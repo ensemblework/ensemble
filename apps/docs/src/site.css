@@ -92,3 +92,12 @@ img { max-width: 100%; height: auto; }
 @media print { .site-header, .sidebar, .on-page, #search-form, #search-results, .ask-launcher, #docs-helper { display: none !important; } .layout { display: block; } }
 
 @media (min-width: 761px) { .sidebar details:not([open]) > nav { display: grid; } .sidebar summary { list-style: none; pointer-events: none; } }
+
+.guide-back { display: inline-block; margin-bottom: 18px; font-size: 14px; }
+.legacy-topic { display: none; }
+.legacy-topic:target { display: block; padding: 20px 0; }
+
+[data-theme="light"] .ask-launcher { box-shadow: 0 10px 24px rgb(40 30 20 / .14); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .ask-launcher { box-shadow: 0 10px 24px rgb(40 30 20 / .14); } }
+
+@media (max-height: 500px) { #docs-helper { max-height: calc(100dvh - 32px); overflow-y: auto; } #helper-answer { min-height: 48px; flex-shrink: 0; } }

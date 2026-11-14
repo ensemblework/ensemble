@@ -1,14 +1,49 @@
 # 40 · Public documentation
 
-Read Ensemble's product guides at [docs.ensemblework.com](https://docs.ensemblework.com) without signing in or supplying a key. Search finds passages in the published guides. **Ask the docs**, the round woven button at the bottom of every page, answers questions from those same pages and links to its sources.
+Read Ensemble's product guides without signing in. Choose a focused topic, search for a question, or open **Ask the docs** for an answer with links to the published guides.
+
+## Read a guide
+
+Choose a guide from **All guides**, then open the topic you need. Each topic has its own page. The guide link above the title takes you back to its topic list.
+
+Reading and navigation work without JavaScript. The site follows your system's light or dark theme. Use the theme button to choose a different appearance.
+
+The public site contains product guidance. It does not publish Ensemble's source code or link to its repository implementation.
+
+## Search the docs
+
+Enter the words you want to find in **Search docs**, then choose **Search**. Results show a short passage and a link to its topic.
+
+If nothing matches, try fewer words or browse the guide's topics. Search needs JavaScript and works locally in your browser once the index loads.
+
+## Ask a question
+
+1. Open the round woven button at the bottom corner of any page.
+2. Enter a question about using Ensemble and choose **Ask**.
+3. Read the answer and follow its source links to verify it.
+4. Choose **Close docs helper**, or press Escape, to return to the button.
+
+The helper uses only published documentation. It cannot read your Ensemble account, tasks, files or source code, and it does not open an Ensemble chat. It will not show implementation code or repository links. No sign-in or API key is needed.
+
+If the guides do not answer the question, the helper says **That is not in the docs** and suggests the closest topic. The panel reminds you: **AI can make mistakes, please verify**.
+
+## When the helper cannot answer
+
+The helper limits requests so everyone can use it within a bounded service allowance. If you reach a limit, try later or use search. A service failure also leaves search and the guides available.
+
+Questions can contain up to 500 characters. Answers stay short and include only links to published topics. Questions and answers are not saved by the helper.
+
+## In the code
+
+The following build, API and operating references remain in the repository documentation. They are not published to readers or used as helper grounding.
 
 ## 1. Source, URLs and search
 
 Choose a guide from the navigation, follow its section links, or search for words from a topic. Reading and navigation work without JavaScript. Search and the helper need JavaScript. An unmatched search says that it found no documentation.
 
-The site publishes only tracked Markdown under `docs/`. The build rejects symbolic links and does not copy git-ignored files, credentials, runbooks or `private/`. The public reader layer adds task-oriented introductions. The detailed reference keeps the source facts, commands, limits and coverage. Implementation paths are available in each page's **In the code** part. The home page is `docs/README.md`.
+The site publishes only tracked Markdown under `docs/`. The build rejects symbolic links and does not copy git-ignored files, credentials, runbooks or `private/`. The public build splits product headings into focused topic pages. Repository guides retain the detailed technical facts and implementation paths after **In the code**; that material and maintenance-only guides are excluded from publication. The home page is `docs/README.md`.
 
-Pages use the lowercase source path without `.md`, followed by `/`: `docs/CONTEXT_BRIDGE.md` becomes `/context_bridge/`, and `docs/desktop/MAC_CHECKLIST.md` becomes `/desktop/mac_checklist/`. Original `.md` URLs redirect to those pages. Reference heading anchors are generated from heading text, with numbered suffixes for duplicates. Links between published guides stay on the site; code links open GitHub at the build's source commit.
+Pages use the lowercase source path without `.md`, followed by `/`: `docs/CONTEXT_BRIDGE.md` becomes `/context_bridge/`, and `docs/desktop/MAC_CHECKLIST.md` becomes `/desktop/mac_checklist/`. Original `.md` URLs redirect to those pages. Reference heading anchors are generated from heading text, with numbered suffixes for duplicates. Links between published guides stay on the site; repository source links are removed from public output. Each public heading gets a focused child URL. Existing guide URLs remain topic indexes; old heading fragments offer a link to the topic without JavaScript and redirect to it with JavaScript.
 
 The interface uses the Hub's dark Deep Petrol and light warm-paper tokens, Figtree text, Fraunces titles and JetBrains Mono code. Fonts are served from the site. It follows the system theme unless the reader chooses Light theme or Dark theme; only that preference is kept in local storage. The header uses the shared 32px woven mark. The helper launcher uses the Hub's 44px button and the same 32px BrandMorph artwork and motion engine. Reduced motion keeps the mark still.
 
@@ -52,18 +87,18 @@ Open the round button, enter a question and choose **Ask**. The answer includes 
 
 The browser sends only `{question}` to public `POST /api/docs/ask` on the existing API, with credentials omitted. Questions accept 1 to 500 characters; the body limit is 2 KB. The route bypasses identity resolution, so even an attached cookie or key cannot add account context. It creates no chat and reads no tasks, files, accounts or private source code. It runs on hosted APIs, not desktop runtimes. Its CORS permission applies only to this route and does not permit cookies.
 
-The API fetches and validates the published search index, with a 60-second cache and an 8 MB limit. It removes common question words and retrieves at most four matching passages, each at most 2,400 characters. Only the question, those passages and their published URLs enter the model input. There are no tools, repository clones, GitHub reads or code-link fetches. A retrieval miss makes no model call. When related passages do not support an answer, the model must report that it is not in the docs. Misses return an ordinary answer with the closest matching guide, or the docs home if nothing matches.
+The API fetches and validates the public-only search index (`audience: "public"`), with a 60-second cache, at most 2,000 pages and an 8 MB limit. It rejects older indexes that include implementation references. It normalizes question words and ranks overlapping published chunks using term frequency, document frequency, length and exact heading matches. It retrieves at most four distinct sections, each passage at most 2,200 characters. Only the question, those passages and their published URLs enter the model input. There are no tools, repository clones, GitHub reads or code-link fetches. A retrieval miss makes no model call. When related passages do not support an answer, the model must report that it is not in the docs. Misses return an ordinary answer with the closest matching guide, or the docs home if nothing matches.
 
-The deployment is fixed to `gpt-5-mini` with `reasoning.effort: "medium"`, `store: false` and a maximum of 4,096 output tokens, including reasoning, further bounded by `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS`. The prompt asks for at most 120 words. The server resolves citations only to retrieved passages; invalid citations and answers containing external URLs are refused as misses. The API uses the existing included-AI configuration, `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY` and `ENSEMBLE_INCLUDED_*`. No new provider, key or Azure resource is needed. If included AI is off or the deployment is unavailable, the helper cannot call it.
+The deployment is fixed to `gpt-5-mini` with `reasoning.effort: "medium"`, `store: false` and a maximum of 4,096 output tokens, including reasoning, further bounded by `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS`. The prompt asks for at most 120 words. The server resolves citations only to retrieved passages; invalid citations, answers over 120 words, and answers containing URLs, source paths, source filenames or fenced code are refused as misses. The API uses the existing included-AI configuration, `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY` and `ENSEMBLE_INCLUDED_*`. No new provider, key or Azure resource is needed. If included AI is off or the deployment is unavailable, the helper cannot call it.
 
 Anonymous use has separate service limits: six requests per minute and 30 per day per address, plus 100 per day and 1,000 per 31 days across the service. These are fixed windows starting at first use. Redis admits all four windows atomically across API processes; failed calls still consume their slot and model calls are not retried. Counters survive API restarts but reset if the transient Redis store restarts. An unavailable limiter fails closed. IPv6 addresses share a /64 allowance; forwarded addresses are accepted only from the hosted loopback tunnel's Cloudflare header. Keys keep a hash of the address, with expiring counters, not the readable address or question.
 
 Limits return 429 with `Retry-After`; service failures return a short 503 message and search remains available. Model requests time out after 60 seconds. This anonymous allowance is separate from account credits and their monthly ledger ([Included AI](33_INCLUDED_AI.md)); it is paid through the same configured resource. Questions and answers are not stored by the helper or logged by its handler. API responses use `Cache-Control: no-store`.
 
-## In the code
+### Implementation files
 
 - `apps/docs/scripts/build.mjs`: tracked-source build, Hub tokens, self-hosted fonts and brand assets, publication headers.
-- `apps/docs/src/readers.mjs`, `render.mjs`, `site.css`: public reader layer and page layout.
+- `apps/docs/src/publication.mjs`, `render.mjs`, `site.css`: public reader layer and page layout.
 - `apps/docs/src/search.js`, `site.js`: local search and navigation.
 - `apps/docs/src/helper.js`: the standalone panel, credential-free request and citation rendering.
 - `apps/hub-api/src/docs-helper/`: public route, publication-only retrieval, fixed model request and limits.

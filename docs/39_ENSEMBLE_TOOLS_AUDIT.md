@@ -1,8 +1,64 @@
 # 39 · Ensemble tools: what the assistant, a node and its agent runs can do
 
-What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub assistant, an Ensemble Node, and agents outside Ensemble: an agent run (a coding agent Ensemble started on the owner's computer) and an editor or agent with an Ensemble MCP key (the Context Bridge). The tool names are in [34](34_ASSISTANT_ACTIONS.md), the node's own tools in [35 §6](35_ENSEMBLE_NODE.md#6-node-tools), the run's MCP server in [30 §9](30_ENGINES.md), the MCP key's actions in [CONTEXT_BRIDGE §5](CONTEXT_BRIDGE.md#5-tools-and-resources).
+Choose the agent that has access to the work you want done. The Hub assistant, Ensemble Node, assigned agents and MCP-connected editors have different tools and permissions.
+
+Use this guide to understand those boundaries. For specific assistant requests, see [Assistant actions](34_ASSISTANT_ACTIONS.md).
 
 ## 1. How each one reaches Ensemble
+
+| Who you use | Where it can work |
+| --- | --- |
+| Hub assistant | The chat's current space, with your access there |
+| Ensemble Node | Spaces its owner can open, with the owner's role. A room with other people is restricted to its shared space |
+| Assigned agent | Its task brief, allowed run folder and permitted task-space actions. Changes and connected apps require the owner's own space |
+| MCP-connected editor or agent | The key's space and other spaces its account owns when explicitly selected. Grants control changes and connected apps |
+
+These agents use Ensemble's tools under their existing identity. They do not need to open Ensemble in a browser or ask you to sign in again.
+
+## 2. The matrix
+
+| Work | Assistant and Node | Assigned agent | MCP-connected editor |
+| --- | --- | --- | --- |
+| Tasks, context and ordinary records | Read and supported changes | Everyday task and record changes | Wider reads and allowed changes, including supported bulk actions |
+| Custom boards | Read and change; deletion waits for Apply | Read and change, without deleting boards | Read and change; may delete a board while keeping its cards |
+| Pages and notes | Read, write, move, delete and supported file conversion | Work with one page at a time | Also supports permitted bulk page deletion |
+| Files | Find, open, save, edit supported originals, tag and Trash | Use attachments and provide evidence | Read, upload, tag and convert; cannot edit an original or delete a file |
+| Skills | Read and manage, with Apply for changes | Uses its task's skills | Read and manage when changes are granted |
+| Connected apps | Read and supported writes on the owner's connections | Permitted app tools in the owner's own space | Requires app grants; writes also require changes permission |
+| Settings, models and layouts | Supported changes with Apply where required | No settings control | Read only |
+| Agent runs | Assign and manage; Node also has its own sessions and plans | Report results, attach evidence and ask questions | Read activity, runs and sessions; cannot start or stop work |
+| Web | Assistant reads public pages; Node also controls supported browser tools | Uses the computer's browser tools | Uses the editor's available web tools |
+
+Access still depends on the selected space and role. Node cannot use another person's private connections through a shared space. A run works within its job's scope.
+
+## 3. Gaps and where they stand
+
+Use the product's own controls for these actions:
+
+- Restore page history, save private templates or copy pages.
+- Decide an approval, accept agent changes or retry a run.
+- Change sharing, members, connections, keys or trusted folders.
+- Reorder tasks inside an Ensemble board column by dragging them on the Board screen.
+
+Custom-board changes have no Undo. Board deletion waits for Apply and keeps the cards.
+
+MCP keys cannot change settings, model choices or layouts; start the assistant, agents, workflows or watchers; stop or delete runs; delete routines or files; or edit a file's original. Those controls stay in Ensemble.
+
+Assigned agents have a narrower task-focused set of actions. Skills, reminders, routines, imports, profile lists, bulk deletes and wider reads remain with you, the assistant or Node. A run can read a space shared with its owner, but cannot change Ensemble there.
+
+## 4. Never Ensemble in a browser
+
+Ask a node or assigned agent to use its Ensemble tools for your tasks, boards, pages and other work. It already acts under its owner's identity.
+
+Node refuses attempts to open Ensemble's hosted app, API or Node websites through browser tools. It names the relevant Ensemble tools instead. The public landing page remains an ordinary website.
+
+Testing Ensemble's interface as a product is a separate task. A local development app can be opened for that work.
+
+## In the code
+
+What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub assistant, an Ensemble Node, and agents outside Ensemble: an agent run (a coding agent Ensemble started on the owner's computer) and an editor or agent with an Ensemble MCP key (the Context Bridge). The tool names are in [34](34_ASSISTANT_ACTIONS.md), the node's own tools in [35 §6](35_ENSEMBLE_NODE.md#6-node-tools), the run's MCP server in [30 §9](30_ENGINES.md), the MCP key's actions in [CONTEXT_BRIDGE §5](CONTEXT_BRIDGE.md#5-tools-and-resources).
+
+### 1. How each one reaches Ensemble: implementation reference
 
 | Who | Reaches Ensemble through | Where it acts |
 | --- | --- | --- |
@@ -13,7 +69,7 @@ What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub 
 
 Each one is already signed in as its owner. None of them opens Ensemble's web app in a browser (§4).
 
-## 2. The matrix
+### 2. The matrix: implementation reference
 
 A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)); "MCP" marks what an MCP key has and a run does not.
 
@@ -51,14 +107,14 @@ OAuth clients use the same Context Bridge grants and allowlist through named `en
 | Ensemble Node itself | None | Rooms, crews, nodes, routines, memories (`node_*`) | None |
 | Ensemble's web app in a browser | None | Refused (§4) | Told not to (§4) |
 
-## 3. Gaps and where they stand
+### 3. Gaps and where they stand: implementation reference
 
 | Gap | Where it stands |
 | --- | --- |
-| Custom boards could not be read or changed by any tool, so a node did not find a board by its name or link | The seven board tools (§2) share `pages/boards.ts` with `routes/page-boards.ts`: the same checks, spaces and sharing as the Board screen. The `boards` playbook routes "my EnsembleWork board", "custom board" and a pasted `/board?board=<id>` link. A node reaches a board in any space its owner can open |
-| Watchers could be made but not listed or stopped | `hub_list_watchers`, `hub_cancel_watcher` (with Undo) |
-| A node asked its owner to sign in to Ensemble's web app | Refused before the computer, with the tools to use (§4) |
-| A click opened a payment in a popup and the node did not know it (it asked its owner for the popup's address), and "close it" after a live view found no tool | Every acting browser tool and `web_task` say which tab a window opened, and `web_task` goes on there; `browser_tabs` lists popups (`popup`, `openedBy`) and, with `browser_close`, is always offered with the browser tools; `live_view {stop: true}` ends a view and keeps the tab ([35 §8.17](35_ENSEMBLE_NODE.md#817-live-terminal-and-browser)) |
+| Reading and changing custom boards | The seven board tools (§2) share `pages/boards.ts` with `routes/page-boards.ts`: the same checks, spaces and sharing as the Board screen. The `boards` playbook routes "my EnsembleWork board", "custom board" and a pasted `/board?board=<id>` link. A node reaches a board in any space its owner can open |
+| Listing and stopping watchers | `hub_list_watchers`, `hub_cancel_watcher` (with Undo) |
+| A node attempting to open Ensemble's web app | Refused before the computer, with the tools to use (§4) |
+| Browser popups and live-view controls | Every acting browser tool and `web_task` say which tab a window opened, and `web_task` goes on there; `browser_tabs` lists popups (`popup`, `openedBy`) and, with `browser_close`, is always offered with the browser tools; `live_view {stop: true}` ends a view and keeps the tab ([35 §8.17](35_ENSEMBLE_NODE.md#817-live-terminal-and-browser)) |
 
 Not offered, and why:
 
@@ -74,7 +130,7 @@ Not offered, and why:
 | Deciding Needs me items, accepting agent changes, retrying a run | Approvals and code review are the person's decisions ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Spaces, sharing, members, connections, keys, folder trust | Permission and credential changes stay the person's own ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)) |
 
-## 4. Never Ensemble in a browser
+### 4. Never Ensemble in a browser: implementation reference
 
 A node and its runs act in Ensemble as their owner already. Opening Ensemble's web app to sign in is never needed.
 

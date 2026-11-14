@@ -9,7 +9,7 @@ import { admitDocs, docsAddress } from "./limits.js";
 import type { Redis } from "ioredis";
 
 const index: DocsIndex = { version: 1, pages: [{ title: "Connected apps", path: "/31_connectors_in_use/", sections: [
-  { heading: "Connect an app", url: "https://docs.ensemblework.com/31_connectors_in_use/#connect", text: "Open Settings → Connections and choose an app. Connecting an account imports nothing. Code: apps/hub-api/src/routes/connectors.ts" },
+  { heading: "Connect an app", url: "https://docs.ensemblework.com/31_connectors_in_use/#connect", text: "Open Settings → Connections and choose an app. Connecting an account imports nothing." },
   { heading: "Permissions", url: "https://docs.ensemblework.com/31_connectors_in_use/#permissions", text: "A viewer cannot change a shared task." },
 ] }] };
 const reply = JSON.stringify({ found: true, answer: "Open Settings → Connections and choose an app.", citations: [1] });
@@ -60,14 +60,14 @@ test("index loading fetches only published pages, bounds and validates them, and
     assert.equal(url, "https://docs.ensemblework.com/search-index.json");
     assert.deepEqual(options?.headers, { accept: "application/json" });
     assert.equal(options?.redirect, "error");
-    return Response.json(index);
+    return Response.json({ ...index, audience: "public" });
   });
   await load(); await load();
   assert.equal(count, 1);
   for (const url of ["https://github.com/ensemblework/ensemble/blob/main/file", "https://docs.ensemblework.com.evil.test/a"]) {
     const changed = structuredClone(index);
     changed.pages[0]!.sections[0]!.url = url;
-    await assert.rejects(documentationIndex(async () => Response.json(changed))());
+    await assert.rejects(documentationIndex(async () => Response.json({ ...changed, audience: "public" }))());
   }
 });
 
@@ -129,4 +129,30 @@ test("limiter atomically admits all four durable windows without storing the raw
     return 42;
   } } as unknown as Redis;
   assert.equal(await admitDocs(redis, "203.0.113.7"), 42);
+});
+
+test("source code and repository paths cannot be returned even with a valid citation", async () => {
+  for (const text of ["Open apps/hub-api/src/app.ts", "The implementation is in auth.ts", "```js\nfunction secret() {}\n```", "See github.com/ensemblework/ensemble"]) {
+    const answer = await answerQuestion("connect app", index, async () => JSON.stringify({ found: true, answer: text, citations: [1] }));
+    assert.equal(answer.found, false);
+    assert.doesNotMatch(answer.answer, /app\.ts|auth\.ts|function secret|github/);
+  }
+});
+test("the helper rejects an older publication that contains implementation references", async () => {
+  await assert.rejects(documentationIndex(async () => Response.json(index))());
+});
+
+test("ordinary questions retrieve the actual answer from the built public topics", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const corpus = JSON.parse(await readFile(new URL("../../../docs/out/search-index.json", import.meta.url), "utf8")) as DocsIndex;
+  for (const [question, path, phrases] of [
+    ["What is the maximum file size?", "/32_files/limits/", ["25 MB", "100 MB"]],
+    ["How do I connect an app?", "/31_connectors_in_use/connect-an-app/", ["Settings", "Connections"]],
+    ["How do I share a page?", "/29_sharing/share-a-page/", ["Share", "Can edit"]],
+    ["How do I create a new space?", "/28_ensemble_spaces/create-a-space/", ["New space", "template"]],
+  ] as const) {
+    const passage = retrieve(corpus, question).find((hit) => new URL(hit.url).pathname === path);
+    assert.ok(passage, question);
+    for (const phrase of phrases) assert.ok(passage.text.includes(phrase), `${question}: ${phrase}`);
+  }
 });

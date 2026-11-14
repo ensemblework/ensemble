@@ -1,4 +1,5 @@
-import { readers } from "./readers.mjs";
+import brandIcons from "@ensemble/brand/icons";
+const { icons } = brandIcons;
 import { staticSVG } from "@ensemble/brand";
 import MarkdownIt from "markdown-it";
 import { DOCS_HOME } from "./search.js";
@@ -14,8 +15,9 @@ function inlineText(token) {
   }).join("");
 }
 
-export function renderDocs(documents, sourceRef = "testing", { reader = false } = {}) {
+export function renderDocs(documents, sourceRef = "testing") {
   const paths = new Map(documents.map(({ file }) => [`/docs/${file}`, pagePath(file)]));
+  const sitePaths = new Set(paths.values());
   return documents.map(({ file, markdown }) => {
     const md = new MarkdownIt({ html: false });
     md.renderer.rules.table_open = () => '<div class="table-scroll" tabindex="0" role="region" aria-label="Reference table"><table>\n';
@@ -27,35 +29,7 @@ export function renderDocs(documents, sourceRef = "testing", { reader = false } 
       return !fence && /^\s*\|/.test(line) ? line.replace(/`([^`]+)`/g, (_match, code) => "`" + code.replace(/(?<!\\)\|/g, "\\|") + "`") : line;
     }).join("\n");
     const original = md.parse(readable, {});
-    const guide = reader ? readers[file] : null;
-    if (reader && !guide) throw new Error(`Missing public reader guide: ${file}`);
-    const tokens = guide && file !== "README.md" ? md.parse(`# ${guide[0]}\n\n${guide[1]}\n\n${guide[2]}\n\n## Reference\n\n`, {}).concat(original.slice(3)) : original;
-    // Capture anchors before shortening visible implementation references.
-    for (let i = 0; i < tokens.length; i++) if (tokens[i].type === "heading_open") tokens[i].meta = { sourceHeading: inlineText(tokens[i + 1]) };
-    const codePaths = new Map();
-    if (reader) {
-      for (const token of tokens) for (const child of token.children ?? []) {
-        if (child.type === "text") child.content = child.content.replace(/\s*—\s*/g, ", ").replace(/ -- /g, " · ");
-        if (child.type === "code_inline" && /^(?:apps|packages|scripts|infra|src|components|lib|routes|workspace|assistant|node|jobs|included|runtime|remote|connectors|files|imports|prisma|\.github)\//.test(child.content) && !/\s/.test(child.content)) {
-          const path = child.content;
-          if (!codePaths.has(path)) codePaths.set(path, codePaths.size + 1);
-          child.meta = { codePath: codePaths.get(path) };
-          child.content = path.replace(/\/$/, "").split("/").pop();
-        }
-      }
-      const inlineCode = md.renderer.rules.code_inline;
-      md.renderer.rules.code_inline = (items, i, options, env, renderer) => {
-        const rendered = inlineCode(items, i, options, env, renderer);
-        return items[i].meta?.codePath ? `<a class="code-ref" href="#code-path-${items[i].meta.codePath}">${rendered}</a>` : rendered;
-      };
-      if (codePaths.size) {
-        tokens.push(...md.parse("\n## In the code\n\nImplementation references used in this guide. Paths are relative to the repository or the source folder named in the reference.\n\n" + [...codePaths].map(([path]) => `- \`${path}\``).join("\n"), {}));
-        let n = 0;
-        for (let i = tokens.length - 1; i >= 0 && n < codePaths.size; i--) {
-          if (tokens[i].type === "list_item_open") tokens[i].attrSet("id", `code-path-${codePaths.size - n++}`);
-        }
-      }
-    }
+    const tokens = original;
     const counts = new Map();
     const sections = [];
     const toc = [];
@@ -86,6 +60,7 @@ export function renderDocs(documents, sourceRef = "testing", { reader = false } 
         if (!href || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(href)) continue;
         const target = new URL(href, `https://repo.invalid/docs/${file}`);
         const path = decodeURIComponent(target.pathname);
+        if (sitePaths.has(path)) continue;
         child.attrSet(attr, paths.has(path)
           ? `${paths.get(path)}${target.hash}`
           : `https://github.com/ensemblework/ensemble/${attr === "src" ? "raw" : "blob"}/${sourceRef}${target.pathname}${target.hash}`);
@@ -104,19 +79,29 @@ export function renderDocs(documents, sourceRef = "testing", { reader = false } 
 
 export function pageHtml(page, pages, sourceRef, endpoint = "https://api.ensemblework.com/api/docs/ask") {
   const e = escapeHtml;
-  const navigation = pages.map((entry) => `<a href="${e(entry.path)}"${entry.path === page.path ? ' aria-current="page"' : ""}>${e(entry.title.replace(/^\d+[. ·]+/, ""))}</a>`).join("\n");
+  const guideLabels = {
+    "README.md": "Documentation home", "00": "Overview", "02": "The Hub", "03": "Context", "04": "Personal skills", "05": "Scheduled work", "06": "Assigned agents", "07": "Access and activity", "11": "Assistant", "16": "Code", "20_PLOTS": "Plots", "20_QUICK": "Quick capture", "21_BLOCK_DIAGRAMS_CHEATSHEET": "Diagram cheat sheet", "21": "Diagrams", "24": "Execution permissions", "25": "Your computers", "26": "CLI", "27": "Imports", "28": "Spaces", "29": "Sharing", "30": "Your own agents", "31": "Connected apps", "32": "Files", "33": "Included AI", "34": "Assistant actions", "35": "Ensemble Node", "38": "Agent attachments", "39": "Agent tools", "40": "Using these docs", "41": "Agent sessions", "DESKTOP.md": "Desktop app", "CONTEXT_BRIDGE.md": "Connect an editor",
+  };
+  const navigation = pages.filter((entry) => !entry.parent).map((entry) => {
+    const label = Object.entries(guideLabels).find(([prefix]) => entry.file.startsWith(prefix))?.[1] ?? entry.title;
+    return `<a href="${e(entry.path)}"${entry.path === page.path || page.sourceFile === entry.file ? ' aria-current="page"' : ""}>${e(label)}</a>`;
+  }).join("\n");
   const toc = page.toc.map(({ heading, id }) => `<a href="#${e(id)}">${e(heading.replace(/^\d+[. ·]+/, ""))}</a>`).join("\n");
-  const source = `https://github.com/ensemblework/ensemble/blob/${sourceRef}/docs/${page.file}`;
+  const parent = pages.find((entry) => entry.file === page.parent);
+  const children = pages.filter((entry) => entry.parent === page.file);
+  const siblings = children.length ? children : pages.filter((entry) => parent && entry.parent === parent.file);
+  siblings.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const topicNavigation = siblings.map((entry) => `<a href="${e(entry.path)}"${entry.path === page.path ? ' aria-current="page"' : ""}>${e(entry.title)}</a>`).join("\n");
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${e(page.title)} | Ensemble Docs</title>
-<meta name="description" content="Ensemble product guides and code maps for people and agents.">
+<meta name="description" content="Learn to use Ensemble with focused guides to tasks, pages, files and agents.">
 <link rel="canonical" href="${e(new URL(page.path, DOCS_HOME).href)}">
 <script src="/theme.js"></script>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+${icons.icon.map((icon) => `<link rel="icon" href="${e(icon.url)}" type="${e(icon.type)}" sizes="${e(icon.sizes)}">`).join("\n")}
 <link rel="preload" href="/fonts/figtree.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/hub-tokens.css">
 <link rel="stylesheet" href="/brand-motion.css">
@@ -132,10 +117,12 @@ export function pageHtml(page, pages, sourceRef, endpoint = "https://api.ensembl
 <main id="content" tabindex="-1">
 <form id="search-form" role="search"><label for="query">Search docs</label><div class="search-field"><input id="query" name="q" type="search" maxlength="200" placeholder="Search tasks, pages, connected apps…" autocomplete="off"><button type="submit">Search</button></div></form>
 <section id="search-results" aria-live="polite" aria-label="Search results" hidden></section>
+${parent ? `<a class="guide-back" href="${e(parent.path)}">${e(parent.title)} topics</a>` : ""}
 <article>${page.html}</article>
-<footer class="page-source"><span>Ensemble documentation</span><a href="${e(source)}">Edit this page</a></footer>
+${(page.aliases ?? []).map((alias) => `<div id="${e(alias.id)}" class="legacy-topic"><a href="${e(pagePath(alias.file))}">Continue to ${e(alias.title)}</a></div>`).join("\n")}
+<footer class="page-source"><span>Ensemble documentation</span><a href="/">All guides</a></footer>
 </main>
-<aside class="on-page"><nav aria-label="On this page"><strong>On this page</strong>${toc}</nav></aside>
+<aside class="on-page"><nav aria-label="On this page"><strong>${siblings.length ? "In this guide" : "On this page"}</strong>${siblings.length ? topicNavigation : toc}</nav></aside>
 </div>
 <button id="docs-launcher" class="ask-launcher" type="button" aria-label="Ask the docs" aria-expanded="false" aria-controls="docs-helper" hidden><span class="u-morph">${staticSVG(32, { id: "docs-launcher-mark", tone: "auto" })}</span></button>
 <section id="docs-helper" role="dialog" aria-labelledby="helper-title" data-endpoint="${e(endpoint)}" hidden>

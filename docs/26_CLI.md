@@ -5,24 +5,25 @@ Type `ensemble` in a project folder and Ensemble opens full-screen in the termin
 1. **Tasks** (default tab): agent runs on this computer (needs you, running, queued, stopped, done) and every question or permission waiting on you, answered right there.
 2. **Chat**: your agent. Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code on your own sign-in, working in the folder under your run profile with your Ensemble board loaded; or Ensemble Code (the assistant with a configured model source).
 
-`ensemble` starts this computer's runtime in the background if it is not running, so tasks assigned from [app.ensemblework.com](https://app.ensemblework.com) or a phone run here, in shared folders, with the model keys saved on the account (or added here). It keeps running after you leave the app. `ensemble mcp` is an MCP server over your hosted Ensemble; editors start it themselves. For editor context only, the **hosted MCP URL** needs no install (§5).
+`ensemble` starts this computer's runtime in the background if it is not running, so tasks assigned from [app.ensemblework.com](https://app.ensemblework.com) or a phone run here, in shared folders, with the model keys saved on the account (or added here). It keeps running after you leave the app. `ensemble mcp` is an MCP server over your hosted Ensemble; editors start it themselves.
 
-The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.6.4+): direct node changes are reported as private file cards, and text edits in the website save back here with version checks. `ensemble browse on` allows reading and `ensemble web edit on` allows saving; no new permission bypass or terminal unlock is introduced. [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) describes the file and quote contract.
+For editor context only, the **hosted MCP URL** needs no install (§5).
 
-The runtime reports `sessionDelete: 1` for owner-confirmed deletion from Node's Sessions page or a node's confirmation card. It deletes the underlying coding agent's recorded session after active jobs stop, keeps project files, and reports native failures instead of hiding an undeleted session. Update and restart the paired runtime to use it; [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card) lists the native methods.
+The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.6.4+): direct node changes are reported as private file cards, and text edits in the website save back here with version checks.
+
+`ensemble browse on` allows reading and `ensemble web edit on` allows saving; no new permission bypass or terminal unlock is introduced. [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) describes the file and quote contract.
+
+The runtime reports `sessionDelete: 1` for owner-confirmed deletion from Node's Sessions page or a node's confirmation card. It deletes the underlying coding agent's recorded session after active jobs stop, keeps project files, and reports native failures instead of hiding an undeleted session.
+
+Update and restart the paired runtime to use it; [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card) lists the native methods.
 
 CLI 0.6.5 includes canonical file identities and per-file edit timestamps in reports, allowing Node's floating selection action to address the last editing node or queue directly into its coding-agent session. The source bytes stay on the computer; account themes and document renderers are owned by the web UI.
 
 CLI 0.6.6 checks the exact recorded original in the web file viewer, rather than reapplying a whole-folder execution guard. Safe generated reports can be read and edited beside protected siblings; actual credentials, runtime files, linked files and protected write targets remain blocked.
 
-| What | Where |
-|---|---|
-| CLI (npm name `ensemblework`, command `ensemble`) | `apps/cli`; the app is `apps/cli/src/tui` (Ink and React, bundled into the same file) |
-| Packaging | `scripts/package-cli.mjs`, `packaging/`, `.github/workflows/cli-release.yml` |
-| Install scripts | `apps/landing/public/install.sh`, `install.ps1`, served at `https://ensemblework.com/install.sh` and `/install.ps1` |
-| User guide | [ensemblework.com/download](https://ensemblework.com/download); in the Hub, Connect your apps and Settings → Connections → Connected computers |
-
 ## 1. Install
+
+Choose the installer for your operating system. After installation, open a terminal in your project folder and run `ensemble`.
 
 | OS | Command |
 |---|---|
@@ -45,11 +46,15 @@ ensemble/sidecar/node        Node runtime
 ensemble/sidecar/app/        hub-api, as the desktop sidecar uses it
 ```
 
-The archive is large because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH. `ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (for packaging checks). Both scripts verify the archive against `SHA256SUMS.txt`.
+The archive is large because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH.
+
+`ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (for packaging checks). Both scripts verify the archive against `SHA256SUMS.txt`.
 
 ### 1.1 Testing CLI
 
-`ensemble-test` is a separate build of this CLI for `test.ensemblework.com`, not a flag on the production command. Install commands and testing/promotion workflow: [36](36_WEB_TESTING.md#install-the-testing-cli). It connects only to `https://api-test.ensemblework.com`; production `ensemble` defaults and native-app integration are unchanged. `ensemble-test status --json` reports `channel: "testing"` and its API. Its version contains `-testing.<build>`.
+`ensemble-test` is a separate build of this CLI for `test.ensemblework.com`, not a flag on the production command. Install commands and testing/promotion workflow: [36](36_WEB_TESTING.md#install-the-testing-cli). It connects only to `https://api-test.ensemblework.com`; production `ensemble` defaults and native-app integration are unchanged.
+
+`ensemble-test status --json` reports `channel: "testing"` and its API. Its version contains `-testing.<build>`.
 
 | Surface | Testing identity |
 | --- | --- |
@@ -61,7 +66,9 @@ The archive is large because it carries Node, Prisma and PGlite. The launchers s
 | Editor MCP entry | `ensemble-test`, alongside production `ensemble` |
 | Updates | `cli-testing-latest` GitHub prerelease, generated testing installers and `channel.json`; never stable package managers or native updates |
 
-Build with `node apps/cli/scripts/build.mjs --testing`; package with `node scripts/package-cli.mjs --channel testing --target <target>`. `ENSEMBLE_TEST_CLI_VERSION` supplies `<release>-testing.<numeric-build>` without changing root `release.json`. The build-time channel (`apps/cli/src/channel.ts`) cannot be changed by a production API environment variable. `ENSEMBLE_TEST_TOKEN`, `ENSEMBLE_TEST_CONFIG_DIR` and `ENSEMBLE_TEST_DATA_HOME` are independent overrides; test launchers use `ENSEMBLE_TEST_LAUNCHER` and `ENSEMBLE_TEST_SIDECAR_DIR`. The testing runtime refuses production pairing, hosted calls and discovery belonging to the native/production runtime. Its included-model credits and account model keys come only from the test account.
+Build with `node apps/cli/scripts/build.mjs --testing`; package with `node scripts/package-cli.mjs --channel testing --target <target>`. `ENSEMBLE_TEST_CLI_VERSION` supplies `<release>-testing.<numeric-build>` without changing root `release.json`. The build-time channel (`apps/cli/src/channel.ts`) cannot be changed by a production API environment variable.
+
+`ENSEMBLE_TEST_TOKEN`, `ENSEMBLE_TEST_CONFIG_DIR` and `ENSEMBLE_TEST_DATA_HOME` are independent overrides; test launchers use `ENSEMBLE_TEST_LAUNCHER` and `ENSEMBLE_TEST_SIDECAR_DIR`. The testing runtime refuses production pairing, hosted calls and discovery belonging to the native/production runtime. Its included-model credits and account model keys come only from the test account.
 
 Its Node tab reads the test API and links to the testing Node website, `https://node-test.ensemblework.com` (`TESTING_NODE`), never the production Node site.
 
@@ -69,19 +76,59 @@ Its Node tab reads the test API and links to the testing Node website, `https://
 
 ### 2.1 The app
 
-`ensemble` with no arguments in a terminal (or `ensemble app`) opens the app on the alternate screen with mouse reporting on and line wrapping off, and restores all three on exit (`apps/cli/src/tui/screen.ts`). An install that only connects editors (the npm package) says so and points to the full install. Layout, top to bottom: tabs (click, or Tab), the main area with a sidebar when the terminal is at least 90 columns wide (Ctrl+B or `/sidebar` hides it), the selected request's answers as numbered buttons, the composer, and a status line (folder, run profile, agent, sign-in).
+`ensemble` with no arguments in a terminal (or `ensemble app`) opens the app on the alternate screen with mouse reporting on and line wrapping off, and restores all three on exit (`apps/cli/src/tui/screen.ts`). An install that only connects editors (the npm package) says so and points to the full install.
 
-**Tasks.** Runs are grouped Needs you, Running, Queued, Stopped and Done, refreshed every 1.5 s from the local runtime (`/api/workspace`, `/api/decisions`). A run waiting on a question sits under Needs you; so do requests from editors and agent apps not tied to a run here. Selecting one shows its progress and log. A question shows its options (recommended one starred) plus Skip; a permission offers Allow once, Allow for this task, Always and Deny (never Always for a path outside the folder). Click a button, press its number, or type an answer and press Enter. `/allow [once|task|always]`, `/deny [reason]` and `/answer <text>` do the same. Answers go to `POST /api/decisions/:id/decide`, so the card on the web and phone closes too. `/stop` and `/retry` act on the selected run.
+Layout, top to bottom: tabs (click, or Tab), the main area with a sidebar when the terminal is at least 90 columns wide (Ctrl+B or `/sidebar` hides it), the selected request's answers as numbered buttons, the composer, and a status line (folder, run profile, agent, sign-in).
 
-**Chat with your agent.** With Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code chosen (`/agent`, which notes for each whether this computer has it and is signed in, with the command to fix it), each message is one `chat: true` run (`POST /api/agent/assign`, `chatTurnRequest` in `apps/cli/src/tui/model.ts`) in the opened folder, on its own branch, under the run profile. The first message creates the chat's task ("Chat: …", kept In progress, no Agent report per turn); later ones resume the agent's session (`claude --resume`, Codex `thread/resume`, Cursor's and Copilot's ACP `session/load`; [30](30_ENGINES.md)). The reply streams from the run's log; permissions and questions appear as buttons. The agent's ensemble MCP server adds `ensemble_list_tasks`, `ensemble_create_task` and `ensemble_search`. `/model` lists the models the agent reports on this computer (`GET /api/subscriptions`; `agentOf` in `model.ts`): Claude Code's models for its installed version (Ensemble's own table before the check answers), Codex's `model/list`, Copilot's models, Cursor's names, each with its cost and context sizes ("low cost · 200K / 922K context"), plus *Another model…* (typed; the only choice when the agent listed none). Then a thinking level from that model's levels (or Default), then Standard or Long context when the model has a long window. The choice is kept in `<config>/app.json` (`agentModel`, `agentEffort`, `agentContext`; switching agent clears them) and sent on Chat turns and `/run` as `model`, `reasoningEffort` and `contextTier`. Without a `/model` choice, `/run` uses the run profile's model, thinking level and context when the profile names the same agent. Before a message or `/run`, a Copilot that was missing or signed out is checked again (`POST /api/subscriptions/check`); still so, nothing is created and the fix is shown ("run copilot login", "npm install -g @github/copilot"). Esc stops the turn; `/new` starts a new chat. With Ensemble's agent chosen and no model key here or on the account, the app switches to the first installed agent (Claude Code, Codex, Cursor, GitHub Copilot) and says so. A missing key names the provider and the fix ("No key for Google Gemini. Add one in Settings → Models (in the Ensemble CLI: /keys google), …").
+#### Review runs and answer questions
 
-**Ensemble Code.** With Ensemble's agent chosen, messages go to `POST /api/assistant/turn` with a `code` session: the folder (`/folder`), the agent (`/agent`), the run profile (`/profile`: up to three profiles saved in the Assign dialog, or Quick; [02](02_MODULE_INTERACTION_HUB_UI.md)) and the chat model (`/model`, sent with its provider, so a Copilot model is called on Copilot only; the first row, *Chat default*, is the account's default tier model). It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, in the sandbox, under the profile. Replies name records by title, as on the web ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). Changes wait for Apply per the assistant's write policy (Settings → Assistant): 1 applies, 2 discards. Esc and `/new` work as above. It runs only against a runtime on this computer (`ENSEMBLE_DESKTOP=1`); the hosted API refuses it with 409.
+**Tasks.** Runs are grouped Needs you, Running, Queued, Stopped and Done, refreshed every 1.5 s from the local runtime (`/api/workspace`, `/api/decisions`). A run waiting on a question sits under Needs you; so do requests from editors and agent apps not tied to a run here.
 
-**Node (read-only).** The third tab shows Ensemble Node at a glance: the account's nodes (working or idle), rooms with unread counts and their newest message, approvals waiting, requests to join someone's room, the computer runs nodes started, and the credits left (shared by Ensemble, the CLI and Node). It reads `GET /api/bridge/node` with the CLI's own sign-in key, every 10 s while open and every minute otherwise for the tab's badge. Approving and chatting happen on the Node website (`ENSEMBLE_NODE_URL`, else `node.` plus the account's Ensemble domain); typing a message here says so ([35](35_ENSEMBLE_NODE.md)).
+Selecting one shows its progress and log. A question shows its options (recommended one starred) plus Skip; a permission offers Allow once, Allow for this task, Always and Deny (never Always for a path outside the folder). Click a button, press its number, or type an answer and press Enter. `/allow [once|task|always]`, `/deny [reason]` and `/answer <text>` do the same.
 
-**Slash commands.** `/` opens a menu under the composer, filtered as you type, with this tab's commands first; arrows choose, Tab completes, Enter runs. `/run <what to do>` creates a task and starts the chosen agent on it in this folder with the run profile (with Ensemble's agent: the profile's model, provider and thinking level). A profile that ends in a pull request runs in its own clone of this folder (which must be a git repository) and says so: "…in its own clone of this folder; it ends in a pull request into testing." Chat messages never end in a pull request. Others: `/tasks`, `/chat`, `/node`, `/trust` (Ask runs commands in a trusted folder without asking; no mode needs one), `/keys [provider]` (add a model key for this computer, typed masked), `/sandbox`, `/hooks` (connect Claude Code, Codex, Copilot and Cursor to Needs me), `/login`, `/logout`, `/runner install|uninstall` (start Ensemble at login), `/update`, `/status`, `/help`, `/exit`.
+Answers go to `POST /api/decisions/:id/decide`, so the card on the web and phone closes too. `/stop` and `/retry` act on the selected run.
 
-**Keys.** Tab cycles Tasks, Chat and Node (completes in the slash menu). With the composer empty, Up and Down select a run (or scroll the chat), Left and Right move between buttons, and 1–9 press one. While typing, Up and Down recall what you sent and Ctrl+A/E/U/W edit the line. PgUp/PgDn and the mouse wheel scroll, Esc closes a menu or clears the composer, Ctrl+C twice leaves. The chosen tab, agent, profile, chat model and sidebar are saved in `<config>/app.json`.
+#### Chat with a coding agent
+
+**Chat with your agent.** With Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code chosen (`/agent`, which notes for each whether this computer has it and is signed in, with the command to fix it), each message is one `chat: true` run (`POST /api/agent/assign`, `chatTurnRequest` in `apps/cli/src/tui/model.ts`) in the opened folder, on its own branch, under the run profile.
+
+The first message creates the chat's task ("Chat: …", kept In progress, no Agent report per turn); later ones resume the agent's session (`claude --resume`, Codex `thread/resume`, Cursor's and Copilot's ACP `session/load`; [30](30_ENGINES.md)). The reply streams from the run's log; permissions and questions appear as buttons.
+
+The agent's ensemble MCP server adds `ensemble_list_tasks`, `ensemble_create_task` and `ensemble_search`. `/model` lists the models the agent reports on this computer (`GET /api/subscriptions`; `agentOf` in `model.ts`): Claude Code's models for its installed version (Ensemble's own table before the check answers), Codex's `model/list`, Copilot's models, Cursor's names, each with its cost and context sizes ("low cost · 200K / 922K context"), plus *Another model…* (typed; the only choice when the agent listed none).
+
+Then a thinking level from that model's levels (or Default), then Standard or Long context when the model has a long window. The choice is kept in `<config>/app.json` (`agentModel`, `agentEffort`, `agentContext`; switching agent clears them) and sent on Chat turns and `/run` as `model`, `reasoningEffort` and `contextTier`.
+
+Without a `/model` choice, `/run` uses the run profile's model, thinking level and context when the profile names the same agent. Before a message or `/run`, a Copilot that was missing or signed out is checked again (`POST /api/subscriptions/check`); still so, nothing is created and the fix is shown ("run copilot login", "npm install -g @github/copilot").
+
+Esc stops the turn; `/new` starts a new chat. With Ensemble's agent chosen and no model key here or on the account, the app switches to the first installed agent (Claude Code, Codex, Cursor, GitHub Copilot) and says so. A missing key names the provider and the fix ("No key for Google Gemini. Add one in Settings → Models (in the Ensemble CLI: /keys google), …").
+
+#### Ask Ensemble Code
+
+**Ensemble Code.** With Ensemble's agent chosen, messages go to `POST /api/assistant/turn` with a `code` session: the folder (`/folder`), the agent (`/agent`), the run profile (`/profile`: up to three profiles saved in the Assign dialog, or Quick; [02](02_MODULE_INTERACTION_HUB_UI.md)) and the chat model (`/model`, sent with its provider, so a Copilot model is called on Copilot only; the first row, *Chat default*, is the account's default tier model).
+
+It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, in the sandbox, under the profile.
+
+Replies name records by title, as on the web ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). Changes wait for Apply per the assistant's write policy (Settings → Assistant): 1 applies, 2 discards. Esc and `/new` work as above. It runs only against a runtime on this computer (`ENSEMBLE_DESKTOP=1`); the hosted API refuses it with 409.
+
+#### Check Ensemble Node activity
+
+**Node (read-only).** The third tab shows Ensemble Node at a glance: the account's nodes (working or idle), rooms with unread counts and their newest message, approvals waiting, requests to join someone's room, the computer runs nodes started, and the credits left (shared by Ensemble, the CLI and Node).
+
+It reads `GET /api/bridge/node` with the CLI's own sign-in key, every 10 s while open and every minute otherwise for the tab's badge. Approving and chatting happen on the Node website (`ENSEMBLE_NODE_URL`, else `node.` plus the account's Ensemble domain); typing a message here says so ([35](35_ENSEMBLE_NODE.md)).
+
+#### Use slash commands
+
+**Slash commands.** `/` opens a menu under the composer, filtered as you type, with this tab's commands first; arrows choose, Tab completes, Enter runs. `/run <what to do>` creates a task and starts the chosen agent on it in this folder with the run profile (with Ensemble's agent: the profile's model, provider and thinking level). A profile that ends in a pull request runs in its own clone of this folder (which must be a git repository) and says so: "…in its own clone of this folder; it ends in a pull request into testing." Chat messages never end in a pull request.
+
+Others: `/tasks`, `/chat`, `/node`, `/trust` (Ask runs commands in a trusted folder without asking; no mode needs one), `/keys [provider]` (add a model key for this computer, typed masked), `/sandbox`, `/hooks` (connect Claude Code, Codex, Copilot and Cursor to Needs me), `/login`, `/logout`, `/runner install|uninstall` (start Ensemble at login), `/update`, `/status`, `/help`, `/exit`.
+
+#### Navigate the terminal app
+
+**Keys.** Tab cycles Tasks, Chat and Node (completes in the slash menu). With the composer empty, Up and Down select a run (or scroll the chat), Left and Right move between buttons, and 1–9 press one. While typing, Up and Down recall what you sent and Ctrl+A/E/U/W edit the line. PgUp/PgDn and the mouse wheel scroll, Esc closes a menu or clears the composer, Ctrl+C twice leaves.
+
+The chosen tab, agent, profile, chat model and sidebar are saved in `<config>/app.json`.
+
+#### Control terminal color and motion
 
 **Identity.** The status row shows `[e] Ensemble` with a four-cell braille infinity at 8 fps while a chat or task runs (`apps/cli/src/tui/brand.tsx`, `packages/brand/cli.js`); idle has no timer. Redirected output and `TERM=dumb` get a still ASCII marker, `NO_COLOR` drops colour, truecolor terminals use `#D7B56F` and others ANSI yellow. `ENSEMBLE_REDUCE_MOTION=1` keeps the marker still.
 
@@ -89,89 +136,110 @@ Its Node tab reads the test API and links to the testing Node website, `https://
 
 Every action is also a plain command; `ensemble help commands` lists them (`ensemble help` and `--help` show the short version).
 
+#### Sign in and check the computer
+
+Use these commands to connect an account, leave it or diagnose a setup problem.
+
 | Command | What it does |
 |---|---|
 | `ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]` | Device login (§4). Saves the MCP key with the grants approved on the `/link` page (changes, connected apps); when "Run tasks" is also approved, pairs this computer as a device |
 | `ensemble logout` | Revokes the key on the server, unpairs the device, clears local credentials. If the server is unreachable it still clears this computer and names the key to revoke under Connect your apps |
 | `ensemble status [--json]`, `ensemble doctor` | Account, API, sign-in, pairing, runner, folders (repositories marked), model keys, the secret key's fingerprint and the secrets mode, sandbox, configured editors. `doctor` exits 1 when a check fails and says how to fix it |
+
+#### Choose folders and remote access
+
+Set the folders and operations this computer allows. The computer checks these settings for every remote request.
+
+| Command | What it does |
+|---|---|
 | `ensemble folders [list] \| add <path> [--label L] [--read-only] [--repo] \| remove <label>` | Folders the agent may work in. Only labels are sent to the server; the Assign dialog lists them. `--repo` shares a git repository as a repository: every run from the web works in its own clone of it, whose `origin` is the folder's own remote ([24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); without it the folder is worked in place. `--repo` with `--read-only`, or on a folder without `.git`, is refused. Listed as `label → path (repository)` |
-| `ensemble keys [list] \| set <provider> \| remove <provider>` | Model keys for this computer. `list` shows where each key is (this computer or the account). `set` reads from a hidden prompt or stdin, never from arguments |
-| `ensemble runner [start] [--foreground] \| stop \| restart \| status \| logs [-f] \| install \| uninstall` | The runner. `install` registers it at login: a LaunchAgent (`~/Library/LaunchAgents/com.ensemblework.cli.runner.plist`), a `systemd --user` unit (`ensemble-runner.service`) or a Task Scheduler task (`Ensemble Runner`), and stops a hand-started runner so the service takes over. Services run `runner start --foreground`, which exits 0 when stopped on purpose, so launchd (`KeepAlive` with `SuccessfulExit` false) and systemd (`Restart=on-failure`) restart it only after a crash; while another runner runs it waits for that one to stop. `uninstall` signs out, then removes the service. `stop` signals only the pid in `api.json`, after `/health` answers with that file's token |
-| `ensemble needs [list] \| answer <n> <allow\|deny\|option number\|"answer">` | Questions and approvals waiting on this computer: questions with options (recommended one marked), pushes, folder trust, paths outside a folder, a folder another task is changing, and the prompts Claude Code, Codex, Copilot and Cursor send through their hooks (several options as `1,3` when the tool allows it). Answering here closes the card on the web too (`apps/cli/src/approvals.ts`). Signed in, the list ends with *From your nodes*: the Ensemble Node cards waiting for you (`GET /api/bridge/node`), answered on Node, or in the Hub for a card a node's run raised ([35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)) |
-| `ensemble sessions [list] [--json]` | The coding-agent sessions on this computer, newest first: agent, model, folder, status, the tasks continued in it and the latest report's first line (`apps/cli/src/sessions.ts`, `GET /api/agent/sessions`) |
 | `ensemble sandbox [status] \| setup` | This computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox account on Windows; what it cannot enforce here; whether internet off is enforced. On Windows `setup` asks for admin permission once (also offered at `ensemble login`). Shared with the desktop app (`apps/cli/src/sandbox.ts`) |
-| `ensemble capture [status] [--json] \| setup [--dry-run] [--json]` | What Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps on a private virtual display, and terminals (a transcript, or the screen of a full-screen program such as htop) ([25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)). `setup` installs Playwright's Chromium and ffmpeg into `<data>/playwright` with Playwright's own installer, then prints the one command for system packages (Xvfb, ffmpeg, a window manager and xdotool on Linux; ffmpeg with Homebrew on macOS); it never runs sudo and exits 1 when a download fails. Both run the local runtime's `src/capture/cli.ts` with the sidecar's Node against this channel's data folder (`apps/cli/src/capture.ts`) |
-| `ensemble capture sites [list] \| add never\|preview <site> \| remove never\|preview <site>` | The sites this computer never captures (no screenshot, video, page reading or live view) and those whose captures wait for the owner's preview before they are sent anywhere ([25 §10.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#101-browser-broker)). A site is a host, which covers its subdomains (`mybank.com`; `*.` and a path or port are dropped), or an address (`https://mail.example.com`, that origin only); the local runtime checks and normalizes each one (400 for one that names no site), at most 200 per list. Kept in `remote.json` (`captureSites`) through `GET`/`PUT /api/remote`, never sent to the web; the ledger records only how many (`remote.capture_sites`) |
-| `ensemble browser logins [list] \| save-login <site> [--totp] \| forget-login <site>` | Logins saved on this computer for Ensemble's browser ([35 §8.16.1](35_ENSEMBLE_NODE.md#8161-signing-in)): when a page asks you to sign in, its card offers "Use saved login" and the browser fills the user name, password and, from a saved seed (`--totp`), the one-time code itself. `save-login` reads the user name, then the password and seed without echo (or one per line from stdin); a site is https, or this computer's own http address. `logins` lists sites and user names, never a password. Kept in `logins.json` in the data folder, encrypted with this computer's local key; never sent to the web, a model or a run |
 | `ensemble trust [list] \| add [path] \| remove <path> \| share [on\|off]` | Trusted folders on this computer (default: the current folder). `share` shows or sets whether they are also trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI (on by default; [24](24_DESKTOP_SANDBOXING.md)). Ensemble's own workspace is always trusted. System folders, the home folder and Ensemble's source are refused |
-| `ensemble hooks [list] \| connect <claude\|codex\|copilot-cli\|cursor> \| disconnect <tool>` | Connects Claude Code (and the Claude app), Codex (CLI and the ChatGPT app), GitHub Copilot CLI or Cursor: prompts and questions from tasks Ensemble opens in them reach Needs me, while the tool's own prompt still works. The hook signs in with a `hooks` key that can ask but never answer ([30](30_ENGINES.md)) |
 | `ensemble approvals [status] \| on \| off` | Whether the web and phone may approve for this computer, and whether the mode, internet and limits chosen there apply here (on by default; [25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals)) |
 | `ensemble approvals websites [ask\|allow]` | Whether nodes open and capture public web sites here without asking (`allow`, the default) or ask once per site first (`ask`; `askBeforeBrowsing` in `remote.json`). This computer's own addresses and its network's always ask ([25 §4.10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#410-a-nodes-own-tools-on-the-computer)) |
 | `ensemble browse [status] \| on \| off` | Whether Ensemble on the web shows files of tasks run here: the text of files a run changed, sent when it ends, and any file or folder in a task's folder, read on demand. Never git's own files or secrets files (on by default; [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
-| `ensemble evidence [status] \| on \| off` | Whether files a run's agent attaches for you (screenshots, reports, logs), and the screenshots and videos a run or a node captures here, go to Ensemble on the web, for you only. Off: they stay on this computer and the web shows their names as on this computer, not uploaded (a held capture cannot be released then). Keys, `.env` files and files holding a saved secret are never attached (on by default; [25 §4.11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#411-the-workers-report-and-evidence)) |
+| `ensemble web [status] \| files on\|off \| edit on\|off \| terminal on\|off` | What Ensemble on the web may do here, each on by default: `files` (same switch as `browse`, plus reading code in the web's Code tab), `edit` (accept or reject an agent's changes, edit files, commit, push, pull), `terminal` (open the terminal here after a passkey unlock on the web). The computer checks each on every request ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web)) |
+
+#### Manage model keys and run secrets
+
+Model keys configure providers. Run secrets are separately scoped values for work on this computer.
+
+| Command | What it does |
+|---|---|
+| `ensemble keys [list] \| set <provider> \| remove <provider>` | Model keys for this computer. `list` shows where each key is (this computer or the account). `set` reads from a hidden prompt or stdin, never from arguments |
 | `ensemble secrets [list] \| set NAME [--allow ORIGIN] \| remove NAME` | Secrets for this computer's coding-agent runs (an API key, a token): the list shows names, when each changed and how runs use it, then the mode; `set` reads the value without echo. Kept encrypted on this computer only; Ensemble on the web never stores one, and no model sees a value. A node's secure-box request saves here too, encrypted in the browser for this computer ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)) |
 | `ensemble secrets allow NAME ORIGIN… \| --none` | Where a secret may be sent by reference (`https://api.stripe.com`; http only to this computer). A secret with a destination is never put in a run's environment: runs call that service with `secret_http`, and git over https to it signs in with it. `--none` makes it an environment secret again |
 | `ensemble secrets mode [named\|all]` | How a run that names no secrets gets them: `all` (compatibility mode, the default) gives it every environment secret, which a program it runs can read; `named` gives it only the secrets its run profile, task or node step names |
 | `ensemble secrets fingerprint` | The fingerprint of this computer's key, which Ensemble on the web encrypts secrets for (`7F98 5267 E5FD 5A05`); compare it with the secret card and the computer's details on the web. Each pairing makes a new key |
-| `ensemble web [status] \| files on\|off \| edit on\|off \| terminal on\|off` | What Ensemble on the web may do here, each on by default: `files` (same switch as `browse`, plus reading code in the web's Code tab), `edit` (accept or reject an agent's changes, edit files, commit, push, pull), `terminal` (open the terminal here after a passkey unlock on the web). The computer checks each on every request ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web)) |
+
+#### Run tasks and answer agent questions
+
+Manage the background runner, inspect sessions and answer requests from agents and editors.
+
+| Command | What it does |
+|---|---|
+| `ensemble runner [start] [--foreground] \| stop \| restart \| status \| logs [-f] \| install \| uninstall` | The runner. `install` registers it at login: a LaunchAgent (`~/Library/LaunchAgents/com.ensemblework.cli.runner.plist`), a `systemd --user` unit (`ensemble-runner.service`) or a Task Scheduler task (`Ensemble Runner`), and stops a hand-started runner so the service takes over. Services run `runner start --foreground`, which exits 0 when stopped on purpose, so launchd (`KeepAlive` with `SuccessfulExit` false) and systemd (`Restart=on-failure`) restart it only after a crash; while another runner runs it waits for that one to stop. `uninstall` signs out, then removes the service. `stop` signals only the pid in `api.json`, after `/health` answers with that file's token |
+| `ensemble needs [list] \| answer <n> <allow\|deny\|option number\|"answer">` | Questions and approvals waiting on this computer: questions with options (recommended one marked), pushes, folder trust, paths outside a folder, a folder another task is changing, and the prompts Claude Code, Codex, Copilot and Cursor send through their hooks (several options as `1,3` when the tool allows it). Answering here closes the card on the web too (`apps/cli/src/approvals.ts`). Signed in, the list ends with *From your nodes*: the Ensemble Node cards waiting for you (`GET /api/bridge/node`), answered on Node, or in the Hub for a card a node's run raised ([35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)) |
+| `ensemble sessions [list] [--json]` | The coding-agent sessions on this computer, newest first: agent, model, folder, status, the tasks continued in it and the latest report's first line (`apps/cli/src/sessions.ts`, `GET /api/agent/sessions`) |
+| `ensemble hooks [list] \| connect <claude\|codex\|copilot-cli\|cursor> \| disconnect <tool>` | Connects Claude Code (and the Claude app), Codex (CLI and the ChatGPT app), GitHub Copilot CLI or Cursor: prompts and questions from tasks Ensemble opens in them reach Needs me, while the tool's own prompt still works. The hook signs in with a `hooks` key that can ask but never answer ([30](30_ENGINES.md)) |
+
+#### Set up browser capture and privacy
+
+Prepare the local browser, choose capture restrictions and decide whether evidence leaves this computer.
+
+| Command | What it does |
+|---|---|
+| `ensemble capture [status] [--json] \| setup [--dry-run] [--json]` | What Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps on a private virtual display, and terminals (a transcript, or the screen of a full-screen program such as htop) ([25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)). `setup` installs Playwright's Chromium and ffmpeg into `<data>/playwright` with Playwright's own installer, then prints the one command for system packages (Xvfb, ffmpeg, a window manager and xdotool on Linux; ffmpeg with Homebrew on macOS); it never runs sudo and exits 1 when a download fails. Both run the local runtime's `src/capture/cli.ts` with the sidecar's Node against this channel's data folder (`apps/cli/src/capture.ts`) |
+| `ensemble capture sites [list] \| add never\|preview <site> \| remove never\|preview <site>` | The sites this computer never captures (no screenshot, video, page reading or live view) and those whose captures wait for the owner's preview before they are sent anywhere ([25 §10.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#101-browser-broker)). A site is a host, which covers its subdomains (`mybank.com`; `*.` and a path or port are dropped), or an address (`https://mail.example.com`, that origin only); the local runtime checks and normalizes each one (400 for one that names no site), at most 200 per list. Kept in `remote.json` (`captureSites`) through `GET`/`PUT /api/remote`, never sent to the web; the ledger records only how many (`remote.capture_sites`) |
+| `ensemble browser logins [list] \| save-login <site> [--totp] \| forget-login <site>` | Logins saved on this computer for Ensemble's browser ([35 §8.16.1](35_ENSEMBLE_NODE.md#8161-signing-in)): when a page asks you to sign in, its card offers "Use saved login" and the browser fills the user name, password and, from a saved seed (`--totp`), the one-time code itself. `save-login` reads the user name, then the password and seed without echo (or one per line from stdin); a site is https, or this computer's own http address. `logins` lists sites and user names, never a password. Kept in `logins.json` in the data folder, encrypted with this computer's local key; never sent to the web, a model or a run |
+| `ensemble evidence [status] \| on \| off` | Whether files a run's agent attaches for you (screenshots, reports, logs), and the screenshots and videos a run or a node captures here, go to Ensemble on the web, for you only. Off: they stay on this computer and the web shows their names as on this computer, not uploaded (a held capture cannot be released then). Keys, `.env` files and files holding a saved secret are never attached (on by default; [25 §4.11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#411-the-workers-report-and-evidence)) |
+
+#### Connect editors through MCP
+
+Editors can start the MCP server on stdio or use the hosted URL.
+
+| Command | What it does |
+|---|---|
 | `ensemble mcp` | MCP server on stdio (editors run this); writes only with a key that may make changes |
 | `ensemble mcp setup [editor…] [--all] [--print] [--hosted]`, `mcp remove <editor>`, `mcp editors` | Write editor config (§6) |
+
+#### Check and install updates
+
+Read the installed version or install the newest available CLI release.
+
+| Command | What it does |
+|---|---|
 | `ensemble update` | Installs the newest CLI release (§4, Updates) |
 | `ensemble version`, `--version` | The release version |
 
 `--api` or `ENSEMBLE_API_URL` changes the server (default `https://api.ensemblework.com`), for example `http://127.0.0.1:4000` for local development.
 
-## 3. Where things live
-
-| What | Location |
-|---|---|
-| Config | `ENSEMBLE_CONFIG_DIR`, else `%APPDATA%\Ensemble`, else `$XDG_CONFIG_HOME/ensemble` or `~/.config/ensemble`: `config.json` (API, account, device name), `credentials.json` (mode 0600, the `ens_` key), `app.json` (app preferences) |
-| Data | `ENSEMBLE_DATA_HOME`, else the desktop app's folder, shared with it: macOS `~/Library/Application Support/com.ensemblework.desktop`, Windows `%APPDATA%\com.ensemblework.desktop`, Linux `$XDG_DATA_HOME/com.ensemblework.desktop` or `~/.local/share/com.ensemblework.desktop` |
-| Inside data | `pglite/` (database), `secret.key` (encrypts model keys, the device token and the sealing key), `remote.json` (pairing, shared folders, switches, capture sites, the secrets mode), `seal-key.json` (this pairing's key pair for secrets typed on the web, the private key encrypted; mode 0600), `seal-seen.json` (encrypted values already taken), `api.json` (running runtime: port, token, pid, which launcher started it), `runtime.lock`, `logs/runner.log` (rotated at 10 MB), `runner.pid`, `update-check.json`, `backups/`, `evidence/<run>/` (files a run's agent attached, removed 30 days after the run), `browser/` (the browser broker's profiles), `logins.json` (logins saved for the browser, encrypted; mode 0600), `playwright/` (Chromium and ffmpeg from `ensemble capture setup`), `capture/` (capture's lease file) |
-| Workspace | `~/ensemble-workspace` (`ENSEMBLE_WORKSPACE_ROOT` overrides), shared with the app |
-
-A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `%LOCALAPPDATA%\Ensemble`, `~/.local/share/ensemble`) is moved to the shared folder once, before the first runner starts, unless the shared folder already has a database (`apps/cli/src/migrate.ts`).
-
-## 4. How it works
-
-**Login.** `ensemble login` calls `POST /api/cli/auth/start`, prints a code like `BCDF-GHJK` and opens `https://app.ensemblework.com/link?code=…` (only `https:` URLs, or `http:` on localhost, go to the system browser; `apps/cli/src/browser.ts`). The signed-in `/link` page shows "Ensemble CLI on ‹computer name›", the platform, CLI version, the network address that started the login (with a warning when it differs from the browser's) and the requested access. Approve stays disabled until you tick that you started this login and the code matches your terminal. The CLI polls `POST /api/cli/auth/token` every 5 seconds. On approval the server mints a bridge-scope `ens_` key (only when editor access was requested; the desktop app asks for `web`, `runner` and `transfer` instead, [DESKTOP](DESKTOP.md) §1.3) and, when "Run tasks" was approved (verified email required on the hosted site), a one-time device pairing code. Device and user codes are stored as SHA-256 hashes and expire after 10 minutes. Routes: `apps/hub-api/src/routes/cli-auth.ts`. The CLI then pairs through the local sidecar (`POST /api/remote/pair` → `POST /api/devices/register`). The key's default space is the Ensemble space open at approval; a call that names another space the account owns acts there ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
-
-**Runner.** The runner is the desktop sidecar (`apps/hub-api/src/desktop/main.ts`) without the Tauri window: one Node process with hub-api on a random loopback port, PGlite, the worker queue and the remote loop (`apps/hub-api/src/remote/loop.ts`). The loop holds an event stream to the hosted API, claims jobs for this device, runs them with the in-process model runtime and this computer's keys, and reports progress and results ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). Claimed jobs carry page and diagram source and the original attached files, downloaded under the job's lease and remapped to local file IDs, up to 100 MB per job. `ensemble` starts the runner when none is running (the desktop runtime counts) and leaves it running on exit. When the running runner's `api.json` `version` differs from the CLI, the app restarts it on open, unless tasks are running or waiting; then it asks the person to finish or stop them and reopen. Commands that need the local API while no runner runs (`folders`, `keys`, pairing at login) start an admin-only sidecar with `ENSEMBLE_REMOTE_LOOP=off`, `ENSEMBLE_AGENT_QUEUE=off` and `ENSEMBLE_SCHEDULER=off`, which never claims hosted work, and stop it afterwards.
-
-**PATH.** At start the runtime asks the login shell for its PATH (`$SHELL -ilc`, at most four seconds) and adds the usual install folders (`~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin`, npm, bun, Volta and nvm), never a folder inside the workspace (`apps/hub-api/src/desktop/user-path.ts`). Started from a terminal, that terminal's PATH stays first; started by the login service or the desktop app, the login shell's comes first. The variable a Codex model provider of the person's own reads its key from (`env_key`) is read from the login shell the same way when the runtime did not inherit it ([30](30_ENGINES.md) §8).
-
-**One runtime per computer.** The CLI and the desktop app run the same sidecar on the same data folder: one database, one pairing, one list of trusted folders, one sandbox. `runtime.lock` (`apps/hub-api/src/desktop/runtime-lock.ts`) stops a second sidecar from opening the database; it exits with code 75 and the launcher attaches to the running one. A lock counts only while the process that wrote it is still the one with its pid (`holderAlive`): one written before the computer last started, or (on Linux) whose pid's process began after it was written, is stale, so a pid reused after a reboot (by the desktop shell, say) never keeps the runner from starting. The desktop app attaches to a running CLI runner (and starts its own on the same port and token if that runner stops); a CLI command uses the app's runtime when the app is open. `ensemble runner stop` does not stop the app's runtime, and a runner service waits while the app runs. `ensemble login` keeps the app's pairing when it is for the same server, and the app signing in keeps the CLI's: one computer, one device. On a computer whose app keeps Ensemble local only (`mode.json`, [DESKTOP](DESKTOP.md) §1.2), `ensemble login` refuses to pair before it opens the browser; `ensemble login --mcp-only` still links editors to an account.
-
-**One set of keys.** Signed in and paired, the runtime uses the model keys saved on the account (Settings → Assistant → Models on the web) for providers with no key on this computer; Ensemble Code, `/model`, `/status`, `ensemble keys list` and tasks run here all see them. They come from `GET /api/devices/self/model-keys` with the device token, are held in memory only, refreshed after 10 minutes or on Refresh in Settings, and never written to this computer's database (`apps/hub-api/src/remote/account-keys.ts`). *Use these keys on my computers* in the web's API keys dialog turns this off. A key added here (`/keys`, `ensemble keys set`, stored through `PUT /api/model-keys/:provider` on the sidecar) stays on this computer and wins for its provider. The encryption key is `<data>/secret.key` (`ENSEMBLE_SECRET_KEY_FILE`), not the install folder, so upgrades and read-only installs keep it.
-
-**Included models** ([33 §4](33_INCLUDED_AI.md#4-where-included-models-run)). The hosted defaults are GPT-5 mini and GPT-4.1 mini; Luna, Sol and Grok are not currently included. Signed in and paired, `/model` also lists the account's included models (*Included with Ensemble · your credits*); each call runs on Ensemble's server on the account's monthly credits through `POST /api/devices/self/included/turn`. Signed out, or without *Run tasks*, the CLI is local only: `/model` shows *Included with Ensemble* (connect this computer first: /login), and a refusal (local only, credits used, paused for everyone) is a framed notice with the fixing command (`apps/cli/src/tui/included.ts`). The allowance is enforced on the account server (`included/accounting.ts`); deleting data or recreating the account with the same email does not replenish it. The CLI does not read external AI plan balances.
-
-**Your AI subscriptions.** Signed in and paired, the runtime tells Ensemble on the web which AI subscriptions it can run (Claude Code from `claude` or the Claude app, Codex from `codex` or the ChatGPT app, Cursor's agent, Copilot CLI) and answers assistant turns for a tier set to one of them: the agent runs here on its own sign-in with only Ensemble's tools, which run on the web ([30](30_ENGINES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). The computer must be awake with the runtime running. The Copilot adapter reads JSONL responses and per-call token events from the process Ensemble launched (`subscriptions/copilot-output.ts`); it does not query account quota, and counts stay unavailable when the process does not report them.
-
-**Editor hooks on handoff.** When Ensemble hands a task to an installed editor, `workspace/editor-hooks.ts` creates a scoped hook token if needed and installs the hook before opening the task; VS Code gets its project hook automatically. Only the handoff's marker or an already linked session sends questions to Needs me; other sessions in the same editor or folder stay in that editor.
-
-**Logout and removal.** `POST /api/cli/logout` revokes the presenting key. The local unpair calls `DELETE /api/devices/self` with the device token, so the computer leaves the account even if the CLI never runs again. A packaged CLI passes its launcher path as `ENSEMBLE_INSTALL_PATH`; if that file stays removed for 10 minutes, a surviving runtime notices on a remote heartbeat and stops and forgets remote access. `brew upgrade` and `scoop update` remove it only for a moment, so updating with the runner running keeps the pairing.
-
-**Updates.** Root `release.json` is the version; `scripts/release-version.mjs --sync` updates package manifests, native configs and `packages/shared-types/src/version.ts`, and build and typecheck reject drift. `ensemble --version` and the app's Status show it. Once a day (2-second timeout; a failed check also waits a day; cached in `update-check.json`) the CLI checks GitHub for the newest `cli-v*` release, independent of desktop tags, and prints a one-line notice; never for `mcp` or `runner`, when stderr is not a terminal, or with `ENSEMBLE_NO_UPDATE_CHECK=1` or `CI`. `ensemble update` and `/update` in the app install it: Homebrew runs `brew update`, then `brew upgrade ensemble`, and fails unless the new version was installed; Scoop `scoop update ensemble`, script installs run the bundled installer (which verifies the checksum); npm, winget, Linux package and unknown installs open the download page. Active tasks block updating. A CLI-owned runner is stopped afterwards and the person reopens Ensemble; a desktop-owned runtime is left running, and installing the CLI does not replace the desktop app.
-
-CLI sign-in and editor `ens_` keys do not consume an open-place slot. They keep working while three Hub windows are open. Sign-in and `/link` approval pages take no slot until they enter the Hub ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
-
 ## 5. MCP: local CLI or hosted URL
 
-Both expose the same Context Bridge capabilities from `apps/context-bridge` (`buildServer` in `src/server.ts`; [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)): 22 read tools, with `ensemble_brief`, `ensemble_context` and `ensemble_search` reading the task's context and the graph around it, `ensemble_files` and `ensemble_get_file` giving the person's files themselves, `ensemble_docs` searching the public product documentation, and `ensemble_spaces` listing the spaces a key may use; `ensemble_actions` and `ensemble_act`, which read the rest of Ensemble and run its changes (tasks, pages, boards, diagrams, plots, new files, projects, people, meeting notes, skills, routines, reminders) when the key may make changes; `ensemble_create_task`, `ensemble_update_task` and `ensemble_upload_file` for such a key; and `ensemble_apps` and `ensemble_app_call` for a key that may use the connected apps ([CONTEXT_BRIDGE §5](CONTEXT_BRIDGE.md#5-tools-and-resources)). Every tool but `ensemble_spaces` takes an optional `space` (a space's id or exact name).
+Both expose the same Context Bridge capabilities from `apps/context-bridge` (`buildServer` in `src/server.ts`; [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)): 22 read tools, with `ensemble_brief`, `ensemble_context` and `ensemble_search` reading the task's context and the graph around it, `ensemble_files` and `ensemble_get_file` giving the person's files themselves, `ensemble_docs` searching the public product documentation, and `ensemble_spaces` listing the spaces a key may use; `ensemble_actions` and `ensemble_act`, which read the rest of Ensemble and run its changes (tasks, pages, boards, diagrams, plots, new files, projects, people, meeting notes, skills, routines, reminders) when the key may make changes; `ensemble_create_task`, `ensemble_update_task` and `ensemble_upload_file` for such a key; and `ensemble_apps` and `ensemble_app_call` for a key that may use the connected apps ([CONTEXT_BRIDGE §5](CONTEXT_BRIDGE.md#5-tools-and-resources)).
 
-`ensemble_docs` has title `Search Ensemble documentation` and `readOnlyHint: true`. It takes `query` (1 to 200 characters of search words) and optional `limit` (1 to 20, default 8), then returns matching page titles, section URLs and short extracts from the published `https://docs.ensemblework.com/search-index.json`. No match is explicit and links the docs home; an unavailable index is a tool error, not an invented procedure. Hosted lookup needs the same `ens_` key as every hosted bridge tool, with no changes or connected-app grants. Reading the [public site](https://docs.ensemblework.com) directly needs no account or key ([40](40_PUBLIC_DOCUMENTATION.md)).
+Every tool but `ensemble_spaces` takes an optional `space` (a space's id or exact name).
+
+`ensemble_docs` has title `Search Ensemble documentation` and `readOnlyHint: true`. It takes `query` (1 to 200 characters of search words) and optional `limit` (1 to 20, default 8), then returns matching page titles, section URLs and short extracts from the published `https://docs.ensemblework.com/search-index.json`.
+
+No match is explicit and links the docs home; an unavailable index is a tool error, not an invented procedure. Hosted lookup needs the same `ens_` key as every hosted bridge tool, with no changes or connected-app grants. Reading the [public site](https://docs.ensemblework.com) directly needs no account or key ([40](40_PUBLIC_DOCUMENTATION.md)).
 
 - **Local:** `ensemble mcp` runs on stdio and reads `https://api.ensemblework.com/api/bridge/*` with the saved key, asking `GET /api/bridge/whoami` once at start which tools to offer. It reads the git repository from the editor's working folder for `ensemble_brief` and a file on this computer for `ensemble_upload_file`'s `path`, and saves a file into the working folder for `ensemble_get_file`'s `saveTo`.
 - **Hosted:** `POST https://api.ensemblework.com/mcp` with a static key or OAuth access token in `Authorization: Bearer ens_…`. Stateless Streamable HTTP with JSON responses (`apps/hub-api/src/routes/mcp.ts`). Every call goes through normal `/api/bridge` checks. Missing bearer or cookie-only requests get 401 with `WWW-Authenticate: Bearer realm="Ensemble", resource_metadata="<API origin>/.well-known/oauth-protected-resource/mcp"`. Device keys get 403; authenticated `GET` and `DELETE` return 405. The server cannot read the editor's disk: brief needs the task or repository/branch, uploads take `dataBase64`, and files are inline up to 20 MB. `x-ensemble-space` selects an owned space. Bodies follow the Files limit. Rate limit: `ENSEMBLE_RATE_MCP_LIMIT` per user per `ENSEMBLE_RATE_MCP_WINDOW_SEC` (240 per 60 s).
 
-Keys for the hosted URL come from Connect your apps (`POST /api/connect/token`) or `ensemble login`. A bridge key can read `/api/bridge`, call `/mcp`, run the read actions (`/api/bridge/act/*`) and revoke itself at `/api/cli/logout`. With **Let editors and agents make changes** ticked as it was made (Connect your apps, or the `/link` page; on by default) it also runs the write actions and `/api/bridge/write/*`; with **Let editors and agents use your connected apps** (on by default) it reaches the connected apps ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)). Keys made before 0.7.1 only read: run `ensemble login` again.
+Keys for the hosted URL come from Connect your apps (`POST /api/connect/token`) or `ensemble login`. A bridge key can read `/api/bridge`, call `/mcp`, run the read actions (`/api/bridge/act/*`) and revoke itself at `/api/cli/logout`.
 
-AI apps and automation clients can use authorization-code OAuth with PKCE, DCR or CIMD on the same URL ([CONTEXT_BRIDGE §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). OAuth defaults to named catalog tools; static keys keep the existing names, with `x-ensemble-tools: catalog` or `legacy` selecting a profile without changing grants. The catalog retains core reads/resources and uses action-specific schemas instead of catch-alls. The local CLI and Claude Desktop's config-file setup remain stdio; Claude's connected-app interface can use the hosted OAuth URL.
+With **Let editors and agents make changes** ticked as it was made (Connect your apps, or the `/link` page; on by default) it also runs the write actions and `/api/bridge/write/*`; with **Let editors and agents use your connected apps** (on by default) it reaches the connected apps ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)). Keys made before 0.7.1 only read: run `ensemble login` again.
+
+AI apps and automation clients can use authorization-code OAuth with PKCE, DCR or CIMD on the same URL ([CONTEXT_BRIDGE §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). OAuth defaults to named catalog tools; static keys keep the existing names, with `x-ensemble-tools: catalog` or `legacy` selecting a profile without changing grants.
+
+The catalog retains core reads/resources and uses action-specific schemas instead of catch-alls. The local CLI and Claude Desktop's config-file setup remain stdio; Claude's connected-app interface can use the hosted OAuth URL.
 
 ## 6. Editors
 
-`ensemble mcp setup` edits JSONC files with `jsonc-parser`, keeps comments and other servers, and saves a one-time `<file>.ensemble-backup`. Codex uses its TOML writer; Claude Code, Mistral Vibe and Grok Build use their own MCP commands. Local mode writes the stable absolute launcher path because GUI apps may not inherit the terminal's PATH. `--hosted` uses the URL form and needs `ensemble login` or `ENSEMBLE_TOKEN`.
+Run `ensemble mcp setup` and choose your editor to write its MCP configuration. It keeps comments and other servers, and saves a one-time `<file>.ensemble-backup` while editing JSONC with `jsonc-parser`. Codex uses its TOML writer; Claude Code, Mistral Vibe and Grok Build use their own MCP commands.
+
+Local mode writes the stable absolute launcher path because GUI apps may not inherit the terminal's PATH. `--hosted` uses the URL form and needs `ensemble login` or `ENSEMBLE_TOKEN`.
 
 | Editor (`setup` id) | File or command |
 |---|---|
@@ -192,18 +260,102 @@ AI apps and automation clients can use authorization-code OAuth with PKCE, DCR o
 
 The Hub's Connect your apps page (`apps/hub-web/lib/connect/configs.ts`) generates the same shapes for each editor, method (CLI, hosted URL, from source) and OS.
 
-## 7. Releases
+## 4. How it works
 
-Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). Jobs:
+### Sign in and pair the computer
 
-1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine).
-2. **release**: `.deb`/`.rpm` with nfpm, the npm tarball, `SHA256SUMS.txt`, metadata from `packaging/render.mjs` (Homebrew formula, Scoop manifest, winget manifests, nfpm configs, AUR `PKGBUILD` and `.SRCINFO`), and a GitHub release created with `--latest=false` so the desktop updater's `releases/latest` is never a CLI release. Installers find the newest `cli-v*` release through the GitHub API.
-3. **homebrew**, **scoop**: push the formula to `ensemblework/homebrew-tap` and the manifest to `ensemblework/scoop-bucket` with the deploy keys `HOMEBREW_TAP_DEPLOY_KEY` and `SCOOP_BUCKET_DEPLOY_KEY`. The formula sets `version` explicitly (Homebrew would otherwise read "64" from `darwin-arm64`) and `version_scheme 1`; `packaging/render.test.mjs` checks both and runs with the CLI tests.
-4. **winget** (only with `WINGET_TOKEN`) and **npm** (only with `NPM_TOKEN`, with provenance).
+**Login.** `ensemble login` calls `POST /api/cli/auth/start`, prints a code like `BCDF-GHJK` and opens `https://app.ensemblework.com/link?code=…` (only `https:` URLs, or `http:` on localhost, go to the system browser; `apps/cli/src/browser.ts`).
 
-Everything uses free services: Actions minutes on a public repository, GitHub Releases and the two public package repositories. Packages declare the repository license, `FSL-1.1-MIT` ([LICENSE.md](../LICENSE.md)), and every archive carries `LICENSE.md`.
+The signed-in `/link` page shows "Ensemble CLI on ‹computer name›", the platform, CLI version, the network address that started the login (with a warning when it differs from the browser's) and the requested access. Approve stays disabled until you tick that you started this login and the code matches your terminal. The CLI polls `POST /api/cli/auth/token` every 5 seconds.
 
-Local packaging needs a host matching the target: `pnpm cli:package -- --target darwin-arm64 --out dist/cli` (or `--skip-sidecar` for a fast layout check).
+On approval the server mints a bridge-scope `ens_` key (only when editor access was requested; the desktop app asks for `web`, `runner` and `transfer` instead, [DESKTOP](DESKTOP.md) §1.3) and, when "Run tasks" was approved (verified email required on the hosted site), a one-time device pairing code. Device and user codes are stored as SHA-256 hashes and expire after 10 minutes.
+
+Routes: `apps/hub-api/src/routes/cli-auth.ts`. The CLI then pairs through the local sidecar (`POST /api/remote/pair` → `POST /api/devices/register`). The key's default space is the Ensemble space open at approval; a call that names another space the account owns acts there ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
+
+### Start and manage the background runner
+
+**Runner.** The runner is the desktop sidecar (`apps/hub-api/src/desktop/main.ts`) without the Tauri window: one Node process with hub-api on a random loopback port, PGlite, the worker queue and the remote loop (`apps/hub-api/src/remote/loop.ts`).
+
+The loop holds an event stream to the hosted API, claims jobs for this device, runs them with the in-process model runtime and this computer's keys, and reports progress and results ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). Claimed jobs carry page and diagram source and the original attached files, downloaded under the job's lease and remapped to local file IDs, up to 100 MB per job.
+
+`ensemble` starts the runner when none is running (the desktop runtime counts) and leaves it running on exit. When the running runner's `api.json` `version` differs from the CLI, the app restarts it on open, unless tasks are running or waiting; then it asks the person to finish or stop them and reopen.
+
+Commands that need the local API while no runner runs (`folders`, `keys`, pairing at login) start an admin-only sidecar with `ENSEMBLE_REMOTE_LOOP=off`, `ENSEMBLE_AGENT_QUEUE=off` and `ENSEMBLE_SCHEDULER=off`, which never claims hosted work, and stop it afterwards.
+
+### Find installed agents and tools
+
+**PATH.** At start the runtime asks the login shell for its PATH (`$SHELL -ilc`, at most four seconds) and adds the usual install folders (`~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin`, npm, bun, Volta and nvm), never a folder inside the workspace (`apps/hub-api/src/desktop/user-path.ts`).
+
+Started from a terminal, that terminal's PATH stays first; started by the login service or the desktop app, the login shell's comes first. The variable a Codex model provider of the person's own reads its key from (`env_key`) is read from the login shell the same way when the runtime did not inherit it ([30](30_ENGINES.md) §8).
+
+### Use the CLI alongside the desktop app
+
+**One runtime per computer.** The CLI and the desktop app run the same sidecar on the same data folder: one database, one pairing, one list of trusted folders, one sandbox.
+
+`runtime.lock` (`apps/hub-api/src/desktop/runtime-lock.ts`) stops a second sidecar from opening the database; it exits with code 75 and the launcher attaches to the running one. A lock counts only while the process that wrote it is still the one with its pid (`holderAlive`): one written before the computer last started, or (on Linux) whose pid's process began after it was written, is stale, so a pid reused after a reboot (by the desktop shell, say) never keeps the runner from starting.
+
+The desktop app attaches to a running CLI runner (and starts its own on the same port and token if that runner stops); a CLI command uses the app's runtime when the app is open. `ensemble runner stop` does not stop the app's runtime, and a runner service waits while the app runs.
+
+`ensemble login` keeps the app's pairing when it is for the same server, and the app signing in keeps the CLI's: one computer, one device. On a computer whose app keeps Ensemble local only (`mode.json`, [DESKTOP](DESKTOP.md) §1.2), `ensemble login` refuses to pair before it opens the browser; `ensemble login --mcp-only` still links editors to an account.
+
+### Choose local or account model keys
+
+**One set of keys.** Signed in and paired, the runtime uses the model keys saved on the account (Settings → Assistant → Models on the web) for providers with no key on this computer; Ensemble Code, `/model`, `/status`, `ensemble keys list` and tasks run here all see them.
+
+They come from `GET /api/devices/self/model-keys` with the device token, are held in memory only, refreshed after 10 minutes or on Refresh in Settings, and never written to this computer's database (`apps/hub-api/src/remote/account-keys.ts`). *Use these keys on my computers* in the web's API keys dialog turns this off. A key added here (`/keys`, `ensemble keys set`, stored through `PUT /api/model-keys/:provider` on the sidecar) stays on this computer and wins for its provider.
+
+The encryption key is `<data>/secret.key` (`ENSEMBLE_SECRET_KEY_FILE`), not the install folder, so upgrades and read-only installs keep it.
+
+### Use included models
+
+**Included models** ([33 §4](33_INCLUDED_AI.md#4-where-included-models-run)). The hosted defaults are GPT-5 mini and GPT-4.1 mini; Luna, Sol and Grok are not currently included.
+
+Signed in and paired, `/model` also lists the account's included models (*Included with Ensemble · your credits*); each call runs on Ensemble's server on the account's monthly credits through `POST /api/devices/self/included/turn`.
+
+Signed out, or without *Run tasks*, the CLI is local only: `/model` shows *Included with Ensemble* (connect this computer first: /login), and a refusal (local only, credits used, paused for everyone) is a framed notice with the fixing command (`apps/cli/src/tui/included.ts`).
+
+The allowance is enforced on the account server (`included/accounting.ts`); deleting data or recreating the account with the same email does not replenish it. The CLI does not read external AI plan balances.
+
+### Use your AI subscriptions
+
+**Your AI subscriptions.** Signed in and paired, the runtime tells Ensemble on the web which AI subscriptions it can run (Claude Code from `claude` or the Claude app, Codex from `codex` or the ChatGPT app, Cursor's agent, Copilot CLI) and answers assistant turns for a tier set to one of them: the agent runs here on its own sign-in with only Ensemble's tools, which run on the web ([30](30_ENGINES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+
+The computer must be awake with the runtime running. The Copilot adapter reads JSONL responses and per-call token events from the process Ensemble launched (`subscriptions/copilot-output.ts`); it does not query account quota, and counts stay unavailable when the process does not report them.
+
+### Receive editor questions in Needs me
+
+**Editor hooks on handoff.** When Ensemble hands a task to an installed editor, `workspace/editor-hooks.ts` creates a scoped hook token if needed and installs the hook before opening the task; VS Code gets its project hook automatically. Only the handoff's marker or an already linked session sends questions to Needs me; other sessions in the same editor or folder stay in that editor.
+
+### Sign out or remove the CLI
+
+**Logout and removal.** `POST /api/cli/logout` revokes the presenting key.
+
+The local unpair calls `DELETE /api/devices/self` with the device token, so the computer leaves the account even if the CLI never runs again. A packaged CLI passes its launcher path as `ENSEMBLE_INSTALL_PATH`; if that file stays removed for 10 minutes, a surviving runtime notices on a remote heartbeat and stops and forgets remote access.
+
+`brew upgrade` and `scoop update` remove it only for a moment, so updating with the runner running keeps the pairing.
+
+### Update the CLI
+
+**Updates.** Root `release.json` is the version; `scripts/release-version.mjs --sync` updates package manifests, native configs and `packages/shared-types/src/version.ts`, and build and typecheck reject drift. `ensemble --version` and the app's Status show it.
+
+Once a day (2-second timeout; a failed check also waits a day; cached in `update-check.json`) the CLI checks GitHub for the newest `cli-v*` release, independent of desktop tags, and prints a one-line notice; never for `mcp` or `runner`, when stderr is not a terminal, or with `ENSEMBLE_NO_UPDATE_CHECK=1` or `CI`.
+
+`ensemble update` and `/update` in the app install it: Homebrew runs `brew update`, then `brew upgrade ensemble`, and fails unless the new version was installed; Scoop `scoop update ensemble`, script installs run the bundled installer (which verifies the checksum); npm, winget, Linux package and unknown installs open the download page.
+
+Active tasks block updating. A CLI-owned runner is stopped afterwards and the person reopens Ensemble; a desktop-owned runtime is left running, and installing the CLI does not replace the desktop app.
+
+CLI sign-in and editor `ens_` keys do not consume an open-place slot. They keep working while three Hub windows are open. Sign-in and `/link` approval pages take no slot until they enter the Hub ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
+
+## 3. Where things live
+
+| What | Location |
+|---|---|
+| Config | `ENSEMBLE_CONFIG_DIR`, else `%APPDATA%\Ensemble`, else `$XDG_CONFIG_HOME/ensemble` or `~/.config/ensemble`: `config.json` (API, account, device name), `credentials.json` (mode 0600, the `ens_` key), `app.json` (app preferences) |
+| Data | `ENSEMBLE_DATA_HOME`, else the desktop app's folder, shared with it: macOS `~/Library/Application Support/com.ensemblework.desktop`, Windows `%APPDATA%\com.ensemblework.desktop`, Linux `$XDG_DATA_HOME/com.ensemblework.desktop` or `~/.local/share/com.ensemblework.desktop` |
+| Inside data | `pglite/` (database), `secret.key` (encrypts model keys, the device token and the sealing key), `remote.json` (pairing, shared folders, switches, capture sites, the secrets mode), `seal-key.json` (this pairing's key pair for secrets typed on the web, the private key encrypted; mode 0600), `seal-seen.json` (encrypted values already taken), `api.json` (running runtime: port, token, pid, which launcher started it), `runtime.lock`, `logs/runner.log` (rotated at 10 MB), `runner.pid`, `update-check.json`, `backups/`, `evidence/<run>/` (files a run's agent attached, removed 30 days after the run), `browser/` (the browser broker's profiles), `logins.json` (logins saved for the browser, encrypted; mode 0600), `playwright/` (Chromium and ffmpeg from `ensemble capture setup`), `capture/` (capture's lease file) |
+| Workspace | `~/ensemble-workspace` (`ENSEMBLE_WORKSPACE_ROOT` overrides), shared with the app |
+
+A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `%LOCALAPPDATA%\Ensemble`, `~/.local/share/ensemble`) is moved to the shared folder once, before the first runner starts, unless the shared folder already has a database (`apps/cli/src/migrate.ts`).
 
 ## 8. Limits
 
@@ -216,7 +368,29 @@ Local packaging needs a host matching the target: `pnpm cli:package -- --target 
 - Ensemble Code reads documents with the Files reader ([32](32_FILES.md)) in a worker with memory and time limits; it does not load other MCP servers.
 - Mouse clicks need a terminal that reports SGR mouse events; the keyboard does everything without them. A terminal narrower than 90 columns hides the sidebar.
 
-## 9. Tests
+## In the code
+
+| What | Where |
+|---|---|
+| CLI (npm name `ensemblework`, command `ensemble`) | `apps/cli`; the app is `apps/cli/src/tui` (Ink and React, bundled into the same file) |
+| Packaging | `scripts/package-cli.mjs`, `packaging/`, `.github/workflows/cli-release.yml` |
+| Install scripts | `apps/landing/public/install.sh`, `install.ps1`, served at `https://ensemblework.com/install.sh` and `/install.ps1` |
+| User guide | [ensemblework.com/download](https://ensemblework.com/download); in the Hub, Connect your apps and Settings → Connections → Connected computers |
+
+### 7. Releases
+
+Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). Jobs:
+
+1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine).
+2. **release**: `.deb`/`.rpm` with nfpm, the npm tarball, `SHA256SUMS.txt`, metadata from `packaging/render.mjs` (Homebrew formula, Scoop manifest, winget manifests, nfpm configs, AUR `PKGBUILD` and `.SRCINFO`), and a GitHub release created with `--latest=false` so the desktop updater's `releases/latest` is never a CLI release. Installers find the newest `cli-v*` release through the GitHub API.
+3. **homebrew**, **scoop**: push the formula to `ensemblework/homebrew-tap` and the manifest to `ensemblework/scoop-bucket` with the deploy keys `HOMEBREW_TAP_DEPLOY_KEY` and `SCOOP_BUCKET_DEPLOY_KEY`. The formula sets `version` explicitly (Homebrew would otherwise read "64" from `darwin-arm64`) and `version_scheme 1`; `packaging/render.test.mjs` checks both and runs with the CLI tests.
+4. **winget** (only with `WINGET_TOKEN`) and **npm** (only with `NPM_TOKEN`, with provenance).
+
+Everything uses free services: Actions minutes on a public repository, GitHub Releases and the two public package repositories. Packages declare the repository license, `FSL-1.1-MIT` ([LICENSE.md](../LICENSE.md)), and every archive carries `LICENSE.md`.
+
+Local packaging needs a host matching the target: `pnpm cli:package -- --target darwin-arm64 --out dist/cli` (or `--skip-sidecar` for a fast layout check).
+
+### 9. Tests
 
 ```bash
 pnpm --filter ensemblework test           # builds dist/ensemble.mjs first

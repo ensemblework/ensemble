@@ -36,7 +36,6 @@ form.addEventListener("submit", async (event) => {
   submit.disabled = true;
   answer.textContent = "Looking in the docs…";
   answer.setAttribute("aria-busy", "true");
-  mark.loop({ delay: 350, kind: "beacon" });
   try {
     const response = await fetch(panel.dataset.endpoint, {
       method: "POST", credentials: "omit", headers: { "Content-Type": "application/json" },
@@ -66,7 +65,6 @@ form.addEventListener("submit", async (event) => {
     pending = undefined;
     submit.disabled = false;
     answer.removeAttribute("aria-busy");
-    mark.idle();
   }
 });
 window.addEventListener("pagehide", () => { pending?.abort(); mark.destroy(); }, { once: true });

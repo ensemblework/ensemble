@@ -1,6 +1,8 @@
 # Branch desk demo
 
-`pnpm seed:demo` fills one engineer desk: **Branch desk** (`branch-desk` / `mkt.branch-desk`). It is Mira Chen's workspace at Fieldnote, a small startup shipping Relay, a webhook delivery product for design partners. The other engineer templates (inbox triage, release desk, on-call morning, partner work, tech lead) are not seeded; `--desk` accepts only `branch`.
+Load **Branch desk** to explore an engineer’s workspace with sample tasks, reviews, meetings and local repositories. The fictional desk belongs to Mira Chen at Fieldnote, a startup shipping the Relay webhook delivery product for design partners.
+
+Run `pnpm seed:demo` to load it. This seed supports only Branch desk (`branch-desk` / `mkt.branch-desk`); `--desk` accepts only `branch`. Inbox triage, release desk, on-call morning, partner work and tech lead templates are not seeded.
 
 The account, if the command creates it:
 
@@ -8,11 +10,6 @@ The account, if the command creates it:
 - Password: `fieldnote-relay`
 
 `--user <email>` attaches the same rows to an existing account instead. That switches the account onto the branch desk and turns the engineer modules on; it does not change the password.
-
-| File | Role |
-|---|---|
-| `apps/hub-api/prisma/demo/branch-desk.json` | The story: people, tasks, meetings, diagram source, git files |
-| `apps/hub-api/prisma/demo-branch.ts` | Loads it into Postgres and builds the local git repos |
 
 ## Load it
 
@@ -39,16 +36,6 @@ Without Docker, use a local PostgreSQL 16 with a database named `ensemble` and s
 | Windows | The PostgreSQL 16 installer; create `ensemble`; run the commands above in PowerShell with Git for Windows on `PATH` |
 | Linux | `sudo apt install postgresql postgresql-contrib git`, `sudo service postgresql start`, `sudo -u postgres createuser --pwprompt ensemble`, `sudo -u postgres createdb -O ensemble ensemble` |
 
-## Re-run and remove
-
-The seed can run again. It deletes the rows it owns (tasks and deliverables with `sourceRef` starting `demo:`, artifacts with `externalId` starting `demo:`, the Fieldnote projects, people, repos and skills, `model.call` events with `payload.demo = branch`, and the `fieldnote/` checkout) and writes them again.
-
-```bash
-pnpm seed:demo                            # reload
-pnpm seed:demo -- --remove                # remove the demo, keep the account
-pnpm seed:demo -- --user you@example.com  # attach to your account
-```
-
 ## What the desk contains
 
 - **Today:** four pull-request reviews (relay, sdk, console, infra), those four repos, checks, deploys, open issues other than the reviews, work in progress, a blocker and finished tasks.
@@ -59,7 +46,26 @@ pnpm seed:demo -- --user you@example.com  # attach to your account
 - **Skills:** the incident note, the signature review and the partner update.
 - **Diagram:** the Relay path from ingress to the Northwind endpoint and the dead letter.
 
-## Adding another desk
+## Re-run and remove
+
+Use the commands below to reload the demo, remove it while keeping the account, or attach it to an existing account.
+
+Reloading deletes the rows the seed owns (tasks and deliverables with `sourceRef` starting `demo:`, artifacts with `externalId` starting `demo:`, the Fieldnote projects, people, repos and skills, `model.call` events with `payload.demo = branch`, and the `fieldnote/` checkout) and writes them again.
+
+```bash
+pnpm seed:demo                            # reload
+pnpm seed:demo -- --remove                # remove the demo, keep the account
+pnpm seed:demo -- --user you@example.com  # attach to your account
+```
+
+## In the code
+
+| File | Role |
+|---|---|
+| `apps/hub-api/prisma/demo/branch-desk.json` | The story: people, tasks, meetings, diagram source, git files |
+| `apps/hub-api/prisma/demo-branch.ts` | Loads it into Postgres and builds the local git repos |
+
+### Adding another desk
 
 Use one JSON file per desk with one loader (or one loader that switches on `--desk`), and make each desk a different week of work rather than renamed branch rows. What the UI needs:
 

@@ -1,35 +1,101 @@
 # 02 · The Hub: surfaces, settings and API map
 
-The Hub is the browser UI in `apps/hub-web`, also loaded by the desktop shell. It organizes work into documents, tasks, linked context and agent runs.
-
-## 1. Interaction principles
-
-Tasks, pages and records keep one identity across views. Saved, pending, failed and completed states look different. Writing autosaves without calling a model; model sends, imports, approvals and irreversible actions are explicit. Drafts survive conflicts and errors. A queued job or a held assistant proposal is never shown as completed work.
-
-Loading feedback uses the smallest affected region (`components/motion/loading.tsx`, `skeletons.tsx`, `slot.tsx`). Ordinary actions have a delayed local indicator; boards, Today, pages and plot frames preserve their structure. Initial failures replace loaders with Retry, while usable cached content remains visible through refresh failures. Next loading boundaries own route readiness. AI waits use the context-sized woven treatments in [BRAND](BRAND.md#motion); queued work and requests waiting for a person stay still. The top bar reads personal AI activity even when the optional Workspace module is hidden, distinguishes checking/unavailable from confirmed idle, and reconciles activity on lifecycle events and reconnects. Activity events and ownership: [11](11_HOW_THE_ASSISTANT_WORKS.md).
+Use the Hub to organize tasks, write pages, keep context and review agent work. The browser and desktop app share this interface. Start with the sidebar to open a work area, or press **Cmd/Ctrl+K** to search and jump to an item.
 
 ## 2. Information architecture & navigation
 
-In the sidebar, the open tab's icon takes the accent (its light or dark variant); the label keeps the text colour.
+Choose a sidebar tab to open that area. The current tab’s icon uses your accent color, adapted to the light or dark theme; its label keeps the text color.
 
-**Right-click menu** (`components/context-menu/`): a right-click opens Ensemble's own menu for what is under the pointer; the nearest surface builds it (`openContextMenu` in `menu-store.ts`), else the page-wide one (`pageWideMenu` in `builders.tsx`). It opens at the pointer and never leaves the window: near the right or bottom edge it opens to the left or upward, a submenu opens on whichever side has room, and a narrow window clamps it. Rows are 28 px, sections are split by a hairline, at most about ten rows show before a submenu, and a mini toolbar sits on top for picked text. Arrows, Home/End, →/← for submenus, typing a letter to jump, Esc to step back, Tab to close; a submenu that lists people, nodes or boards has a search field and puts your recent picks first (`ensemble.menu.recent.*` in this browser). Taking a task from a node that has started asks in place first; a delete goes to Trash with Undo.
-- **In a page, task or meeting notes** (`components/editor/editor-menu.tsx`): right-clicking *on* picked text gives Bold, Italic, Underline, Strike, Code, Link and Comment on top, then **Ask Ensemble ▸** (Explain, Summarize, Improve the writing, Make it shorter, Find action items, Translate, Ask something else…), **Attach to assistant**, Turn into task, Search for “…”, and Cut · Copy · Paste. Right-clicking elsewhere on a block picks that block (blocks already picked act together) and gives Ask, Attach, Turn into ▸, Duplicate, Comment, Copy text and Delete; a table cell adds Table ▸ (rows, columns, header, delete) and "Make a plot from this table"; an image gives Open, Copy, Download, Describe with Ensemble and Delete; a link, a mention or a page inside the page gives what it can do. The page itself is one submenu away (**Page ▸** / **Task ▸**). A word the browser picks on the right-click itself (macOS does) does not count as picked text. Shortcuts in the menu are written for the platform (⌘B on a Mac, Ctrl+B elsewhere).
-- **Spelling** (`components/context-menu/spelling.ts`): right-clicking a misspelled word where you can write (a page, task or meeting notes, and the titles below) puts its suggestions on top in bold under *Spelling*, each replacing the word as typing would (undo takes it back), then *Ignore spelling* (remembered in this browser, `ensemble.spelling.ignored`). A page cannot read the browser's own spell checker, so this uses the same kind of dictionary browsers ship: Hunspell's English one from SCOWL (`public/spelling/`, en-US for en-US, en and en-CA, en-GB for other English locales; MIT/BSD, licence files beside them), read by `nspell`. It loads in the background once per visit when a page you can edit opens or a title is focused, so the menu has the answer at once and never jumps. Only when the browser's language is English; addresses, paths, handles, words with digits and names with capitals inside (iPhone, APIs) are skipped. For another language, *Browser menu* gives the browser's own suggestions.
-- **In a title** (a page's, task's, project's or meeting's title, and a deliverable's in its peek; `components/context-menu/text-field-menu.ts`): spelling as above, Search for picked text, Cut · Copy · Paste, Select all, then the page's own menu (**Page ▸** / **Task ▸**) as in its body. Other text boxes keep the browser's menu.
-- **Attach to assistant** puts the part in the dock above its box with the page it came from: the message carries it as a quote followed by From “Title”, the turn's reference names the record by id (never shown) so the assistant can read the whole page, and the chat shows it as a quote card. A whole page or task attaches the same way (as `[Attached: “Title”]`, or as a task mention).
-- **Elsewhere**: board cards (Open in side peek or a new tab, Assign to ▸ with the node hand-off question, Move to ▸, Priority ▸, Due date ▸ with the calendar, Attach, Copy link, Delete; on custom boards Move to board ▸), sidebar items and page rows (Open, side peek, new tab, Attach, Copy link, Rename, Duplicate, Move to board ▸, Download as ▸, Delete), the sidebar's empty space (New page, New task, Search, Settings), the assistant's replies (Copy, Quote in my reply, Ask again), and anywhere else picked text (Copy, Search, Ask, Attach), a link, an image or the screen (Back · Forward · Reload, Copy link to this page, Search, Ask).
-- **The browser's own menu** stays in other text fields and code editors (autofill and the browser's spelling), with Shift held, on a second right-click on the same spot or a right-click on ours' last row **Browser menu** (both open it at once; a page cannot open the browser's menu from a click, so clicking that row leaves the next right-click to the browser), on canvases and media, and everywhere when Settings › Appearance › *Ensemble's right-click menu* is off (`appearance.contextMenu`).
-- **On touch** (an iPad without a trackpad, a phone) there is no right-click: a long-press on a sidebar row, a page row or an image opens the same menu as a sheet from the bottom with finger-sized rows; submenus slide in with Back. A long-press on text keeps the system's own selection and Copy bar, and on a board card it still drags. With a trackpad or mouse, an iPad gets the floating menu.
+### Use the right-click menu
 
-Dates and times are picked in Ensemble's own fields (`components/date-time.tsx`: `DateInput`, `TimeInput`, `DateTimeInput`), never the browser's: a button that reads naturally ("Fri, 14 Nov", "Tomorrow · 14 Nov", "09:30") opens a calendar in the accent (today marked, the picked day filled, arrows, Page Up/Down for months, Home/End for the week, Today/Tomorrow/Next week) or a list of times, and either can be typed ("tomorrow", "fri", "in 3 days", "14 nov", "9:30pm"). Values stay `YYYY-MM-DD`, `HH:MM` and `YYYY-MM-DDTHH:MM`. Used for a task's due date, new tasks, reminders, quiet hours, the morning brief, routines, assignments and imported meetings.
+Right-click an item to see its available actions (`components/context-menu/`); the nearest surface builds it (`openContextMenu` in `menu-store.ts`), else the page-wide one (`pageWideMenu` in `builders.tsx`). It opens at the pointer and never leaves the window: near the right or bottom edge it opens to the left or upward, a submenu opens on whichever side has room, and a narrow window clamps it.
 
-A focused field shows one edge, the outer one. A standalone field (`.field`) turns its own border accent. When an input sits inside a box (an icon, chips or a hidden label beside it: `.compound-field`, the date picker's type field, a bordered wrapper around a `bg-transparent` input), only the box shows focus and the input draws no ring, outline or shadow of its own (rules after `.tile` in `app/globals.css`).
+Rows are 28 px, sections are split by a hairline, at most about ten rows show before a submenu, and a mini toolbar sits on top for picked text. Arrows, Home/End, →/← for submenus, typing a letter to jump, Esc to step back, Tab to close; a submenu that lists people, nodes or boards has a search field and puts your recent picks first (`ensemble.menu.recent.*` in this browser).
 
-The assistant's bubble sits only along the bottom or the right edge of the work area, never over the sidebar, the top bar or a bar pinned to the work area's foot (an element marked `data-launcher-floor`, such as Code's status bar, which also sends `ensemble:launcher-floor` as it appears and goes): a drag lands on the nearer edge (`snapLauncher` in `components/assistant/ask-launcher.tsx`). Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters fit the screen it is opened on (`starterPrompts`). Its message box formats as you type (`lib/chat-format.ts`, `lib/use-chat-format.ts`; the same file is in Ensemble Node): `- ` or `* ` at the start of a line starts a bulleted list (• ◦ ▪ by depth) and `1. ` or `1) ` a numbered one; in a list Enter adds the next item (numbers follow), Enter on an empty item steps out a level and then leaves the list, Shift+Enter breaks the line inside the item, Tab and Shift+Tab nest, Backspace right after a marker takes it away, and Ctrl/Cmd+Enter sends from anywhere (the key hint says so in a list). Ctrl/Cmd+B, I, E and Shift+X wrap the selection in bold, italic, code and strikethrough Markdown (on a Mac, Ctrl keeps moving the caret). Each change is one browser edit, so Ctrl+Z undoes it in one step. Bullets are sent as `- `; nothing inside a ``` fence is touched. A sent message shows its lists as lists, numbered as typed, with that inline formatting (`components/chat-text.tsx`).
+Taking a task from a node that has started asks in place first; a delete goes to Trash with Undo.
+#### Use actions on selected text or blocks
 
-`app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow. Cmd/Ctrl+K (or the top bar's *Search and jump* box) opens Search and jump (`components/shell/command-palette.tsx`): matches from your work come first under *Your work*, then *Go to* (views, settings, connectors) and *Actions*, each row with the sidebar's icon and, where one exists, its shortcut; ↑↓ move, Enter opens, Esc closes. Views and settings stay listed while your work is still being searched; Enter pressed then opens the selected row (or the only result) once the search finishes. With nothing typed it starts with *Recent*: the last five things opened from it in this space, kept in this browser (`ensemble.palette.recent`, `components/shell/palette-items.ts`). Pages sits beneath Today and can collapse while keeping its add action. The tabs from Board to Weekly recap can be put in any order by pressing and dragging one (no handle; the tab follows the pointer, a line glides to where it lands, the tabs settle into the new order on release, Esc cancels; the sidebar does not render while the pointer moves); their right-click menu has Move up, Move down and Reset sidebar order for the keyboard and touch. The order is kept in this browser (`ensemble.sidebar.order`, `lib/sidebar-order.ts`); groups keep their gaps and a tab can move into another group. The Pages browser panel (`components/pages/pages-panel.tsx`) resizes from its inner edge like the sidebar (`components/shell/panel-resize.tsx`): 220–520 px and at most 42% of the window, double-click resets, arrow keys nudge when the edge is focused; the width is kept in `ensemble.pages.width` (`PAGES_PANEL_WIDTH` in `lib/panel-width.ts`) and restored before first paint. Row actions float over page titles instead of taking their width, so titles stay readable at the narrowest width.
+**In a page, task or meeting notes** (`components/editor/editor-menu.tsx`): right-clicking *on* picked text gives Bold, Italic, Underline, Strike, Code, Link and Comment on top, then **Ask Ensemble ▸** (Explain, Summarize, Improve the writing, Make it shorter, Find action items, Translate, Ask something else…), **Attach to assistant**, Turn into task, Search for “…”, and Cut · Copy · Paste.
 
-Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
+Right-clicking elsewhere on a block picks that block (blocks already picked act together) and gives Ask, Attach, Turn into ▸, Duplicate, Comment, Copy text and Delete; a table cell adds Table ▸ (rows, columns, header, delete) and "Make a plot from this table"; an image gives Open, Copy, Download, Describe with Ensemble and Delete; a link, a mention or a page inside the page gives what it can do.
+
+The page itself is one submenu away (**Page ▸** / **Task ▸**). A word the browser picks on the right-click itself (macOS does) does not count as picked text. Shortcuts in the menu are written for the platform (⌘B on a Mac, Ctrl+B elsewhere).
+#### Correct a spelling
+
+**Spelling** (`components/context-menu/spelling.ts`): right-clicking a misspelled word where you can write (a page, task or meeting notes, and the titles below) puts its suggestions on top in bold under *Spelling*, each replacing the word as typing would (undo takes it back), then *Ignore spelling* (remembered in this browser, `ensemble.spelling.ignored`). A page cannot read the browser's own spell checker, so this uses the same kind of dictionary browsers ship: Hunspell's English one from SCOWL (`public/spelling/`, en-US for en-US, en and en-CA, en-GB for other English locales; MIT/BSD, licence files beside them), read by `nspell`.
+
+It loads in the background once per visit when a page you can edit opens or a title is focused, so the menu has the answer at once and never jumps. Only when the browser's language is English; addresses, paths, handles, words with digits and names with capitals inside (iPhone, APIs) are skipped. For another language, *Browser menu* gives the browser's own suggestions.
+#### Use actions on a title
+
+**In a title** (a page's, task's, project's or meeting's title, and a deliverable's in its peek; `components/context-menu/text-field-menu.ts`): spelling as above, Search for picked text, Cut · Copy · Paste, Select all, then the page's own menu (**Page ▸** / **Task ▸**) as in its body. Other text boxes keep the browser's menu.
+#### Attach a passage to the assistant
+
+**Attach to assistant** puts the part in the dock above its box with the page it came from: the message carries it as a quote followed by From “Title”, the turn's reference names the record by id (never shown) so the assistant can read the whole page, and the chat shows it as a quote card. A whole page or task attaches the same way (as `[Attached: “Title”]`, or as a task mention).
+#### Use actions on cards and navigation
+
+**Elsewhere**: board cards (Open in side peek or a new tab, Assign to ▸ with the node hand-off question, Move to ▸, Priority ▸, Due date ▸ with the calendar, Attach, Copy link, Delete; on custom boards Move to board ▸), sidebar items and page rows (Open, side peek, new tab, Attach, Copy link, Rename, Duplicate, Move to board ▸, Download as ▸, Delete), the sidebar's empty space (New page, New task, Search, Settings), the assistant's replies (Copy, Quote in my reply, Ask again), and anywhere else picked text (Copy, Search, Ask, Attach), a link, an image or the screen (Back · Forward · Reload, Copy link to this page, Search, Ask).
+#### Open the browser’s menu
+
+**The browser's own menu** stays in other text fields and code editors (autofill and the browser's spelling), with Shift held, on a second right-click on the same spot or a right-click on ours' last row **Browser menu** (both open it at once; a page cannot open the browser's menu from a click, so clicking that row leaves the next right-click to the browser), on canvases and media, and everywhere when Settings › Appearance › *Ensemble's right-click menu* is off (`appearance.contextMenu`).
+#### Open menus on a touch screen
+
+**On touch** (an iPad without a trackpad, a phone) there is no right-click: a long-press on a sidebar row, a page row or an image opens the same menu as a sheet from the bottom with finger-sized rows; submenus slide in with Back. A long-press on text keeps the system's own selection and Copy bar, and on a board card it still drags. With a trackpad or mouse, an iPad gets the floating menu.
+
+### Choose a date or time
+
+Dates and times are picked in Ensemble's own fields (`components/date-time.tsx`: `DateInput`, `TimeInput`, `DateTimeInput`), never the browser's: a button that reads naturally ("Fri, 14 Nov", "Tomorrow · 14 Nov", "09:30") opens a calendar in the accent (today marked, the picked day filled, arrows, Page Up/Down for months, Home/End for the week, Today/Tomorrow/Next week) or a list of times, and either can be typed ("tomorrow", "fri", "in 3 days", "14 nov", "9:30pm").
+
+Values stay `YYYY-MM-DD`, `HH:MM` and `YYYY-MM-DDTHH:MM`. Used for a task's due date, new tasks, reminders, quiet hours, the morning brief, routines, assignments and imported meetings.
+
+#### Focused fields
+
+A focused field shows one edge, the outer one. A standalone field (`.field`) turns its own border accent.
+
+When an input sits inside a box (an icon, chips or a hidden label beside it: `.compound-field`, the date picker's type field, a bordered wrapper around a `bg-transparent` input), only the box shows focus and the input draws no ring, outline or shadow of its own (rules after `.tile` in `app/globals.css`).
+
+### Position and resize the assistant
+
+The assistant's bubble sits only along the bottom or the right edge of the work area, never over the sidebar, the top bar or a bar pinned to the work area's foot (an element marked `data-launcher-floor`, such as Code's status bar, which also sends `ensemble:launcher-floor` as it appears and goes): a drag lands on the nearer edge (`snapLauncher` in `components/assistant/ask-launcher.tsx`).
+
+Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters fit the screen it is opened on (`starterPrompts`).
+
+#### Format an assistant message
+
+The assistant’s message box formats as you type (`lib/chat-format.ts`, `lib/use-chat-format.ts`; the same file is in Ensemble Node): `- ` or `* ` at the start of a line starts a bulleted list (• ◦ ▪ by depth) and `1. ` or `1) ` a numbered one; in a list Enter adds the next item (numbers follow), Enter on an empty item steps out a level and then leaves the list, Shift+Enter breaks the line inside the item, Tab and Shift+Tab nest, Backspace right after a marker takes it away, and Ctrl/Cmd+Enter sends from anywhere (the key hint says so in a list).
+
+Ctrl/Cmd+B, I, E and Shift+X wrap the selection in bold, italic, code and strikethrough Markdown (on a Mac, Ctrl keeps moving the caret). Each change is one browser edit, so Ctrl+Z undoes it in one step. Bullets are sent as `- `; nothing inside a ``` fence is touched. A sent message shows its lists as lists, numbered as typed, with that inline formatting (`components/chat-text.tsx`).
+
+### Open and collapse the sidebar
+
+`app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer).
+
+With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow.
+
+### Search and jump
+
+Press **Cmd/Ctrl+K** or open the top bar’s **Search and jump** box to search your work (`components/shell/command-palette.tsx`): matches from your work come first under *Your work*, then *Go to* (views, settings, connectors) and *Actions*, each row with the sidebar's icon and, where one exists, its shortcut; ↑↓ move, Enter opens, Esc closes.
+
+Views and settings stay listed while your work is still being searched; Enter pressed then opens the selected row (or the only result) once the search finishes. With nothing typed it starts with *Recent*: the last five things opened from it in this space, kept in this browser (`ensemble.palette.recent`, `components/shell/palette-items.ts`).
+
+### Reorder sidebar tabs
+
+Pages sits beneath Today and can collapse while keeping its add action.
+
+Press and drag a tab from Board through Weekly recap to change its order (no handle; the tab follows the pointer, a line glides to where it lands, the tabs settle into the new order on release, Esc cancels; the sidebar does not render while the pointer moves); their right-click menu has Move up, Move down and Reset sidebar order for the keyboard and touch.
+
+The order is kept in this browser (`ensemble.sidebar.order`, `lib/sidebar-order.ts`); groups keep their gaps and a tab can move into another group.
+
+### Resize the Pages panel
+
+Drag the Pages browser panel’s inner edge to resize it, as with the sidebar (`components/pages/pages-panel.tsx`) (`components/shell/panel-resize.tsx`): 220–520 px and at most 42% of the window, double-click resets, arrow keys nudge when the edge is focused; the width is kept in `ensemble.pages.width` (`PAGES_PANEL_WIDTH` in `lib/panel-width.ts`) and restored before first paint.
+
+Row actions float over page titles instead of taking their width, so titles stay readable at the narrowest width.
+
+### Find the views available to your profile
+
+Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission.
+
+Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 
 | Route | Purpose |
 | --- | --- |
@@ -51,57 +117,131 @@ Public routes: `/login`, `/signup`, `/forgot`, `/reset`, `/verify` and computer 
 
 ### 3.1 Today (Morning Briefing)
 
-Today combines the profession desk, briefing, focus tasks, triage, reminders and relevant calendar/work records. The Morning brief tile (`components/widgets/glances.tsx`) reads the built-in routine's latest successful reply with `GET /api/brief/today`, independently of unread bell notifications. A paused, deleted, disabled or not-run brief has a one-line empty state pointing to `/routines`; a failed brief without a saved reply says it did not finish. `/morning-brief` redirects to `/routines?routine=morning-brief`, which focuses the built-in routine even after a rename.
+Open **Today** for your profession desk, briefing, focus tasks, triage, reminders and relevant calendar and work records.
+
+The Morning brief tile (`components/widgets/glances.tsx`) reads the built-in routine's latest successful reply with `GET /api/brief/today`, independently of unread bell notifications. A paused, deleted, disabled or not-run brief has a one-line empty state pointing to `/routines`; a failed brief without a saved reply says it did not finish. `/morning-brief` redirects to `/routines?routine=morning-brief`, which focuses the built-in routine even after a rename.
 
 Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Hiding a tile does not remove its records.
 
-A native desk tile (Today and Context Overview, `useTileControls` in `components/desk/arrange.tsx`) moves by the grip before its title: its label lifts and follows the pointer, the tile waits faded, and a line on the tile under the pointer shows which side it lands on. The corner resizes it: a dashed outline shows the snapped size in columns × rows, and the tiles stay still until the release. Nothing renders while the pointer moves; on release the layout saves once and every tile glides to its new place (FLIP, `lib/motion/drag.ts`). Esc cancels either. Focused, the grip moves the tile with the arrow keys and the corner resizes it. In the widget view's Edit layout (`components/widgets/edit-mode.tsx`) tiles glide after a drop, an arrow key or a size change, and their contents do not render while one is dragged.
+#### Move or resize a Today tile
+
+A native desk tile (Today and Context Overview, `useTileControls` in `components/desk/arrange.tsx`) moves by the grip before its title: its label lifts and follows the pointer, the tile waits faded, and a line on the tile under the pointer shows which side it lands on. The corner resizes it: a dashed outline shows the snapped size in columns × rows, and the tiles stay still until the release.
+
+Nothing renders while the pointer moves; on release the layout saves once and every tile glides to its new place (FLIP, `lib/motion/drag.ts`). Esc cancels either. Focused, the grip moves the tile with the arrow keys and the corner resizes it.
+
+In the widget view's Edit layout (`components/widgets/edit-mode.tsx`) tiles glide after a drop, an arrow key or a size change, and their contents do not render while one is dragged.
 
 Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears in focus. Snooze saves a date/time, not another task status. Private reminders: §14.
 
-The native desk header (`components/desk/view.tsx`, `glance.tsx`) shows the date, a greeting and day-at-a-glance links: open, due today and overdue (from `/api/desk/live`), needs you (the Needs me count), agents working (`/api/agent/state`, workspace module on) and meetings today (a one-day `/api/calendar` read, shown once a calendar is connected). Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. `/api/desk/live` task rows include `priority`. Add a tile also offers Focus now (the next three open tasks with Done and Undo), Your week (finished tasks per day, the streak and a link to `/recap`) and, for engineer and builder profiles, Agents at work (running and queued agent jobs, the Needs you count, a link to `/runs`) (`components/desk/now-tiles.tsx`).
+The native desk header (`components/desk/view.tsx`, `glance.tsx`) shows the date, a greeting and day-at-a-glance links: open, due today and overdue (from `/api/desk/live`), needs you (the Needs me count), agents working (`/api/agent/state`, workspace module on) and meetings today (a one-day `/api/calendar` read, shown once a calendar is connected).
 
-**The Today calendar** is one calendar made from every connected calendar: Google Calendar, Outlook (Teams meetings included) and calendar links (ICS), with a meeting or holiday that several of them hold shown once ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)). It appears as the Calendar widget on the widget view (`components/today/work-calendar.tsx`) and as the desk's Calendar agenda tile (`components/desk/calendar-agenda.tsx`, the next seven days, three days with events at most). Both read `GET /api/calendar` and draw days with `components/calendar/agenda.tsx` (styles in `agenda.css`, loaded by `app/(hub)/layout.tsx`): all-day events in a strip on top, then one row per event with its time in the person's time zone (`Intl`, `lib/calendar.ts`), a dot per source calendar (tooltip and label "From Google · Outlook"), the place, **Join** for an online meeting that has not ended, a warning mark and a left rule on events that overlap, and Now on the one in progress. The widget shows the work week as a row of days (dots for events, amber for an overlap); a day opens its agenda, and on today finished events fold into "N earlier". The footer names the calendars and when they were last read, or which one needs attention (a link to Settings). Sync reads every calendar (`POST /api/calendar/sync`). Loading shows skeleton rows; with no calendar and no events the tile offers **Connect a calendar** (the Google & Microsoft store) and **Add by link** (Settings → Connections → Calendars on Today).
+Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. `/api/desk/live` task rows include `priority`.
+
+Add a tile also offers Focus now (the next three open tasks with Done and Undo), Your week (finished tasks per day, the streak and a link to `/recap`) and, for engineer and builder profiles, Agents at work (running and queued agent jobs, the Needs you count, a link to `/runs`) (`components/desk/now-tiles.tsx`).
+
+#### Read your Today calendar
+
+**The Today calendar** is one calendar made from every connected calendar: Google Calendar, Outlook (Teams meetings included) and calendar links (ICS), with a meeting or holiday that several of them hold shown once ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)).
+
+It appears as the Calendar widget on the widget view (`components/today/work-calendar.tsx`) and as the desk's Calendar agenda tile (`components/desk/calendar-agenda.tsx`, the next seven days, three days with events at most).
+
+Both read `GET /api/calendar` and draw days with `components/calendar/agenda.tsx` (styles in `agenda.css`, loaded by `app/(hub)/layout.tsx`): all-day events in a strip on top, then one row per event with its time in the person's time zone (`Intl`, `lib/calendar.ts`), a dot per source calendar (tooltip and label "From Google · Outlook"), the place, **Join** for an online meeting that has not ended, a warning mark and a left rule on events that overlap, and Now on the one in progress.
+
+The widget shows the work week as a row of days (dots for events, amber for an overlap); a day opens its agenda, and on today finished events fold into "N earlier". The footer names the calendars and when they were last read, or which one needs attention (a link to Settings). Sync reads every calendar (`POST /api/calendar/sync`).
+
+Loading shows skeleton rows; with no calendar and no events the tile offers **Connect a calendar** (the Google & Microsoft store) and **Add by link** (Settings → Connections → Calendars on Today).
+
+#### Pin a task to Today
 
 Pin to Today is in the task's More menu. Open pinned tasks appear above every native desk, independent of its tiles, through `pinnedTasks` in `/api/desk/live`. Completed, deleted and currently snoozed tasks are excluded; pins are not lost when a task falls outside the recent-task window.
 
 ### 3.2 Board (Kanban)
 
-Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow. On hosted Ensemble the owner menu also lists the person's own Ensemble Node nodes and crews (Nodes and Crews, from `GET /api/node/assignable`, `components/task/node-owner.tsx`), each node with its face as Node draws it (shape, colour and eyes; it blinks, hops when pointed at and rests while paused, `components/task/node-face.tsx`) and long names and roles ending in an ellipsis; a task given to one shows `@handle` or the crew's title on its card and page, the owner filter offers Nodes and crews once a task has one, and the node or the crew's lead is told and decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)).
+Open **Board** to create, prioritize, order, filter and assign tasks. Use the toolbar search to narrow the list (`components/board/board.tsx`). Choose **New task**, then set its owner, due date, project, repository, people and skills in the document. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
+
+On hosted Ensemble the owner menu also lists the person's own Ensemble Node nodes and crews (Nodes and Crews, from `GET /api/node/assignable`, `components/task/node-owner.tsx`), each node with its face as Node draws it (shape, colour and eyes; it blinks, hops when pointed at and rests while paused, `components/task/node-face.tsx`) and long names and roles ending in an ellipsis; a task given to one shows `@handle` or the crew's title on its card and page, the owner filter offers Nodes and crews once a task has one, and the node or the crew's lead is told and decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)).
 
 Assigned tasks move to In progress live when the agent claims the work; queued tasks stay in To do. Paired-computer claims publish task and run events so the board and task details update without reloading ([25 §1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#1-execution-and-ownership)).
 
-The Ensemble Kanban collapses independently of Board overview. Its columns are Proposed, To do, In progress and Done. Blocked and awaiting-approval tasks appear in In progress while retaining their task status and approval controls. Flow, WIP counts and the In progress overview filter use the same grouping; the attention tile can still isolate blocked and awaiting-approval work. `/api/tasks?board=default` excludes task pages assigned to custom boards; `/api/tasks` remains the complete task list.
+The Ensemble Kanban collapses independently of Board overview. Its columns are Proposed, To do, In progress and Done. Blocked and awaiting-approval tasks appear in In progress while retaining their task status and approval controls.
 
-A card reaching Done, by your drag or because the work finished, moves like a card between any other columns: no completion animation. Only a reorder within a column slides the shifted cards; opening a peek, the assistant, or resizing the board moves nothing (`components/motion/board-drag/board-drag-dnd-kit.tsx`). A dragged card is drawn in the same frame as the pointer move (`lib/motion/dnd-sensors.ts`); while it is in the air only the columns it leaves and enters render again (columns, cards and the overview are memoised), and the lists are not measured for remote moves.
+Flow, WIP counts and the In progress overview filter use the same grouping; the attention tile can still isolate blocked and awaiting-approval work. `/api/tasks?board=default` excludes task pages assigned to custom boards; `/api/tasks` remains the complete task list.
 
-A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px. Add a page and Board tiles are in the toolbar's More (⋯) menu; Import and New task stay visible.
+A card reaching Done, by your drag or because the work finished, moves like a card between any other columns: no completion animation.
 
-**Custom boards** appear as cards below the Ensemble board (`components/board/custom-boards.tsx`). New board sets a name, description and 1–20 named, colored columns. Each opens at `/board?board=<id>` (`custom-board.tsx`) with its own name, columns, Board settings and overview, and otherwise works like the Ensemble board: the same toolbar (search, count, More ⋯ with New page (notes only) and Add a page…, New task), columns (`board-column.tsx`), cards (`SortableBoardCard` in `task-card.tsx`, `page-card.tsx`), drag motion and side peek. Cards are real standalone or task pages, not copies. The whole card drags (pointer, touch, and Space then arrow keys between columns); a click opens it in the side peek (`?peek=<id>&kind=page` for a standalone page, `NotePage` with `variant="peek"`); the hover trash button moves it to Trash with Undo. A drop keeps the card where it lands while the move saves (`place` and the held arrangement in `custom-board.tsx`), so it never flies back first. New task in a column (`POST /api/boards/:id/pages` with `kind: "task"`) makes a task page there and opens the task peek: owner, priority, complexity, due date, labels, project, people, repositories, deliverables, items from apps and Assign to agent work as on any task, and its card is the Ensemble board's task card. A custom board's task stays off the Ensemble board; its column is its own and does not change its run status. New page (notes only) makes a standalone page and opens it in the peek with its title focused; turning such a page into a task keeps it in its column.
+Only a reorder within a column slides the shifted cards; opening a peek, the assistant, or resizing the board moves nothing (`components/motion/board-drag/board-drag-dnd-kit.tsx`). A dragged card is drawn in the same frame as the pointer move (`lib/motion/dnd-sensors.ts`); while it is in the air only the columns it leaves and enters render again (columns, cards and the overview are memoised), and the lists are not measured for remote moves.
 
-Board settings rename/reorder columns and remove empty columns. A column with pages, including pages in Trash, cannot be removed. Deleting a board requires confirmation and keeps its pages: notes become independent; task pages return to the Ensemble board. Board settings use revision checks to reject conflicting saves. The board's selected overview tiles are saved on `PageBoard`: page count, a column-colored donut, column breakdown and recently edited pages (`board-widgets.tsx`). They use only that board's pages and actual column names, independent of Ensemble's task status metrics.
+A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px.
+
+Add a page and Board tiles are in the toolbar's More (⋯) menu; Import and New task stay visible.
+
+#### Create and use a custom board
+
+**Custom boards** appear as cards below the Ensemble board (`components/board/custom-boards.tsx`). New board sets a name, description and 1–20 named, colored columns.
+
+Each opens at `/board?board=<id>` (`custom-board.tsx`) with its own name, columns, Board settings and overview, and otherwise works like the Ensemble board: the same toolbar (search, count, More ⋯ with New page (notes only) and Add a page…, New task), columns (`board-column.tsx`), cards (`SortableBoardCard` in `task-card.tsx`, `page-card.tsx`), drag motion and side peek.
+
+Cards are real standalone or task pages, not copies.
+
+The whole card drags (pointer, touch, and Space then arrow keys between columns); a click opens it in the side peek (`?peek=<id>&kind=page` for a standalone page, `NotePage` with `variant="peek"`); the hover trash button moves it to Trash with Undo. A drop keeps the card where it lands while the move saves (`place` and the held arrangement in `custom-board.tsx`), so it never flies back first.
+
+New task in a column (`POST /api/boards/:id/pages` with `kind: "task"`) makes a task page there and opens the task peek: owner, priority, complexity, due date, labels, project, people, repositories, deliverables, items from apps and Assign to agent work as on any task, and its card is the Ensemble board's task card. A custom board's task stays off the Ensemble board; its column is its own and does not change its run status.
+
+New page (notes only) makes a standalone page and opens it in the peek with its title focused; turning such a page into a task keeps it in its column.
+
+#### Change or remove a custom board
+
+Board settings rename/reorder columns and remove empty columns. A column with pages, including pages in Trash, cannot be removed. Deleting a board requires confirmation and keeps its pages: notes become independent; task pages return to the Ensemble board. Board settings use revision checks to reject conflicting saves.
+
+The board's selected overview tiles are saved on `PageBoard`: page count, a column-colored donut, column breakdown and recently edited pages (`board-widgets.tsx`). They use only that board's pages and actual column names, independent of Ensemble's task status metrics.
 
 ### 3.3 Needs Me (Approval Queue)
 
-Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts. Of Ensemble Node it shows only what a node's sessions ask for, as the session's own request: a run's questions and permissions under *Your agent is asking* (`GET /api/decisions?surface=hub`), and under *From your nodes' sessions* the cards a run raised for its agent, a sign-in or captures to check (`GET /api/node/approvals`; `components/needs-me/node-approvals.tsx`: answer, discard or open in Node; a sign-in card may be a human check, or ask for the site's code). Each names the agent, folder and computer, with "via @node" and a link to the run in Node (`SessionLine` in `components/needs-me/editor-decisions.tsx`). A node's own requests (to act, post, start or steer a session, a secret, its computer tools) are answered in the Node chat only and are neither listed nor counted here; a reply typed in the Node chat answers a session's request and removes it here too ([35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)). The sidebar badge (`GET /api/shell`) counts exactly the rows listed. The list follows the live stream and reads again every 30 seconds and when the window regains focus: a request answered elsewhere (Node, the CLI, a phone), or whose time ran out, leaves without a reload (`usePendingDecisions` drops a question at its deadline; the scheduler closes it and tells the open pages). Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
+Open **Needs me** when an agent needs an answer, execution permission, publishing approval or help with an interrupted attempt.
+
+Of Ensemble Node it shows only what a node's sessions ask for, as the session's own request: a run's questions and permissions under *Your agent is asking* (`GET /api/decisions?surface=hub`), and under *From your nodes' sessions* the cards a run raised for its agent, a sign-in or captures to check (`GET /api/node/approvals`; `components/needs-me/node-approvals.tsx`: answer, discard or open in Node; a sign-in card may be a human check, or ask for the site's code).
+
+Each names the agent, folder and computer, with "via @node" and a link to the run in Node (`SessionLine` in `components/needs-me/editor-decisions.tsx`). A node's own requests (to act, post, start or steer a session, a secret, its computer tools) are answered in the Node chat only and are neither listed nor counted here; a reply typed in the Node chat answers a session's request and removes it here too ([35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)).
+
+The sidebar badge (`GET /api/shell`) counts exactly the rows listed. The list follows the live stream and reads again every 30 seconds and when the window regains focus: a request answered elsewhere (Node, the CLI, a phone), or whose time ran out, leaves without a reload (`usePendingDecisions` drops a question at its deadline; the scheduler closes it and tells the open pages).
+
+Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
 
 It is one queue, without overview counters or filter tabs. Empty sections are omitted; a fully empty queue shows All caught up. Failed queries keep an explicit retry.
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
-Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. A code run's sheet shows the checkout's folder name, with its path in the tooltip where the person may see it; fresh own-checkout folders use the task-named slug in [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation). Up next, Working now and Needs you retain job actions, queue order and waiting reasons. Assign task, Pause all/Resume, sharing and run-limit settings stay available. Completed and stopped work appears in run history, not separate lanes. Queue errors and history errors retry independently.
+Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. A code run's sheet shows the checkout's folder name, with its path in the tooltip where the person may see it; fresh own-checkout folders use the task-named slug in [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation).
+
+Up next, Working now and Needs you retain job actions, queue order and waiting reasons. Assign task, Pause all/Resume, sharing and run-limit settings stay available. Completed and stopped work appears in run history, not separate lanes. Queue errors and history errors retry independently.
 
 Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
 
-Tool input and output use a readable JSON view (`lib/run-trace.ts`, `components/runs/run-preview.tsx`): string fields retain real newlines, content envelopes expose their text, and other fields remain visible. Raw toggles show the exact stored text; Copy copies that raw text. Incomplete content envelopes show recoverable text with an explicit warning; unrecognized malformed JSON stays unchanged. A tool result repeated in the step's output is shown only once, while distinct assistant commentary stays under Said.
+Tool input and output use a readable JSON view (`lib/run-trace.ts`, `components/runs/run-preview.tsx`): string fields retain real newlines, content envelopes expose their text, and other fields remain visible. Raw toggles show the exact stored text; Copy copies that raw text.
+
+Incomplete content envelopes show recoverable text with an explicit warning; unrecognized malformed JSON stays unchanged. A tool result repeated in the step's output is shown only once, while distinct assistant commentary stays under Said.
 
 ### 3.5 Context
 
-Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. On Overview (`components/desk/context-lens.tsx`), People lists each person with role, open tasks and last contact; Projects shows active projects with a done/total bar (`/api/widgets/feed`) and opens the project peek. Empty Overview tiles fold into one Get started strip of first steps and return as tiles once they have content. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
+Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. On Overview (`components/desk/context-lens.tsx`), People lists each person with role, open tasks and last contact; Projects shows active projects with a done/total bar (`/api/widgets/feed`) and opens the project peek.
+
+Empty Overview tiles fold into one Get started strip of first steps and return as tiles once they have content. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
+
+#### Open a person and their linked work
 
 People cards (`components/context/people.tsx`) edit role, team and **To you** (the person's relationship to you, which agents read), show each project with the person's role on it, and **Open** a person panel in the side peek (`components/context/person-panel.tsx`, `?peek=<id>&kind=person`; `/context?person=<id>` opens it too): the same fields, then everything that links to them from `GET /api/context/item` (projects with roles, open tasks, work you wait on them for, meetings, work done together, files, pages that mention them), each list paged with Show more (`components/context/item-relations.tsx`). A project's People property lists members with their role on the project, edited in place (`PATCH /api/projects/:id` with `people: [{ id, role }]`).
 
-Projects open the same `components/project/project-page.tsx` in a side peek or at `/projects/[id]`: page-style title and one-line summary (`PageTitleField`, `HumanDescription`), properties (status, people, repositories, linked sources), app items, then the project's page and its linked work. **New project** creates an untitled project at once (`POST /api/projects` with no name gives "Untitled project") and opens it with the name focused, like a new page; names may repeat. The page body is the block editor (`components/project/project-body.tsx`), saved in order 600 ms after typing stops as `content` through `PATCH /api/projects/:id`; its Markdown is kept in `notes` for search and the assistant, and older plain notes open as its first paragraphs. Below it, `components/project/linked-work.tsx` lists Tasks, Deliverables and Meeting notes: each adds a new one in place (Enter adds and keeps the row open), Tasks and Meeting notes also link existing ones from a search picker, and a row's × takes it off the project. Deliverables tick complete in place. Meeting notes made there open in Meeting notes, which can also choose a project from its header. Graph interaction help is behind its information icon.
+#### Create and edit a project
+
+Projects open the same `components/project/project-page.tsx` in a side peek or at `/projects/[id]`: page-style title and one-line summary (`PageTitleField`, `HumanDescription`), properties (status, people, repositories, linked sources), app items, then the project's page and its linked work.
+
+**New project** creates an untitled project at once (`POST /api/projects` with no name gives "Untitled project") and opens it with the name focused, like a new page; names may repeat.
+
+The page body is the block editor (`components/project/project-body.tsx`), saved in order 600 ms after typing stops as `content` through `PATCH /api/projects/:id`; its Markdown is kept in `notes` for search and the assistant, and older plain notes open as its first paragraphs.
+
+Below it, `components/project/linked-work.tsx` lists Tasks, Deliverables and Meeting notes: each adds a new one in place (Enter adds and keeps the row open), Tasks and Meeting notes also link existing ones from a search picker, and a row's × takes it off the project. Deliverables tick complete in place. Meeting notes made there open in Meeting notes, which can also choose a project from its header.
+
+Graph interaction help is behind its information icon.
 
 ### 3.6 Skills
 
@@ -113,17 +253,21 @@ Code opens a review or folder with changed-file diff, editor and Source control.
 
 ### 3.8 Metrics
 
-Metrics shows calls routed through Ensemble: token totals, an activity chart, usage by model and purpose, and expandable recent calls. The provider filter and 14/30/90-day period apply to every aggregate; the provider selector keeps its value when a period has no calls for it. Missing token counts and prices are stated, and such calls still appear. The credits card covers the UTC calendar month and shows credits used before a usage erasure. Reading the summary repairs usage left by an earlier Everything deletion, keeping known charges and later work (`repairErasedUsage`). No time-saved estimate is shown. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md), [33](33_INCLUDED_AI.md).
+Metrics shows calls routed through Ensemble: token totals, an activity chart, usage by model and purpose, and expandable recent calls. The provider filter and 14/30/90-day period apply to every aggregate; the provider selector keeps its value when a period has no calls for it. Missing token counts and prices are stated, and such calls still appear.
+
+The credits card covers the UTC calendar month and shows credits used before a usage erasure. Reading the summary repairs usage left by an earlier Everything deletion, keeping known charges and later work (`repairErasedUsage`). No time-saved estimate is shown. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md), [33](33_INCLUDED_AI.md).
 
 ### 3.9 Settings
 
-Settings (`app/(hub)/settings/page.tsx`) is one page with URL-addressable tabs (`?tab=…`, `components/settings/url-state.ts`). The nav (`components/settings/settings-nav.tsx`, sticky beside the cards on a wide screen, a scrolling row on a narrow one) has three parts:
+Open **Settings**, then choose a tab or use Search settings to find a control. Each tab has its own address (`?tab=…`, `components/settings/url-state.ts`). The nav (`components/settings/settings-nav.tsx`, sticky beside the cards on a wide screen, a scrolling row on a narrow one) has three parts:
 
 - **Search settings**: a few words list matching rows with where they are and the settings map's line on what they do (`components/settings/settings-search.ts`); ↑↓ choose, Enter opens the tab, scrolls to the row and gives it a short glow (`flashSetting` in `components/settings/navigation.ts`). On a phone it opens from the search button in place of the tab row.
 - **Tabs** in three groups, in this order: Personal (Account, Appearance, Notifications, Shortcuts), AI (Assistant, Agents), Workspace (Connections, Spaces, Sharing, Data). Arrow keys, Home and End move between them; each is a real link.
 - **On this page** (`SettingsOutline`): the open tab's cards, read from the page, with the one in view marked; a click scrolls to it. Every jump in Settings (this rail, its search, Search and jump, a link with an anchor) moves Settings' own scroller only (`scrollSettingIntoView` in `components/settings/navigation.ts`): `scrollIntoView` also scrolls the frames around it once the scroller is at its end, and those cannot be scrolled back by hand. Those frames, and the app's outer frame, are `.frame-clip` (`overflow: clip`), so nothing can scroll them. A slim rail of its own on the right (`.settings-rail` in `app/globals.css`), sticky and scrolling apart from the page, in windows 1360 px and wider; narrower windows and phones leave it out.
 
-Every control has a jump anchor (`#jump-<section>-<label>`, `components/settings/navigation.ts`), used by search, Search and jump and the assistant's links. A link with a `?tab=` written before a section moved still lands: a jump anchor names one control, so it wins over the tab, and old section hashes (`#quiet`, `#autonomy`, `#orchestration`, `#terminal`, `#failed`) open the tab that holds them now. Renamed jump ids keep working as aliases.
+Every control has a jump anchor (`#jump-<section>-<label>`, `components/settings/navigation.ts`), used by search, Search and jump and the assistant's links. A link with a `?tab=` written before a section moved still lands: a jump anchor names one control, so it wins over the tab, and old section hashes (`#quiet`, `#autonomy`, `#orchestration`, `#terminal`, `#failed`) open the tab that holds them now.
+
+Renamed jump ids keep working as aliases.
 
 | Tab | Cards |
 | --- | --- |
@@ -139,23 +283,49 @@ Every control has a jump anchor (`#jump-<section>-<label>`, `components/settings
 
 Rows follow the Settings rules in `AGENTS.md`. Revoking a computer or a personal token, unpairing this computer, leaving a shared space, turning off a public link and resetting every shortcut each ask first.
 
-Subcontrols depend on profile, local/hosted mode and permissions. `GET /api/settings` returns `settings` and their private `scope`. `PATCH /api/settings` takes partial patches with `_base`, the copy the person edited. Under the account lock, unchanged leaves are omitted and changes to different keys merge. If another place changed the same key differently, it returns 409 `SAVE_CONFLICT` with the saved value and this place's value. The dialog asks which to save; its retry uses the returned current copy, so a further clash asks again. Settings saves run in order and an unsaved draft stays in this tab, scoped to its settings owner (`components/save-conflict-host.tsx`, `app/(hub)/settings/page.tsx`, `lib/settings.ts`). `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
+Subcontrols depend on profile, local/hosted mode and permissions. `GET /api/settings` returns `settings` and their private `scope`. `PATCH /api/settings` takes partial patches with `_base`, the copy the person edited. Under the account lock, unchanged leaves are omitted and changes to different keys merge.
 
-**Doodle** (`components/settings/doodle-picker.tsx`, `appearance.doodle`): a faint pattern behind the work area (`[data-theme-canvas]`, the main column). *Theme's own* keeps the color theme's artwork (Lagoon, Juniper, Blueprint; none for the others), *Plain* has none, and twelve more are seamless 480 px tiles in `public/doodles/` (Constellations, Orbits, Galaxy, Stardust, Ripples, Network, Contours, Waves, Weave, Dot grid, Circuits, Graph paper), built by `apps/hub-web/scripts/doodles.ts` (`--check` fails when a file is out of date). Each is faint white marks drawn with `background-blend-mode: difference` over the theme's own background, so it reads in every color theme and in light and dark; it stays still while the page scrolls and is not printed. Writing stays on plain paper: a page, task or trashed page (anything marked `data-plain-canvas`) drops the doodle and the theme's artwork, wherever it is opened from. Views whose writing sits on an opaque card (Meeting notes, Skills) keep the doodle around the card. The boot script sets `data-doodle` before paint.
+If another place changed the same key differently, it returns 409 `SAVE_CONFLICT` with the saved value and this place's value. The dialog asks which to save; its retry uses the returned current copy, so a further clash asks again.
+
+Settings saves run in order and an unsaved draft stays in this tab, scoped to its settings owner (`components/save-conflict-host.tsx`, `app/(hub)/settings/page.tsx`, `lib/settings.ts`). `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
+
+#### Choose a background pattern
+
+**Doodle** (`components/settings/doodle-picker.tsx`, `appearance.doodle`): a faint pattern behind the work area (`[data-theme-canvas]`, the main column). *Theme's own* keeps the color theme's artwork (Lagoon, Juniper, Blueprint; none for the others), *Plain* has none, and twelve more are seamless 480 px tiles in `public/doodles/` (Constellations, Orbits, Galaxy, Stardust, Ripples, Network, Contours, Waves, Weave, Dot grid, Circuits, Graph paper), built by `apps/hub-web/scripts/doodles.ts` (`--check` fails when a file is out of date).
+
+Each is faint white marks drawn with `background-blend-mode: difference` over the theme's own background, so it reads in every color theme and in light and dark; it stays still while the page scrolls and is not printed. Writing stays on plain paper: a page, task or trashed page (anything marked `data-plain-canvas`) drops the doodle and the theme's artwork, wherever it is opened from.
+
+Views whose writing sits on an opaque card (Meeting notes, Skills) keep the doodle around the card. The boot script sets `data-doodle` before paint.
 
 The assistant can find, read and change **allowlisted** settings after Apply and pick a catalog model/effort; supported appearance changes apply live. Keys, account deletion, sharing, folder trust, sandbox/permission grants and other sensitive controls need the human UI ([34](34_ASSISTANT_ACTIONS.md)).
 
 #### Connector store
 
-`components/connectors` reads `GET /api/connectors/catalog`: operator app configured, the person's connection, products and granted scopes, last sync/error, vendor MCP state/tools. Turning on a product without enough scope offers reconnect/consent. A vendor MCP server holding the person's data but connected without an account shows "Connected · public data only", still offering sign-in and token; where the vendor names the account the badge reads "Connected as <account>". Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting imports nothing; Sync people updates bounded metadata only ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+`components/connectors` reads `GET /api/connectors/catalog`: operator app configured, the person's connection, products and granted scopes, last sync/error, vendor MCP state/tools.
 
-Connected apps come first wherever connectors are listed: the store grid (every category and search) and the five-app short list in Settings → Connections (`FEATURED_ORDER`: Google Workspace, Microsoft 365, Notion, Linear, GitHub). "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid. Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API returns catalog order.
+Turning on a product without enough scope offers reconnect/consent. A vendor MCP server holding the person's data but connected without an account shows "Connected · public data only", still offering sign-in and token; where the vendor names the account the badge reads "Connected as <account>".
 
-The detail page's connect panel has one **Step-by-step guide** disclosure, open by default (`aria-expanded` button; numbered steps, links in a new tab, "Looks like", "Not this", "Permissions" and "More help" notes). Token, address and own-app ways have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short what-to-approve guide (`connectorGuide`). Guides and field labels use the vendor's name for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's **Get a token** opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
+Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting imports nothing; Sync people updates bounded metadata only ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+
+Connected apps come first wherever connectors are listed: the store grid (every category and search) and the five-app short list in Settings → Connections (`FEATURED_ORDER`: Google Workspace, Microsoft 365, Notion, Linear, GitHub). "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid.
+
+Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API returns catalog order.
+
+The detail page's connect panel has one **Step-by-step guide** disclosure, open by default (`aria-expanded` button; numbered steps, links in a new tab, "Looks like", "Not this", "Permissions" and "More help" notes).
+
+Token, address and own-app ways have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short what-to-approve guide (`connectorGuide`).
+
+Guides and field labels use the vendor's name for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's **Get a token** opens Trello's authorize page for the typed key. A refused token is shown under the fields.
+
+**In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
 
 Google detail also shows its productivity use, selected-provider AI processing and Limited Use notice before consent and while connected, with a public privacy/deletion link (`connector-detail.tsx`; [31](31_CONNECTORS_IN_USE.md)).
 
-**Connect your apps** (`components/connect/connect-page.tsx`) also shows the shared MCP URL and OAuth app connections (`oauth-connections.tsx`). The standalone web `/oauth` consent page (`components/mcp-consent.tsx`) is a known public route in `middleware.ts` and `lib/app-routes.ts`; middleware serves it without an unknown-page rewrite or onboarding detour. Its session-protected API displays the app's name/domains and the signed-in account, requested read/write/app permissions and default owned space. Extra explanations use `InfoTip`. Disconnect ends the app's access and refresh token family; static editor keys remain in their own list. Sign-in and email signup retain the consent return; provider returns are bound to the browser's signed login state. Protocol and grants: [Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps).
+**Connect your apps** (`components/connect/connect-page.tsx`) also shows the shared MCP URL and OAuth app connections (`oauth-connections.tsx`). The standalone web `/oauth` consent page (`components/mcp-consent.tsx`) is a known public route in `middleware.ts` and `lib/app-routes.ts`; middleware serves it without an unknown-page rewrite or onboarding detour.
+
+Its session-protected API displays the app's name/domains and the signed-in account, requested read/write/app permissions and default owned space. Extra explanations use `InfoTip`. Disconnect ends the app's access and refresh token family; static editor keys remain in their own list. Sign-in and email signup retain the consent return; provider returns are bound to the browser's signed login state.
+
+Protocol and grants: [Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps).
 
 ### 3.10 Files
 
@@ -163,47 +333,370 @@ Files lists uploaded originals and app content the person explicitly saved or im
 
 ### 3.10a Routines
 
-`/routines` (`components/routines/routines-page.tsx`, `hub-api routines/service.ts`) is work the assistant does by itself on a schedule: a morning inbox digest, a Monday plan, a Friday board tidy. A routine is a name, an instruction that stands on its own, and a schedule picked as Hourly, Daily, Weekdays, Weekly (days), Monthly (day 1–28) or a five-field cron, in the person's time zone. Each run is a turn of the assistant in the routine's own conversation, with the person's default model, connected apps and write policy (a change that needs their OK waits there for Apply); its result goes on the routine's card ("Last run") and into the bell (Reminders tab). Cards say when the routine runs next and offer Run now, Edit (in place, no dialog), Conversation (opens it in the dock), pause/resume and a two-step delete (which deletes the routine's conversation too, and on an AI plan its agent session: [41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up)); new routines start blank or from an idea. The assistant adds, lists and changes routines itself (`hub_create_routine`, `hub_list_routines`, `hub_update_routine`, playbook `routines`). Settings › Notifications › Routines (`routines.enabled`, on by default) turns them all off: none run and the page leaves the sidebar. Routines belong to the space's owner; at most 50.
+Open **Routines** at `/routines` to schedule assistant work, such as a morning inbox digest, Monday plan or Friday board tidy.
 
-Each account starts with one **Morning brief**, an ordinary `AssistantRoutine` with the stable `builtInKey: "morning-brief"`. New signups start active, daily at 08:00 in their time zone, from the next local day (`createMorningRoutine`, email and provider signup). The person changes its name, instruction and schedule, pauses it or deletes it here. Its scheduled runs happen at most once per local day; Run now is explicit. A saved initialization marker prevents reseeding after deletion. The built-in counts toward the 50-routine cap. Instructions accept up to 100,000 characters so saved personal brief bodies remain editable. Every routine uses `assistant.defaultTier`; the form has no model, provider or thinking control.
+1. Start with a blank routine or an idea.
+2. Give it a name and an instruction that makes sense on its own.
+3. Choose Hourly, Daily, Weekdays, Weekly (days), Monthly (day 1–28) or a five-field cron, in your time zone.
+
+`components/routines/routines-page.tsx` and `hub-api routines/service.ts` implement the routine. Each run is a turn of the assistant in the routine's own conversation, with the person's default model, connected apps and write policy (a change that needs their OK waits there for Apply); its result goes on the routine's card ("Last run") and into the bell (Reminders tab).
+
+Cards say when the routine runs next and offer Run now, Edit (in place, no dialog), Conversation (opens it in the dock), pause/resume and a two-step delete (which deletes the routine's conversation too, and on an AI plan its agent session: [41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up)); new routines start blank or from an idea.
+
+The assistant adds, lists and changes routines itself (`hub_create_routine`, `hub_list_routines`, `hub_update_routine`, playbook `routines`). Settings › Notifications › Routines (`routines.enabled`, on by default) turns them all off: none run and the page leaves the sidebar. Routines belong to the space's owner; at most 50.
+
+#### Edit the morning brief
+
+Each account starts with one **Morning brief**, an ordinary `AssistantRoutine` with the stable `builtInKey: "morning-brief"`. New signups start active, daily at 08:00 in their time zone, from the next local day (`createMorningRoutine`, email and provider signup). The person changes its name, instruction and schedule, pauses it or deletes it here.
+
+Its scheduled runs happen at most once per local day; Run now is explicit. A saved initialization marker prevents reseeding after deletion. The built-in counts toward the 50-routine cap. Instructions accept up to 100,000 characters so saved personal brief bodies remain editable. Every routine uses `assistant.defaultTier`; the form has no model, provider or thinking control.
 
 ### 3.11 Weekly recap
 
-`/recap` (`components/recap/recap-view.tsx`) reviews one Monday–Sunday week in the person's time zone. ‹ › and This week move between weeks with `?date=YYYY-MM-DD`; Export copies or downloads the Markdown. A summary sentence written from the numbers (no model call) leads, followed by six figures with their change against last week (during the current week, against the same moment last week): tasks done (by you and by agents), tasks added, agent runs, Active in Ensemble, decisions and pages edited. Tiles: Daily rhythm (tasks finished per day by you and by agents, tasks added as a dashed bar; a bulk-add day is clipped and labelled), Highlights (delivered milestones, high-priority tasks, best day, project progress, active days, first agent run, Needs me clear), When you worked (weekday × hour) and Where time went (top five areas), Projects moved, Agent work (success rate, runs by agent), Looking ahead (due through the end of next week, overdue, waiting in Needs me; a past week shows what it left open) and the week item by item. Active in Ensemble is the signed-in person's own screen time from the interaction log ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)), not hours worked. A week with nothing recorded shows one "A quiet week" card.
+`/recap` (`components/recap/recap-view.tsx`) reviews one Monday–Sunday week in the person's time zone. ‹ › and This week move between weeks with `?date=YYYY-MM-DD`; Export copies or downloads the Markdown. A summary sentence written from the numbers (no model call) leads, followed by six figures with their change against last week (during the current week, against the same moment last week): tasks done (by you and by agents), tasks added, agent runs, Active in Ensemble, decisions and pages edited.
+
+Tiles: Daily rhythm (tasks finished per day by you and by agents, tasks added as a dashed bar; a bulk-add day is clipped and labelled), Highlights (delivered milestones, high-priority tasks, best day, project progress, active days, first agent run, Needs me clear), When you worked (weekday × hour) and Where time went (top five areas), Projects moved, Agent work (success rate, runs by agent), Looking ahead (due through the end of next week, overdue, waiting in Needs me; a past week shows what it left open) and the week item by item.
+
+Active in Ensemble is the signed-in person's own screen time from the interaction log ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)), not hours worked. A week with nothing recorded shows one "A quiet week" card.
+
+## 13. Document-style pages
+
+The TipTap editor uses the shared page schema (`packages/shared-types/src/page-schema.json`). A page is writing with structured blocks, not a chat. Task properties and execution controls sit around the document. Task documents and standalone notes share the editor but keep separate identities.
+
+### Creation and properties
+
+Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning a person or the agent as owner does not run anything; giving the task to one of your nodes or crews tells that node (or the crew's lead), which decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)).
+
+Focus mode gives a reading-width document with save state and an exit control.
+
+Task More holds Pin to Today, Comment, Add description, diagram creation, board assignment and Trash. Convert to page remains visible. Only an in-progress property save needs a status label.
+
+### Standalone notes
+
+A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` nests pages. Saves and renames lock the row and reject stale revisions, and refresh the saved search text. A note is not a task or project.
+
+Delete soft-deletes the note and its descendants, with Undo, after pending saves finish. Trash keeps content, mentions, discussions and history until purge. A link to a deleted page shows a read-only restore state; a missing or purged ID shows a missing-item screen. Shared and public views hide owner-only recovery controls.
+
+The page header's board picker (inside More for task pages) assigns a page to one custom board and column, moves it between boards, or removes the assignment (`components/pages/page-board-picker.tsx`). Membership is stored as `TaskPage.boardId`, `boardColumnId` and `boardOrder`, without rewriting saved content or editor revisions. Custom column moves do not change a task's agent status or runs.
+
+Choosing Ensemble board for a standalone note attaches the existing page to a new task and clears any custom-board assignment. Quick assign also uses that task conversion. Convert to page detaches the document and trashes the old task, retaining any custom-board membership.
+
+Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
+
+`/pages` lists pages as cards in two columns (one on narrow screens). It and the Pages browser show independent notes first, followed by board-named groups collapsed by default, including an Ensemble board group for default task pages. Expanding a group opens its pages; task pages link to `/tasks/:id`.
+
+Searching reveals matching pages inside groups. `/api/pages?all=true` supplies this combined directory, with `q` searching titles and saved text; `/api/pages` lists standalone notes for existing page-only pickers. Custom-board notes remain standalone pages.
+
+### Page history, copies and private templates
+
+`pages/history.ts` coalesces checkpoints within five minutes and keeps at most 30. Restore first saves current work and reconciles an open live editor. Versions show their author when recorded. A stale restore fails with 409.
+
+Choose **New page** to open a blank page immediately. Use **More → Version history** to inspect or restore a saved version, or Duplicate to create independent writing. There is no template picker or Save as template action in this menu.
+
+Version history (`components/pages/page-history.tsx` in the shared `components/history/version-history.tsx` dialog) lists saved versions by day with the time, how long ago, who and the title; arrow keys, Home and End move through them.
+
+The preview marks what differs from the page now (`components/history/version-diff.ts`, by block, then by word): highlighted text is only in that version, struck text only on the page now, and long unchanged stretches fold. **Show changes** off shows the version plain. Restore asks once, in place, before it replaces the page.
+
+Duplicate creates independent writing and omits discussions, shares and active AI bindings; static AI output becomes text. Embedded resources stay same-space references; source-file export associations are not copied. The owner-only template API and saved templates remain available to API clients, capped at 50 per profile and space.
+
+### Blocks and mentions
+
+Slash commands insert writing blocks; `@` links real entities by ID and can request Ensemble. `/page` (`components/editor/nested-page.ts`) makes a page inside the one being written: in a page it nests under that page, in a task under the task's page (`POST /api/pages` with `parentId` or `parentTaskId`), and from a project or meeting notes it is a page of its own. A link-to-page block lands where the caret was and the new page opens in the side peek with its title focused.
+
+Link-to-page blocks show the linked page's current title. Pages, tasks and the peek list nested pages that the content does not already link under "Pages inside" (`components/pages/nested-pages.tsx`). The assistant and nodes nest pages with `hub_create_page` (`parentPageId`, `parentTaskId`) and `hub_move_page` (`parentTaskId`).
+
+Pages nest at most four levels deep (`MAX_PAGE_DEPTH`: a page or task, and three levels inside it, counting the pages a moved page carries): the API refuses a deeper one (400 `TOO_DEEP`) for `/page`, a move and the assistant alike, and `/page` is not offered on a page at the deepest level. A page's header starts with a back arrow to the page above and the path to it (Pages › … › parent, from `ancestors` on `GET /api/pages/:id`; a task reads Task › its status), so the way up is one click.
+
+#### Move a block
+
+Use a block’s handle to move it, as in Notion (`components/editor/block-targets.ts`): each item of a bulleted, numbered or checklist at any depth, each block inside an item after its first line and inside a collapsible block after its summary; a list as a whole has none.
+
+Over a list's bullets and indent, or the gutter beside the page (where the + and the handle are drawn, outside the editor itself), the handle is the item at the pointer's height, so the controls follow the pointer down the gutter and moving to an item's handle never jumps to its list; a nested item's handle sits beside its own bullet.
+
+The handle drags the block like a board card (`components/editor/block-drag.ts`): it lifts into a copy that follows the pointer, its siblings slide aside to open the slot it will land in, and on release it glides into place in one undoable step.
+
+Over a block of another container (another list, a nested list, the page around a list) a line shows where it will land, and it goes there (`moveBlockTo` in `block-move.ts`): an item moved into another list becomes that list's kind of item, an item moved out of lists stays an item in a list of its own kind (joined to one of that kind beside it), another block dropped between two items splits their list around it, and lists left side by side close up.
+
+An item takes its nested items along. A numbered list's numbers stay with their places. Esc puts the block back; the page scrolls near its edges. With reduced motion the slot opens and the block lands at once.
+
+When there is no room beside the page (a side peek, a small window, or a bordered card such as a meeting's notes with under 54 px to its left edge), the + leaves and the handle and the comment button sit just inside the page instead of being cut off or crossing the border (`block-controls.tsx`, `data-gutter-left`/`data-gutter-right` on `.block-editor-body`).
+
+#### Select and edit several blocks
+
+Blocks are the units of a page, as in Notion (`components/editor/block-selection.ts`), in pages, tasks, projects and meeting notes alike. A drag that starts beside the text (the page around the editor, its gutter, a gap between blocks, the space after a short line) draws a rectangle and selects every block whose own line it crosses; a click there still puts the caret on the nearest line. A drag through text selects text until it reaches another block, then selects those blocks instead; a double-click, and a drag from it, always selects text.
+
+Esc in a block selects it, and clicking a block's handle selects it while its menu is open (Delete and Duplicate then act on all the selected blocks).
+
+Selected blocks are whole blocks (an item's nested items go with it): Delete or Backspace removes them in one undoable step, copy and cut take them whole, typing does not write over them, Enter goes back to writing at the end of the last one, ↑ and ↓ move to the block above or below and Shift extends, Shift-click beside the text extends to a block, Mod+D duplicates them, and Esc lets go (a second Esc reaches what holds the page).
+
+Mod+A selects the line's text first, then every block. A table keeps its own cell selection, and focus mode keeps Esc for leaving.
+
+#### Continue writing after a table or image
+
+Every editable page ends on an empty line (`components/editor/trailing-block.ts`): it is drawn, not saved, and clicking it or anywhere below the last block makes it a real line, so there is always somewhere to write after an image, a table or a list.
+
+#### Embed a file, plot or diagram
+
+Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
+
+#### Add an image to a page
+
+Images (`components/editor/page-image.ts`, the `image` node) come from `/image`, a drop, a paste or HTML with `data:` images, upload into Files with `purpose: "page-image"` behind a progress placeholder (`file-attach.ts`), and land as one undoable step.
+
+Width (10–100% of the column, or the image's own size), alignment, alt text and the original's size are node attributes, so they save, undo and co-edit; drag handles with a keyboard slider, a toolbar with alignment and width presets, Alt and remove appear only on editable pages. File-backed images load with the share headers and show from object URLs, so shared pages and public links show them.
+
+Each image is at most 2 MB (2,097,152 bytes), PNG, JPEG, GIF or WebP; the rules, storage and limits are in [32 §6](32_FILES.md#images-in-pages).
+
+#### Open or edit a link
+
+Links in an editable page open on click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab).
+
+Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link by drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
+
+### Saving and concurrent edits
+
+Live page/task editing uses `pages/collab.ts`, `collab-core.ts` and `routes/collab.ts`, with epoch/version markers. Whole-document saves and conversions flush the live session first, so they include what others typed. A revision conflict keeps the draft.
+
+Annotation-only saves do not rewrite task notes or running instructions. A model action gets bounded current document context and can read more through tools.
+
+### Agent output and human notes
+
+Run output is immutable evidence. A run's card on its task shows the agent's output and **What it did**, a link to that run's full trace in Runs (`/runs?run=<id>`); a run still going shows its live log in place. Human annotations keep their run/output anchors. Request changes or Redo creates a new assignment/attempt instead of rewriting an answer.
+
+Context keeps saved output, annotations and current task instructions apart.
+
+### Selection comments and inline questions
+
+Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model.
+
+While it is typed in the caret's line, `@ensemble` shows as Ensemble's chip, the question is tinted and the line ends with *↵ Ask Ensemble* (an empty one says what it can do); these are editor decorations only (`components/editor/ensemble-ask.ts`), and only where Enter sends a request (a page, task or meeting notes, not a public link).
+
+In the @ menu the row carries Ensemble's mark and an *AI* badge.
+
+Comments never reserve document width or change the focus-mode reading column. Small gutter markers show thread counts; clicking a marker or highlighted text opens one compact, viewport-bounded thread overlay. Long quotes are limited to two lines; the thread scrolls independently. Close or Escape returns to writing.
+
+Page comments and selection drafts use the same overlay, with edits, resolution and delete confirmation (`components/comments/comment-layer.tsx`, `.comment-*` rules in `app/globals.css`).
+
+Inline requests use the normal assistant loop and scoped tools. Newly requested diagrams/plots can be created and attached inline under the existing policy; other held writes still need Apply. Request IDs stop retries from starting duplicate work. Failed drafts stay visible. A request needs a final answer; tool activity alone does not count as a reply.
+
+Code: `components/comments`, `apps/hub-api/src/ensemble/`, `routes/comments.ts`.
+
+### Manual and imported meeting notes
+
+`/meetings` (`app/(hub)/meetings/page.tsx`, styles in `components/meetings/meetings.css`) keeps each meeting with what a plain page lacks: its calendar event, the people in it, the whole transcript and the next steps.
+
+- **From your calendar** (`calendar-meetings.tsx`) shows timed events from `GET /api/calendar` for the last 7 days and the next 2 days, upcoming and live first; on phones it is one row that scrolls sideways. Each has **Take notes** (notes linked to the event and its attendees, or **Open notes** when they exist) and, for a past meeting whose join link is Teams, Google Meet or Zoom (`providerForUrl` in `lib/api-meetings.ts`), **Get transcript** (or **Transcript** once imported). It uses only `id`, `title`, `start`, `end`, `allDay`, `joinUrl` and `location`.
+- **Import** (`import-menu.tsx`) lists, from `GET /api/meetings/sources`: Upload a transcript, Paste a transcript, Microsoft Teams, Google Meet and Zoom (Connected, Turn on, Connect, or Not set up here when the server has no OAuth app), and Granola, Fireflies.ai, Fathom, tl;dv, Krisp, Jamie and Otter.ai (Connect opens Settings → Connections; once connected, Import 30 days). Turn on and Connect switch on the suite product and return to `/meetings` (`useConnectApp` in `fetch-problem.tsx`); a sign-in that needs an admin's approval shows a notice with Paste from Teams.
+- **Upload or paste** (`import-dialog.tsx`) reads the transcript first (`POST /api/meetings/transcripts/preview`): format, turns, speakers (You, In People, or Add to People, ticked for full names), duration, items found, the first lines and any warnings; title and time can be changed before **Import meeting**. Paste from Teams shows how to copy the transcript from Teams' recap.
+- **Teams, Google Meet, Zoom** (`remote-dialog.tsx`) lists recent meetings (`GET /api/meetings/remote/:provider`) with **Get transcript**, plus a field for a meeting link. When a transcript can't be read, `FetchProblem` shows why and the next steps the API returned: connect or turn on and approve, Ask the organizer (a `mailto:` with subject and body), Open in Teams or Meet, Paste from Teams, Upload. Explanations sit behind `InfoTip`.
+- **The shelf** lists notes taken in Ensemble and imported meetings together, newest first, with a search over titles, notes, summaries, sources and speakers. Each card shows Delete on hover or keyboard focus (always on touch screens); it confirms and offers Undo (`DELETE /api/meetings/sessions/:id` or `DELETE /api/meetings/notes/:id` and `POST …/restore`). With no meetings, a short welcome offers Upload a transcript, Paste from Teams and Start notes.
+- **Notes taken in Ensemble** use the block editor with serialized, debounced saving (`notes-fields.tsx`), under the meeting's event (with Get transcript or Open transcript for an online meeting) and its people. Typed content also gets a Markdown projection for search and recap. Failed drafts stay in browser memory across in-app navigation, not a full reload.
+- **Imported meetings** (`imported-notes.tsx`) are read-only source records apart from their **Project** (a picker; `PATCH /api/meetings/notes/:id` moves the meeting's open tasks too): source and time, the event, people (linked when in People; you are left out), summary, decisions, your action items and those waiting on others, each with **Make task** (`POST /api/meetings/notes/:id/tasks`, one task per item) or Open task, and the transcript (`transcript-view.tsx`): collapsed when there is a summary, speaker-coloured and timestamped, with a search that keeps matching turns by words or speaker. Items found from phrases in speech say so behind an `InfoTip`.
+- **Ensemble's read** (`meeting-ai.tsx`), on imported meetings and on notes taken in Ensemble once they end: the model's summary, the project it was about, decisions, your work from it and work waiting on others (each with its kind, the quoted words and their time, who asked, the due date; **Review** or **Open task** for a proposed task, **Already tracked** for existing work, **Make task** otherwise; items whose words were not found say so), open questions, topics for next time, and people who were in it but not in People (**Add**). **Suggest tasks** (or **Read again**) asks for a read now (`POST /api/meetings/notes/:id/suggest`, or `…/sessions/:id/suggest` for typed notes); while it reads, the panel shows progress and refreshes on the `meetings` live event. A link to typed notes' meeting note (`?note=<id>` from a notification, the graph or an agent) opens the notes.
+
+Today's meeting cues (`components/today/meeting-cues.tsx`) add **Last time** for a meeting of a series (the previous meeting's summary, its open tasks, what others owe and topics to raise, linking to it) with **Prepare**, and the prep brief once written ([03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)).
+
+Meetings do not record the microphone or transcribe audio. Routes: [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context), imports: [03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-meeting-transcripts-files-pastes-teams-google-meet-and-zoom).
+
+### Context graph
+
+Graph (`components/context/graph.tsx`, layout in `lib/graph-layout.ts`) derives connections from saved records and mentions (`GET /api/context/graph`); it never starts a provider fetch.
+
+Nodes are people, projects, repositories, tasks, deliverables, skills, meetings, pages, diagrams, plots and saved app items; links include project membership (with the role), task–project/repository/deliverable/skill, dependencies, work from a meeting, meeting attendees, work you wait on someone for (dashed, people-coloured), and mentions on pages (dashed).
+
+**Find in graph** lights matching nodes (Enter selects the first). Clicking a node opens a side panel with what links to it (`GET /api/context/item`); a linked record on the graph is selected in place, so the panel walks the graph, and **Focus here** keeps only what is within one or two links (the hop count is in the focus chip).
+
+Double-click or **Open** opens a record where it lives: tasks, projects, deliverables and people in the side peek, meetings and pages on their page. Phones use the list view. Data and suppression: [03](03_MODULE_CONTEXT_ENGINE.md).
+
+## 10. The Hub assistant
+
+The floating dock is the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home restores the default size.
+
+The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px or past the window less a 20 px margin, and refitted when the window changes (`components/assistant/use-panel-size.ts`).
+
+Expanded, and on phones (640 px wide or less), it has no handles and a fixed layout; on a phone it fills the screen, top bar included, with an 8 px margin, has no Expand button (it would change nothing), keeps the page behind still while it is open (`html[data-assistant-open]`; its chat scrolls on its own, `overscroll-behavior: contain`), and going to another page (a link in an answer, the navigation) closes it so the page shows.
+
+Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)).
+
+The paperclip uploads files into Files or chooses saved ones (`components/files/add-to-message.tsx`, never connected apps); files can also be dropped or pasted.
+
+Up to 8 per message wait on a shelf above the box with progress, Cancel and Remove (`components/assistant/chat-attachments.tsx`), are sent as file mentions, and show under the sent message with links and image thumbnails; the model gets their text and pictures ([38](38_AGENT_READABLE_FILES.md)). Live connected-app reads need a separate explicit request.
+
+Model menus choose the tier/model and show who pays. A failed turn is saved as an error with Retry, not as an assistant answer.
+
+Routing, tool execution and Apply: [11](11_HOW_THE_ASSISTANT_WORKS.md). Action map: [34](34_ASSISTANT_ACTIONS.md).
+
+## 11. Undo / redo
+
+`apps/hub-api/src/lib/undo.ts` journals supported Hub writes transactionally, including grouped assistant changes. Undo/redo replays the journal; it does not call the model. It cannot reverse arbitrary external calls, invitations, imports already consumed elsewhere or filesystem side effects; each tool reports whether it supports Undo.
+
+Conversions and history restores keep document identity and have their own safeguards.
+
+## 12. Live agent activity and the stop button
+
+Activity state and SSE show work actually running or waiting. The top bar's activity pill (`components/shell/activity-panel.tsx`) reads Idle, Working with the number of model calls and agent tasks running (Ensemble's mark animates, and holds still with reduced motion), Needs you, Queued, Paused or Offline; an amber dot on the mark means something is waiting for you while other work runs.
+
+It opens a panel listing Waiting for you, Model calls, Agent tasks and Queued, each row with its elapsed time and a stop button (a task row opens the task); Stop everything and Pause are at its foot, and Esc closes it. Pause stops new jobs and cancels current model/command work; Stop everything also clears the queue. A remote request already accepted can finish.
+
+Cancelling does not undo an external write or guarantee a billing refund. Saved work and retry: [05 §6](05_MODULE_TASK_ORCHESTRATOR.md#6-stop-interruption-and-retry).
+
+## 14. Notifications and private reminders
+
+Morning brief results are `routine` notifications, linking to the same editable routine. Reading or clearing one does not erase the latest reply shown on Today. Quiet-work nudges wait until the active brief's daily time, or 09:00 without an active daily brief (`cowork/service.ts`).
+
+The top bar's bell (`components/shell/notification-bell.tsx`) lists **unread notifications only**: reading one removes it, and there is no history. Its tabs are Unread (everything), Needs me (agent questions and runs that stopped needing the person), Reminders (reminders, nudges, the morning brief, routine results) and Sharing; it opens on Unread.
+
+The panel sizes to its rows up to 560 px, then scrolls. Rows are grouped Today, Yesterday and Earlier. Opening a row marks it read; × (shown in place of the time when the row is pointed at or focused, or a sideways swipe on touch) dismisses it, and Clear dismisses the open tab. The badge counts unread notifications and turns amber while something needs the person.
+
+An agent run that is stopped creates no notification (the board and Runs show it). One that finishes with its work waiting for the person (not marked done by the run) creates **Ready for review: <task>** (kind `review`, under Unread; `workspace/review-notice.ts`) unless Settings › Notifications › Nudges turns review notices off; a failed or interrupted one creates a "needs you" notification.
+
+Runs an Ensemble Node started notify neither way (the node reports in its chat and carries on). A "needs you" notification names what it waits on (`subject`: `decision:<id>` or `task:<id>`), and the bell shows it only while that still waits, exactly as the Needs me page does (`hub-api notifications/needs.ts`): a question or permission answered, expired or stopped anywhere (Ensemble, Ensemble Node's chat, the editor), a node's own request, a node's request while **Show my nodes' requests in Ensemble** is off, or a task that is no longer blocked leaves the bell at once and is marked read. A change to a request, approval, task or run refreshes the bell live.
+
+Reminders belong to the person, not to shared task context. A due reminder creates a notification. Platform delivery needs permission and a running browser tab or desktop app; quiet hours and OS Focus still apply. Snooze saves a real next time. Reminders are excluded from Context Bridge and search briefs.
+
+See [07 §1.2](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#12-private-reminders-and-platform-notifications).
+
+## 16. Accounts and public signup
+
+`routes/auth.ts` and `auth-oauth.ts` provide scrypt passwords and hashed-cookie sessions. `ENSEMBLE_SIGNUP_MODE` is `open`, `allowlist` or `closed`; allowlist reads `ENSEMBLE_SIGNUP_ALLOWLIST`. Local first-account adoption of placeholder data is separate from hosted registration, which never claims localhost data.
+
+### Use Ensemble in several windows
+
+**Three open places per app.** The hosted Hub shell (`components/active-place-gate.tsx`) registers one place per tab/window, including the account's hosted web app inside a desktop window. Ensemble's `hub` and `desktop` places share a limit of three; Ensemble Node's `node` places have a separate limit of three.
+
+Three of each may be open at once. A session-storage id survives reload; a Web Lock gives a duplicated tab its own id. Where Web Locks are unavailable, each page load gets a fresh id. Heartbeats run every 10 seconds, independently of space sharing. `ActivePlace` belongs to the account and session, not the open space; 60 seconds without a heartbeat frees its slot (`lib/active-places.ts`).
+
+Closing releases it; sequence numbers prevent a delayed heartbeat from undoing a release. Each app's fourth place sees only that app's surface/browser/computer labels and cannot enter until it chooses one to sign out, or continues here in that pool's least recently heard slot. Replacement, release and expiry cannot take or move a slot in the other pool.
+
+Eviction revokes that place, not the shared cookie or every tab; its next request/heartbeat stops it, keeping open drafts. A revoked place cannot reclaim a free slot without choosing to continue.
+
+The lease API accepts `hub`, `node` and `desktop` surfaces and checks `x-ensemble-place` on ordinary session requests. Node's website registers its own windows and sends `x-ensemble-place-surface: node`; absent that header, requests use Ensemble's pool. Its EventSource names `place` and `placeAccount` in `/api/node/events`' query because EventSource cannot send custom headers.
+
+Requests without a place id retain their existing contract. CLI/editor `ens_` keys, past sign-ins, local-only runtimes and space switches do not consume slots. Password change revokes all old sessions and renews the changing window's cookie; password reset revokes every session, and sign-out revokes that cookie's session. Their old place rows cascade away. Account export excludes leases.
+
+### Keep working through a connection loss
+
+An admitted window keeps offline editing available if its heartbeat fails, with a visible retry notice. Server requests still check its lease; reconnecting may require choosing a place. Pending page and settings drafts stay intact.
+
+The Hub binds its window to the account read at startup (`accountId` in heartbeats and `x-ensemble-place-account` on requests). A shared-cookie account switch returns `PLACE_ACCOUNT_CHANGED` and reloads the window after keeping drafts, rather than applying an old account's cached edits to the new one.
+
+### Sign in with Google, GitHub or Microsoft
+
+Social buttons need `AUTH_<PROVIDER>_CLIENT_ID`/`_SECRET`.
+
+Login uses browser-bound PKCE/nonce/single-use state and identity validation, and stores login mappings, not connector tokens. A verified provider email links accounts only under the ownership rules; a Microsoft email or username alone is not email verification. `?return=node` on the start route sends a sign-in begun on Ensemble Node back to `ENSEMBLE_NODE_WEB_ORIGIN` (never another URL); the account and session are the Hub's ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)).
+
+### Verify an email signup
+
+Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`). Verification codes are hashed, expire after 30 minutes and count attempts; a new code invalidates the old one.
+
+The email links to the Hub's `/verify`, or to Ensemble Node's `/welcome` for a sign-up made there ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)). Turnstile answers are accepted from the Hub's host and from `ENSEMBLE_NODE_WEB_ORIGIN`'s host. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
+
+### Choose a profile and take the tour
+
+New accounts pick a profession/profile and a template. The tour (`components/onboarding/guided-tour.tsx`, replayed from the account menu's Take a tour) plays fictional scenes of the app on a preview canvas and never changes real work; Ask opens a draft without sending. Each scene runs on one clock (`tour-playback.ts`) with play/pause, restart, chapter dots and Back/Next.
+
+One simulated pointer (`tour-pointer.tsx`, stops in `tour-cursor.ts`) aims at the scene's `data-film-target` elements, clicks and drags in step with the scene, and eases from where it is drawn across chapter changes, restarts and resizes. With reduced motion, scenes show their final frame, chapters cut and there is no pointer. Settings has no control to change the signup role.
+
+### Manage account sign-in methods
+
+Settings › Account manages the password, linked login methods (shown when the server offers any; the last way to sign in cannot be unlinked), a universal circular avatar picker (character, color and scenery) and export; deletion is in Settings › Data › Danger zone. Removing a method or deleting the account needs a recent session or password confirmation.
+
+Social-only accounts can add a first password. Sign-out confirms and returns to login. Account deletion keeps only the monthly credit-enforcement amount and a minimal operational log ([07 §6](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure)); no profile snapshot or survey.
+
+## 17. Linking a computer, and connecting editors
+
+`/link` approves a CLI login showing the computer, platform and access requested, and returns correctly after sign-in. Editor access and task-running access are distinct; hosted task access needs a verified account. Settings' Connect this computer dialog shares pairing steps, a ten-minute code and renewal/error state across its entry points.
+
+Connect guides offer CLI setup, a hosted MCP URL with a key (read, or read and change) or a source bridge.
+
+Editor guides (VS Code, Cursor, Windsurf, JetBrains) add **Using an AI extension inside…** (`components/connect/extensions.tsx`, `lib/connect/extensions.ts`): Claude Code, Codex, GitHub Copilot Chat, Gemini Code Assist, Cline, Roo Code, Kilo Code and Continue, each with where it reads its MCP servers, the steps and config for the chosen way, how to check it and what to avoid; `?ext=<id>` opens one, and the Connect page links each.
+
+**Need a hand?** (`components/connect/help.tsx`, `lib/connect/help.ts`) sends a setup question to the assistant in a new chat at the Medium tier, with the facts for that page (app, extension, way, OS, how many keys may make changes; never a key) as the turn's reference context. Device trust, lease lifetime, subscription calls and approvals: [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md).
+
+Assignment choices/profiles: [06](06_MODULE_WORKSPACE_AND_SURFACES.md). Engines and handoff: [30](30_ENGINES.md). Pairing never exposes the hosted server's filesystem.
+
+## 18. Downloads
+
+Page/task exports, original-file downloads, space archives and account exports are separate operations. Exported timestamps carry an explicit offset where the format includes local time. A file-backed page can export back from the browser where supported; server assistant exports rebuild supported documents. Format limits: [32](32_FILES.md).
+
+Space archives: [28 §5](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting). Full export: Account. Downloads use the same access checks as reading.
 
 ## 4. Interaction patterns
 
 Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
 
-`InfoTip` opens bounded, portalled guidance on hover, focus or tap. Escape dismisses help before its containing dialog; a tap outside closes it. Routine explanations belong there rather than under every control; errors, security warnings and destructive-action confirmations stay visible. Run queue cards keep titles, compact status/priority/Git choices, computer/model and live progress or errors; full summaries belong to the task/run.
+`InfoTip` opens bounded, portalled guidance on hover, focus or tap. Escape dismisses help before its containing dialog; a tap outside closes it. Routine explanations belong there rather than under every control; errors, security warnings and destructive-action confirmations stay visible.
+
+Run queue cards keep titles, compact status/priority/Git choices, computer/model and live progress or errors; full summaries belong to the task/run.
+
+### Open and close a side peek
 
 Side peeks (`components/shell/peek.tsx`: tasks, pages, projects, deliverables) close on Esc, with ×, or with a plain click on the page beside them, like Notion. A drag, a text selection, a click in a menu or dialog, and the click that opens another card or row (which switches the peek) leave it open; full-screen peeks have nothing beside them.
 
-Below 768 CSS pixels, Context tiles use full-width rows; the tab strip scrolls sideways only, fades at its right edge, keeps the open tab in view, and Add a tab is a + button. Record grids shrink to the available width. Runs stacks its live queues below 1024 pixels, with recent history below. History actions sit below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code. Desktop panel preferences and saved tile sizes are unchanged.
+### Use work views on a phone
+
+Below 768 CSS pixels, Context tiles use full-width rows; the tab strip scrolls sideways only, fades at its right edge, keeps the open tab in view, and Add a tab is a + button. Record grids shrink to the available width. Runs stacks its live queues below 1024 pixels, with recent history below.
+
+History actions sit below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code.
+
+Desktop panel preferences and saved tile sizes are unchanged.
 
 Phone form fields use at least 16 px text to avoid Safari zooming the page on focus. The on-screen keyboard resizes the app rather than covering the field (`interactiveWidget: "resizes-content"` in `app/layout.tsx`), and on a phone Search and jump sits at the top of the screen. Search and jump opens above the assistant's panel.
 
-On a phone, Pages is the full-screen `/pages` list, with New page and Import in its header; the Pages panel does not open there (`app/(hub)/layout.tsx`), and if the window narrows while it is open it fills the screen. A task or page peek fills the width without its resize edge or its Full screen button. Below 641 pixels the page editor's gutter keeps only the block handle (blocks are added with /), so text gets the width.
+On a phone, Pages is the full-screen `/pages` list, with New page and Import in its header; the Pages panel does not open there (`app/(hub)/layout.tsx`), and if the window narrows while it is open it fills the screen. A task or page peek fills the width without its resize edge or its Full screen button.
 
-On touch screens (`pointer: coarse`), a control marked `.tap-area` (the ⓘ of `InfoTip`, `Toggle`) answers a finger anywhere in at least 40 × 40 px around it without changing its look (not inside a sideways-scrolling strip, which would then scroll up and down). It is opt-in, never a whole class of buttons or tabs: the zone is an `::after`, and a control that draws with its own `::after` (the selected Context tab's underline) would lose that drawing; and keyboard hints marked `.key-hint` are hidden where there is no hover. The floating Ask button hides while a dialog, the phone navigation, a sheet or full screen is open.
+Below 641 pixels the page editor's gutter keeps only the block handle (blocks are added with /), so text gets the width.
+
+On touch screens (`pointer: coarse`), a control marked `.tap-area` (the ⓘ of `InfoTip`, `Toggle`) answers a finger anywhere in at least 40 × 40 px around it without changing its look (not inside a sideways-scrolling strip, which would then scroll up and down).
+
+It is opt-in, never a whole class of buttons or tabs: the zone is an `::after`, and a control that draws with its own `::after` (the selected Context tab's underline) would lose that drawing; and keyboard hints marked `.key-hint` are hidden where there is no hover. The floating Ask button hides while a dialog, the phone navigation, a sheet or full screen is open.
 
 The local browser regression `e2e/mobile-layout.mjs` covers 320, 390, 640, 768, 1024 and 1440 pixel widths against the in-memory API fixture `apps/hub-api/scripts/mobile-ui-fixture.ts`. It can include Ensemble Node through `NODE_WEB`; it never targets a hosted account.
 
 `e2e/clean-surfaces.mjs` uses that fixture for help dismissal, compact task actions, persisted Today pins, project peek/full-page editing, blank-page creation and account-deletion guards on phones and desktop.
 
-Notices (`components/toast.tsx`) appear bottom centre, at most two at a time (a third pushes out the oldest; the same notice again replaces the earlier one), and close after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar runs down over that time. Pointing at or focusing a notice pauses it, so Undo stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback). A notice is only for what the screen does not already show: something failed, an Undo, a consequence or limit worth knowing (a link stopped working, the result lands in the bell, a computer was asked to stop), or the result of a sync or import. Saving, copying, moving, assigning, approving, pushing or toggling something you can see change gets no notice.
+### Read or dismiss a notice
+
+Notices (`components/toast.tsx`) appear bottom centre, at most two at a time (a third pushes out the oldest; the same notice again replaces the earlier one), and close after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar runs down over that time.
+
+Pointing at or focusing a notice pauses it, so Undo stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback). A notice is only for what the screen does not already show: something failed, an Undo, a consequence or limit worth knowing (a link stopped working, the result lands in the bell, a computer was asked to stop), or the result of a sync or import.
+
+Saving, copying, moving, assigning, approving, pushing or toggling something you can see change gets no notice.
 
 Confirmations are specific to the action. Moving pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Ordinary autosave has none.
 
-## 5. State & data flow
+## 15. Waiting, previews and quiet status
+
+Saving, waiting for a person, queued, active and failed each have their own indicator; reduced motion keeps them without animation. Error turns never enter model history. Pending proposals keep Apply; failed dependent work offers Retry remaining steps and is not labelled Applied.
+
+## 1. Interaction principles
+
+Tasks, pages and records keep one identity across views. Saved, pending, failed and completed states look different. Writing autosaves without calling a model; model sends, imports, approvals and irreversible actions are explicit. Drafts survive conflicts and errors. A queued job or a held assistant proposal is never shown as completed work.
+
+Loading feedback uses the smallest affected region (`components/motion/loading.tsx`, `skeletons.tsx`, `slot.tsx`). Ordinary actions have a delayed local indicator; boards, Today, pages and plot frames preserve their structure. Initial failures replace loaders with Retry, while usable cached content remains visible through refresh failures. Next loading boundaries own route readiness.
+
+AI waits use the context-sized woven treatments in [BRAND](BRAND.md#motion); queued work and requests waiting for a person stay still. The top bar reads personal AI activity even when the optional Workspace module is hidden, distinguishes checking/unavailable from confirmed idle, and reconciles activity on lifecycle events and reconnects.
+
+Activity events and ownership: [11](11_HOW_THE_ASSISTANT_WORKS.md).
+
+## In the code
+
+`apps/hub-web` implements the Hub browser UI loaded by the desktop shell. Settings is `app/(hub)/settings/page.tsx`.
+
+### 5. State & data flow
 
 React Query caches scoped API responses. SSE events invalidate/refetch queries and drive progress; they are not the database. Live editing has its own authority/version protocol (§13). Preferences hold layouts and UI choices; browser-only draft/position state is shorter-lived.
 
 `lib/api.ts` centralizes requests and readable errors, including off-module errors. `lib/assistant-surface.ts` and view components publish bounded IDs, filters, selection and layout to the assistant; this context grants no authorization.
 
-**Saves outside live documents.** The Hub keeps the last-read copy for task fields, people, projects, repositories, deliverables, manual meeting notes, skills, routines, plots, comments and preferences. Their ordinary saves send `_base`; row-locked writes merge disjoint fields and return 409 `SAVE_CONFLICT` for overlapping ones (`lib/save-conflict.ts`, `packages/shared-types/src/save-merge.ts`). Nested objects merge by field; arrays and whole document blocks are compared as values. The dialog keeps both values until the person chooses. Keeping the saved value still applies non-conflicting changes. Meeting and project editors keep pending drafts; settings keep theirs in session storage. `settings.changed` is account-private and refreshes the other windows. Pages and task documents keep their live step/rebase protocol (§13); boards, diagrams and original files keep their revision/hash checks. Callers without `_base` retain their existing write contract.
+**Saves outside live documents.** The Hub keeps the last-read copy for task fields, people, projects, repositories, deliverables, manual meeting notes, skills, routines, plots, comments and preferences. Their ordinary saves send `_base`; row-locked writes merge disjoint fields and return 409 `SAVE_CONFLICT` for overlapping ones (`lib/save-conflict.ts`, `packages/shared-types/src/save-merge.ts`).
 
-## 6. API contract (hub-api → UI, abridged)
+Nested objects merge by field; arrays and whole document blocks are compared as values. The dialog keeps both values until the person chooses. Keeping the saved value still applies non-conflicting changes. Meeting and project editors keep pending drafts; settings keep theirs in session storage. `settings.changed` is account-private and refreshes the other windows.
+
+Pages and task documents keep their live step/rebase protocol (§13); boards, diagrams and original files keep their revision/hash checks. Callers without `_base` retain their existing write contract.
+
+### 6. API contract (hub-api → UI, abridged)
 
 `apps/hub-api/scripts/route-inventory.json` (checked by `pnpm --filter @ensemble/hub-api route:inventory:check`) lists every registered route. This table groups the main entry points; files are under `apps/hub-api/src`. Sharing access is classed separately in `sharing/policy.ts`.
 
@@ -252,155 +745,28 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 
 Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 
-## 7. Component ownership
+### 7. Component ownership
 
 `components/editor`, `pages`, `task` and `comments` own documents; `board`, `desk`, `widgets`, `context` and `today` own work views; `assistant` owns chat/proposals; `agent`, `needs-me`, `code` own execution/review; `settings`, `connectors`, `sharing` own account/app controls. Shared primitives live in `components/ui.tsx`; shared models/validation in `packages/shared-types`.
 
-## 8. Visual style
+### 8. Visual style
 
 `packages/brand` owns marks, palettes and motion ([BRAND](BRAND.md)). Reduced motion is independent of theme. Menus and dialogs opened from the floating assistant sit on a layer above it, so model and mention menus stay clickable.
 
-Mentions use one chip everywhere: pages, sent assistant messages and comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned for light and dark, so it reads under every color theme; the chip is inline and does not change line height. Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay native.
+Mentions use one chip everywhere: pages, sent assistant messages and comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned for light and dark, so it reads under every color theme; the chip is inline and does not change line height.
 
-Addresses in text are links. `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (no other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews). `MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. Clicking a link inside a clickable row or click-to-edit field opens only the link.
+Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay native.
 
-## 9. Tests
+Addresses in text are links.
+
+`lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (no other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews).
+
+`MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. Clicking a link inside a clickable row or click-to-edit field opens only the link.
+
+### 9. Tests
 
 `pnpm --filter @ensemble/hub-web test` plus the relevant API tests cover behaviour changes. Browser scripts in `apps/hub-web/e2e` and `apps/hub-web/scripts` have their own prerequisites. The route inventory check covers registered endpoints, not every happy path.
 
-## 10. The Hub assistant
-
-The floating dock is the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home restores the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px or past the window less a 20 px margin, and refitted when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and a fixed layout; on a phone it fills the screen, top bar included, with an 8 px margin, has no Expand button (it would change nothing), keeps the page behind still while it is open (`html[data-assistant-open]`; its chat scrolls on its own, `overscroll-behavior: contain`), and going to another page (a link in an answer, the navigation) closes it so the page shows.
-
-Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). The paperclip uploads files into Files or chooses saved ones (`components/files/add-to-message.tsx`, never connected apps); files can also be dropped or pasted. Up to 8 per message wait on a shelf above the box with progress, Cancel and Remove (`components/assistant/chat-attachments.tsx`), are sent as file mentions, and show under the sent message with links and image thumbnails; the model gets their text and pictures ([38](38_AGENT_READABLE_FILES.md)). Live connected-app reads need a separate explicit request. Model menus choose the tier/model and show who pays. A failed turn is saved as an error with Retry, not as an assistant answer.
-
-Routing, tool execution and Apply: [11](11_HOW_THE_ASSISTANT_WORKS.md). Action map: [34](34_ASSISTANT_ACTIONS.md).
-
-## 11. Undo / redo
-
-`apps/hub-api/src/lib/undo.ts` journals supported Hub writes transactionally, including grouped assistant changes. Undo/redo replays the journal; it does not call the model. It cannot reverse arbitrary external calls, invitations, imports already consumed elsewhere or filesystem side effects; each tool reports whether it supports Undo. Conversions and history restores keep document identity and have their own safeguards.
-
-## 12. Live agent activity and the stop button
-
-Activity state and SSE show work actually running or waiting. The top bar's activity pill (`components/shell/activity-panel.tsx`) reads Idle, Working with the number of model calls and agent tasks running (Ensemble's mark animates, and holds still with reduced motion), Needs you, Queued, Paused or Offline; an amber dot on the mark means something is waiting for you while other work runs. It opens a panel listing Waiting for you, Model calls, Agent tasks and Queued, each row with its elapsed time and a stop button (a task row opens the task); Stop everything and Pause are at its foot, and Esc closes it. Pause stops new jobs and cancels current model/command work; Stop everything also clears the queue. A remote request already accepted can finish. Cancelling does not undo an external write or guarantee a billing refund. Saved work and retry: [05 §6](05_MODULE_TASK_ORCHESTRATOR.md#6-stop-interruption-and-retry).
-
-## 13. Document-style pages
-
-The TipTap editor uses the shared page schema (`packages/shared-types/src/page-schema.json`). A page is writing with structured blocks, not a chat. Task properties and execution controls sit around the document. Task documents and standalone notes share the editor but keep separate identities.
-
-### Creation and properties
-
-Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning a person or the agent as owner does not run anything; giving the task to one of your nodes or crews tells that node (or the crew's lead), which decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)). Focus mode gives a reading-width document with save state and an exit control.
-
-Task More holds Pin to Today, Comment, Add description, diagram creation, board assignment and Trash. Convert to page remains visible. Only an in-progress property save needs a status label.
-
-### Standalone notes
-
-A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` nests pages. Saves and renames lock the row and reject stale revisions, and refresh the saved search text. A note is not a task or project.
-
-Delete soft-deletes the note and its descendants, with Undo, after pending saves finish. Trash keeps content, mentions, discussions and history until purge. A link to a deleted page shows a read-only restore state; a missing or purged ID shows a missing-item screen. Shared and public views hide owner-only recovery controls.
-
-The page header's board picker (inside More for task pages) assigns a page to one custom board and column, moves it between boards, or removes the assignment (`components/pages/page-board-picker.tsx`). Membership is stored as `TaskPage.boardId`, `boardColumnId` and `boardOrder`, without rewriting saved content or editor revisions. Custom column moves do not change a task's agent status or runs.
-
-Choosing Ensemble board for a standalone note attaches the existing page to a new task and clears any custom-board assignment. Quick assign also uses that task conversion. Convert to page detaches the document and trashes the old task, retaining any custom-board membership. Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
-
-`/pages` lists pages as cards in two columns (one on narrow screens). It and the Pages browser show independent notes first, followed by board-named groups collapsed by default, including an Ensemble board group for default task pages. Expanding a group opens its pages; task pages link to `/tasks/:id`. Searching reveals matching pages inside groups. `/api/pages?all=true` supplies this combined directory, with `q` searching titles and saved text; `/api/pages` lists standalone notes for existing page-only pickers. Custom-board notes remain standalone pages.
-
-### Page history, copies and private templates
-
-`pages/history.ts` coalesces checkpoints within five minutes and keeps at most 30. Restore first saves current work and reconciles an open live editor. Versions show their author when recorded. A stale restore fails with 409.
-
-New page creates and opens a blank page immediately. More offers duplication and version history, without a template picker or Save as template action. Version history (`components/pages/page-history.tsx` in the shared `components/history/version-history.tsx` dialog) lists saved versions by day with the time, how long ago, who and the title; arrow keys, Home and End move through them. The preview marks what differs from the page now (`components/history/version-diff.ts`, by block, then by word): highlighted text is only in that version, struck text only on the page now, and long unchanged stretches fold. **Show changes** off shows the version plain. Restore asks once, in place, before it replaces the page. Duplicate creates independent writing and omits discussions, shares and active AI bindings; static AI output becomes text. Embedded resources stay same-space references; source-file export associations are not copied. The owner-only template API and saved templates remain available to API clients, capped at 50 per profile and space.
-
-### Blocks and mentions
-
-Slash commands insert writing blocks; `@` links real entities by ID and can request Ensemble. `/page` (`components/editor/nested-page.ts`) makes a page inside the one being written: in a page it nests under that page, in a task under the task's page (`POST /api/pages` with `parentId` or `parentTaskId`), and from a project or meeting notes it is a page of its own. A link-to-page block lands where the caret was and the new page opens in the side peek with its title focused. Link-to-page blocks show the linked page's current title. Pages, tasks and the peek list nested pages that the content does not already link under "Pages inside" (`components/pages/nested-pages.tsx`). The assistant and nodes nest pages with `hub_create_page` (`parentPageId`, `parentTaskId`) and `hub_move_page` (`parentTaskId`). Pages nest at most four levels deep (`MAX_PAGE_DEPTH`: a page or task, and three levels inside it, counting the pages a moved page carries): the API refuses a deeper one (400 `TOO_DEEP`) for `/page`, a move and the assistant alike, and `/page` is not offered on a page at the deepest level. A page's header starts with a back arrow to the page above and the path to it (Pages › … › parent, from `ancestors` on `GET /api/pages/:id`; a task reads Task › its status), so the way up is one click.
-
-Every block has its own handle, as in Notion (`components/editor/block-targets.ts`): each item of a bulleted, numbered or checklist at any depth, each block inside an item after its first line and inside a collapsible block after its summary; a list as a whole has none. Over a list's bullets and indent, or the gutter beside the page (where the + and the handle are drawn, outside the editor itself), the handle is the item at the pointer's height, so the controls follow the pointer down the gutter and moving to an item's handle never jumps to its list; a nested item's handle sits beside its own bullet. The handle drags the block like a board card (`components/editor/block-drag.ts`): it lifts into a copy that follows the pointer, its siblings slide aside to open the slot it will land in, and on release it glides into place in one undoable step. Over a block of another container (another list, a nested list, the page around a list) a line shows where it will land, and it goes there (`moveBlockTo` in `block-move.ts`): an item moved into another list becomes that list's kind of item, an item moved out of lists stays an item in a list of its own kind (joined to one of that kind beside it), another block dropped between two items splits their list around it, and lists left side by side close up. An item takes its nested items along. A numbered list's numbers stay with their places. Esc puts the block back; the page scrolls near its edges. With reduced motion the slot opens and the block lands at once. When there is no room beside the page (a side peek, a small window, or a bordered card such as a meeting's notes with under 54 px to its left edge), the + leaves and the handle and the comment button sit just inside the page instead of being cut off or crossing the border (`block-controls.tsx`, `data-gutter-left`/`data-gutter-right` on `.block-editor-body`). Blocks are the units of a page, as in Notion (`components/editor/block-selection.ts`), in pages, tasks, projects and meeting notes alike. A drag that starts beside the text (the page around the editor, its gutter, a gap between blocks, the space after a short line) draws a rectangle and selects every block whose own line it crosses; a click there still puts the caret on the nearest line. A drag through text selects text until it reaches another block, then selects those blocks instead; a double-click, and a drag from it, always selects text. Esc in a block selects it, and clicking a block's handle selects it while its menu is open (Delete and Duplicate then act on all the selected blocks). Selected blocks are whole blocks (an item's nested items go with it): Delete or Backspace removes them in one undoable step, copy and cut take them whole, typing does not write over them, Enter goes back to writing at the end of the last one, ↑ and ↓ move to the block above or below and Shift extends, Shift-click beside the text extends to a block, Mod+D duplicates them, and Esc lets go (a second Esc reaches what holds the page). Mod+A selects the line's text first, then every block. A table keeps its own cell selection, and focus mode keeps Esc for leaving. Every editable page ends on an empty line (`components/editor/trailing-block.ts`): it is drawn, not saved, and clicking it or anywhere below the last block makes it a real line, so there is always somewhere to write after an image, a table or a list. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
-
-Images (`components/editor/page-image.ts`, the `image` node) come from `/image`, a drop, a paste or HTML with `data:` images, upload into Files with `purpose: "page-image"` behind a progress placeholder (`file-attach.ts`), and land as one undoable step. Width (10–100% of the column, or the image's own size), alignment, alt text and the original's size are node attributes, so they save, undo and co-edit; drag handles with a keyboard slider, a toolbar with alignment and width presets, Alt and remove appear only on editable pages. File-backed images load with the share headers and show from object URLs, so shared pages and public links show them. Each image is at most 2 MB (2,097,152 bytes), PNG, JPEG, GIF or WebP; the rules, storage and limits are in [32 §6](32_FILES.md#images-in-pages).
-
-Links in an editable page open on click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link by drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
-
-### Saving and concurrent edits
-
-Live page/task editing uses `pages/collab.ts`, `collab-core.ts` and `routes/collab.ts`, with epoch/version markers. Whole-document saves and conversions flush the live session first, so they include what others typed. A revision conflict keeps the draft. Annotation-only saves do not rewrite task notes or running instructions. A model action gets bounded current document context and can read more through tools.
-
-### Agent output and human notes
-
-Run output is immutable evidence. A run's card on its task shows the agent's output and **What it did**, a link to that run's full trace in Runs (`/runs?run=<id>`); a run still going shows its live log in place. Human annotations keep their run/output anchors. Request changes or Redo creates a new assignment/attempt instead of rewriting an answer. Context keeps saved output, annotations and current task instructions apart.
-
-### Selection comments and inline questions
-
-Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model. While it is typed in the caret's line, `@ensemble` shows as Ensemble's chip, the question is tinted and the line ends with *↵ Ask Ensemble* (an empty one says what it can do); these are editor decorations only (`components/editor/ensemble-ask.ts`), and only where Enter sends a request (a page, task or meeting notes, not a public link). In the @ menu the row carries Ensemble's mark and an *AI* badge.
-
-Comments never reserve document width or change the focus-mode reading column. Small gutter markers show thread counts; clicking a marker or highlighted text opens one compact, viewport-bounded thread overlay. Long quotes are limited to two lines; the thread scrolls independently. Close or Escape returns to writing. Page comments and selection drafts use the same overlay, with edits, resolution and delete confirmation (`components/comments/comment-layer.tsx`, `.comment-*` rules in `app/globals.css`).
-
-Inline requests use the normal assistant loop and scoped tools. Newly requested diagrams/plots can be created and attached inline under the existing policy; other held writes still need Apply. Request IDs stop retries from starting duplicate work. Failed drafts stay visible. A request needs a final answer; tool activity alone does not count as a reply. Code: `components/comments`, `apps/hub-api/src/ensemble/`, `routes/comments.ts`.
-
-### Manual and imported meeting notes
-
-`/meetings` (`app/(hub)/meetings/page.tsx`, styles in `components/meetings/meetings.css`) keeps each meeting with what a plain page lacks: its calendar event, the people in it, the whole transcript and the next steps.
-
-- **From your calendar** (`calendar-meetings.tsx`) shows timed events from `GET /api/calendar` for the last 7 days and the next 2 days, upcoming and live first; on phones it is one row that scrolls sideways. Each has **Take notes** (notes linked to the event and its attendees, or **Open notes** when they exist) and, for a past meeting whose join link is Teams, Google Meet or Zoom (`providerForUrl` in `lib/api-meetings.ts`), **Get transcript** (or **Transcript** once imported). It uses only `id`, `title`, `start`, `end`, `allDay`, `joinUrl` and `location`.
-- **Import** (`import-menu.tsx`) lists, from `GET /api/meetings/sources`: Upload a transcript, Paste a transcript, Microsoft Teams, Google Meet and Zoom (Connected, Turn on, Connect, or Not set up here when the server has no OAuth app), and Granola, Fireflies.ai, Fathom, tl;dv, Krisp, Jamie and Otter.ai (Connect opens Settings → Connections; once connected, Import 30 days). Turn on and Connect switch on the suite product and return to `/meetings` (`useConnectApp` in `fetch-problem.tsx`); a sign-in that needs an admin's approval shows a notice with Paste from Teams.
-- **Upload or paste** (`import-dialog.tsx`) reads the transcript first (`POST /api/meetings/transcripts/preview`): format, turns, speakers (You, In People, or Add to People, ticked for full names), duration, items found, the first lines and any warnings; title and time can be changed before **Import meeting**. Paste from Teams shows how to copy the transcript from Teams' recap.
-- **Teams, Google Meet, Zoom** (`remote-dialog.tsx`) lists recent meetings (`GET /api/meetings/remote/:provider`) with **Get transcript**, plus a field for a meeting link. When a transcript can't be read, `FetchProblem` shows why and the next steps the API returned: connect or turn on and approve, Ask the organizer (a `mailto:` with subject and body), Open in Teams or Meet, Paste from Teams, Upload. Explanations sit behind `InfoTip`.
-- **The shelf** lists notes taken in Ensemble and imported meetings together, newest first, with a search over titles, notes, summaries, sources and speakers. Each card shows Delete on hover or keyboard focus (always on touch screens); it confirms and offers Undo (`DELETE /api/meetings/sessions/:id` or `DELETE /api/meetings/notes/:id` and `POST …/restore`). With no meetings, a short welcome offers Upload a transcript, Paste from Teams and Start notes.
-- **Notes taken in Ensemble** use the block editor with serialized, debounced saving (`notes-fields.tsx`), under the meeting's event (with Get transcript or Open transcript for an online meeting) and its people. Typed content also gets a Markdown projection for search and recap. Failed drafts stay in browser memory across in-app navigation, not a full reload.
-- **Imported meetings** (`imported-notes.tsx`) are read-only source records apart from their **Project** (a picker; `PATCH /api/meetings/notes/:id` moves the meeting's open tasks too): source and time, the event, people (linked when in People; you are left out), summary, decisions, your action items and those waiting on others, each with **Make task** (`POST /api/meetings/notes/:id/tasks`, one task per item) or Open task, and the transcript (`transcript-view.tsx`): collapsed when there is a summary, speaker-coloured and timestamped, with a search that keeps matching turns by words or speaker. Items found from phrases in speech say so behind an `InfoTip`.
-- **Ensemble's read** (`meeting-ai.tsx`), on imported meetings and on notes taken in Ensemble once they end: the model's summary, the project it was about, decisions, your work from it and work waiting on others (each with its kind, the quoted words and their time, who asked, the due date; **Review** or **Open task** for a proposed task, **Already tracked** for existing work, **Make task** otherwise; items whose words were not found say so), open questions, topics for next time, and people who were in it but not in People (**Add**). **Suggest tasks** (or **Read again**) asks for a read now (`POST /api/meetings/notes/:id/suggest`, or `…/sessions/:id/suggest` for typed notes); while it reads, the panel shows progress and refreshes on the `meetings` live event. A link to typed notes' meeting note (`?note=<id>` from a notification, the graph or an agent) opens the notes.
-
-Today's meeting cues (`components/today/meeting-cues.tsx`) add **Last time** for a meeting of a series (the previous meeting's summary, its open tasks, what others owe and topics to raise, linking to it) with **Prepare**, and the prep brief once written ([03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)).
-
-Meetings do not record the microphone or transcribe audio. Routes: [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context), imports: [03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-meeting-transcripts-files-pastes-teams-google-meet-and-zoom).
-
-### Context graph
-
-Graph (`components/context/graph.tsx`, layout in `lib/graph-layout.ts`) derives connections from saved records and mentions (`GET /api/context/graph`); it never starts a provider fetch. Nodes are people, projects, repositories, tasks, deliverables, skills, meetings, pages, diagrams, plots and saved app items; links include project membership (with the role), task–project/repository/deliverable/skill, dependencies, work from a meeting, meeting attendees, work you wait on someone for (dashed, people-coloured), and mentions on pages (dashed). **Find in graph** lights matching nodes (Enter selects the first). Clicking a node opens a side panel with what links to it (`GET /api/context/item`); a linked record on the graph is selected in place, so the panel walks the graph, and **Focus here** keeps only what is within one or two links (the hop count is in the focus chip). Double-click or **Open** opens a record where it lives: tasks, projects, deliverables and people in the side peek, meetings and pages on their page. Phones use the list view. Data and suppression: [03](03_MODULE_CONTEXT_ENGINE.md).
-
-## 14. Notifications and private reminders
-
-Morning brief results are `routine` notifications, linking to the same editable routine. Reading or clearing one does not erase the latest reply shown on Today. Quiet-work nudges wait until the active brief's daily time, or 09:00 without an active daily brief (`cowork/service.ts`).
-
-The top bar's bell (`components/shell/notification-bell.tsx`) lists **unread notifications only**: reading one removes it, and there is no history. Its tabs are Unread (everything), Needs me (agent questions and runs that stopped needing the person), Reminders (reminders, nudges, the morning brief, routine results) and Sharing; it opens on Unread. The panel sizes to its rows up to 560 px, then scrolls. Rows are grouped Today, Yesterday and Earlier. Opening a row marks it read; × (shown in place of the time when the row is pointed at or focused, or a sideways swipe on touch) dismisses it, and Clear dismisses the open tab. The badge counts unread notifications and turns amber while something needs the person. An agent run that is stopped creates no notification (the board and Runs show it). One that finishes with its work waiting for the person (not marked done by the run) creates **Ready for review: <task>** (kind `review`, under Unread; `workspace/review-notice.ts`) unless Settings › Notifications › Nudges turns review notices off; a failed or interrupted one creates a "needs you" notification. Runs an Ensemble Node started notify neither way (the node reports in its chat and carries on). A "needs you" notification names what it waits on (`subject`: `decision:<id>` or `task:<id>`), and the bell shows it only while that still waits, exactly as the Needs me page does (`hub-api notifications/needs.ts`): a question or permission answered, expired or stopped anywhere (Ensemble, Ensemble Node's chat, the editor), a node's own request, a node's request while **Show my nodes' requests in Ensemble** is off, or a task that is no longer blocked leaves the bell at once and is marked read. A change to a request, approval, task or run refreshes the bell live.
-
-Reminders belong to the person, not to shared task context. A due reminder creates a notification. Platform delivery needs permission and a running browser tab or desktop app; quiet hours and OS Focus still apply. Snooze saves a real next time. Reminders are excluded from Context Bridge and search briefs. See [07 §1.2](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#12-private-reminders-and-platform-notifications).
-
-## 15. Waiting, previews and quiet status
-
-Saving, waiting for a person, queued, active and failed each have their own indicator; reduced motion keeps them without animation. Error turns never enter model history. Pending proposals keep Apply; failed dependent work offers Retry remaining steps and is not labelled Applied.
-
-## 16. Accounts and public signup
-
-`routes/auth.ts` and `auth-oauth.ts` provide scrypt passwords and hashed-cookie sessions. `ENSEMBLE_SIGNUP_MODE` is `open`, `allowlist` or `closed`; allowlist reads `ENSEMBLE_SIGNUP_ALLOWLIST`. Local first-account adoption of placeholder data is separate from hosted registration, which never claims localhost data.
-
-**Three open places per app.** The hosted Hub shell (`components/active-place-gate.tsx`) registers one place per tab/window, including the account's hosted web app inside a desktop window. Ensemble's `hub` and `desktop` places share a limit of three; Ensemble Node's `node` places have a separate limit of three. Three of each may be open at once. A session-storage id survives reload; a Web Lock gives a duplicated tab its own id. Where Web Locks are unavailable, each page load gets a fresh id. Heartbeats run every 10 seconds, independently of space sharing. `ActivePlace` belongs to the account and session, not the open space; 60 seconds without a heartbeat frees its slot (`lib/active-places.ts`). Closing releases it; sequence numbers prevent a delayed heartbeat from undoing a release. Each app's fourth place sees only that app's surface/browser/computer labels and cannot enter until it chooses one to sign out, or continues here in that pool's least recently heard slot. Replacement, release and expiry cannot take or move a slot in the other pool. Eviction revokes that place, not the shared cookie or every tab; its next request/heartbeat stops it, keeping open drafts. A revoked place cannot reclaim a free slot without choosing to continue.
-
-The lease API accepts `hub`, `node` and `desktop` surfaces and checks `x-ensemble-place` on ordinary session requests. Node's website registers its own windows and sends `x-ensemble-place-surface: node`; absent that header, requests use Ensemble's pool. Its EventSource names `place` and `placeAccount` in `/api/node/events`' query because EventSource cannot send custom headers. Requests without a place id retain their existing contract. CLI/editor `ens_` keys, past sign-ins, local-only runtimes and space switches do not consume slots. Password change revokes all old sessions and renews the changing window's cookie; password reset revokes every session, and sign-out revokes that cookie's session. Their old place rows cascade away. Account export excludes leases.
-
-An admitted window keeps offline editing available if its heartbeat fails, with a visible retry notice. Server requests still check its lease; reconnecting may require choosing a place. Pending page and settings drafts stay intact.
-
-The Hub binds its window to the account read at startup (`accountId` in heartbeats and `x-ensemble-place-account` on requests). A shared-cookie account switch returns `PLACE_ACCOUNT_CHANGED` and reloads the window after keeping drafts, rather than applying an old account's cached edits to the new one.
-
-Social buttons need `AUTH_<PROVIDER>_CLIENT_ID`/`_SECRET`. Login uses browser-bound PKCE/nonce/single-use state and identity validation, and stores login mappings, not connector tokens. A verified provider email links accounts only under the ownership rules; a Microsoft email or username alone is not email verification. `?return=node` on the start route sends a sign-in begun on Ensemble Node back to `ENSEMBLE_NODE_WEB_ORIGIN` (never another URL); the account and session are the Hub's ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)).
-
-Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`). Verification codes are hashed, expire after 30 minutes and count attempts; a new code invalidates the old one. The email links to the Hub's `/verify`, or to Ensemble Node's `/welcome` for a sign-up made there ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)). Turnstile answers are accepted from the Hub's host and from `ENSEMBLE_NODE_WEB_ORIGIN`'s host. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
-
-New accounts pick a profession/profile and a template. The tour (`components/onboarding/guided-tour.tsx`, replayed from the account menu's Take a tour) plays fictional scenes of the app on a preview canvas and never changes real work; Ask opens a draft without sending. Each scene runs on one clock (`tour-playback.ts`) with play/pause, restart, chapter dots and Back/Next. One simulated pointer (`tour-pointer.tsx`, stops in `tour-cursor.ts`) aims at the scene's `data-film-target` elements, clicks and drags in step with the scene, and eases from where it is drawn across chapter changes, restarts and resizes. With reduced motion, scenes show their final frame, chapters cut and there is no pointer. Settings has no control to change the signup role.
-
-Settings › Account manages the password, linked login methods (shown when the server offers any; the last way to sign in cannot be unlinked), a universal circular avatar picker (character, color and scenery) and export; deletion is in Settings › Data › Danger zone. Removing a method or deleting the account needs a recent session or password confirmation. Social-only accounts can add a first password. Sign-out confirms and returns to login. Account deletion keeps only the monthly credit-enforcement amount and a minimal operational log ([07 §6](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure)); no profile snapshot or survey.
-
-## 17. Linking a computer, and connecting editors
-
-`/link` approves a CLI login showing the computer, platform and access requested, and returns correctly after sign-in. Editor access and task-running access are distinct; hosted task access needs a verified account. Settings' Connect this computer dialog shares pairing steps, a ten-minute code and renewal/error state across its entry points.
-
-Connect guides offer CLI setup, a hosted MCP URL with a key (read, or read and change) or a source bridge. Editor guides (VS Code, Cursor, Windsurf, JetBrains) add **Using an AI extension inside…** (`components/connect/extensions.tsx`, `lib/connect/extensions.ts`): Claude Code, Codex, GitHub Copilot Chat, Gemini Code Assist, Cline, Roo Code, Kilo Code and Continue, each with where it reads its MCP servers, the steps and config for the chosen way, how to check it and what to avoid; `?ext=<id>` opens one, and the Connect page links each. **Need a hand?** (`components/connect/help.tsx`, `lib/connect/help.ts`) sends a setup question to the assistant in a new chat at the Medium tier, with the facts for that page (app, extension, way, OS, how many keys may make changes; never a key) as the turn's reference context. Device trust, lease lifetime, subscription calls and approvals: [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md). Assignment choices/profiles: [06](06_MODULE_WORKSPACE_AND_SURFACES.md). Engines and handoff: [30](30_ENGINES.md). Pairing never exposes the hosted server's filesystem.
-
-## 18. Downloads
-
-Page/task exports, original-file downloads, space archives and account exports are separate operations. Exported timestamps carry an explicit offset where the format includes local time. A file-backed page can export back from the browser where supported; server assistant exports rebuild supported documents. Format limits: [32](32_FILES.md). Space archives: [28 §5](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting). Full export: Account. Downloads use the same access checks as reading.
-
-## Public documentation API
+### Public documentation API
 
 `POST /api/docs/ask` answers anonymous questions from published docs only. It accepts no account context or credentials, creates no chat, and uses a separate rate-limited allowance. Its public access class bypasses identity and sharing resolution; other routes keep their existing sharing classes. See [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).

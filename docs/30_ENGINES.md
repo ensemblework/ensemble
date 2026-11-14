@@ -1,5 +1,182 @@
 # 30 · Engines: who does the work, and how their questions reach you
 
+Assign a task to Ensemble's agent or to a coding agent on your computer. You can use Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code.
+
+Open **Assign**, choose the agent and computer, then review the folder, permissions, model and limits. On the hosted app, pair your own computer for coding-agent execution. An agent opened in its own app uses that app's settings.
+
+## Start a task or terminal chat
+
+1. Install and sign in to the agent on the computer that will run it.
+2. Pair that computer with your Ensemble account if you are assigning from the web.
+3. In **Assign**, choose the agent, computer and folder or repository.
+4. Select a model and any available thinking, context or fast-mode options.
+5. Review the run mode, sandbox, outside-folder access, internet, Git permissions and limits. Start the run and follow its progress in Runs.
+
+**Auto** uses the agent configured for the task's complexity. A run profile remembers your choices. See [Execution permissions](24_DESKTOP_SANDBOXING.md) for the boundaries each mode applies.
+
+In the terminal app, use `/agent` and `/profile`, then `/run <what to do>`. The run starts in the folder where you opened the app. With a coding agent selected, each Chat message continues that agent's session under the same run rules. With Ensemble's agent selected, Ensemble Code reads the folder and can propose a task for an agent; it does not edit files or run commands itself.
+
+## 1. Claude Code as the engine
+
+Sign in to Claude Code on your computer. Ensemble uses your installed command or the copy supplied by the Claude app. It does not handle your Claude credentials or run Claude Code on its servers.
+
+Choose Claude Code in Assign, then select an available model. Thinking levels, long context and fast mode appear only when that model supports them. The run reports a requested option it cannot apply.
+
+Commands and edits follow the run's permissions. Questions and approvals appear in **Needs me**, including on the web or phone. In **Run unattended**, a question uses its recommended answer and records that decision on the task.
+
+With Sandbox on, Claude Code needs a supported sandbox on macOS or Linux. It cannot start sandboxed on native Windows or Linux without the required sandbox tools. The run explains what is missing. Its live log shows progress, tools, tokens and the final summary.
+
+## 2. Codex as the engine
+
+Sign in through the ChatGPT app or run `codex login` on the chosen computer. Ensemble uses the installed Codex or the app's copy with that existing account.
+
+Choose Codex in Assign and review the available model, thinking and fast-mode options. Codex runs in the selected folder with the run's sandbox and internet choices.
+
+Commands, file changes, requests for more access and questions go through the applicable run permissions. Questions appear in **Needs me**. Stop interrupts the current turn. The run keeps its progress, tool trace and final reply.
+
+## 3. Cursor's agent and GitHub Copilot as the engine
+
+Sign in on the computer before starting a run:
+
+| Agent | Sign-in command |
+| --- | --- |
+| Cursor's agent | `cursor-agent login` |
+| GitHub Copilot | `copilot login` |
+
+You can also use **Sign in** in Settings → Models. Ensemble uses the agent's existing account and reports when it needs an update or sign-in.
+
+Both agents send requested permissions to Ensemble. A permission granted for this call does not change the agent's permanent allowlist. Existing permissions you already saved in the agent can still let it act without asking Ensemble.
+
+Copilot starts with the chosen model, thinking level and context window. An unavailable model stops the run; an unsupported level is skipped with a note. If Copilot reports a smaller context window than requested, the run says so. A locked keychain can temporarily prevent access to an existing Copilot sign-in.
+
+### 3.1 Keeping a run going
+
+A run can recover from a temporary network failure, provider error, stopped agent process or locked keychain. It retries after 15 seconds, one minute and two minutes, then reports the error if recovery fails. Missing agents, signed-out accounts, unknown models and exhausted limits are not retried.
+
+Ten minutes without process output, a running tool or an open question counts as stuck. A single tool can run quietly for up to 60 minutes. Ensemble stops the agent and tries to continue the session. The run's own minutes limit still applies, excluding time waiting for you.
+
+### 3.2 Choosing the model, thinking level, context window and fast mode
+
+Choose the computer first so Assign can show the models that its agent reports. **Agent default** uses the agent's own choice. When no model list is available, the field can accept a typed model name.
+
+Thinking, context window and fast mode appear only when supported. Changing the agent or model resets incompatible options. Fast mode uses more of the plan in exchange for faster output. Run profiles, Quick assign, Run again and the CLI's `/model` preserve these choices.
+
+### 3.3 Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code and Kimi Code
+
+| Agent | Sign in on the chosen computer |
+| --- | --- |
+| Grok Build | `grok login` |
+| OpenCode | `opencode auth login` |
+| Gemini CLI | Start `gemini` and follow its sign-in prompts |
+| Antigravity | Choose **Install and sign in** or **Sign in** in Settings → Models |
+| Mistral Vibe | `vibe-acp --setup` or `vibe --setup` |
+| Qwen Code | Start `qwen` and use its sign-in prompt or `/auth` |
+| Kimi Code | `kimi login` |
+
+Each uses its own account and available models. Ensemble checks tool requests and routes questions to Needs me.
+
+Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can enable. Gemini CLI and Qwen Code support it on macOS only. A run with Sandbox on stops when its agent cannot provide one; select a supported agent or deliberately change that run's sandbox choice.
+
+### 3.4 What the agent says it runs with
+
+A run distinguishes the settings you requested, the settings sent to the agent and what the agent reported. Unsupported choices are explained in the run notes. A value the agent does not report is shown as **Not reported**; it is not guessed from your request.
+
+## 4. In the agent's own app, or a terminal
+
+On the computer's local runtime, open **Assign → More options → Open in the agent's own app**. Choose an existing folder, an earlier task's folder or a new empty workspace folder. Ensemble does not clone a repository for this handoff.
+
+| Destination | What you do next |
+| --- | --- |
+| Claude app, Code tab | Confirm the folder and press Send |
+| Codex in the ChatGPT app | Press Send |
+| Cursor | Press Send |
+| VS Code with Copilot agent | Press Send |
+| Claude Code, Codex, Cursor's agent or Copilot CLI in a terminal | The task starts immediately |
+
+The app uses its own settings and sign-in. Ensemble's run mode, sandbox and Git choices do not govern that app session. Connected hooks can relay its prompts to Needs me. Use **Done with it** on the task when the handoff is complete.
+
+A hosted page cannot start this handoff on a paired computer. The other supported coding agents have no app handoff.
+
+## 5. Prompts from the tools, and answering in either place
+
+Connect an editor or agent through **Settings → Editors & agents → Connect**, or run `ensemble hooks connect <tool>` on the local runtime. Only sessions Ensemble opened are linked to Needs me.
+
+Open **Needs me** in Ensemble or use `ensemble needs` to answer a question or permission request. Claude can show its own dialog alongside the card; the first answer counts. Other connected tools ask through Ensemble first, then fall back to their own prompt if Ensemble is unavailable or nobody answers in time. A hook never approves by itself.
+
+For an Ensemble-run task, **Allow for this run** or **Deny for this run** applies to matching actions during that run. It does not change the agent's permanent permissions. Older paired computers may need an update to receive a whole-run answer; **Allow once** remains available.
+
+Editor folder-trust prompts stay in the editor. They do not appear in Needs me.
+
+## 6. Vendor and account boundaries
+
+Ensemble starts the agent installed on your computer with its existing sign-in. It does not copy that sign-in into a hosted model API. Your provider's plan, entitlement and quota determine what the agent can use.
+
+An agent you configured with its own model provider keeps that setup. Detecting an installed program does not prove that its account has access to every model. Read the agent's own message when sign-in, entitlement or quota prevents a run.
+
+## 7. Limits
+
+An agent's own plugins, skills, MCP servers and instructions can add substantial context to every message. Permissions you permanently allowed in that agent can run without another Ensemble prompt.
+
+An engine-run session cannot be watched or continued live in the agent's app. Use the separate app handoff when that is the workflow you want. Supported session titles and project grouping are described in [Agent sessions](41_AGENT_SESSIONS.md).
+
+An unanswered question lasts only as long as the agent continues waiting. If it stops waiting, Ensemble withdraws the card because an answer would have no recipient.
+
+## 8. Your AI subscriptions for the assistant
+
+Use an AI plan for the assistant, Ask Ensemble or routines without adding an API key. The plan's agent does the model work on your computer. Those calls do not spend Ensemble's included credits.
+
+1. Open **Settings → Assistant → Models → Your AI subscriptions**.
+2. Select the computer that has the agent installed and signed in.
+3. Open **Manage subscriptions** if the plan is missing. Use its installation or sign-in action, then **Check again**.
+4. Choose the plan for a tier, or choose **Use for everything**.
+5. Select a supported model, thinking level and context window.
+
+Claude and Codex tiles show usage windows when the agent reports them. Copilot shows the signed-in account and model cost/context information. If no computer is selected, Ensemble uses the most recently seen online computer with that agent signed in. In a shared space, it uses your computers, not the owner's.
+
+### Working with tools and files on an AI plan
+
+On a current runtime, an ordinary assistant chat, Ask or routine keeps the agent's own shell, file, web and built-in tools. Hard restrictions still block credentials, other accounts, Ensemble's data and code, system files and dangerous machine-control operations. Node turns use Ensemble's computer tools with owner approvals instead. One-off summaries and similar background completions do not receive unrestricted local tools.
+
+Attach up to eight files to a message. Ensemble sends the originals to the computer; a file too large or unsupported for the agent's message is named with the reason. File delivery and format limits are in [Agents and attachments](38_AGENT_READABLE_FILES.md).
+
+Each chat normally continues one agent session. A new chat starts fresh. Deleted or unavailable sessions restart with Ensemble's conversation context. See [Agent sessions](41_AGENT_SESSIONS.md) for continuation and cleanup.
+
+### When an AI plan cannot answer
+
+The message explains whether no computer is paired, the computer is offline, Ensemble needs updating, the agent is missing or signed out, or the plan has reached its limit. Follow that action on the selected computer, then retry. Switching to an available included model or your own API key is a separate choice.
+
+## 9. The worker's report and evidence
+
+Open a completed run to read its result, checks and attached evidence. The agent reports whether it is done, passed, failed or blocked, separately from its closing message. Evidence can include screenshots, video, traces, reports, logs and other files.
+
+A run can attach up to **100 files**, each at most **100 MB**. Evidence is separate from ordinary Files. Credential files and files containing saved secret values are refused. Captures that need your preview stay on the computer until you release or discard them.
+
+Use `ensemble evidence off` to keep evidence on the computer. The run then says it was not uploaded. Run evidence is removed from the computer 30 days after the run ends. See [Files](32_FILES.md#evidence-from-agent-runs) for reading and sharing evidence.
+
+## 10. Support matrix
+
+Choose the agent for the work and the computer's available permissions. All supported coding agents can receive tasks, report progress and results, continue sessions and route questions through Ensemble. Their model menus, sandbox support and app handoffs differ.
+
+### 10.1 Coding agents
+
+| Feature | Availability |
+| --- | --- |
+| Model selection | Models reported by the installed agent and its account |
+| Thinking level | When the agent and selected model expose a level |
+| Long context | Claude Code and supported Copilot models |
+| Fast mode | Supported Claude Code and Codex models |
+| Browser and capture | Through the computer's Ensemble tools, subject to the run mode |
+| OS sandbox | Agent- and platform-dependent; see each agent's section |
+| Personal skills | The agent's own supported skill locations and trusted project configuration |
+
+### 10.2 A node's brain
+
+A node can use an included model, a supported API key or an AI plan on a paired computer. Local model servers must be reachable from the runtime using them. On a hosted account, use an AI-plan agent configured for your local model to run it on your computer.
+
+The node's model is checked against everything its owner can use, including models beyond the first entries shown in the picker. Included calls use account credits; an AI-plan turn uses the plan and keeps a conversation session on the computer.
+
+## In the code
+
 A code task is done by one of:
 
 - **Ensemble's agent**: Ensemble's own tool loop calling a model with the selected credential or funding source (`apps/hub-api/src/workspace/agent.ts`).
@@ -22,9 +199,11 @@ Paths below are under `apps/hub-api/src/` unless qualified.
 
 **Agent sessions.** Runs that continue each other (`continueFromJobId`) with the same agent are one session of that agent: Continue an earlier task resumes it, a fitting session may be chosen for a new run, a project's tasks share one folder, the agents' own apps list Ensemble's sessions with titles and projects, and sessions of retired work are cleaned up. All of it is in [41 · Agent sessions](41_AGENT_SESSIONS.md).
 
-**Ensemble Code.** With Ensemble's agent chosen, the Chat tab is Ensemble Code: the assistant with a code session (`assistant/tools/code.ts`). It reads, lists and searches the folder and reads PDF and Office files as text. Its one write, `ensemble_start_agent`, creates a task and starts the chosen engine on it with the profile's settings (or in a fresh clone when given a repository URL) through `createJob`, so every run rule applies. It follows the assistant's write policy ([11 §6](11_HOW_THE_ASSISTANT_WORKS.md#6-apply-undo-and-dependent-actions)); applied from a proposal it is ledgered as `assistant.ensemble_start_agent`. Ensemble Code never edits files or runs commands itself, and the hosted API refuses it (409): it needs the runtime on the person's computer.
+**Ensemble Code.** With Ensemble's agent chosen, the Chat tab is Ensemble Code: the assistant with a code session (`assistant/tools/code.ts`). It reads, lists and searches the folder and reads PDF and Office files as text. Its one write, `ensemble_start_agent`, creates a task and starts the chosen engine on it with the profile's settings (or in a fresh clone when given a repository URL) through `createJob`, so every run rule applies.
 
-## 1. Claude Code as the engine
+It follows the assistant's write policy ([11 §6](11_HOW_THE_ASSISTANT_WORKS.md#6-apply-undo-and-dependent-actions)); applied from a proposal it is ledgered as `assistant.ensemble_start_agent`. Ensemble Code never edits files or runs commands itself, and the hosted API refuses it (409): it needs the runtime on the person's computer.
+
+### 1. Claude Code as the engine: implementation reference
 
 **Account boundary.** Ensemble starts the person's own unmodified `claude` with its own sign-in: the `claude` command on the trusted PATH (never inside the work folder; the PATH comes from the login shell and usual install folders such as `~/.local/bin`), else the Claude app's copy (§8; `claudeBinary` in `subscriptions/detect.ts`). Ensemble never offers a Claude login, reads Claude credentials or runs Claude Code on its servers; API-key variables are removed (§6).
 
@@ -43,9 +222,13 @@ Paths below are under `apps/hub-api/src/` unless qualified.
 5. **Sandbox.** With the sandbox on, Claude Code's own sandbox (Anthropic's sandbox-runtime: Seatbelt on macOS, bubblewrap on Linux) confines shell commands to the work folder, the cache and the folders the run was let into (Run unattended: also the workspace's folders and the person's own folders). A command it stops may be retried outside the sandbox (`dangerouslyDisableSandbox`); the hook judges that retry: allowed in Run unattended, in Review only when its outside paths are all in allowed folders, otherwise asked. Where it cannot run (native Windows; Linux without bubblewrap and socat) Claude Code does not start; Ensemble says so and the sandbox can be turned off for the run. Internet off is an empty domain list.
 6. **Progress and trace.** The stream (`system/init`, `assistant`, `user`, `result`) feeds progress, live log, tool count, tokens and reported cost, and the run's trace (`EngineTrace`, `workspace/engines/trace.ts`): thinking, messages, and each tool call as one step (name, summary, input, then output and duration from its `tool_result`; failed if marked an error), in the engine's order. Previews only (`TRACE_PREVIEW`): input 600 characters, output 1,200, thinking and messages 2,000, final answer 20,000; at most 600 steps. Secrets are redacted by shape (`lib/redact.ts`), and a call reading a secrets file (`.env*`, private keys, `.npmrc`, `.netrc`, credentials files) gets no output. Open calls end when the run stops or fails. The Runs page shows the trace ([02](02_MODULE_INTERACTION_HUB_UI.md)); a paired computer sends the same previews to the web ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). The final reply is the task summary; model, cost estimate and changed files (names, line counts) are kept on the job (`evidence`).
 
-A task assigned on the web with Claude Code runs the same way on the paired computer; its Needs me cards reach the web and phone through it ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). **Models:** the ones Claude Code itself lists for the plan (§8: its `initialize` reply, each with its thinking levels and whether it has fast mode), with each model's context window and default level from `CLAUDE_MODELS` (`claude-models.ts`: a fixed 1M or 200K, or 200K with a 1M choice; aliases `opus`, `sonnet`, `haiku` and `fable` follow the newest of each), then the earlier models that version still runs (`minVersion`). Before the computer reports, the table stands in. The table follows T3 Code's model manifest (MIT). **Fast mode:** the per-run settings carry `fastMode: true` for a model that has it; one without it runs at its usual speed with an `engine_note`.
+A task assigned on the web with Claude Code runs the same way on the paired computer; its Needs me cards reach the web and phone through it ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
-## 2. Codex as the engine
+**Models:** the ones Claude Code itself lists for the plan (§8: its `initialize` reply, each with its thinking levels and whether it has fast mode), with each model's context window and default level from `CLAUDE_MODELS` (`claude-models.ts`: a fixed 1M or 200K, or 200K with a 1M choice; aliases `opus`, `sonnet`, `haiku` and `fable` follow the newest of each), then the earlier models that version still runs (`minVersion`). Before the computer reports, the table stands in. The table follows T3 Code's model manifest (MIT).
+
+**Fast mode:** the per-run settings carry `fastMode: true` for a model that has it; one without it runs at its usual speed with an `engine_note`.
+
+### 2. Codex as the engine: implementation reference
 
 **Account boundary.** Ensemble starts the person's own Codex through `codex app-server` (JSON lines over stdio, `workspace/engines/codex.ts`): `codex` on the trusted PATH, else the ChatGPT app's copy (`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex` on macOS, under `%LOCALAPPDATA%\OpenAI\Codex\bin\` on Windows, `/usr/lib/chatgpt/resources/codex` on Linux), which shares the `~/.codex` sign-in. Ensemble never signs in for the person or reads `auth.json` or the keychain, and refuses to start when `account/read` says Codex is not signed in ("Open the ChatGPT app (or run `codex login`) and sign in").
 
@@ -68,13 +251,19 @@ A task assigned on the web with Claude Code runs the same way on the paired comp
 
 Tests: `engines/codex.test.ts`, `engines/codex.e2e.test.ts` (with a stand-in `codex`).
 
-## 3. Cursor's agent and GitHub Copilot as the engine
+### 3. Cursor's agent and GitHub Copilot as the engine: implementation reference
 
 Both are driven through ACP, the Agent Client Protocol (JSON-RPC lines over stdio). Every `session/request_permission` is read as a tool call and judged by the same rules as §1; the answer is **allow-once or reject-once, never allow-always**, which would change the person's own allowlist in that tool. `session/update` feeds the live log, tool count, the reply (the task summary) and the trace: `tool_call` to its last `tool_call_update` is one step; `agent_thought_chunk` is thinking. Stop sends `session/cancel`. A chat message continues the agent's session with `session/load`.
 
-**Cursor's agent.** Ensemble starts the person's own `cursor-agent` (on the trusted PATH): `cursor-agent --sandbox enabled|disabled --workspace <folder> acp` (`workspace/engines/cursor.ts`). It uses the existing login (`authenticate` with `cursor_login`); without one it stops with "Run `agent login` there". A run: `initialize`, `authenticate`, `session/new` in the work folder with the `ask_person` MCP server, then `session/prompt` with the task. Cursor's own sandbox is on when the run's is. `cursorCall` reads a command as an `execute` call titled with the command, an edit by its path, and an MCP tool by its `server: tool` title (Ensemble's own tools pass; its browser and capture tools follow the mode). `cursor/ask_question` and form questions (`elicitation/create`) go to Needs me (recommended option in Run unattended; a typed answer goes back verbatim). Tests: `engines/cursor.test.ts`, `engines/cursor.e2e.test.ts`.
+**Cursor's agent.** Ensemble starts the person's own `cursor-agent` (on the trusted PATH): `cursor-agent --sandbox enabled|disabled --workspace <folder> acp` (`workspace/engines/cursor.ts`). It uses the existing login (`authenticate` with `cursor_login`); without one it stops with "Run `agent login` there". A run: `initialize`, `authenticate`, `session/new` in the work folder with the `ask_person` MCP server, then `session/prompt` with the task. Cursor's own sandbox is on when the run's is.
 
-**GitHub Copilot.** Ensemble starts the person's own `copilot` (on the trusted PATH) with the sign-in it already has (`workspace/engines/copilot.ts`, `subscriptions/copilot.ts`): `copilot --acp --no-auto-update --no-ask-user --additional-mcp-config @<file> --allow-tool 'ensemble(ask_person)' … --disallow-temp-dir [--sandbox] [--context long_context]`. Copilot's ACP accepts only http MCP servers from the client, so the run's `ask_person` server (and Chat's board tools) comes in through a per-run config file (mode 0600, removed at the end, `timeout` one day so `ask_person` waits for the person); `--allow-tool 'ensemble(<tool>)'` lets Ensemble's own tools run without asking (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`: `ask_person`, `report_result`, `attach_evidence`, `ensemble_context`, `secret_http` and Chat's board tools), while its browser and capture tools are asked about and judged by the run's mode like any MCP tool, and `--no-ask-user` sends every question through `ask_person` to Needs me. A session that starts with the person's own `/allow-all` on, or in autopilot or plan mode, is set back to `allow_all: off` and the agent mode before the task goes (`askingCopilot`): left on, Copilot would ask nothing and the judge would see no call. One that cannot be set back is not run.
+`cursorCall` reads a command as an `execute` call titled with the command, an edit by its path, and an MCP tool by its `server: tool` title (Ensemble's own tools pass; its browser and capture tools follow the mode). `cursor/ask_question` and form questions (`elicitation/create`) go to Needs me (recommended option in Run unattended; a typed answer goes back verbatim). Tests: `engines/cursor.test.ts`, `engines/cursor.e2e.test.ts`.
+
+**GitHub Copilot.** Ensemble starts the person's own `copilot` (on the trusted PATH) with the sign-in it already has (`workspace/engines/copilot.ts`, `subscriptions/copilot.ts`): `copilot --acp --no-auto-update --no-ask-user --additional-mcp-config @<file> --allow-tool 'ensemble(ask_person)' … --disallow-temp-dir [--sandbox] [--context long_context]`.
+
+Copilot's ACP accepts only http MCP servers from the client, so the run's `ask_person` server (and Chat's board tools) comes in through a per-run config file (mode 0600, removed at the end, `timeout` one day so `ask_person` waits for the person); `--allow-tool 'ensemble(<tool>)'` lets Ensemble's own tools run without asking (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`: `ask_person`, `report_result`, `attach_evidence`, `ensemble_context`, `secret_http` and Chat's board tools), while its browser and capture tools are asked about and judged by the run's mode like any MCP tool, and `--no-ask-user` sends every question through `ask_person` to Needs me.
+
+A session that starts with the person's own `/allow-all` on, or in autopilot or plan mode, is set back to `allow_all: off` and the agent mode before the task goes (`askingCopilot`): left on, Copilot would ask nothing and the judge would see no call. One that cannot be set back is not run.
 
 - **Model, thinking and context.** The task's model, thinking level and context window are given as Copilot starts (`--model`, `--reasoning-effort`, and `--context long_context` for the long window: `contextTier` on the assignment, kept on the job's context and sent to a paired computer as `contextTier`). Switching the model over ACP afterwards puts the session on that model's standard window, so `session/set_config_option` (`model`, `reasoning_effort`) is used only when Copilot did not start on them, and the run then notes that the window may be the standard one. A model the plan does not offer stops the run with that sentence; a level the model does not take is skipped with a note. A run whose reported window is smaller than the long window chosen gets a note saying so. Copilot's `usage_update` (tokens in use, window size) is recorded on the run as `engine_context`; tokens come from each `session/prompt` result.
 - **Permissions.** `copilotCalls` reads an `execute` request by its `command`, an `edit` by `rawInput.fileName` and every `locations` path (a patch over several files is judged for each), `read` and `search` by path, `fetch` by URL, and anything else as an MCP tool named by the `<server>-<tool>` title of its `tool_call` update. Reads inside the work folder do not ask; reads outside it, edits, commands, fetches and MCP tools do.
@@ -97,7 +286,13 @@ Each carry-on is an `engine_retry` event on the run; its open tool calls end as 
 
 ### 3.2 Choosing the model, thinking level, context window and fast mode
 
-The Assign dialog (`components/agent/assign-dialog.tsx`) offers the same menus for every coding agent, from the models the chosen computer reports (`computerAgent` and `engineModel` in `apps/hub-web/lib/engine-models.ts`): Claude Code from `CLAUDE_MODELS` for its installed version (Ensemble's own table before the computer reports), Codex from `model/list` (each model's levels, default level and whether it takes images), GitHub Copilot from `models.list` (cost, levels, two windows), Cursor's agent from `cursor-agent models` (names only), the ACP agents as §3.3 says. *<Agent> default* comes first; a typed model when the computer listed none. Under it are the model's facts (vendor, cost, context sizes); *Thinking* appears when the model has levels (its own default named, "Default (Medium)"), *Context window* when it has two, and *Fast mode* when the model has one (faster output that uses more of the plan: Claude Code's `fastMode`, Codex's fast service tier). A model without the chosen level or long window resets that choice, and so does changing agent. The dialog says when the agent is not signed in on that computer (with its login command), when Ensemble there is too old to run it, or what its check reported. For an agent with no OS sandbox there (`engineSandboxes`) and Sandbox on, it says the run will stop and to turn Sandbox off (§3.3). `engineAssign` sends `model`, `reasoningEffort`, `contextTier` and `fast` for every agent; the runner on the computer checks them again against that model, and one the model does not take is left out with an `engine_note`. Fast mode is kept on the job's context (`fastOf`) and sent to a paired computer as `fast`. Run profiles, Quick assign, Run again and the assistant's `hub_assign_agent` keep all four; the CLI's `/model` offers the same choices ([26](26_CLI.md)). Tests: `engines/copilot.test.ts`, `engines/copilot.e2e.test.ts` (with a stand-in `copilot`).
+The Assign dialog (`components/agent/assign-dialog.tsx`) offers the same menus for every coding agent, from the models the chosen computer reports (`computerAgent` and `engineModel` in `apps/hub-web/lib/engine-models.ts`): Claude Code from `CLAUDE_MODELS` for its installed version (Ensemble's own table before the computer reports), Codex from `model/list` (each model's levels, default level and whether it takes images), GitHub Copilot from `models.list` (cost, levels, two windows), Cursor's agent from `cursor-agent models` (names only), the ACP agents as §3.3 says. *<Agent> default* comes first; a typed model when the computer listed none.
+
+Under it are the model's facts (vendor, cost, context sizes); *Thinking* appears when the model has levels (its own default named, "Default (Medium)"), *Context window* when it has two, and *Fast mode* when the model has one (faster output that uses more of the plan: Claude Code's `fastMode`, Codex's fast service tier). A model without the chosen level or long window resets that choice, and so does changing agent.
+
+The dialog says when the agent is not signed in on that computer (with its login command), when Ensemble there is too old to run it, or what its check reported. For an agent with no OS sandbox there (`engineSandboxes`) and Sandbox on, it says the run will stop and to turn Sandbox off (§3.3).
+
+`engineAssign` sends `model`, `reasoningEffort`, `contextTier` and `fast` for every agent; the runner on the computer checks them again against that model, and one the model does not take is left out with an `engine_note`. Fast mode is kept on the job's context (`fastOf`) and sent to a paired computer as `fast`. Run profiles, Quick assign, Run again and the assistant's `hub_assign_agent` keep all four; the CLI's `/model` offers the same choices ([26](26_CLI.md)). Tests: `engines/copilot.test.ts`, `engines/copilot.e2e.test.ts` (with a stand-in `copilot`).
 
 ### 3.3 Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code and Kimi Code
 
@@ -113,11 +308,17 @@ These seven run through one ACP runner (`workspace/engines/acp.ts`, `ACP_AGENTS`
 | Qwen Code | `qwen --acp --approval-mode default` (`--experimental-acp` on an older one) and `--model`; built from Gemini CLI | `qwen`, whose first start asks how to sign in (`/auth`: the Qwen account with a Plus or Pro plan, or a provider key) | the API-key variables of §6 |
 | Kimi Code | `kimi acp` (Kimi Code CLI, which replaced the archived Python Kimi CLI); `authenticate` with `login`; every session starts in `default`, which asks before edits and commands, and is set back to it if not; `KIMI_CODE_TRUST_WORKSPACE=1` only in a folder the person trusted by name in Ensemble, removed otherwise | `kimi login` (device code: a link and a code) | `MOONSHOT_API_KEY` |
 
-A run is the Copilot run of §3 with the agent's own names: `initialize`, `authenticate` where the agent has a stored sign-in, `session/new` in the work folder with the `ask_person` MCP server (stdio), then the model and thinking level from the session's own options (`configOptions` with category `model` and `thought_level`, set with `session/set_config_option`; an older agent's `models` and `session/set_model`). A model the account does not offer stops the run with that sentence; a level the model does not take is left out with an `engine_note`. Every `session/request_permission` is read by `acpCalls` (a command from `rawInput.command` as a string or argv, or a backticked title; paths from `locations`, a diff's `path` and `rawInput`; an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`) and judged as in §1, answered allow-once or reject-once, never "always" (for Grok and OpenCode "always" is project-wide). Ensemble offers form questions (`clientCapabilities.elicitation.form`), so an agent's `elicitation/create` (OpenCode's question tool) reaches the person as `ask_person` does (§1 step 4); without it OpenCode tells its model the question could not be shown. Refusals go back as the next message, at most `REFUSAL_FOLLOW_UPS` times. `usage_update` is recorded as `engine_context`. A chat message continues the session.
+A run is the Copilot run of §3 with the agent's own names: `initialize`, `authenticate` where the agent has a stored sign-in, `session/new` in the work folder with the `ask_person` MCP server (stdio), then the model and thinking level from the session's own options (`configOptions` with category `model` and `thought_level`, set with `session/set_config_option`; an older agent's `models` and `session/set_model`). A model the account does not offer stops the run with that sentence; a level the model does not take is left out with an `engine_note`.
+
+Every `session/request_permission` is read by `acpCalls` (a command from `rawInput.command` as a string or argv, or a backticked title; paths from `locations`, a diff's `path` and `rawInput`; an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`) and judged as in §1, answered allow-once or reject-once, never "always" (for Grok and OpenCode "always" is project-wide).
+
+Ensemble offers form questions (`clientCapabilities.elicitation.form`), so an agent's `elicitation/create` (OpenCode's question tool) reaches the person as `ask_person` does (§1 step 4); without it OpenCode tells its model the question could not be shown. Refusals go back as the next message, at most `REFUSAL_FOLLOW_UPS` times. `usage_update` is recorded as `engine_context`. A chat message continues the session.
 
 **Sandbox.** Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can turn on, and Gemini CLI and Qwen Code have one only on macOS (`--sandbox`, Seatbelt). A run with Sandbox on stops with "<agent> has no OS sandbox Ensemble can turn on here. Turn the sandbox off for this run: Ensemble still judges every command, edit, outside read and fetch <agent> asks to make."
 
-**Antigravity's install** (`subscriptions/antigravity.ts`). Google publishes the agent as a zip per platform on `dl.google.com` (`agy-acp-server-1.3.0-<os>-<arch>.zip`, a few hundred MB). Sign in (or *Install and sign in* on its tile) downloads it once, checks it against the pinned SHA-256 and unpacks it (`ditto`, `unzip`, Python's `zipfile` or `tar`) into `<state>/agents/antigravity/versions/1.3.0/`. It then starts the server with `GEMINI_HOME=<state>/agents/antigravity/home` and `AGY_ACP_FORCE_FILE_STORAGE=1`, calls `authenticate`, and opens the Google sign-in link the server prints (`Open the following link to authenticate the ACP server: …`) in the browser; Google answers on the server's own 127.0.0.1 address, and the sign-in stays in Antigravity's file in that home. A run that meets the link instead says it is not signed in. Release table and environment follow T3 Code (MIT).
+**Antigravity's install** (`subscriptions/antigravity.ts`). Google publishes the agent as a zip per platform on `dl.google.com` (`agy-acp-server-1.3.0-<os>-<arch>.zip`, a few hundred MB). Sign in (or *Install and sign in* on its tile) downloads it once, checks it against the pinned SHA-256 and unpacks it (`ditto`, `unzip`, Python's `zipfile` or `tar`) into `<state>/agents/antigravity/versions/1.3.0/`.
+
+It then starts the server with `GEMINI_HOME=<state>/agents/antigravity/home` and `AGY_ACP_FORCE_FILE_STORAGE=1`, calls `authenticate`, and opens the Google sign-in link the server prints (`Open the following link to authenticate the ACP server: …`) in the browser; Google answers on the server's own 127.0.0.1 address, and the sign-in stays in Antigravity's file in that home. A run that meets the link instead says it is not signed in. Release table and environment follow T3 Code (MIT).
 
 ### 3.4 What the agent says it runs with
 
@@ -133,7 +334,7 @@ A run's settings are recorded three ways ([35 §8.10](35_ENSEMBLE_NODE.md#810-ru
 
 The computer sends the result with its progress when it changes and with complete (`observed`, and `totals.observed`; [25 §4.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#41-account-and-device-routes)), and the server keeps it on the job (`workspace_jobs.observed_settings`). A run on this server is read from its own events. Anything not reported shows as "not reported": a runtime before this release reports only the model, from its `engine` event.
 
-## 4. In the agent's own app, or a terminal
+### 4. In the agent's own app, or a terminal: implementation reference
 
 Assign → More options → **Open in the agent's own app** opens the task in an app found on this computer (`GET /api/agent/apps`) on a folder: one of the person's, an earlier task's, or a new empty one in the workspace (Ensemble does not clone for an app). `POST /api/agent/handoff`, `workspace/handoff.ts`:
 
@@ -146,9 +347,11 @@ Assign → More options → **Open in the agent's own app** opens the task in an
 
 **In a terminal**: Claude Code, Codex (its CLI or the ChatGPT app's copy), Cursor's agent or Copilot CLI starts in a terminal window on the folder with the task as first prompt (`claude "…"`, `codex "…"`, `cursor-agent "…"`, `copilot -i "…"`) and begins at once. The window is Terminal on macOS (a `.command` file), the first terminal found on Linux, PowerShell on Windows (an encoded command); `terminalScript` quotes the prompt so nothing in it runs as a command.
 
-Vendors let another app fill in a prompt but not send it, so in an app the person presses Send. The prompt ends with a marker (`Ensemble task ens-…`); the agent's `UserPromptSubmit` hook (or a hook in the hand-off's folder, for tools that never see the prompt) links that session to the hand-off. From then on its permission prompts and questions reach Needs me, and the task page shows "In Claude", then the agent's last words when a turn ends (`Stop`), until the person presses "Done with it". The app uses its own settings and sign-in; Ensemble's mode, sandbox and git choices do not apply. Only the runtime on the person's computer opens apps; the hosted site refuses with 409.
+Vendors let another app fill in a prompt but not send it, so in an app the person presses Send. The prompt ends with a marker (`Ensemble task ens-…`); the agent's `UserPromptSubmit` hook (or a hook in the hand-off's folder, for tools that never see the prompt) links that session to the hand-off.
 
-## 5. Prompts from the tools, and answering in either place
+From then on its permission prompts and questions reach Needs me, and the task page shows "In Claude", then the agent's last words when a turn ends (`Stop`), until the person presses "Done with it". The app uses its own settings and sign-in; Ensemble's mode, sandbox and git choices do not apply. Only the runtime on the person's computer opens apps; the hosted site refuses with 409.
+
+### 5. Prompts from the tools, and answering in either place: implementation reference
 
 The same hook, installed into each tool's settings, sends prompts to Needs me: Settings → Editors & agents → **Connect** (desktop app or the CLI's runtime), `ensemble hooks connect <tool>`, or `node scripts/ensemble-hook.mjs install --target cursor|claude|codex|copilot-cli|vscode --token …`. Connect signs the hook in with a **`hooks` key**: it can open a card, wait on it, withdraw it and report session activity, never answer a card (`hooksTokenRejected` in `bridge/auth.ts`).
 
@@ -164,26 +367,46 @@ The same hook, installed into each tool's settings, sends prompts to Needs me: S
 
 Reporting hooks wait at most 5 s and never block the tool. `POST /api/decisions/activity` links the session, closes cards answered in the tool (status `settled`; the waiting hook lets go) and records a hand-off's progress. An answer applies once, for the session, or always. If Ensemble is unreachable or nobody answers in time, the tool shows its own prompt; the hook never allows by itself. `ensemble needs` lists these too.
 
-**Answers in a run Ensemble started** (§1–§3). *Allow for this run* (`scope: "session"`) is kept as a rule of that run (`RUN_RULE_SOURCE`) and read before the person is asked again (`runRule` in `workspace/tools.ts`). It covers the same command with other arguments (`commandKind` in `workspace/command-kind.ts`: the program and its script or what it does, as `python3 <script>`, `npm run build`, `git commit`, `npx playwright test`; never inline code, a variable, `VAR=value` in front, another computer, or a command with an option before what it does, which match only themselves), an edit anywhere in the run's own folder, a fetch from the same site, and the run's other browser tools (or capture tools). *Deny for this run* covers the same. A run on a paired computer takes it from the web and the Node chat too: the computer reports `capabilities.runAnswers: 1`, the web takes *for this run* on a permission (never a question or a push) only for such a computer ("Update Ensemble on <computer> to allow this for the whole run from here. Allow once works now." otherwise), and the computer keeps the rule for its run (`judgeAnswer` in `remote/policy.ts`). The agents' own "always" is never chosen: Ensemble's run rule answers the agent's next ask at once (Claude Code's hook sees every call, so a Claude `updatedPermissions` session rule would add nothing), while an agent's "always" changes the person's own allowlist (Copilot keeps it per folder in `~/.copilot/permissions-config.json`, Cursor in its allowlist, Grok and OpenCode for the project) and hides later calls from the judge.
+**Answers in a run Ensemble started** (§1–§3). *Allow for this run* (`scope: "session"`) is kept as a rule of that run (`RUN_RULE_SOURCE`) and read before the person is asked again (`runRule` in `workspace/tools.ts`).
 
-## 6. Vendor and account boundaries
+It covers the same command with other arguments (`commandKind` in `workspace/command-kind.ts`: the program and its script or what it does, as `python3 <script>`, `npm run build`, `git commit`, `npx playwright test`; never inline code, a variable, `VAR=value` in front, another computer, or a command with an option before what it does, which match only themselves), an edit anywhere in the run's own folder, a fetch from the same site, and the run's other browser tools (or capture tools). *Deny for this run* covers the same.
 
-Engine adapters and subscription turns launch the person's installed, unmodified program with its own sign-in and never copy a vendor token into a hosted model API. Variables that would bill an API account instead of the plan are removed from the program's environment: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` for Codex, `CURSOR_API_KEY` for Cursor (`KEY_VARIABLES` in each engine). The ACP agents (§3.3), subscription turns (§8) and detection drop all of them plus `XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `ENSEMBLE_DESKTOP_TOKEN` and `ENSEMBLE_INTERNAL_TOKEN` (`agentEnv` in `subscriptions/detect.ts`). GitHub Copilot, as an engine, in a subscription turn and in detection, also loses `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_TOKEN` (which would replace its stored sign-in and reach its shell commands) and `COPILOT_ALLOW_ALL` and `COPILOT_ASSISTED_APPROVAL` (which would approve tool calls without asking), and runs with `COPILOT_AUTO_UPDATE=false` (`copilotEnv` in `subscriptions/copilot.ts`). A tool the person set up with its own model provider (their Codex `config.toml`, Claude Code settings, Copilot's `COPILOT_PROVIDER_*`) runs as set up: the variable a Codex provider reads its key from (`env_key`) is kept even when it is one of the variables above (`codexEnv` in `subscriptions/detect.ts`). Detecting a binary does not prove a plan or model entitlement; the tool reports its own account and quota errors. Vendor terms are the operator's to review.
+A run on a paired computer takes it from the web and the Node chat too: the computer reports `capabilities.runAnswers: 1`, the web takes *for this run* on a permission (never a question or a push) only for such a computer ("Update Ensemble on <computer> to allow this for the whole run from here. Allow once works now." otherwise), and the computer keeps the rule for its run (`judgeAnswer` in `remote/policy.ts`).
 
-**A runtime started inside a Claude session.** Claude in the Claude app's Code tab can start the runtime itself (`pnpm dev`, `ensemble runner start`); the runtime then inherits what the app sets for that session and what the session sets for each command it runs. Engines, subscription turns, detection, and the terminals, editors and links that hand-offs (§4) and sign-ins (§8) open run without those variables (`withoutHostSession` in `subscriptions/host-session.ts`, in `agentEnv`, each engine's environment and `launch` in `workspace/handoff.ts`), so Claude Code does not wait for the app's sign-in ("Not logged in"), call itself the app or reach the app's messaging socket: Claude Code's marks on a session's commands (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`), the app's entry point, sign-in and account (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_OAUTH_SCOPES`, `CLAUDE_CODE_SUBSCRIPTION_TYPE` and the like), and the `CLAUDE_CODE_HOST_*`, `CLAUDE_CODE_DESKTOP_*`, `CLAUDE_CODE_SDK_HAS_*` and `CLAUDE_AGENT_SDK_*` families. Where the app manages the provider (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` set: a gateway or a cloud provider), it has written its own provider over the person's, so the provider variables go too: `CLAUDE_CODE_USE_*`, `ANTHROPIC_BASE_URL` and the other base URLs, `ANTHROPIC_CUSTOM_HEADERS`, the provider's project, region and keys, and the model names (`ANTHROPIC_DEFAULT_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`). Claude Code then uses the person's own sign-in and settings (`~/.claude/settings.json`). Anywhere else the provider variables are the person's own and pass through, as do their other `CLAUDE_CODE_*` settings.
+The agents' own "always" is never chosen: Ensemble's run rule answers the agent's next ask at once (Claude Code's hook sees every call, so a Claude `updatedPermissions` session rule would add nothing), while an agent's "always" changes the person's own allowlist (Copilot keeps it per folder in `~/.copilot/permissions-config.json`, Cursor in its allowlist, Grok and OpenCode for the project) and hides later calls from the judge.
 
-## 7. Limits
+### 6. Vendor and account boundaries: implementation reference
+
+Engine adapters and subscription turns launch the person's installed, unmodified program with its own sign-in and never copy a vendor token into a hosted model API. Variables that would bill an API account instead of the plan are removed from the program's environment: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` for Codex, `CURSOR_API_KEY` for Cursor (`KEY_VARIABLES` in each engine).
+
+The ACP agents (§3.3), subscription turns (§8) and detection drop all of them plus `XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `ENSEMBLE_DESKTOP_TOKEN` and `ENSEMBLE_INTERNAL_TOKEN` (`agentEnv` in `subscriptions/detect.ts`). GitHub Copilot, as an engine, in a subscription turn and in detection, also loses `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_TOKEN` (which would replace its stored sign-in and reach its shell commands) and `COPILOT_ALLOW_ALL` and `COPILOT_ASSISTED_APPROVAL` (which would approve tool calls without asking), and runs with `COPILOT_AUTO_UPDATE=false` (`copilotEnv` in `subscriptions/copilot.ts`).
+
+A tool the person set up with its own model provider (their Codex `config.toml`, Claude Code settings, Copilot's `COPILOT_PROVIDER_*`) runs as set up: the variable a Codex provider reads its key from (`env_key`) is kept even when it is one of the variables above (`codexEnv` in `subscriptions/detect.ts`). Detecting a binary does not prove a plan or model entitlement; the tool reports its own account and quota errors. Vendor terms are the operator's to review.
+
+**A runtime started inside a Claude session.** Claude in the Claude app's Code tab can start the runtime itself (`pnpm dev`, `ensemble runner start`); the runtime then inherits what the app sets for that session and what the session sets for each command it runs.
+
+Engines, subscription turns, detection, and the terminals, editors and links that hand-offs (§4) and sign-ins (§8) open run without those variables (`withoutHostSession` in `subscriptions/host-session.ts`, in `agentEnv`, each engine's environment and `launch` in `workspace/handoff.ts`), so Claude Code does not wait for the app's sign-in ("Not logged in"), call itself the app or reach the app's messaging socket: Claude Code's marks on a session's commands (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`), the app's entry point, sign-in and account (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_OAUTH_SCOPES`, `CLAUDE_CODE_SUBSCRIPTION_TYPE` and the like), and the `CLAUDE_CODE_HOST_*`, `CLAUDE_CODE_DESKTOP_*`, `CLAUDE_CODE_SDK_HAS_*` and `CLAUDE_AGENT_SDK_*` families.
+
+Where the app manages the provider (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` set: a gateway or a cloud provider), it has written its own provider over the person's, so the provider variables go too: `CLAUDE_CODE_USE_*`, `ANTHROPIC_BASE_URL` and the other base URLs, `ANTHROPIC_CUSTOM_HEADERS`, the provider's project, region and keys, and the model names (`ANTHROPIC_DEFAULT_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`). Claude Code then uses the person's own sign-in and settings (`~/.claude/settings.json`). Anywhere else the provider variables are the person's own and pass through, as do their other `CLAUDE_CODE_*` settings.
+
+### 7. Limits: implementation reference
 
 - GitHub Copilot loads the person's own Copilot setup as it would in a terminal: their plugins, skills, MCP servers and custom instructions (`AGENTS.md` and the like in the folder). With many plugins or MCP tools, each message carries a large fixed context. A tool the person already allowed "always" in Copilot for that folder (`~/.copilot/permissions-config.json`) runs without asking, so the judge does not see it; the same holds for a command in Cursor's own allowlist and a tool in Gemini CLI's `tools.allowed`. Copilot's `/allow-all` and autopilot are turned off for the run (§3).
 - An engine run cannot be watched or continued in the agent's own app, and hand-offs (§4) cannot be started on a paired computer from the web. Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code and Kimi Code have no hand-off.
 - Grok Build, OpenCode and Gemini CLI load the person's own setup (their MCP servers, Gemini's and OpenCode's global settings and instructions). `ask_person` waits as long as the agent's own MCP request timeout allows; when the agent gives up, the card is withdrawn (§1 step 4).
 - The VS Code and Cursor editors' own folder-trust prompts do not reach Needs me. VS Code's Copilot sign-in is reachable only through the hand-off (§4); code runs and subscription turns use Copilot CLI's sign-in.
 
-## 8. Your AI subscriptions for the assistant
+### 8. Your AI subscriptions for the assistant: implementation reference
 
 The assistant (the dock, `@ensemble` on a page, the Ask panel) and Ensemble's quick model calls (triage, summaries, a tier's Test) can run on the person's own Claude, ChatGPT, Cursor, GitHub Copilot, Grok, OpenCode, Gemini, Antigravity, Mistral Vibe, Qwen Code or Kimi Code plan instead of an API key. The plan's agent does the thinking on the person's computer with the vendor's sign-in; Ensemble's tools and data stay where they are. Nothing is billed through Ensemble, and Ensemble never sees the sign-in.
 
-**Choosing it.** Each subscription is a model provider: `claude-code`, `codex`, `cursor-agent`, `copilot-cli`, `grok-cli`, `opencode`, `gemini-cli`, `antigravity`, `mistral-vibe`, `qwen-code`, `kimi-code` (`SUBSCRIPTION_PROVIDERS` in `packages/shared-types/src/subscriptions.ts`). A tier set to one (Settings → Assistant → Models → *Your AI subscriptions* → *Use for everything*, or a tier's provider menu) runs there, on the computer in `models.computer`, else the most recently seen online computer with that agent signed in (`pickComputer` in `subscriptions/turn.ts`). In a space shared with the person, only their own computers are used. The card shows only the plans found on that computer; *Manage subscriptions* (`?dialog=subscriptions`, `subscriptions-dialog.tsx`) lists every plan like *Manage API keys*: the found ones first, then the rest with how to add each. The plans (marks in `apps/hub-web/components/connectors/provider-logo.tsx`, sources in `public/providers/manifest.json`; Grok shows its initial). A tile with usage windows (Claude, Codex) shows a bar for each with how much is used and when it starts over (`UsageBars`). A signed-in Copilot tile shows *Signed in as <account>*, and its models show their vendor, cost and context sizes ("OpenAI · low cost · 200K or 922K context"; `lib/engine-models.ts`). A tier on a model that has a long window (a Copilot model, or a Claude model with a 1M choice) offers *Context window*: Standard or Long context, saved as the tier's `context`; a model or provider without one resets it to the default, as does *Use for everything*. The thinking menu names the model's own default level ("Automatic (Medium)").
+**Choosing it.** Each subscription is a model provider: `claude-code`, `codex`, `cursor-agent`, `copilot-cli`, `grok-cli`, `opencode`, `gemini-cli`, `antigravity`, `mistral-vibe`, `qwen-code`, `kimi-code` (`SUBSCRIPTION_PROVIDERS` in `packages/shared-types/src/subscriptions.ts`). A tier set to one (Settings → Assistant → Models → *Your AI subscriptions* → *Use for everything*, or a tier's provider menu) runs there, on the computer in `models.computer`, else the most recently seen online computer with that agent signed in (`pickComputer` in `subscriptions/turn.ts`). In a space shared with the person, only their own computers are used.
+
+The card shows only the plans found on that computer; *Manage subscriptions* (`?dialog=subscriptions`, `subscriptions-dialog.tsx`) lists every plan like *Manage API keys*: the found ones first, then the rest with how to add each. The plans (marks in `apps/hub-web/components/connectors/provider-logo.tsx`, sources in `public/providers/manifest.json`; Grok shows its initial). A tile with usage windows (Claude, Codex) shows a bar for each with how much is used and when it starts over (`UsageBars`).
+
+A signed-in Copilot tile shows *Signed in as <account>*, and its models show their vendor, cost and context sizes ("OpenAI · low cost · 200K or 922K context"; `lib/engine-models.ts`). A tier on a model that has a long window (a Copilot model, or a Claude model with a 1M choice) offers *Context window*: Standard or Long context, saved as the tier's `context`; a model or provider without one resets it to the default, as does *Use for everything*.
+
+The thinking menu names the model's own default level ("Automatic (Medium)").
 
 **Detection** (`subscriptions/detect.ts`, reported in the heartbeat's `capabilities.agents` with `assistantTurns: 3`; rechecked every 10 minutes, on *Check again* and after a sign-in):
 
@@ -201,11 +424,21 @@ The assistant (the dock, `@ensemble` on a page, the Ask panel) and Ensemble's qu
 
 **Signing in.** *Sign in* (web or desktop app) opens a terminal window on that computer running the tool's own login (`claude auth login --claudeai`, `codex login`, `cursor-agent login`, `copilot login`, `grok login`, `opencode auth login`, `vibe-acp --setup`, `kimi login`, or `gemini` or `qwen`, whose first start asks how to sign in; `subscriptions/signin.ts`). Antigravity has no command: Sign in installs its agent when needed and opens Google's sign-in page from it (§3.3). The tool opens the vendor's sign-in page and stores the sign-in where it always does. Ensemble checks the tool every 8 seconds for up to 6 minutes.
 
-**One turn** (`subscriptions/agents.ts`). The turn is built as for a model key ([11](11_HOW_THE_ASSISTANT_WORKS.md)): the instructions plus a few lines on how it runs there (`howYouRun` in `subscriptions/turn.ts`: Ensemble's tools, all its own tools in a chat, Ask Ensemble or a routine (below), else its own web search and page reading when `ownWeb` is on (only for Claude Code, Codex and Copilot, `OWN_WEB_AGENTS`: Cursor's agent and the ACP agents get every tool of their own refused in a turn, so they read the web through `hub_web_search` and `hub_read_web_page`), and for a node's turn that the computer's browser and terminal are reached through Ensemble's tools, that real coding goes to a coding-agent session and that the conversation goes on from one message to the next), the message with its context, and the turn's tools (core and playbook tools plus `hub_use_tool`, which calls any of the turn's tools by name).
+**One turn** (`subscriptions/agents.ts`).
+
+The turn is built as for a model key ([11](11_HOW_THE_ASSISTANT_WORKS.md)): the instructions plus a few lines on how it runs there (`howYouRun` in `subscriptions/turn.ts`: Ensemble's tools, all its own tools in a chat, Ask Ensemble or a routine (below), else its own web search and page reading when `ownWeb` is on (only for Claude Code, Codex and Copilot, `OWN_WEB_AGENTS`: Cursor's agent and the ACP agents get every tool of their own refused in a turn, so they read the web through `hub_web_search` and `hub_read_web_page`), and for a node's turn that the computer's browser and terminal are reached through Ensemble's tools, that real coding goes to a coding-agent session and that the conversation goes on from one message to the next), the message with its context, and the turn's tools (core and playbook tools plus `hub_use_tool`, which calls any of the turn's tools by name).
 
 **Sessions.** Each chat is one session of the plan's agent on the computer that runs it, resumed message to message; a group of chats (an Ensemble Node) shares a project folder, a session the person used in the agent's own app is not resumed, an inline ask keeps one short session per page, a one-off completion keeps none, and deleting a chat deletes its session: [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan) and [§6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up).
 
-**The agent's own tools in a chat** (`subscriptions/own-tools.ts`, `assistantTurns: 4`). A chat, an Ask Ensemble or a routine (`ownTools` on the turn's spec; never a node's turn, which reaches the computer through Ensemble's tools so its owner approves, nor a one-off completion, whose input is a file, an email or a meeting the person did not write) keeps all of the agent's own tools: its shell, files, web search and its own built-in tools, as in the person's own agent, without asking. Ensemble decides nothing about what the request needs: the instructions (`howYouRun` with `ownTools`) say most requests need only Ensemble's tools, that a command or a file on the computer is the agent's to judge, that its folder is the chat's scratch folder (keep work in Ensemble with `hub_save_file` or a page, or where the person says), and that a change to code in a repository usually goes better as a task for a coding agent (`hub_assign_to_agent`) unless the person asks for it here. Only the hard floor refuses a call, judged from the turn's folder (`judgeFloor` in `workspace/engines/judge.ts`, the same floor a run has: the dangerous commands, privilege, persistence and system-settings programs, and outside that folder keys and sign-ins, Ensemble's own data and code, start-up items, the system's files and other accounts); a refused call comes back to the agent with its reason and the turn goes on. Each agent is asked its own way: Claude Code runs every tool through a PreToolUse hook (`--settings`, `scripts/ensemble-hook.mjs --chat`, which asks the turn's runtime at `POST /api/engine/assistant/ask` with the turn's secret and fails closed); Copilot CLI gets every tool, path and URL (`--allow-all-tools --allow-all-paths --allow-all-urls`, its built-in MCP servers on) and the same hook as a per-turn plugin (`--plugin-dir`, a `plugin.json` and `hooks.json` in the chat's folder: a folder's own `.github/hooks` load only for a new trusted session, a plugin for a resumed one too), from a Copilot whose help lists `--plugin-dir`; Codex runs without its sandbox and with its environment (no `environments: []`), asking before every command it does not consider safe and every file change, each answered by the floor (`answerCodexOwnTools`); Cursor's agent runs with `--sandbox disabled` and Cursor's and the ACP agents' permission requests are answered by the floor (`answerAcpOwnTools`). Each of its own calls, with its input and what it returned, and each refusal with why, goes in the person's AI activity log (`OwnToolLog`, [07 §1.4](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#14-the-ai-activity-log)). A computer before `assistantTurns: 4` (`ASSISTANT_TURN_OWN_TOOLS`) runs the turn with Ensemble's tools only, and its agent is told so (`systemWithoutOwnTools`). Otherwise the agent gets only Ensemble's tools:
+**The agent's own tools in a chat** (`subscriptions/own-tools.ts`, `assistantTurns: 4`). A chat, an Ask Ensemble or a routine (`ownTools` on the turn's spec; never a node's turn, which reaches the computer through Ensemble's tools so its owner approves, nor a one-off completion, whose input is a file, an email or a meeting the person did not write) keeps all of the agent's own tools: its shell, files, web search and its own built-in tools, as in the person's own agent, without asking.
+
+Ensemble decides nothing about what the request needs: the instructions (`howYouRun` with `ownTools`) say most requests need only Ensemble's tools, that a command or a file on the computer is the agent's to judge, that its folder is the chat's scratch folder (keep work in Ensemble with `hub_save_file` or a page, or where the person says), and that a change to code in a repository usually goes better as a task for a coding agent (`hub_assign_to_agent`) unless the person asks for it here.
+
+Only the hard floor refuses a call, judged from the turn's folder (`judgeFloor` in `workspace/engines/judge.ts`, the same floor a run has: the dangerous commands, privilege, persistence and system-settings programs, and outside that folder keys and sign-ins, Ensemble's own data and code, start-up items, the system's files and other accounts); a refused call comes back to the agent with its reason and the turn goes on.
+
+Each agent is asked its own way: Claude Code runs every tool through a PreToolUse hook (`--settings`, `scripts/ensemble-hook.mjs --chat`, which asks the turn's runtime at `POST /api/engine/assistant/ask` with the turn's secret and fails closed); Copilot CLI gets every tool, path and URL (`--allow-all-tools --allow-all-paths --allow-all-urls`, its built-in MCP servers on) and the same hook as a per-turn plugin (`--plugin-dir`, a `plugin.json` and `hooks.json` in the chat's folder: a folder's own `.github/hooks` load only for a new trusted session, a plugin for a resumed one too), from a Copilot whose help lists `--plugin-dir`; Codex runs without its sandbox and with its environment (no `environments: []`), asking before every command it does not consider safe and every file change, each answered by the floor (`answerCodexOwnTools`); Cursor's agent runs with `--sandbox disabled` and Cursor's and the ACP agents' permission requests are answered by the floor (`answerAcpOwnTools`).
+
+Each of its own calls, with its input and what it returned, and each refusal with why, goes in the person's AI activity log (`OwnToolLog`, [07 §1.4](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#14-the-ai-activity-log)). A computer before `assistantTurns: 4` (`ASSISTANT_TURN_OWN_TOOLS`) runs the turn with Ensemble's tools only, and its agent is told so (`systemWithoutOwnTools`). Otherwise the agent gets only Ensemble's tools:
 
 - **Claude Code:** `claude -p [--input-format stream-json] --output-format stream-json --verbose --include-partial-messages --system-prompt-file <file> --tools "" --strict-mcp-config --mcp-config <file> --allowedTools mcp__ensemble --permission-mode default (with own web: --tools "WebSearch,WebFetch" --allowedTools mcp__ensemble,WebSearch,WebFetch) --setting-sources user (--session-id <id> | --resume <id> | --no-session-persistence) --max-turns 28 [--model] [--effort]`, message on stdin (with files, one stream-json user message), in the chat's folder. The instructions go with every turn (Claude Code does not keep them in a session). Model, level and the tier's long window go through `claudeLaunch` as for a run (§1). No shell or files of its own; web only with own web. The person's user settings load (where Claude Code may keep how it signs in), never a folder's; their MCP servers do not; Ensemble's hook steps aside (`ENSEMBLE_RUN`); the turn is not saved as a Claude Code session.
 - **Codex:** `codex app-server`, a thread with Ensemble's instructions as `baseInstructions` (`thread/start`, kept for the chat; `thread/resume` on its next turn, with the instructions again; ephemeral for a one-off), every `turn/start` with `environments: []` (a resumed thread does not keep it), a read-only sandbox without network (with own web, Codex's own `web_search: "live"`), `environments: []` (no shell or file tools; a Codex that rejects the field starts without it), every approval declined (`answerCodexTurn`).
@@ -215,28 +448,40 @@ The assistant (the dock, `@ensemble` on a page, the Ask panel) and Ensemble's qu
 
 The agent's environment is cleaned as in §6.
 
-**Files on the message** (`subscriptions/turn-files.ts`). Every file attached to the person's message is delivered to the agent's computer: it travels with the turn as `files` (`TurnFile`: id, name, media type, kind, size; `TURN_FILES_MAX` 8), passed to `runSubscriptionTurn` with a reader. The desktop runtime and a computer that reports `assistantTurns: 2` get the files; an older computer gets a note after the message naming them and saying Ensemble on that computer must be updated to receive files ([25 §4.9](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#49-subscriptions-and-included-models)). `runAgentTurn` downloads each file into the turn folder's `files/` (`saveTurnFiles`, names made safe with `diskName`, a repeat gets " (2)"), skipping a file over 32 MB and anything past 64 MB together. Each file then goes inside the agent's message in the agent's own input form. A file stays out of the message only where putting it in would fail the whole turn, because the agent's message format has no place for that kind; the message names it, says it is saved in `files/` and why it is not inside the message. Ensemble does not read files for the agent and its extracted text is not added (`files/extracted-text-policy.ts`, off). A text file's own contents are the file and go as they are.
+**Files on the message** (`subscriptions/turn-files.ts`). Every file attached to the person's message is delivered to the agent's computer: it travels with the turn as `files` (`TurnFile`: id, name, media type, kind, size; `TURN_FILES_MAX` 8), passed to `runSubscriptionTurn` with a reader. The desktop runtime and a computer that reports `assistantTurns: 2` get the files; an older computer gets a note after the message naming them and saying Ensemble on that computer must be updated to receive files ([25 §4.9](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#49-subscriptions-and-included-models)).
+
+`runAgentTurn` downloads each file into the turn folder's `files/` (`saveTurnFiles`, names made safe with `diskName`, a repeat gets " (2)"), skipping a file over 32 MB and anything past 64 MB together. Each file then goes inside the agent's message in the agent's own input form.
+
+A file stays out of the message only where putting it in would fail the whole turn, because the agent's message format has no place for that kind; the message names it, says it is saved in `files/` and why it is not inside the message. Ensemble does not read files for the agent and its extracted text is not added (`files/extracted-text-policy.ts`, off). A text file's own contents are the file and go as they are.
 
 | Agent | Inside the message (its own input form) | Saved in `files/` only, because the message format has no place for it |
 |---|---|---|
-| Claude Code | Pictures (PNG, JPEG, GIF, WebP, up to 3.75 MB) as `image` blocks; PDFs up to 32 MB as base64 `document` blocks; text files (text, Markdown, code, CSV, TSV, JSON, XML, YAML, SVG) as text `document` blocks, up to 2 MB whole (longer: the first 60,000 characters) | Pictures over 3.75 MB, PDFs over 32 MB, Word (.docx, .doc), Excel (.xlsx, .xlsm, .xls), PowerPoint (.pptx, .ppt), OpenDocument (.odt, .ods, .odp), RTF, Keynote, Numbers, HEIC, TIFF, BMP, AVIF and other pictures, audio, video: Claude's message input takes pictures, PDFs and text only, and the chat turn gives Claude Code no file tools (`--tools ""`) |
-| Codex | Pictures (PNG, JPEG, GIF, WebP) as `localImage` items (the saved path); text files as their contents in a text item, up to 60,000 characters | PDF (text and scanned), Word, Excel, PowerPoint, every other document, other picture formats, audio, video: Codex's `turn/start` input has no document type, and the chat turn declines every command (`approvalPolicy` untrusted, all approvals declined), so Codex cannot open the saved file |
+| Claude Code | Pictures (PNG, JPEG, GIF, WebP, up to 3.75 MB) as `image` blocks; PDFs up to 32 MB as base64 `document` blocks; text files (text, Markdown, code, CSV, TSV, JSON, XML, YAML, SVG) as text `document` blocks, up to 2 MB whole (longer: the first 60,000 characters) | Pictures over 3.75 MB, PDFs over 32 MB, Word (.docx, .doc), Excel (.xlsx, .xlsm, .xls), PowerPoint (.pptx, .ppt), OpenDocument (.odt, .ods, .odp), RTF, Keynote, Numbers, HEIC, TIFF, BMP, AVIF and other pictures, audio, video: Claude's message input takes pictures, PDFs and text only, and a turn without own tools gives Claude Code no file tools (`--tools ""`); current chats, asks and routines with `ownTools` can open the saved file themselves |
+| Codex | Pictures (PNG, JPEG, GIF, WebP) as `localImage` items (the saved path); text files as their contents in a text item, up to 60,000 characters | PDF (text and scanned), Word, Excel, PowerPoint, every other document, other picture formats, audio, video: Codex's `turn/start` input has no document type, and a turn without own tools declines every command (`approvalPolicy` untrusted, all approvals declined). Current chats, asks and routines with `ownTools` can open the saved file through Codex's tools |
 | GitHub Copilot | `--attachment` for pictures (.png, .jpg, .jpeg, .gif, .webp) and documents (.pdf, .doc, .docx, .ppt, .pptx, .xls, .xlsx, .odt, .rtf); text files as their contents in the prompt (`--attachment` refuses .md, .csv, .txt, .json, .html and fails the whole run) | .ods, .odp, .key, .numbers, HEIC, TIFF, SVG, audio, video: `--attachment` does not take them. Attached documents reach Copilot's model as Copilot handles them: with its default model (copilot 1.0.103) a .docx, .xlsx and .pptx arrived as a name only and a scanned PDF was not read |
-| Cursor's agent, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code (ACP) | Pictures as `image` blocks when `initialize` reports `promptCapabilities.image`; PDFs as `resource` blocks with the bytes when it reports `embeddedContext`; text files as `resource` blocks with their text when it reports `embeddedContext` (up to 2 MB), else as their contents in a text block | Word, Excel, PowerPoint, OpenDocument, RTF and every other non-PDF document; pictures when the agent does not report `image`; PDFs when it does not report `embeddedContext`. These get a `resource_link` to the saved file and a note: Office types are never embedded (the models behind these agents refuse them inline) and the chat turn refuses the agent's own file permissions, so the link cannot be opened |
+| Cursor's agent, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code (ACP) | Pictures as `image` blocks when `initialize` reports `promptCapabilities.image`; PDFs as `resource` blocks with the bytes when it reports `embeddedContext`; text files as `resource` blocks with their text when it reports `embeddedContext` (up to 2 MB), else as their contents in a text block | Word, Excel, PowerPoint, OpenDocument, RTF and every other non-PDF document; pictures when the agent does not report `image`; PDFs when it does not report `embeddedContext`. These get a `resource_link` to the saved file and a note: Office types are never embedded (the models behind these agents refuse them inline) and turns without own tools refuse the agent's own file permissions. Current chats, asks and routines with `ownTools` can use the agent's tools to open the saved file |
 
 On a Copilot before 1.0.78 on Windows the files' contents in Copilot's prompt are cut first, so Ensemble's instructions stay within the 28,000-character command line (`copilotPrompt`); piped on stdin nothing is cut. Closing a gap is per agent, without Ensemble reading the file: for example a document-reading MCP server or the agent's own read tools limited to the turn's `files/` folder ([38 §7](38_AGENT_READABLE_FILES.md#7-files-outside-the-message)).
 
-**Tools.** The agent starts Ensemble's MCP server (`scripts/ensemble-ask-mcp.mjs` with `ENSEMBLE_ASSISTANT_TURN`), which lists and calls the turn's tools through this computer's loopback API (`GET /api/engine/assistant/tools`, `POST /api/engine/assistant/tool`) with the turn's own secret (`subscriptions/bridge.ts`). Each call runs where the data is, through the same code as a model-key turn (`runOne` in `assistant/agent.ts`): same space, write policy and refusals, at most 24 calls per turn (`MAX_COMPUTER_CALLS`; an Ensemble Node's turn 60, as `maxTurns` is capped at 64 for older computers). A turn on the person's plan spends none of Ensemble's included credits: `hub_web_search` skips Foundry's search there (`ownPlan` on the tool context) and answers from the free search, and a node's `web_task`, which runs on a server model, is left out. Every agent waits up to 10 minutes for one call (`TOOL_TIMEOUT_MS`: Claude Code's `MCP_TOOL_TIMEOUT`, Codex's `tool_timeout_sec`, the `timeout` in Copilot's MCP config, whose own default is shorter), as a node's browser task or a slow connected app takes minutes; a relayed turn whose computer is waiting on a call is working, not quiet (`quiet` in `subscriptions/relay.ts`), so only the 20-minute limit ends it. When `hub_how_to` loads a playbook, its tools are added and the server sends `notifications/tools/list_changed`. In the desktop app the tools run in its own process; from Ensemble on the web the turn travels to the computer and back ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+**Tools.** The agent starts Ensemble's MCP server (`scripts/ensemble-ask-mcp.mjs` with `ENSEMBLE_ASSISTANT_TURN`), which lists and calls the turn's tools through this computer's loopback API (`GET /api/engine/assistant/tools`, `POST /api/engine/assistant/tool`) with the turn's own secret (`subscriptions/bridge.ts`). Each call runs where the data is, through the same code as a model-key turn (`runOne` in `assistant/agent.ts`): same space, write policy and refusals, at most 24 calls per turn (`MAX_COMPUTER_CALLS`; an Ensemble Node's turn 60, as `maxTurns` is capped at 64 for older computers).
+
+A turn on the person's plan spends none of Ensemble's included credits: `hub_web_search` skips Foundry's search there (`ownPlan` on the tool context) and answers from the free search, and a node's `web_task`, which runs on a server model, is left out.
+
+Every agent waits up to 10 minutes for one call (`TOOL_TIMEOUT_MS`: Claude Code's `MCP_TOOL_TIMEOUT`, Codex's `tool_timeout_sec`, the `timeout` in Copilot's MCP config, whose own default is shorter), as a node's browser task or a slow connected app takes minutes; a relayed turn whose computer is waiting on a call is working, not quiet (`quiet` in `subscriptions/relay.ts`), so only the 20-minute limit ends it. When `hub_how_to` loads a playbook, its tools are added and the server sends `notifications/tools/list_changed`.
+
+In the desktop app the tools run in its own process; from Ensemble on the web the turn travels to the computer and back ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
 **Problems are said in words:** no computer paired, none online (with when last seen), Ensemble too old there, the agent missing (with the vendor's install link), not signed in (with where to press Sign in), the plan's limit reached (shown like a quota), or the agent's own message.
 
 Tests: `subscriptions/subscriptions.test.ts` (including each agent's form for files), `subscriptions.integration.test.ts` (the file route), `agents.e2e.test.ts`, `remote/assistant.test.ts`.
 
-## 9. The worker's report and evidence
+### 9. The worker's report and evidence: implementation reference
 
 A coding agent reports its own result, separate from its closing words, and attaches what its owner should see (`evidence/run-tools.ts`). Ensemble Node reads the report to decide whether a step is done ([35 §8.12](35_ENSEMBLE_NODE.md#812-results-and-evidence)).
 
-**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has `report_result`, `attach_evidence`, `ensemble_context`, `ensemble_search`, `ensemble_actions`, `ensemble_act`, `ensemble_apps`, `ensemble_app_call` and `secret_http` next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools, `ensemble_context` and the connected apps instead. Its `initialize` answer carries `instructions` (`instructionsFor`): the agent acts in Ensemble through this server and its brief, and never opens Ensemble's web app to sign in or to read the person's work ([39 §4](39_ENSEMBLE_TOOLS_AUDIT.md#4-never-ensemble-in-a-browser)). Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`), except `ensemble_act` and `ensemble_app_call`, which change things and are decided by the run's mode like a command.
+**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has `report_result`, `attach_evidence`, `ensemble_context`, `ensemble_search`, `ensemble_actions`, `ensemble_act`, `ensemble_apps`, `ensemble_app_call` and `secret_http` next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools, `ensemble_context` and the connected apps instead. Its `initialize` answer carries `instructions` (`instructionsFor`): the agent acts in Ensemble through this server and its brief, and never opens Ensemble's web app to sign in or to read the person's work ([39 §4](39_ENSEMBLE_TOOLS_AUDIT.md#4-never-ensemble-in-a-browser)).
+
+Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`), except `ensemble_act` and `ensemble_app_call`, which change things and are decided by the run's mode like a command.
 
 | Tool | Input | What happens |
 | --- | --- | --- |
@@ -250,11 +495,19 @@ A coding agent reports its own result, separate from its closing words, and atta
 
 **Secrets by reference.** A run that may use a secret with allowed destinations is told its name and where it may go, never its value (`secretRules` in `lib/run-secrets.ts`), and, when the run names the secret, gets git settings that make git over https to those hosts sign in with it (`credentials/git-credential.ts`). The secret is never in the run's environment.
 
-**Browser and capture.** The server also lists `browser_*` and `capture_*` ([25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)), as `GET /api/engine/tools` gives them for a task run: all of them when the computer has a browser for Ensemble, else only `capture_status`, which says what `ensemble capture setup` adds. A call runs for the run's own operation (its job), writing into its evidence folder (`evidence/capture-tools.ts`). They follow the run's mode like any MCP tool, for every engine: Review only and Run unattended use them freely, Ask asks before them (*Allow for this run* on one browser tool covers the run's other browser tools, and the same for capture), a read-only run is refused. What it writes is the run's evidence at once, with no `attach_evidence`: the answer names each file's id (to put in `checks[].evidence` after `capture_check`), or says it is held for the owner's preview (a saved secret or key on screen, a desktop app's window, a site the owner previews first); a held file goes nowhere until the owner releases it ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)). A run with the internet off opens and loads only this computer's own addresses (`loopbackOnly`). `capture_app_start` starts an app in the run's folder (or one it was let into), sandboxed as the run is. A run may read its own evidence folder, to look at its screenshots. When the run ends, a recording still going is finished and kept, and its tabs, apps and displays end (`finishRunCapture`).
+**Browser and capture.** The server also lists `browser_*` and `capture_*` ([25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)), as `GET /api/engine/tools` gives them for a task run: all of them when the computer has a browser for Ensemble, else only `capture_status`, which says what `ensemble capture setup` adds. A call runs for the run's own operation (its job), writing into its evidence folder (`evidence/capture-tools.ts`).
+
+They follow the run's mode like any MCP tool, for every engine: Review only and Run unattended use them freely, Ask asks before them (*Allow for this run* on one browser tool covers the run's other browser tools, and the same for capture), a read-only run is refused.
+
+What it writes is the run's evidence at once, with no `attach_evidence`: the answer names each file's id (to put in `checks[].evidence` after `capture_check`), or says it is held for the owner's preview (a saved secret or key on screen, a desktop app's window, a site the owner previews first); a held file goes nowhere until the owner releases it ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)). A run with the internet off opens and loads only this computer's own addresses (`loopbackOnly`).
+
+`capture_app_start` starts an app in the run's folder (or one it was let into), sandboxed as the run is. A run may read its own evidence folder, to look at its screenshots. When the run ends, a recording still going is finished and kept, and its tabs, apps and displays end (`finishRunCapture`).
 
 **Instructions.** Every engine's brief has one line on this (`reportingNote` in `workspace/agent.ts`, part of `workingNotes`): at the end call `report_result`, after `attach_evidence` for files the owner should see (with the path of the run's evidence folder), and without MCP tools write the report as JSON to `.ensemble/result.json`. A `commit` or `contentHash` at the top of a report is taken as its `subject`.
 
-**Without MCP.** When the run ends with no report from the tool, the runtime reads `.ensemble/result.json` in the run's folder (`collectRunResult`). It reads only a regular file with one name, at most 256 KB, written during this run, without following links. It must be a valid `StepReport` with a candidate that exists. The files it names under `evidence` (kinds `screenshot`, `video`, `report`, `log`, `file` or `evidence`; not URLs) are attached under the same checks, and so is any file left in the run's evidence folder. A problem is recorded as a `report_refused` or `evidence_refused` event; it never fails the run. Chat runs and interrupted runs are not read.
+**Without MCP.** When the run ends with no report from the tool, the runtime reads `.ensemble/result.json` in the run's folder (`collectRunResult`). It reads only a regular file with one name, at most 256 KB, written during this run, without following links. It must be a valid `StepReport` with a candidate that exists. The files it names under `evidence` (kinds `screenshot`, `video`, `report`, `log`, `file` or `evidence`; not URLs) are attached under the same checks, and so is any file left in the run's evidence folder.
+
+A problem is recorded as a `report_refused` or `evidence_refused` event; it never fails the run. Chat runs and interrupted runs are not read.
 
 **The evidence folder** (`evidence/files.ts`) is `<Ensemble's data folder>/evidence/<job id>`, never in the repository. Agents cannot write there (the sandbox denies Ensemble's data folder), so the runtime copies each file in. A file is read once, by descriptor:
 
@@ -269,11 +522,15 @@ What is copied is exactly what was checked, and the copy is checked again before
 
 Tests: `src/evidence/report.integration.test.ts` (the MCP server end to end, content hashes, the result file), `src/evidence/files.test.ts` (the file rules), `src/evidence/capture-run.integration.test.ts` (the browser and capture tools through the MCP server: listed for task runs only, captures kept and held, a blank screenshot failing its check, internet off, a recording finished at the run's end, held files to newer and older servers) and `src/evidence/captures.test.ts` (recording captures as evidence).
 
-## 10. Support matrix
+### 10. Support matrix: implementation reference
 
-What each agent does for a run Ensemble starts, including the runs a node starts ([35 §8](35_ENSEMBLE_NODE.md#8-work-on-a-computer)), and what each model provider does as a node's brain. Checked against Claude Code 2.1.304, Codex 0.163.0 and GitHub Copilot CLI 1.0.108 on Linux; Copilot's skill runs, tool permissions, `allow_all` and MCP tools were checked live, the others through stand-ins speaking each protocol (`engines/*.e2e.test.ts`). Mistral Vibe 3.1.1, Qwen Code 0.27.1 and Kimi Code 2.5.3 were started live signed out (version, ACP `initialize`, the sign-in check); signed-in runs follow their documented protocols, as do Cursor's agent, Gemini CLI, OpenCode, Grok Build and Antigravity.
+What each agent does for a run Ensemble starts, including the runs a node starts ([35 §8](35_ENSEMBLE_NODE.md#8-work-on-a-computer)), and what each model provider does as a node's brain. Checked against Claude Code 2.1.304, Codex 0.163.0 and GitHub Copilot CLI 1.0.108 on Linux; Copilot's skill runs, tool permissions, `allow_all` and MCP tools were checked live, the others through stand-ins speaking each protocol (`engines/*.e2e.test.ts`).
 
-**The desktop chat apps.** The Claude app, the ChatGPT app and the Cursor app are not driven themselves: each ships (or sits beside) the agent Ensemble drives, on the same subscription and sign-in. The Claude app's Code tab is Claude Code (Ensemble finds the copy inside the app when there is no `claude` command); the ChatGPT app's Codex is the Codex CLI (`~/.codex`, the app's own copy when there is no `codex`); the Cursor app's agent is `cursor-agent`, signed in with `agent login`. A task can still be opened in the app itself (§4), where the app's own settings apply.
+Mistral Vibe 3.1.1, Qwen Code 0.27.1 and Kimi Code 2.5.3 were started live signed out (version, ACP `initialize`, the sign-in check); signed-in runs follow their documented protocols, as do Cursor's agent, Gemini CLI, OpenCode, Grok Build and Antigravity.
+
+**The desktop chat apps.** The Claude app, the ChatGPT app and the Cursor app are not driven themselves: each ships (or sits beside) the agent Ensemble drives, on the same subscription and sign-in. The Claude app's Code tab is Claude Code (Ensemble finds the copy inside the app when there is no `claude` command); the ChatGPT app's Codex is the Codex CLI (`~/.codex`, the app's own copy when there is no `codex`); the Cursor app's agent is `cursor-agent`, signed in with `agent login`.
+
+A task can still be opened in the app itself (§4), where the app's own settings apply.
 
 ### 10.1 Coding agents
 
@@ -295,7 +552,9 @@ What each agent does for a run Ensemble starts, including the runs a node starts
 
 **Skill folders** (`agentSkillRoots` in `engines/skills.ts`): `~/.agents/skills`; `~/.claude/skills`, `~/.claude/plugins/marketplaces`, `~/.claude/plugins/cache` (or under `CLAUDE_CONFIG_DIR`); `~/.codex/skills`, `~/.codex/plugins/cache` (or under `CODEX_HOME`); `~/.copilot/skills`, `~/.copilot/installed-plugins` (or under `COPILOT_HOME`) and Copilot's own package (`~/.cache/copilot/pkg`); `~/.cursor/skills`, `~/.cursor/skills-cursor`; `~/.gemini/skills`, `~/.gemini/extensions`, `~/.gemini/antigravity/skills`; `~/.config/opencode/skill` and `skills`; `~/.vibe/skills` (or under `VIBE_HOME`); `~/.qwen/skills`, `~/.qwen/extensions`; `~/.kimi-code/skills` (or under `KIMI_CODE_HOME`). A link into one of them is followed. Credential files there (`.env`, keys) and git's own files are left to the usual rules.
 
-**Adding an agent.** Each further ACP agent needs an entry in `ACP_AGENTS` (its program, the mode that asks, its sign-in), its id in `SUBSCRIPTION_PROVIDERS`, `CODE_ENGINES` and `ACP_ENGINES` (and `ModelProvider`), a detection (`probeAcpAgent`: version and `acpProbe`), a sign-in command (`LOGIN_ARGS`), session deletion (`deleteNativeSession`), its skill folders, its words in `engineNamed`, shared trust when it keeps a trust file, its MCP setup (`ensemble mcp setup`, the Connect page) and its label and mark on the web and in the CLI. Mistral Vibe, Qwen Code and Kimi Code are entries of this kind. Goose (`goose acp`), Trae (`traecli acp serve`) and Kiro (`kiro-cli acp`) are further such agents. Pi speaks its own JSON-lines protocol, not ACP, and needs a driver.
+**Adding an agent.** Each further ACP agent needs an entry in `ACP_AGENTS` (its program, the mode that asks, its sign-in), its id in `SUBSCRIPTION_PROVIDERS`, `CODE_ENGINES` and `ACP_ENGINES` (and `ModelProvider`), a detection (`probeAcpAgent`: version and `acpProbe`), a sign-in command (`LOGIN_ARGS`), session deletion (`deleteNativeSession`), its skill folders, its words in `engineNamed`, shared trust when it keeps a trust file, its MCP setup (`ensemble mcp setup`, the Connect page) and its label and mark on the web and in the CLI.
+
+Mistral Vibe, Qwen Code and Kimi Code are entries of this kind. Goose (`goose acp`), Trae (`traecli acp serve`) and Kiro (`kiro-cli acp`) are further such agents. Pi speaks its own JSON-lines protocol, not ACP, and needs a driver.
 
 ### 10.2 A node's brain
 

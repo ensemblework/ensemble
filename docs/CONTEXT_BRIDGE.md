@@ -1,10 +1,16 @@
 # Context Bridge
 
-The Context Bridge is Ensemble's MCP server for editors and agents. An agent uses it to read Ensemble: a brief for its task (where the task came from, who asked, the people and their roles, related work), any record and what it links to (the context graph, [03 §5](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs)), ranked search, tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files and their contents, diagrams and plots, and through the read actions everything else the assistant reads. A key made with changes allowed also runs Ensemble's writes (tasks, pages, boards, diagrams, plots, new files, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists, imports; §5.1), and a key made with apps allowed uses the apps the person connected to Ensemble (§5.2). A key works in its own space and in every other space its account owns (§4).
+Connect your editor or AI app to Ensemble through the Context Bridge, its MCP server. An agent can read a task brief, search your saved work and follow the links between records. It can read tasks, projects, repositories, skills, deliverables, calendars, people, Needs me, files and their contents, diagrams and plots, plus the other reads available to the assistant.
 
-The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model or app keys. The editor runs its own model; Ensemble supplies the records, runs the actions with the assistant's own tools, and calls the apps with the person's connections.
+Allow **changes** when creating the key if you want it to update tasks, pages, boards, diagrams, plots, new files, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists or imports (§5.1). Allow **connected apps** to use your app connections (§5.2). A key reaches its default space and the other spaces your account owns (§4).
+
+Task briefs include where the work came from, who asked, the people and their roles, and related work. The [context graph](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs) supplies a record’s saved relationships.
+
+Your editor uses its own model. Ensemble supplies records and runs permitted actions and connected-app calls. The bridge never holds model or app keys or opens the database directly.
 
 ## 1. Three ways to reach it
+
+Choose the hosted URL when you need no local installation, or the CLI when your editor should use a local stdio command. The source option is for repository development.
 
 | Way | For | How |
 |---|---|---|
@@ -12,61 +18,17 @@ The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes ove
 | **Hosted URL** | AI apps, automation clients and editors; nothing to install | `POST https://api.ensemblework.com/mcp` with an OAuth access token or a static `Authorization: Bearer ens_…` key, and optionally `x-ensemble-space: <space id>` (§4). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
 | **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (§3) |
 
-All ways use the same Context Bridge and `/api/bridge` checks. Stdio and ordinary static keys use `buildServer` (`apps/context-bridge/src/server.ts`). Hosted OAuth uses `buildCatalogServer` (`src/catalog.ts`, exported as `@ensemble/context-bridge/catalog`): the core tools and resources plus named operations instead of catch-alls (§5.4). `x-ensemble-tools: catalog` selects that profile for a static key; `legacy` selects the existing tool names. This changes metadata, not grants.
+All ways use the same Context Bridge and `/api/bridge` checks. Stdio and ordinary static keys use `buildServer` (`apps/context-bridge/src/server.ts`). Hosted OAuth uses `buildCatalogServer` (`src/catalog.ts`, exported as `@ensemble/context-bridge/catalog`): the core tools and resources plus named operations instead of catch-alls (§5.4).
 
-Write tools require changes allowed and app tools require apps allowed. Hosted requests read the grants from the token; CLI and source builds ask `GET /api/bridge/whoami` at start (`buildServerForKey`). The hosted endpoint cannot see the editor's disk: `ensemble_brief` needs `task` or `repo` and `branch`, `ensemble_upload_file` takes `dataBase64`, and `ensemble_get_file` cannot use `saveTo`. Local bridges detect the repository, read a `path` and save into the working folder. Actions and connected apps run on Ensemble's server in either profile.
+`x-ensemble-tools: catalog` selects that profile for a static key; `legacy` selects the existing tool names. This changes metadata, not grants.
 
-## 2. Architecture
+Write tools require changes allowed and app tools require apps allowed. Hosted requests read the grants from the token; CLI and source builds ask `GET /api/bridge/whoami` at start (`buildServerForKey`). The hosted endpoint cannot see the editor's disk: `ensemble_brief` needs `task` or `repo` and `branch`, `ensemble_upload_file` takes `dataBase64`, and `ensemble_get_file` cannot use `saveTo`.
 
-```text
-Editor / MCP client
-    → stdio bridge | loopback HTTP bridge | hosted /mcp
-    → apps/context-bridge/src/server.ts (buildServer)
-    → hub-api /api/bridge routes, scoped to the key's space or another its account owns
-    → bridge/service.ts over saved workspace records
-```
-
-| Path | Responsibility |
-| --- | --- |
-| `apps/context-bridge/src/server.ts` | MCP tools and resources, their annotations; the write tools only for a key that may make changes, the app tools only for one that may use apps |
-| `apps/context-bridge/src/catalog.ts` | Core tool reuse, named action/app schemas, fixed operation variants, OAuth tool schemes and input validation |
-| `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors; the space a call names (`x-ensemble-space`) and file downloads |
-| `apps/context-bridge/src/spaces.ts` | The `space` argument every tool takes: an id or exact name, resolved from `GET /api/bridge/spaces` |
-| `apps/context-bridge/src/files.ts` | A file as MCP content (image, text, embedded resource) and where `saveTo` may write |
-| `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
-| `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
-| `apps/hub-api/src/bridge/routes.ts` | Read routes |
-| `apps/hub-api/src/bridge/docs.ts`, `apps/docs/src/search.js` | Public documentation index and shared word search, without private workspace records ([40](40_PUBLIC_DOCUMENTATION.md)) |
-| `apps/hub-api/src/bridge/write-routes.ts` | `whoami`, the task writes and file uploads (§5.1) |
-| `apps/hub-api/src/bridge/actions.ts`, `action-routes.ts` | The actions allowlist, listing and running actions and app tools (§5.1, §5.2) |
-| `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination; context and search over `context/graph/` |
-| `apps/hub-api/src/bridge/files.ts` | Files: details, summary and tags, Ensemble's text in parts, the original (§5) |
-| `apps/hub-api/src/bridge/spaces.ts` | The spaces a key's account can open and which of them the key may act in (§4) |
-| `apps/hub-api/src/bridge/resolve.ts` | Repository, branch and task resolution |
-| `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts, and which may write |
-| `apps/hub-api/src/lib/auth.ts` (`keyIdentity`) | The space a key acts in: its own, or another its account owns named by `x-ensemble-space` (§4) |
-| `apps/hub-api/src/bridge/gaps.ts` | Exclusion and missing-data text for `ensemble_gaps` (§7) |
-| `apps/hub-api/src/routes/mcp.ts` | Hosted Streamable HTTP |
-| `apps/hub-api/src/routes/mcp-oauth.ts`, `src/mcp-oauth/` | OAuth discovery, DCR/CIMD, browser consent, PKCE, rotating credentials and revocation |
-
-MCP server-info reports the release version from `@ensemble/shared-types/version`.
-
-## 3. Run it from source
-
-```bash
-pnpm bridge:build          # tsc → apps/context-bridge/dist
-pnpm bridge:start          # stdio (what editors launch)
-pnpm bridge:http           # Streamable HTTP on 127.0.0.1:4010
-pnpm bridge:verify         # hub-api bridge tests, then typecheck, MCP tests, build, smoke
-```
-
-hub-api has to be up (`pnpm dev`), or every tool returns: ``Ensemble is not running. Start it with `pnpm dev`.``
-
-The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `api.json` ([DESKTOP](DESKTOP.md) §3.2), else `http://$HUB_API_HOST:$HUB_API_PORT` (default `127.0.0.1:4000`). Found through `api.json`, it uses that file's launch token and reads the file again before each call, so a restarted app (new port and token) keeps working; tools then say *The Ensemble app is not running on this computer* when it is closed. This is how editors use a local-only desktop app without the CLI: Connect your apps there shows the command (`GET /api/desktop/mcp`, [DESKTOP](DESKTOP.md) §1.2).
+Local bridges detect the repository, read a `path` and save into the working folder. Actions and connected apps run on Ensemble's server in either profile.
 
 ## 4. Token
 
-The Hub's **Connect your apps** page (`/connect`) creates a key, fills in this computer's paths and offers one-click install for VS Code and Cursor.
+Open **Connect your apps** at `/connect` to create a key and get the configuration for your editor. It fills this computer’s paths and offers one-click installation for VS Code and Cursor.
 
 1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge` (files included, §5), call `/mcp`, run the read actions and revoke itself at `/api/cli/logout`. Two grants, both ticked by default (`POST /api/connect/token`):
    - **Let editors and agents make changes** (`canWrite`, `api_tokens.can_write`): the task writes, file uploads and every write action on the allowlist (§5.1).
@@ -81,9 +43,15 @@ export ENSEMBLE_BRIDGE_TOKEN=ens_...
 
 `ENSEMBLE_BRIDGE_TOKEN` must start with `ens_`. With no token and no `HUB_API_URL`, the bridge uses a running desktop or CLI runtime's launch token from `api.json`. Otherwise every tool returns a configuration error; the bridge never falls back to the default internal token.
 
-hub-api's `ENSEMBLE_INTERNAL_TOKEN` is the agent-runtime service credential and defaults to `dev-internal-token`, which hub-api warns about at startup. The bridge uses it only with `ENSEMBLE_BRIDGE_USE_INTERNAL_TOKEN=true`, and refuses the default value unless `ENSEMBLE_BRIDGE_ALLOW_DEFAULT_INTERNAL_TOKEN=true` is also set (local demos only, never on a shared network). Set a private one (`openssl rand -hex 32`) if anything besides this machine can reach port 4000. `ENSEMBLE_DEV_AUTH_BYPASS` is refused on `/api/bridge/*`.
+hub-api's `ENSEMBLE_INTERNAL_TOKEN` is the agent-runtime service credential and defaults to `dev-internal-token`, which hub-api warns about at startup. The bridge uses it only with `ENSEMBLE_BRIDGE_USE_INTERNAL_TOKEN=true`, and refuses the default value unless `ENSEMBLE_BRIDGE_ALLOW_DEFAULT_INTERNAL_TOKEN=true` is also set (local demos only, never on a shared network).
 
-**Spaces.** A `bridge` or `full` key acts in the space it was made in (its default). A request that names another space with `x-ensemble-space: <space id>` acts there when the key's account owns it (`keyIdentity` in `apps/hub-api/src/lib/auth.ts`, checked with `openedSpace()` on every request): the account's own space and the spaces it created ([28](28_ENSEMBLE_SPACES.md)). The account is `api_tokens.account_id`, set when Connect your apps, Settings or `ensemble login` makes the key (migration `20261126100000_api_token_account`; `ensemble login` keeps the approving account on `cli_auth_requests.account_id` until the exchange). A key with no `account_id` acts for its own row's account when it was made in an account's own space, and stays in its space when it was made inside another. Refusals are one sentence and nothing falls back to another space:
+Set a private one (`openssl rand -hex 32`) if anything besides this machine can reach port 4000. `ENSEMBLE_DEV_AUTH_BYPASS` is refused on `/api/bridge/*`.
+
+**Spaces.** A `bridge` or `full` key acts in the space it was made in (its default). A request that names another space with `x-ensemble-space: <space id>` acts there when the key's account owns it (`keyIdentity` in `apps/hub-api/src/lib/auth.ts`, checked with `openedSpace()` on every request): the account's own space and the spaces it created ([28](28_ENSEMBLE_SPACES.md)).
+
+The account is `api_tokens.account_id`, set when Connect your apps, Settings or `ensemble login` makes the key (migration `20261126100000_api_token_account`; `ensemble login` keeps the approving account on `cli_auth_requests.account_id` until the exchange). A key with no `account_id` acts for its own row's account when it was made in an account's own space, and stays in its space when it was made inside another.
+
+Refusals are one sentence and nothing falls back to another space:
 
 | Request names | Answer |
 |---|---|
@@ -97,11 +65,23 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 
 ### 4.1 OAuth for AI apps
 
-An app adds the same `/mcp` URL and discovers `/.well-known/oauth-protected-resource/mcp` (also served at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`. Unauthenticated MCP gets a 401 Bearer challenge with `resource_metadata`. `HUB_API_PUBLIC_URL` is the issuer's HTTPS origin; HTTP loopback is allowed only in development. Metadata and OAuth endpoints (`/.well-known/…`, `/oauth/…`) never take a cookie, key or space header as the person's identity, so a key sent there unlocks nothing and is not refused; `/oauth/token` and `/oauth/revoke` read `Authorization` only as the app's client authentication.
+Add the hosted `/mcp` URL in an AI app that supports OAuth. Check the app name, requested read/write/app permissions and default owned space on Ensemble’s consent page before approving.
 
-`POST /oauth/register` supports public clients (`none`) and confidential `client_secret_basic` or `client_secret_post` clients. HTTPS client IDs can use CIMD; the public document must match its URL, include its name and redirects, and support `none`. Fetches are public-only, DNS-pinned, without user credentials or redirects, bounded to 5 seconds and 32 KB. Registered redirects match exactly; an HTTP loopback callback may vary only its port.
+The client discovers `/.well-known/oauth-protected-resource/mcp` (also served at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`. Unauthenticated MCP gets a 401 Bearer challenge with `resource_metadata`. `HUB_API_PUBLIC_URL` is the issuer's HTTPS origin; HTTP loopback is allowed only in development.
 
-`GET /oauth/authorize` requires authorization-code flow and PKCE S256. The standalone web `/oauth` page is public, but its consent API requires the signed-in browser session. It preserves the request rather than detouring through onboarding. The person checks the app's name and domains, and approves its requested read/write/app grants and default owned space. Consent is bound to that browser session and expires after 10 minutes. Email signup and Google/GitHub/Microsoft sign-in retain the consent return. All the account's owned spaces remain reachable; shared spaces do not.
+Metadata and OAuth endpoints (`/.well-known/…`, `/oauth/…`) never take a cookie, key or space header as the person's identity, so a key sent there unlocks nothing and is not refused; `/oauth/token` and `/oauth/revoke` read `Authorization` only as the app's client authentication.
+
+#### OAuth client registration
+
+`POST /oauth/register` supports public clients (`none`) and confidential `client_secret_basic` or `client_secret_post` clients. HTTPS client IDs can use CIMD; the public document must match its URL, include its name and redirects, and support `none`. Fetches are public-only, DNS-pinned, without user credentials or redirects, bounded to 5 seconds and 32 KB.
+
+Registered redirects match exactly; an HTTP loopback callback may vary only its port.
+
+#### Approve an OAuth connection
+
+`GET /oauth/authorize` requires authorization-code flow and PKCE S256. The standalone web `/oauth` page is public, but its consent API requires the signed-in browser session. It preserves the request rather than detouring through onboarding. The person checks the app's name and domains, and approves its requested read/write/app grants and default owned space.
+
+Consent is bound to that browser session and expires after 10 minutes. Email signup and Google/GitHub/Microsoft sign-in retain the consent return. All the account's owned spaces remain reachable; shared spaces do not.
 
 | Scope | Permission |
 |---|---|
@@ -110,13 +90,64 @@ An app adds the same `/mcp` URL and discovers `/.well-known/oauth-protected-reso
 | `ensemble:apps` | Existing `canUseApps`; app writes also need write |
 | `offline_access` | Refresh after access expires; rotation by default |
 
-`POST /oauth/token` exchanges a single-use code or refresh token. Explicit `resource` values must equal this server's `/mcp` URL; clients omitting it get that sole resource. Access tokens are hashed `ens_` bridge keys expiring in one hour. Refresh tokens expire after 30 days and rotate on use; narrowing persists, and replay revokes the entire connection. Issuer identification is returned on success and error callbacks. There is no `client_credentials`, implicit grant, no-auth or mixed-auth mode.
+#### OAuth tokens and refresh
 
-Confidential registrations may explicitly request `ensemble_refresh_token_mode: "persistent"` for clients such as Google's Connected Apps persistent-linking flow. Every refresh must authenticate with the client secret; the same refresh credential is returned and its 30-day expiry extends. Narrowed permissions stay narrowed. Public and CIMD clients cannot select this mode and keep rotation/replay detection. Client publishing requirements are vendor-specific; standard public-client security is not weakened.
+`POST /oauth/token` exchanges a single-use code or refresh token. Explicit `resource` values must equal this server's `/mcp` URL; clients omitting it get that sole resource. Access tokens are hashed `ens_` bridge keys expiring in one hour. Refresh tokens expire after 30 days and rotate on use; narrowing persists, and replay revokes the entire connection.
+
+Issuer identification is returned on success and error callbacks. There is no `client_credentials`, implicit grant, no-auth or mixed-auth mode.
+
+#### Persistent linking for confidential clients
+
+Confidential registrations may explicitly request `ensemble_refresh_token_mode: "persistent"` for clients such as Google's Connected Apps persistent-linking flow. Every refresh must authenticate with the client secret; the same refresh credential is returned and its 30-day expiry extends. Narrowed permissions stay narrowed.
+
+Public and CIMD clients cannot select this mode and keep rotation/replay detection. Client publishing requirements are vendor-specific; standard public-client security is not weakened.
+
+#### Publishing an OpenAI app integration
 
 `GET /.well-known/openai-apps-challenge` serves the exact plaintext `OPENAI_APPS_CHALLENGE` value for OpenAI plugin domain verification. It returns 404 when unset, has no identity or workspace context, and is not cached. The operator supplies the portal-generated token for this API hostname; no challenge value or vendor approval is bundled with the code.
 
-`POST /oauth/revoke`, **Connect your apps → Disconnect**, and self-logout revoke the whole token family. `GET /api/mcp-oauth/connections` lists only the signed-in account's connections; consent and disconnect mutations require the browser's origin and CSRF proof. Ephemeral access keys are excluded from manual key lists. Grant metadata is exported with the account; secrets are not. Account or default-space deletion cascades through grants and tokens ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)).
+#### Disconnect an OAuth app
+
+`POST /oauth/revoke`, **Connect your apps → Disconnect**, and self-logout revoke the whole token family. `GET /api/mcp-oauth/connections` lists only the signed-in account's connections; consent and disconnect mutations require the browser's origin and CSRF proof. Ephemeral access keys are excluded from manual key lists. Grant metadata is exported with the account; secrets are not.
+
+Account or default-space deletion cascades through grants and tokens ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)).
+
+## 9. Client setup
+
+To connect an editor:
+
+1. Open **Connect your apps** in the Hub, or run `ensemble mcp setup`.
+2. Choose the editor and the connection method: CLI, hosted URL or source build.
+3. Follow its configuration steps, then enable Ensemble in the editor’s tool list.
+
+ Connect your apps has CLI, hosted-URL and from-source guides for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue, opencode, Qwen Code, Kimi Code and Mistral Vibe (through `vibe mcp add`) on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`).
+
+`ensemble mcp setup grok` uses Grok Build's own `grok mcp add` command for stdio or a bearer URL. AI apps and native MCP automation clients use the hosted URL with OAuth or their documented bearer-header option. Claude/Duet, ChatGPT/dots, Cursor, Grok/Grok Bot, Gemini, Muse, Copilot Studio, n8n, Zapier and Make share that server; each vendor controls client availability and approvals.
+
+Open-source plugin packages, client helpers and automation templates live in [ensemblework/ensemble-integrations](https://github.com/ensemblework/ensemble-integrations). A package or registry entry is not vendor approval or curated placement.
+The from-source samples are in `apps/context-bridge/clients/`. Build first (`pnpm bridge:build`), use absolute paths and never commit a real token. Committed project files use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}`. `${input:…}` is avoided because it drops the server from VS Code's Agent Host.
+
+One-click links (`vscode:mcp/install`, `cursor://anysphere.cursor-deeplink/mcp/install`) keep the key in the environment, not the URL.
+
+| Client | Config | Sample |
+|---|---|---|
+| VS Code (Copilot agent mode) | Committed `.vscode/mcp.json` (`servers`); or the profile `mcp.json` with an absolute path. Reload, then enable the server in the Chat tools list | `vscode.mcp.json` |
+| GitHub Copilot CLI | `~/.copilot/mcp-config.json` (`mcpServers`; it does not read `.vscode/mcp.json`). Or `copilot mcp add ensemble -- node "$PWD/apps/context-bridge/dist/index.js"`, then put the token in that file's `env`. `/mcp` in a session lists it | `copilot-cli.mcp.json` |
+| Cursor | Committed `.cursor/mcp.json`, or `~/.cursor/mcp.json` (`mcpServers`) | `cursor.mcp.json` |
+| Claude Code | Committed `.mcp.json`, or the command below | `claude-code.mcp.json` |
+| Claude Desktop | `mcpServers` in `claude_desktop_config.json`: `~/Library/Application Support/Claude/` (macOS), `~/.config/Claude/` (Linux), `%APPDATA%\Claude\` (Windows). Absolute path; restart the app | `claude-desktop.mcp.json` |
+| Codex CLI | Merge into `~/.codex/config.toml` | `codex.config.toml` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `windsurf.mcp.json` |
+| Any client, local HTTP | Run `pnpm bridge:http`; `type: "http"`, `url: "http://127.0.0.1:4010/mcp"` (`servers` for VS Code, `mcpServers` elsewhere) | `http.mcp.json` |
+
+```bash
+claude mcp add --transport stdio \
+  --env ENSEMBLE_BRIDGE_TOKEN="$ENSEMBLE_BRIDGE_TOKEN" \
+  --env HUB_API_URL=http://127.0.0.1:4000 \
+  ensemble -- node "$PWD/apps/context-bridge/dist/index.js"
+```
+
+The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ensemble_brief` and cites sources) and `.github/skills/ensemble-context/SKILL.md` (copy the folder to `~/.copilot/skills/ensemble-context/` to load it in Copilot CLI everywhere).
 
 ## 5. Tools and resources
 
@@ -143,7 +174,9 @@ Confidential registrations may explicitly request `ensemble_refresh_token_mode: 
 | `ensemble_get_file` | None | One file (`GET /api/bridge/files/:id`, `bridge/files.ts`): its details (id, name, format, media type, size, pages, tags by name, created, link in Ensemble) and summary as JSON; `text: true` adds Ensemble's text of it in parts (`offset`, `limit` ≤20,000 characters); and the file itself unless `content: false`: a PNG, JPEG, GIF or WebP picture up to 5 MB as an `image` block, a text or code file as text (up to 200,000 characters), anything else (PDF, Office…) as an embedded `resource` with `blob` and media type. One answer carries a file up to 20 MB; a larger one is named with what to do. Through the CLI or a source build, `saveTo` writes the original into the working folder instead, any size (`GET /api/bridge/files/:id/original`): a path inside the folder, relative or absolute, never with `..`, never through or onto a symbolic link, and onto an existing file only with `overwrite: true` (`apps/context-bridge/src/files.ts`) |
 | `ensemble_spaces` | None | The spaces the key's account can open (`GET /api/bridge/spaces`): id, name, `access` (`own` or `member`) and `role`, the key's `default`, the request's `current`, and `usable` (false, with `refusal`, for a space shared with the account) |
 
-Every tool but `ensemble_spaces` takes an optional `space`: a space's id or exact name (compared as the space switcher compares names). `apps/context-bridge/src/spaces.ts` resolves it from `GET /api/bridge/spaces` (kept 30 seconds) and sends it as `x-ensemble-space` with each request of that call; hub-api checks it again (§4). A space shared with the account is refused before any call. Resources read the key's default space.
+Every tool but `ensemble_spaces` takes an optional `space`: a space's id or exact name (compared as the space switcher compares names). `apps/context-bridge/src/spaces.ts` resolves it from `GET /api/bridge/spaces` (kept 30 seconds) and sends it as `x-ensemble-space` with each request of that call; hub-api checks it again (§4). A space shared with the account is refused before any call.
+
+Resources read the key's default space.
 
 ### 5.1 Changes in Ensemble
 
@@ -186,11 +219,17 @@ The allowlist (each name is the assistant's tool, [34](34_ASSISTANT_ACTIONS.md))
 | imports | `hub_read_import`, *apps* `hub_preview_board_import` | *apps* `hub_start_board_import`, `hub_manage_import` (cancel, undo) |
 | relationships | `hub_list_connections`, `hub_list_app_relationships` | *apps* `hub_manage_app_relationship`, *apps* `hub_fetch_now` |
 
-An action runs in the request's space (the key's own, or one it named, §4) as the person (route-backed tools call the API with the internal credential and `x-ensemble-user`), with the space's modules. What changes how Ensemble behaves or starts work stays with the person in Ensemble: a name the assistant has but the list does not answers 404 saying so (`hub_update_settings`, `hub_choose_model`, `hub_edit_layout`, `hub_stop_activity`, `hub_assign_to_agent`, `hub_run_workflow`, `hub_create_watcher`, `hub_cancel_watcher`, `hub_edit_file`; `hub_view_file` points to `ensemble_get_file`, and `hub_web_search` and `hub_read_web_page` are the assistant's own). Guards refuse deleting a file (`hub_delete_entity` kind `document`: "Files cannot be deleted from editors and agents; delete it in Ensemble."), deleting a routine and replacing a file's original (403). No action stops or deletes a run or starts the assistant.
+An action runs in the request's space (the key's own, or one it named, §4) as the person (route-backed tools call the API with the internal credential and `x-ensemble-user`), with the space's modules.
+
+What changes how Ensemble behaves or starts work stays with the person in Ensemble: a name the assistant has but the list does not answers 404 saying so (`hub_update_settings`, `hub_choose_model`, `hub_edit_layout`, `hub_stop_activity`, `hub_assign_to_agent`, `hub_run_workflow`, `hub_create_watcher`, `hub_cancel_watcher`, `hub_edit_file`; `hub_view_file` points to `ensemble_get_file`, and `hub_web_search` and `hub_read_web_page` are the assistant's own).
+
+Guards refuse deleting a file (`hub_delete_entity` kind `document`: "Files cannot be deleted from editors and agents; delete it in Ensemble."), deleting a routine and replacing a file's original (403). No action stops or deletes a run or starts the assistant.
 
 A coding agent Ensemble started keeps the everyday part of the list (`runActionCaller` in `workspace/context-tools.ts`): the entries not marked `keyOnly` in `BRIDGE_ACTIONS`, without deleting a dataset or restoring a skill or reminder; anything else answers "Agent runs cannot use ‹name›…" ([30 §9](30_ENGINES.md)).
 
-`GET /api/bridge/whoami` answers `{canWrite, canUseApps, apps (connected app names), spaceId, spaceName (the request's space), defaultSpace {id, name} (the key's own), crossSpace, crossSpaceNote?, keyName}`. Writes are refused (403) for a key without changes allowed, device and hook keys, and every other route; a signed-in page and a full key may use them. Each write refreshes open pages (`task`, `page`, `documents` or `assistant.acted` events). `POST /api/bridge/act/*` and `/api/bridge/write/*` share the hosted MCP rate limit (`mcp`, 240 a minute per space).
+`GET /api/bridge/whoami` answers `{canWrite, canUseApps, apps (connected app names), spaceId, spaceName (the request's space), defaultSpace {id, name} (the key's own), crossSpace, crossSpaceNote?, keyName}`. Writes are refused (403) for a key without changes allowed, device and hook keys, and every other route; a signed-in page and a full key may use them.
+
+Each write refreshes open pages (`task`, `page`, `documents` or `assistant.acted` events). `POST /api/bridge/act/*` and `/api/bridge/write/*` share the hosted MCP rate limit (`mcp`, 240 a minute per space).
 
 ### 5.2 Connected apps
 
@@ -199,7 +238,11 @@ A coding agent Ensemble started keeps the everyday part of the list (`runActionC
 | `ensemble_apps` | `GET /api/bridge/apps` (`app`, `names`, `schema`) | The apps connected in the request's space (`assistant/connections.ts`), what Ensemble can do in each, apps that are connected but broken, and their tools, each with its first sentence (all of an MCP server's switched-on tools, not one assistant turn's share: `appCatalog`); `app` narrows it to one app, and named tools come with their full description and `inputSchema`. A key without apps allowed gets `{allowed: false, refusal}` |
 | `ensemble_app_call` | `POST /api/bridge/act/:tool` `{input}` | Calls one app tool with the person's own connection: the built-in Google Workspace, Microsoft 365, Zoom, DocuSign and Jira tools, `apps_search`/`apps_read`/`apps_post_update` across the apps Ensemble can search (Notion, GitHub, Linear, Slack, Figma, Vercel, Zotero, Hugging Face…, [31](31_CONNECTORS_IN_USE.md)), and each connected MCP server's own tools (`mcp_<server>_<tool>`) |
 
-Both tools exist only for a key with apps allowed. App tools are offered and checked as for the assistant (`assistant/apps.ts`): the suite connected, the product switched on, the scopes granted; app writes are left out when Settings → Assistant turns connected-app writes off. A change in an app also needs changes allowed, runs at once through `runOutsideWrite` (ledgered as `apps.<tool>`), and cannot be undone from Ensemble. Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys.
+Both tools exist only for a key with apps allowed.
+
+App tools are offered and checked as for the assistant (`assistant/apps.ts`): the suite connected, the product switched on, the scopes granted; app writes are left out when Settings → Assistant turns connected-app writes off. A change in an app also needs changes allowed, runs at once through `runOutsideWrite` (ledgered as `apps.<tool>`), and cannot be undone from Ensemble.
+
+Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys.
 
 ### 5.3 What each way in can do
 
@@ -214,15 +257,21 @@ Both tools exist only for a key with apps allowed. App tools are offered and che
 | Deleting a routine or a file; editing a file's original | No | Yes | Yes |
 | Assigning work to agents, workflows, watchers, stopping runs | No | Yes | Yes, plus its own sessions, computers and crews |
 
-A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, with the everyday part of the list (§5.1), and `ensemble_apps` and `ensemble_app_call` with the connected apps as above (§5.2; the person's own agent in Chat has the apps too), only in its owner's own space ([30 §9](30_ENGINES.md)). So every way an agent reaches Ensemble (a key in an editor, a run Ensemble starts, the assistant, a node) reaches the person's connected apps through it.
+A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, with the everyday part of the list (§5.1), and `ensemble_apps` and `ensemble_app_call` with the connected apps as above (§5.2; the person's own agent in Chat has the apps too), only in its owner's own space ([30 §9](30_ENGINES.md)).
+
+So every way an agent reaches Ensemble (a key in an editor, a run Ensemble starts, the assistant, a node) reaches the person's connected apps through it.
 
 A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the request's space: the key's own, or another its account owns (§4, [28](28_ENSEMBLE_SPACES.md)); module checks still apply.
 
 ### 5.4 Named catalog profile
 
-The hosted catalog keeps the existing core reads, resources and dedicated task/file writes. `ensemble_actions`, `ensemble_act`, `ensemble_apps` and `ensemble_app_call` are replaced by `ensemble_action_<name>` and `ensemble_app_<name>` tools built from the same allowed action and connected-app schemas. Names stay within 64 characters; changed or shortened names get a deterministic hash suffix. Enum-based action, operation or method choices become separate fixed-operation tools. No call can select a different underlying action.
+The hosted catalog keeps the existing core reads, resources and dedicated task/file writes. `ensemble_actions`, `ensemble_act`, `ensemble_apps` and `ensemble_app_call` are replaced by `ensemble_action_<name>` and `ensemble_app_<name>` tools built from the same allowed action and connected-app schemas. Names stay within 64 characters; changed or shortened names get a deterministic hash suffix.
 
-Each tool has a title and explicit read-only, destructive, idempotent and open-world hints, plus its required OAuth scopes. Only allowed tools are listed; original API validation, module checks, ownership, grants, Undo and app-write policy still apply. Every tool takes optional `space`; a provider tool whose own schema has `space` keeps its arguments under `input`. Inputs are validated against the published schema before dispatch. Tool errors are MCP errors, not empty results.
+Enum-based action, operation or method choices become separate fixed-operation tools. No call can select a different underlying action.
+
+Each tool has a title and explicit read-only, destructive, idempotent and open-world hints, plus its required OAuth scopes. Only allowed tools are listed; original API validation, module checks, ownership, grants, Undo and app-write policy still apply. Every tool takes optional `space`; a provider tool whose own schema has `space` keeps its arguments under `input`.
+
+Inputs are validated against the published schema before dispatch. Tool errors are MCP errors, not empty results.
 
 - **Files.** `ensemble_read` of a `document` gives a file's name, format, size, page count, summary and link in Ensemble, and search matches a file's name and summary. `ensemble_get_file` gives Ensemble's text of it when asked and the file itself (§5); the extracted text stays out of search, briefs and `ensemble_read` ([32](32_FILES.md), `files/extracted-text-policy.ts`). A task or page also lists its files. A key adds files (`ensemble_upload_file`, `hub_save_file`, page exports) and never edits an original or deletes a file.
 - **Pages.** `apps/hub-api/src/pages/agent-context.ts` adds the source of diagrams embedded in task and standalone pages, with space ownership checks. For the bridge, page bodies are bounded at 15,000 characters and diagram source at 20,000, then paginated. Converted source documents appear in the page's file citations (`files/attached.ts`).
@@ -244,42 +293,11 @@ The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine
 
 ## 7. What `ensemble_gaps` says
 
-`apps/hub-api/src/bridge/gaps.ts` lists what the bridge does not have or will not give, so a model does not invent it: no embedding search (retrieval is ranked words plus graph links), no redaction pass on bridge reads (ingest and file paths redact), mail, chats and transcripts only when the person saved or imported them, layouts and reminders only through the read actions, no older skill bodies, files (the 20 MB answer and `saveTo`), other spaces (§4), which changes a key may make (§5.1) and how the connected apps are reached (§5.2). It is not the connector inventory ([31](31_CONNECTORS_IN_USE.md)).
+Ask for `ensemble_gaps` when a capability or missing record is unclear.
 
-## 8. Transports
+It reports the bridge’s boundaries instead of inventing an answer (`apps/hub-api/src/bridge/gaps.ts`): no embedding search (retrieval is ranked words plus graph links), no redaction pass on bridge reads (ingest and file paths redact), mail, chats and transcripts only when the person saved or imported them, layouts and reminders only through the read actions, no older skill bodies, files (the 20 MB answer and `saveTo`), other spaces (§4), which changes a key may make (§5.1) and how the connected apps are reached (§5.2).
 
-- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` from the CLI.
-- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. An OAuth access token or static `Bearer ens_` key is required; cookies and device keys are refused. Unauthenticated requests receive discovery challenges. Authenticated `GET` and `DELETE` return 405. `x-ensemble-space` goes with every call unless a tool names its own `space` (§4).
-- **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint; without it, `ensemble_upload_file` does not read a `path` (any process on the computer can reach a loopback port). The Hub token stays in the bridge process.
-
-hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.yml` publishes Postgres (`5432`) and Redis (`6379`) on `127.0.0.1` only, so use `127.0.0.1`, not `localhost`, in `DATABASE_URL` and `REDIS_URL`.
-
-## 9. Client setup
-
-Prefer **Connect your apps** in the Hub or `ensemble mcp setup`. Connect your apps has CLI, hosted-URL and from-source guides for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue, opencode, Qwen Code, Kimi Code and Mistral Vibe (through `vibe mcp add`) on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`).
-
-`ensemble mcp setup grok` uses Grok Build's own `grok mcp add` command for stdio or a bearer URL. AI apps and native MCP automation clients use the hosted URL with OAuth or their documented bearer-header option. Claude/Duet, ChatGPT/dots, Cursor, Grok/Grok Bot, Gemini, Muse, Copilot Studio, n8n, Zapier and Make share that server; each vendor controls client availability and approvals. Open-source plugin packages, client helpers and automation templates live in [ensemblework/ensemble-integrations](https://github.com/ensemblework/ensemble-integrations). A package or registry entry is not vendor approval or curated placement.
-The from-source samples are in `apps/context-bridge/clients/`. Build first (`pnpm bridge:build`), use absolute paths and never commit a real token. Committed project files use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}`. `${input:…}` is avoided because it drops the server from VS Code's Agent Host. One-click links (`vscode:mcp/install`, `cursor://anysphere.cursor-deeplink/mcp/install`) keep the key in the environment, not the URL.
-
-| Client | Config | Sample |
-|---|---|---|
-| VS Code (Copilot agent mode) | Committed `.vscode/mcp.json` (`servers`); or the profile `mcp.json` with an absolute path. Reload, then enable the server in the Chat tools list | `vscode.mcp.json` |
-| GitHub Copilot CLI | `~/.copilot/mcp-config.json` (`mcpServers`; it does not read `.vscode/mcp.json`). Or `copilot mcp add ensemble -- node "$PWD/apps/context-bridge/dist/index.js"`, then put the token in that file's `env`. `/mcp` in a session lists it | `copilot-cli.mcp.json` |
-| Cursor | Committed `.cursor/mcp.json`, or `~/.cursor/mcp.json` (`mcpServers`) | `cursor.mcp.json` |
-| Claude Code | Committed `.mcp.json`, or the command below | `claude-code.mcp.json` |
-| Claude Desktop | `mcpServers` in `claude_desktop_config.json`: `~/Library/Application Support/Claude/` (macOS), `~/.config/Claude/` (Linux), `%APPDATA%\Claude\` (Windows). Absolute path; restart the app | `claude-desktop.mcp.json` |
-| Codex CLI | Merge into `~/.codex/config.toml` | `codex.config.toml` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `windsurf.mcp.json` |
-| Any client, local HTTP | Run `pnpm bridge:http`; `type: "http"`, `url: "http://127.0.0.1:4010/mcp"` (`servers` for VS Code, `mcpServers` elsewhere) | `http.mcp.json` |
-
-```bash
-claude mcp add --transport stdio \
-  --env ENSEMBLE_BRIDGE_TOKEN="$ENSEMBLE_BRIDGE_TOKEN" \
-  --env HUB_API_URL=http://127.0.0.1:4000 \
-  ensemble -- node "$PWD/apps/context-bridge/dist/index.js"
-```
-
-The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ensemble_brief` and cites sources) and `.github/skills/ensemble-context/SKILL.md` (copy the folder to `~/.copilot/skills/ensemble-context/` to load it in Copilot CLI everywhere).
+It is not the connector inventory ([31](31_CONNECTORS_IN_USE.md)).
 
 ## 10. Failure behaviour
 
@@ -295,9 +313,75 @@ The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ens
 | A space the key cannot act in | One sentence saying why (§4); nothing falls back to another space |
 | Long body | Excerpt plus `ensemble_read` |
 
-## 11. Tests
+## In the code
 
-`pnpm --filter @ensemble/hub-api test:mcp-oauth` exercises the hosted OAuth routes and an MCP SDK client against in-memory PGlite: metadata, DCR/CIMD, consent, PKCE, ownership, client/resource binding, single-use codes, rotating refresh/replay, confidential persistent refresh, disconnect, domain proof and legacy keys. `test/catalog.test.ts` checks named dispatch and schema/space isolation; web `mcp-consent.test.tsx` and provider sign-in tests cover grants and returns. These are protocol/component tests, not a claim of live approval by a vendor directory.
+The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model or app keys. The editor runs its own model; Ensemble supplies the records, runs the actions with the assistant's own tools, and calls the apps with the person's connections.
+
+### 2. Architecture
+
+```text
+Editor / MCP client
+    → stdio bridge | loopback HTTP bridge | hosted /mcp
+    → apps/context-bridge/src/server.ts (buildServer)
+    → hub-api /api/bridge routes, scoped to the key's space or another its account owns
+    → bridge/service.ts over saved workspace records
+```
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/context-bridge/src/server.ts` | MCP tools and resources, their annotations; the write tools only for a key that may make changes, the app tools only for one that may use apps |
+| `apps/context-bridge/src/catalog.ts` | Core tool reuse, named action/app schemas, fixed operation variants, OAuth tool schemes and input validation |
+| `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors; the space a call names (`x-ensemble-space`) and file downloads |
+| `apps/context-bridge/src/spaces.ts` | The `space` argument every tool takes: an id or exact name, resolved from `GET /api/bridge/spaces` |
+| `apps/context-bridge/src/files.ts` | A file as MCP content (image, text, embedded resource) and where `saveTo` may write |
+| `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
+| `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
+| `apps/hub-api/src/bridge/routes.ts` | Read routes |
+| `apps/hub-api/src/bridge/docs.ts`, `apps/docs/src/search.js` | Public documentation index and shared word search, without private workspace records ([40](40_PUBLIC_DOCUMENTATION.md)) |
+| `apps/hub-api/src/bridge/write-routes.ts` | `whoami`, the task writes and file uploads (§5.1) |
+| `apps/hub-api/src/bridge/actions.ts`, `action-routes.ts` | The actions allowlist, listing and running actions and app tools (§5.1, §5.2) |
+| `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination; context and search over `context/graph/` |
+| `apps/hub-api/src/bridge/files.ts` | Files: details, summary and tags, Ensemble's text in parts, the original (§5) |
+| `apps/hub-api/src/bridge/spaces.ts` | The spaces a key's account can open and which of them the key may act in (§4) |
+| `apps/hub-api/src/bridge/resolve.ts` | Repository, branch and task resolution |
+| `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts, and which may write |
+| `apps/hub-api/src/lib/auth.ts` (`keyIdentity`) | The space a key acts in: its own, or another its account owns named by `x-ensemble-space` (§4) |
+| `apps/hub-api/src/bridge/gaps.ts` | Exclusion and missing-data text for `ensemble_gaps` (§7) |
+| `apps/hub-api/src/routes/mcp.ts` | Hosted Streamable HTTP |
+| `apps/hub-api/src/routes/mcp-oauth.ts`, `src/mcp-oauth/` | OAuth discovery, DCR/CIMD, browser consent, PKCE, rotating credentials and revocation |
+
+MCP server-info reports the release version from `@ensemble/shared-types/version`.
+
+### 3. Run it from source
+
+```bash
+pnpm bridge:build          # tsc → apps/context-bridge/dist
+pnpm bridge:start          # stdio (what editors launch)
+pnpm bridge:http           # Streamable HTTP on 127.0.0.1:4010
+pnpm bridge:verify         # hub-api bridge tests, then typecheck, MCP tests, build, smoke
+```
+
+hub-api has to be up (`pnpm dev`), or every tool returns: ``Ensemble is not running. Start it with `pnpm dev`.``
+
+The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `api.json` ([DESKTOP](DESKTOP.md) §3.2), else `http://$HUB_API_HOST:$HUB_API_PORT` (default `127.0.0.1:4000`).
+
+Found through `api.json`, it uses that file's launch token and reads the file again before each call, so a restarted app (new port and token) keeps working; tools then say *The Ensemble app is not running on this computer* when it is closed.
+
+This is how editors use a local-only desktop app without the CLI: Connect your apps there shows the command (`GET /api/desktop/mcp`, [DESKTOP](DESKTOP.md) §1.2).
+
+### 8. Transports
+
+- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` from the CLI.
+- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. An OAuth access token or static `Bearer ens_` key is required; cookies and device keys are refused. Unauthenticated requests receive discovery challenges. Authenticated `GET` and `DELETE` return 405. `x-ensemble-space` goes with every call unless a tool names its own `space` (§4).
+- **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint; without it, `ensemble_upload_file` does not read a `path` (any process on the computer can reach a loopback port). The Hub token stays in the bridge process.
+
+hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.yml` publishes Postgres (`5432`) and Redis (`6379`) on `127.0.0.1` only, so use `127.0.0.1`, not `localhost`, in `DATABASE_URL` and `REDIS_URL`.
+
+### 11. Tests
+
+`pnpm --filter @ensemble/hub-api test:mcp-oauth` exercises the hosted OAuth routes and an MCP SDK client against in-memory PGlite: metadata, DCR/CIMD, consent, PKCE, ownership, client/resource binding, single-use codes, rotating refresh/replay, confidential persistent refresh, disconnect, domain proof and legacy keys.
+
+`test/catalog.test.ts` checks named dispatch and schema/space isolation; web `mcp-consent.test.tsx` and provider sign-in tests cover grants and returns. These are protocol/component tests, not a claim of live approval by a vendor directory.
 
 ```bash
 pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, write gating; context, brief by task, ranked search, task writes, actions, uploads, files, spaces and apps on PGlite
@@ -308,9 +392,13 @@ pnpm bridge:e2e                                # live Postgres, hub-api, both tr
 
 The smoke script (`apps/context-bridge/scripts/smoke.ts`) speaks MCP to the built server against a mocked hub-api and checks `tools/list`, a tool call and resources.
 
-`pnpm bridge:e2e` (`scripts/live-e2e.ts`) creates the `ensemble_pg` volume if needed, starts `infra/docker-compose.yml`, writes a gitignored `.env` when missing, runs `db:generate`, `db:push` and `db:seed`, builds the bridge, starts hub-api on `127.0.0.1:4000` with `ENSEMBLE_DEV_AUTH_BYPASS=true`, and mints a real `ens_` key through `POST /api/connect/token`. The seed covers every status, a task linked to `encode/httpx` on branch `docs/default-timeout`, two tasks on `retry-helper`, deliverables, calendar events in the next 14 days, meeting notes, a file and a document, and a pending editor decision; the script also uploads `latency-readout.md` and opens a Needs-me prompt.
+`pnpm bridge:e2e` (`scripts/live-e2e.ts`) creates the `ensemble_pg` volume if needed, starts `infra/docker-compose.yml`, writes a gitignored `.env` when missing, runs `db:generate`, `db:push` and `db:seed`, builds the bridge, starts hub-api on `127.0.0.1:4000` with `ENSEMBLE_DEV_AUTH_BYPASS=true`, and mints a real `ens_` key through `POST /api/connect/token`.
 
-It then connects with the MCP SDK over stdio (as the editor configs do) and over Streamable HTTP at `http://127.0.0.1:4010/mcp`, calls every tool, reads every resource and item template, and compares payloads with the database (counts, ids, titles, trust labels). Security checks cover bridge-key writes (403 elsewhere in hub-api, 405 on `/api/bridge`), key minting, refusal of `ENSEMBLE_DEV_AUTH_BYPASS` and `dev-internal-token` on bridge routes, loopback binds, refusal of a non-loopback host, missing and invalid tokens, hub-api down, and Postgres/Redis refusing non-loopback connections.
+The seed covers every status, a task linked to `encode/httpx` on branch `docs/default-timeout`, two tasks on `retry-helper`, deliverables, calendar events in the next 14 days, meeting notes, a file and a document, and a pending editor decision; the script also uploads `latency-readout.md` and opens a Needs-me prompt.
+
+It then connects with the MCP SDK over stdio (as the editor configs do) and over Streamable HTTP at `http://127.0.0.1:4010/mcp`, calls every tool, reads every resource and item template, and compares payloads with the database (counts, ids, titles, trust labels).
+
+Security checks cover bridge-key writes (403 elsewhere in hub-api, 405 on `/api/bridge`), key minting, refusal of `ENSEMBLE_DEV_AUTH_BYPASS` and `dev-internal-token` on bridge routes, loopback binds, refusal of a non-loopback host, missing and invalid tokens, hub-api down, and Postgres/Redis refusing non-loopback connections.
 
 The script leaves hub-api and the HTTP bridge running, writes logs under `/tmp/ensemble-bridge-e2e/` and a JSON summary to `bridge-e2e-report.json` in the repo root, and never prints the token.
 

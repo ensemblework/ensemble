@@ -1,8 +1,38 @@
 # 17 · Repository structure
 
-What lives where. For the product, what works today and the domain model, see [00](00_PROJECT_OVERVIEW.md). Operator runbooks are in the git-ignored `private/` folder, not here.
+Find the application or package responsible for a change before editing. Start with the guide for the product area, then use the ownership map below. The [overview](00_PROJECT_OVERVIEW.md) explains current capabilities and the domain model. Operator runbooks stay in the git-ignored `private/` folder.
 
-## 1. Top level
+
+
+## In the code
+
+### 4. Where a change usually belongs
+
+| Change | Start here |
+|---|---|
+| Page, component, styling, browser behaviour | `apps/hub-web/` |
+| Landing page | `apps/landing/` |
+| Endpoint, persistence, connector, scheduled job, assistant tool | `apps/hub-api/` |
+| Model provider, plot export | `apps/agent-runtime/`, and `apps/hub-api/src/runtime/` for the in-process path |
+| Shared API or domain shape | `packages/shared-types/` |
+| Editor access to context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
+| Agent sessions: continuing, choosing, project folders, clean-up | `apps/hub-api/src/workspace/` (`sessions.ts`, `session-choice/`, `session-cleanup.ts`, `delete-session.ts`, `agent-projects.ts`, `engines/app-sessions.ts`), `apps/hub-api/src/subscriptions/turn-sessions.ts` ([41](41_AGENT_SESSIONS.md)) |
+| Ensemble Node (nodes, rooms, node turns) | `apps/hub-api/src/node/`, the CLI's Node tab in `apps/cli/src/tui/node.ts`; the website is the separate `ensemblework/ensemble-node` repository ([35](35_ENSEMBLE_NODE.md)) |
+| CLI, installers, releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
+| Spaces | `apps/hub-api/src/spaces/`, the space cookie in `apps/hub-api/src/lib/auth.ts`, `apps/hub-web/components/shell/space-switcher.tsx`, `apps/hub-web/app/(hub)/spaces/` ([28](28_ENSEMBLE_SPACES.md)) |
+| Sharing, contacts, presence | `apps/hub-api/src/sharing/` (`policy.ts` classes every route), `apps/hub-web/components/sharing/`, `app/(hub)/shared/`, `app/shared/[id]/`, `app/p/[token]/`, `apps/hub-web/lib/{access,presence}.ts` ([29](29_SHARING.md)) |
+| Live co-editing | `apps/hub-api/src/pages/collab*.ts`, `live.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `components/pages/use-collab.ts`; schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
+| Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
+| Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
+| Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
+| Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
+| CI, deploys, CLI releases | `.github/workflows/` |
+| Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
+| Public docs site and search | `apps/docs/`, `apps/hub-api/src/bridge/docs.ts`, `apps/context-bridge/src/server.ts` ([40](40_PUBLIC_DOCUMENTATION.md)) |
+
+`node_modules/`, `.next/`, `out/`, `dist/`, `.venv/`, `__pycache__/`, `*.egg-info/`, `.turbo/`, `target/`, test caches, `docs/screenshots/` and `.ensemble/` are outputs or local state. They are git-ignored; do not put source code there.
+
+### 1. Top level
 
 ```text
 ensemble/
@@ -46,7 +76,7 @@ ensemble/
 
 Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bridge:*`, `brand:*`, `version:*`), `pnpm-workspace.yaml`, `turbo.json` (TypeScript task graph; `pnpm dev` does not use it), `tsconfig.base.json`, `.env.example` (development configuration, [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)), `LICENSE.md`.
 
-## 2. Applications
+### 2. Applications
 
 ```text
 apps/hub-web/
@@ -118,7 +148,7 @@ apps/desktop/                 src-tauri/ (Rust shell: sidecar, site, assets, dia
 apps/quick-capture/           src-tauri/ + ui/
 ```
 
-## 3. Scripts
+### 3. Scripts
 
 | Script | What it does |
 |---|---|
@@ -135,29 +165,3 @@ apps/quick-capture/           src-tauri/ + ui/
 | `desktop-*.mjs`, `build-mac-dmg.sh`, `package-mac-dmg.mjs`, `publish-desktop-recovery.mjs`, `verify-desktop-signatures.*` | Desktop API discovery and process spawning, build matrix, signed update manifest, Mac disk images (`pnpm desktop:dmg`), recovery publishing, signature checks ([DESKTOP](DESKTOP.md)) |
 | `package-cli.mjs`, `smoke-cli-package.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive |
 | `measure-*.mjs`, `ui-walk.mjs`, `verify-followup.mjs` | Playwright performance and UI probes ([CACHING](CACHING.md)) |
-
-## 4. Where a change usually belongs
-
-| Change | Start here |
-|---|---|
-| Page, component, styling, browser behaviour | `apps/hub-web/` |
-| Landing page | `apps/landing/` |
-| Endpoint, persistence, connector, scheduled job, assistant tool | `apps/hub-api/` |
-| Model provider, plot export | `apps/agent-runtime/`, and `apps/hub-api/src/runtime/` for the in-process path |
-| Shared API or domain shape | `packages/shared-types/` |
-| Editor access to context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
-| Agent sessions: continuing, choosing, project folders, clean-up | `apps/hub-api/src/workspace/` (`sessions.ts`, `session-choice/`, `session-cleanup.ts`, `delete-session.ts`, `agent-projects.ts`, `engines/app-sessions.ts`), `apps/hub-api/src/subscriptions/turn-sessions.ts` ([41](41_AGENT_SESSIONS.md)) |
-| Ensemble Node (nodes, rooms, node turns) | `apps/hub-api/src/node/`, the CLI's Node tab in `apps/cli/src/tui/node.ts`; the website is the separate `ensemblework/ensemble-node` repository ([35](35_ENSEMBLE_NODE.md)) |
-| CLI, installers, releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
-| Spaces | `apps/hub-api/src/spaces/`, the space cookie in `apps/hub-api/src/lib/auth.ts`, `apps/hub-web/components/shell/space-switcher.tsx`, `apps/hub-web/app/(hub)/spaces/` ([28](28_ENSEMBLE_SPACES.md)) |
-| Sharing, contacts, presence | `apps/hub-api/src/sharing/` (`policy.ts` classes every route), `apps/hub-web/components/sharing/`, `app/(hub)/shared/`, `app/shared/[id]/`, `app/p/[token]/`, `apps/hub-web/lib/{access,presence}.ts` ([29](29_SHARING.md)) |
-| Live co-editing | `apps/hub-api/src/pages/collab*.ts`, `live.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `components/pages/use-collab.ts`; schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
-| Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
-| Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
-| Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
-| Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
-| CI, deploys, CLI releases | `.github/workflows/` |
-| Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
-| Public docs site and search | `apps/docs/`, `apps/hub-api/src/bridge/docs.ts`, `apps/context-bridge/src/server.ts` ([40](40_PUBLIC_DOCUMENTATION.md)) |
-
-`node_modules/`, `.next/`, `out/`, `dist/`, `.venv/`, `__pycache__/`, `*.egg-info/`, `.turbo/`, `target/`, test caches, `docs/screenshots/` and `.ensemble/` are outputs or local state. They are git-ignored; do not put source code there.

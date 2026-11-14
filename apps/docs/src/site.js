@@ -72,3 +72,12 @@ const desktopLayout = matchMedia("(min-width: 761px)");
 function sizeNavigation() { navigation.open = desktopLayout.matches; }
 sizeNavigation();
 desktopLayout.addEventListener("change", sizeNavigation);
+
+function openLinkedTopic() {
+  let id;
+  try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+  const target = document.getElementById(id);
+  if (target?.classList.contains("legacy-topic")) location.replace(target.querySelector("a").href);
+}
+openLinkedTopic();
+window.addEventListener("hashchange", openLinkedTopic);

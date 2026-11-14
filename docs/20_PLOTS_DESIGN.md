@@ -1,6 +1,6 @@
 # 20 · Plots
 
-Plots is Ensemble's 2D chart tab for people who already know what a figure should show: analysts, data scientists and ML researchers. Defaults follow publication practice; decoration that makes a value harder to read is left out.
+Create a 2D chart in **Plots** by adding a dataset, choosing a chart and mapping its columns. Adjust the figure, then export it for your paper or report. The defaults suit analysts, data scientists and ML researchers preparing publication figures; decoration that obscures values is left out.
 
 Plots is an optional module. It is off until the person enables it, and availability follows the profile/template and saved module settings. Desk plot slots use the `desk.plots` preference (`components/desk/view.tsx`).
 
@@ -9,17 +9,151 @@ Where plot Python runs:
 - **Desktop and local servers:** the agent runtime's sandbox (§5).
 - **Hosted (Ensemble on the web):** server-side Python (rendering, reading binary spreadsheets) runs only for a verified operator (`ENSEMBLE_OPERATOR_EMAILS`; `requireHostAccess` in `lib/hosted-access.ts`, otherwise 403 `HOST_ACCESS_DENIED`). Everyone else runs plot Python in their own browser (§5a). Datasets belong to the account and count against hosted storage limits (§2).
 
-## 1. Charting library
+## 4. What the tab does
 
-**Apache ECharts** (`echarts` in `apps/hub-web/package.json`), lazy-loaded by the Plots studio and workspace only. Other routes do not import it.
+Open `/plots` and choose **Enable** if the module is off. This adds Plots to the sidebar and command palette, a Saved plots tile on Today with a skippable tour, and the assistant’s plot tools. Turning Plots off hides these controls and keeps your data.
 
-- Dual axes, legend toggling, data zoom, brush and crosshair are configuration. `sampling: "lttb"` plus `progressive` keeps a 100k-point line on canvas; scatter uses `large` mode.
-- `markLine` and `markArea` draw reference lines and bands (annotations, not series).
-- Waterfall is a stacked bar with a transparent base; violin is a kernel-density ribbon in a custom series; combo charts are bar and line series on one grid.
-- SVG export draws an off-screen chart with `renderer: "svg"`; PNG is the canvas at a chosen pixel ratio.
-- ECharts GL is not shipped. There is no 3D or pseudo-3D mode: extruded bars and tilted pies distort how large a value looks.
+### Add data
 
-The stored spec is Ensemble's own JSON (`PlotConfig` in `packages/shared-types/src/plots.ts`); ECharts and matplotlib both render it. The desktop Hub uses the same UI.
+drop, pick, paste, or paste a URL. Preview table with a type menu per column (number, date, category, text).
+### Charts
+
+line, multi-line, area, stacked area; bar (grouped, stacked, 100 % stacked, horizontal or vertical); pie, donut; scatter, bubble; histogram, box, violin; heatmap; error bars and bands; step; waterfall; combo bar + line.
+### Encodings
+
+X, one or many Y, colour-by, aggregation (sum, mean, count, median), sort, one filter, log scales.
+### Dual Y
+
+each series is on the left or right axis, each with its own scale, title and log flag.
+### Interaction
+
+tooltip, wheel zoom, box zoom, pan, reset, brush a range (offered as a filter), legend toggles a series, click a bar or slice to recolour it, crosshair.
+### Style
+
+per-series colour, dash (solid, dashed, dotted, dash-dot), width, marker, opacity; title, subtitle, axis titles, tick format, legend position, grid, font size; palettes.
+### Annotations
+
+horizontal line, vertical line, `y = mx + c`, shaded band, each with label, colour and dash. Not data.
+### Export
+
+PNG at 1×, 2×, 4× or a DPI (72–600); SVG; CSV of the plotted (aggregated) rows; copy image; matplotlib source; matplotlib PDF, SVG, PNG and EPS rendered on the server (§5) or in the browser (§5a).
+
+The CSV comes from `tableToCsv` (`packages/shared-types/src/plots-parse.ts`), which CSV-escapes headers and cells containing commas, quotes or line breaks; the parser reads quoted multiline records back. *Settings › Data › Download this space* with Plots ticked adds each plot space's settings as JSON and its data as CSV; it does not render figures.
+### Code view
+
+CodeMirror in Python mode, lazy-loaded, with the Code tab's shared theme picker (a change updates other open editors on the device). Below 768 px wide or 500 px tall it is view-only. The boilerplate calls `load` / `save`. **Run** (button, Ctrl/⌘+Enter or Shift+Enter) renders the script to PNG on the server (§5) or in the browser (§5a) and shows the figure under the code.
+
+**Figure beside code** (screens 1,024 px and wider; `useFigureBeside` in `figure-run.tsx`) and **Wrap lines** are kept per browser. A failure shows the message with its line ("Line 4: NameError: …", `scriptErrorLine` in `lib/plots/render.ts`) and marks that line (`components/plots/code-pane.tsx`). `plt.show()` and `save()` both capture the figure. The script is stored on the plot.
+### Saved plots
+
+dataset id, config, style, annotations, optional code; autosave; duplicate. The space menu next to the plot space's title lists them under Saved plots, each opening in its own editor (`/plots/<id>`). An `@` mention renders a card that opens the plot. Ask search returns plots when the module is on.
+
+Assistant tools create and edit plots like tasks (a write waits for Apply); `hub_import_dataset` makes a dataset from pasted CSV or from a CSV, TSV or `.xlsx` sheet in Files ([11](11_HOW_THE_ASSISTANT_WORKS.md)). Through the Context Bridge a key reads plots and, with changes allowed, makes and edits them (`ensemble_act`, [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
+
+Plot and plot-space saves carry `_base`, the copy edited. `routes/plots.ts` locks the row and merges disjoint fields; overlapping config, code or title edits return 409 `SAVE_CONFLICT` for a choice, not a silent overwrite ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+
+## 8. Tiled workspace
+
+The main surface is a **plot space**: a canvas of chart tiles (`components/plots/workspace.tsx`). An account can create, name and switch between several plot spaces; each is stored as a plot whose config has `kind: "workspace"` (routes in §9). Layout and tile config autosave, and switching saves the current space first.
+
+Renaming patches only the title, so it cannot overwrite a queued layout save. `/plots/<space-id>` redirects to `/plots?space=<id>`. A plot space lives inside one Ensemble space ([28](28_ENSEMBLE_SPACES.md)); it organises charts and files and is not a context-isolation boundary. A saved single plot still opens in the studio.
+
+The top bar has the space's title (edit it in place) with the space switcher, a View only badge or Share, and on the right the **Shared columns** chip when names collide, a **Canvas / Code** switch, **Upload**, **Add tile** and **Export figure**, the one primary button.
+
+Below 640 CSS px the switch and Upload show only their icons. A tile's header has a grip and its title; Open and Delete show on hover, focus or selection.
+
+Right-clicking a tile gives Open, Ask Ensemble ▸ (Explain this chart, Suggest a clearer chart, Write a caption: the chart and its code go with the question), Attach to assistant, Download ▸ PNG / SVG / PDF, Copy image, Copy code, Copy title, Duplicate and Delete (`components/plots/tile-menu.ts`).
+
+The open tile's editor has Close (×, or Esc) at the top right; its settings panel is dragged wider or narrower between a quarter and 60% of the editor (arrow keys too; double-click resets), and so is the code beside the figure in the canvas Code view (`components/plots/split.tsx`).
+
+The Add tile, Add data and Export figure dialogs share one dialog frame (`components/plots/plot-dialog.tsx`) with a title, a line under it and Close. Styles are in `components/plots/plots.css`.
+
+### Packing
+
+A **12-column grid with vertical compaction** (the Grafana rule; `packages/shared-types/src/plots-pack.ts`). Each tile stores `col`, `row`, `w`, `h`; minimum 3 × 3 so a tile cannot collapse into an unreadable sliver. A gutter separates tiles.
+
+The chart is clipped to its tile, and a `ResizeObserver` calls `chart.resize()` (throttled to one animation frame) when the tile's size changes. A tile moved by its header lifts and follows the pointer exactly; a tile resized by its corner keeps its size while a dashed ghost shows the snapped size (columns × rows).
+
+Either way the ghost marks the target cells, and the other tiles re-pack only when the snapped place changes and glide there with a transform (FLIP, `lib/motion/drag.ts`), so their charts are not rebuilt. On pointer-up the packing is saved and the tile glides from where it was let go; Esc cancels. Tiles never animate `left`, `top`, `width` or `height`.
+
+Overlapping tiles are pushed down, then every tile moves up until it meets another tile or the top. The column is left alone, so a tile parked on the right stays there.
+
+- **Click** selects a tile and opens quick edit on it (title, series colour, line style).
+- **Double-click, Open or Enter** expands it into the focused editor: the chart plus encode, style, lines, code, export and axis side per series. Hover shows resize handles, Open and Delete.
+- **Keyboard**, with the tile focused: arrows move it one cell, Shift+arrows resize, Delete removes (with a toast Undo that puts it back in a free position), Enter opens. Controls inside a tile keep their normal keys. Escape closes the editor; a nested popover takes Escape first.
+- Below 768 CSS px the focused editor stacks the chart above a full-width scrolling settings panel, hides the width grip and keeps Back reachable (`components/plots/focus-editor.tsx`). Settings tabs use Left/Right, Home and End.
+
+### Adding a tile
+
+1. Choose **Add tile** to open the gallery. Browse Paper figures or Everyday charts; each type has a preview.
+2. Choose the chart type.
+3. Search the columns from all datasets on the workspace and choose X and Y. Each column shows its type. A file name appears only when needed to distinguish duplicate column names; you do not choose a file separately.
+
+### Uploads belong to the workspace
+
+The **Add data** dialog takes a drop, a file from **Choose a file**, a public Sheets, Drive, OneDrive or SharePoint link, a paste, and the formats in §2. Progress appears after the shared loading delay. File reading and upload each show their own measured percentage (`loaded / total`), labelled with that stage.
+
+Browser parsing, server parsing and fetching a link show a local activity indicator and the actual stage, without a percentage. The column summary appears as soon as the response arrives; no simulated scanning or minimum display time delays it.
+
+Review the file name, row count, columns and detected types on the next screen. Change a column type when needed. Choose **OK** to keep the dataset on the workspace, or **Cancel** to delete it.
+
+### Duplicate column names
+
+Columns are **separate by default**, labelled with their file only when names collide. The shared-name choice is **per name** and appears only when a name collides: in the upload summary, and afterwards from a dismissible **Shared columns** chip in the toolbar (hidden when nothing collides). One switch for every duplicate would join a key and a measure alike and hide type mismatches.
+
+- **Keep separate:** two pool entries (`time` from `train.csv`, `time` from `eval.csv`). Right for two measures that share a name.
+- **Join on this column:** offered only when every copy has the same type (otherwise disabled with the reason). Tiles can then plot a measure from one file against one from another, inner-joined on that key.
+
+A pool entry is stored as a dataset id (or a join) plus the column name, separated by a unit separator (`\u001f`, `packages/shared-types/src/plots-pool.ts`); Postgres cannot store a null byte inside JSON.
+
+### Paper figures
+
+Gallery entries, not a second chart engine:
+
+| Gallery entry | Use | Chart |
+|---|---|---|
+| Training curve | Mean over seeds, shaded standard deviation | Line, error as a band |
+| Ablation bars | Grouped bars with error bars | Bar, error as bars |
+| Scaling law | Loss against compute or data | Line, both axes logarithmic |
+| Pareto front | Two objectives, one point per run | Scatter |
+| Confusion matrix | Class against class | Heatmap |
+| Reliability | Confidence against accuracy, with the diagonal | Line plus `y = x` |
+| Run distribution | Spread across seeds | Violin |
+
+A training curve wants a step, a measure and an optional seed: per-seed rows are averaged and the sample standard deviation shaded. An ablation wants a mean and an error column.
+
+An empty space starts with **Upload a table**; there is no sample-data action. With a table and no tiles it offers **Add your first chart**. Add tile and Export figure wait until there is something to add or export. The space switcher is a menu beside the title (each space, then New space).
+
+In Add tile each slot names the column chosen for it, the columns list marks which slot each fills, and the slot rules are behind the information icon. On a phone (narrower than 640 CSS pixels) tiles stack at full width in reading order; their saved places do not change. An empty cell is left out of a box or violin plot rather than counted as zero, and a scatter always draws its points.
+
+The default major grid is light (opacity 0.25); a minor grid, when on, keeps its contrast. Image grids are not a tile type (the importers do not carry images).
+
+Export of one tile draws that tile's script. **Export figure** for the canvas (`components/plots/export-dialog.tsx`) shows a large preview and offers width and height in inches (default 7 × at least 4.2), DPI (default 150; the preview uses at most 150), font size, 1–3 columns, a shared legend, panel order, and PDF, SVG, PNG or EPS.
+
+The script plots each tile's table, including a join, so the file matches the canvas; box, violin and confusion-matrix tiles are drawn as such. Panel labels `(a)`, `(b)`, … sit outside the top-left of each axes.
+
+### Code on the canvas
+
+`load(name)` resolves every dataset on the workspace by its visible name (a repeated name is numbered, `runs 2`, as `render-input` numbers it). `save()` captures the figure. No file path is shown. Both Code panels have **Run** with the figure under the code or, with **Figure beside code**, beside it (§4 item 9). Scripts come from `apps/hub-web/lib/plots/tile-code.ts`.
+
+- **A tile's Code tab** (in the focused editor) shows the matplotlib that draws that tile from its settings: its series and marks (line, bar, scatter, area, step, box, violin, heatmap, histogram, pie), error bars or bands, seed mean and std, axis labels, title, colours, ticks and legend (`matplotlibSource` in `packages/shared-types/src/plots-matplotlib.ts`). It loads the tile's file by name; a tile joined across files has its rows written into the script. The run's figure fills the editor's preview, with a Chart / Code output switch.
+- **Editing it** stores the text on the tile (`code`, up to 40,000 characters). From then on the tile's export and its Export figure panel draw that code; Encode and Style still change the canvas chart but not the code, and both tabs say so. The tile shows a small **Code** mark. **Reset to generated**, or typing the generated text back, clears the edit.
+- **The canvas Code view** (**Code** in the top bar's Canvas / Code switch) is a full-width editor that starts from every tile as one panel figure, with files loaded by name (rows written in only for a join or a seed summary); with no drawable tile it starts from the first file's first two columns. Edits are saved as the plot space's `code`; Reset to generated clears them.
+- **Export figure** with edited canvas code offers a choice, starting on **your edited canvas code** (the script as it is, with its own size and layout, so only DPI applies) or **the tiles**. A tile with edited code is drawn from its code either way: the panel is that script's figure, run with its style changes undone afterwards, and the dialog names those tiles. In PDF, SVG and EPS such a panel is a picture at the chosen DPI; the tile's own Export gives the vector file. A failure in a tile's code names the panel and its line.
+
+`apps/hub-web/lib/plots/tile-code.test.ts` renders every sample tile's generated script, a violin, and a canvas figure with an edited tile through the browser's driver under the agent runtime's Python.
+
+### Plots inside pages
+
+The `@` menu has one Plots category. `@plots:` browses named spaces, then their tiles; saved single plots are under Saved plots. Uploaded tables appear as data-file mentions, found through `@plot:<name>` or `@plots:<name>`. Tile identity includes the space id, so identical tile titles do not select the wrong chart. The entity endpoint is user-scoped and leaves this out when Plots is off.
+
+An inline `@ensemble` request can use a dataset mention to create a saved plot and attach it below its answer. `components/plots/plot-card.tsx` renders real ECharts charts for saved plots and workspace tiles. The embed is page-width, follows the chart's proportions until resized, and has compact/expand and remove controls.
+
+Its bottom bar resizes the height (drag or arrow keys, 180 px minimum; Esc during a drag puts it back); the height is saved on the mention, and the card renders once, on release (`components/editor/embed-resize.ts`).
+
+Removing it (or Backspace) changes only the document; the saved chart and its files remain. A page's Download draws it as a picture in every format that holds one ([32 §6](32_FILES.md#6-pages)).
+
+On screen, category labels on the x axis turn (32°) only when they would not fit side by side at the chart's measured width (`chartOption` with `width`, `lib/plots/option.ts`); the x title sits below them, clear of the zoom slider, and a still picture for a document (`print`) has no slider.
 
 ## 2. Data ingestion
 
@@ -54,7 +188,9 @@ A dataset is an account object (`plotDataset`: name, columns, row count, byte si
 
 The browser parses text so a preview appears before the upload finishes. Binary formats need the agent runtime; when it is down, the UI says so and still accepts CSV, TSV, TXT, JSON, JSONL and paste.
 
-On Ensemble on the web, where the server reads binary formats only for its operator, the upload dialog reads xlsx, xlsm, xls, ODS, Parquet, Feather and Arrow in the browser with the runtime's own `parse_table.py` under Pyodide (§5a), asks for a sheet when a workbook has several, and posts the result as an explicit table. Apple Numbers needs a native library Pyodide lacks: export it to Excel or CSV. The browser cannot fetch a spreadsheet link (cross-origin), so it asks the person to download the file and add it.
+On Ensemble on the web, where the server reads binary formats only for its operator, the upload dialog reads xlsx, xlsm, xls, ODS, Parquet, Feather and Arrow in the browser with the runtime's own `parse_table.py` under Pyodide (§5a), asks for a sheet when a workbook has several, and posts the result as an explicit table. Apple Numbers needs a native library Pyodide lacks: export it to Excel or CSV.
+
+The browser cannot fetch a spreadsheet link (cross-origin), so it asks the person to download the file and add it.
 
 Explicit `{ columns, rows }` tables (posted by the browser and by the assistant's tools) are strict: 1–64 uniquely named columns, rectangular rows, finite JSON numbers in numeric columns, ISO/year-first dates or numeric timestamps in date columns; `null` is a missing value. A malformed table returns 400 before anything is written (`validateExplicitTable` in `plots/service.ts`).
 
@@ -124,24 +260,33 @@ Chart defaults (`PlotConfig`, `lib/plots/option.ts`):
 
 The browser chart reads the shell's surface and text tokens (`apps/hub-web/lib/plots/theme.ts`, `components/plots/chart-view.tsx`) and observes `data-theme`, `data-color-theme` and accent styles, so changing the app palette repaints the chart without resetting the axes. Series colours and the Code editor theme are unaffected.
 
-## 4. What the tab does
+## 5a. In the browser (Ensemble on the web)
 
-When Plots is off, `/plots` shows a blurred landing with Enable. Enabling adds the sidebar item, command-palette entries, a Saved plots tile on Today (with a skippable starter tour) and the assistant tools. Turning it off hides those and keeps the data.
+`GET /api/plots/runtime` returns `{ serverPython }`. When it is false, or a render answers 403 `HOST_ACCESS_DENIED`, the page runs the same script in the browser (`lib/plots/render.ts`, `lib/plots/browser-python.ts`):
 
-1. **Add data:** drop, pick, paste, or paste a URL. Preview table with a type menu per column (number, date, category, text).
-2. **Charts:** line, multi-line, area, stacked area; bar (grouped, stacked, 100 % stacked, horizontal or vertical); pie, donut; scatter, bubble; histogram, box, violin; heatmap; error bars and bands; step; waterfall; combo bar + line.
-3. **Encodings:** X, one or many Y, colour-by, aggregation (sum, mean, count, median), sort, one filter, log scales.
-4. **Dual Y:** each series is on the left or right axis, each with its own scale, title and log flag.
-5. **Interaction:** tooltip, wheel zoom, box zoom, pan, reset, brush a range (offered as a filter), legend toggles a series, click a bar or slice to recolour it, crosshair.
-6. **Style:** per-series colour, dash (solid, dashed, dotted, dash-dot), width, marker, opacity; title, subtitle, axis titles, tick format, legend position, grid, font size; palettes.
-7. **Annotations:** horizontal line, vertical line, `y = mx + c`, shaded band, each with label, colour and dash. Not data.
-8. **Export:** PNG at 1×, 2×, 4× or a DPI (72–600); SVG; CSV of the plotted (aggregated) rows; copy image; matplotlib source; matplotlib PDF, SVG, PNG and EPS rendered on the server (§5) or in the browser (§5a). The CSV comes from `tableToCsv` (`packages/shared-types/src/plots-parse.ts`), which CSV-escapes headers and cells containing commas, quotes or line breaks; the parser reads quoted multiline records back. *Settings › Data › Download this space* with Plots ticked adds each plot space's settings as JSON and its data as CSV; it does not render figures.
-9. **Code view:** CodeMirror in Python mode, lazy-loaded, with the Code tab's shared theme picker (a change updates other open editors on the device). Below 768 px wide or 500 px tall it is view-only. The boilerplate calls `load` / `save`. **Run** (button, Ctrl/⌘+Enter or Shift+Enter) renders the script to PNG on the server (§5) or in the browser (§5a) and shows the figure under the code. **Figure beside code** (screens 1,024 px and wider; `useFigureBeside` in `figure-run.tsx`) and **Wrap lines** are kept per browser. A failure shows the message with its line ("Line 4: NameError: …", `scriptErrorLine` in `lib/plots/render.ts`) and marks that line (`components/plots/code-pane.tsx`). `plt.show()` and `save()` both capture the figure. The script is stored on the plot.
-10. **Saved plots:** dataset id, config, style, annotations, optional code; autosave; duplicate. The space menu next to the plot space's title lists them under Saved plots, each opening in its own editor (`/plots/<id>`). An `@` mention renders a card that opens the plot. Ask search returns plots when the module is on. Assistant tools create and edit plots like tasks (a write waits for Apply); `hub_import_dataset` makes a dataset from pasted CSV or from a CSV, TSV or `.xlsx` sheet in Files ([11](11_HOW_THE_ASSISTANT_WORKS.md)). Through the Context Bridge a key reads plots and, with changes allowed, makes and edits them (`ensemble_act`, [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
+- `GET /api/plots/:id/render-input` returns what the server's render would run: the datasets (`{ name, columns, rows }`, repeated names numbered) and the code (the plot's own or the generated one). Nothing runs on the server.
+- Python is Pyodide 314.0.7, downloaded through Ensemble's own `/pyodide/…` (a `next.config.ts` rewrite to jsDelivr, so a network or content blocker that stops `cdn.jsdelivr.net` still gets it) and from `cdn.jsdelivr.net` when that fails (`pyodideIndexes`; the desktop app goes straight to the CDN): numpy, pandas, matplotlib and whatever the script imports (`loadPackagesFromImports`; seaborn via micropip). The first use downloads about 30 MB, which the browser caches; the page says so while it starts.
+- The script runs with the runtime's own `ensemble_plots` module and the same steps as `worker.py` (temp folder, `datasets.json`, `user_script.py`, `PLOTS_FORMAT` / `PLOTS_DPI`, Agg backend, figure read back from `out/`). The result has the server's shape (`{ format, data, stdout, stderr }`; a failure gives the message and the line). `lib/plots/python-sources.ts` holds copies of `worker.py`'s `HELPER` and `parse_table.py`; a test keeps them byte-for-byte equal, and the driver is tested under CPython.
+- **Isolation.** The script runs in a module Web Worker (Pyodide 314 loads only as an ES module: `pyodide.mjs` and `pyodide.asm.mjs`; there is no `pyodide.asm.js`, so a classic worker cannot start it). Before it runs, the worker permanently removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `Worker`, IndexedDB and cache storage from its scope and every prototype that defines them, and makes `eval` and every Function constructor refuse, since new JavaScript is the only way left to reach the module worker's `import()`; a script that needs a package the worker did not load gets a fresh worker. A plot script, including one someone else wrote, has no network, storage, page or cookies, so it cannot send data anywhere or call Ensemble as the user. A run stops after 1 minute (3 minutes until the worker's first answer, for every request made before it).
+- Spreadsheet readers run in a second worker that runs only Ensemble's own code.
+- A worker starts Python once and handles one request at a time: a preview and a download asked for together share the download, and a plot cannot lock the network away while another request is still loading packages.
+- The Pyodide files come from this site first; only the fallback is cross-origin (`cdn.jsdelivr.net`). When both fail, the first failure (this site's) is the one reported: the browser gives a bare network or CORS error, and the page says Python could not be downloaded from Ensemble or jsDelivr and quotes the browser (`pythonFailure`). Figures and PNG exports are decoded in the page, not fetched.
 
-Plot and plot-space saves carry `_base`, the copy edited. `routes/plots.ts` locks the row and merges disjoint fields; overlapping config, code or title edits return 409 `SAVE_CONFLICT` for a choice, not a silent overwrite ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+## In the code
 
-## 5. Matplotlib and the sandbox
+### 1. Charting library
+
+**Apache ECharts** (`echarts` in `apps/hub-web/package.json`), lazy-loaded by the Plots studio and workspace only. Other routes do not import it.
+
+- Dual axes, legend toggling, data zoom, brush and crosshair are configuration. `sampling: "lttb"` plus `progressive` keeps a 100k-point line on canvas; scatter uses `large` mode.
+- `markLine` and `markArea` draw reference lines and bands (annotations, not series).
+- Waterfall is a stacked bar with a transparent base; violin is a kernel-density ribbon in a custom series; combo charts are bar and line series on one grid.
+- SVG export draws an off-screen chart with `renderer: "svg"`; PNG is the canvas at a chosen pixel ratio.
+- ECharts GL is not shipped. There is no 3D or pseudo-3D mode: extruded bars and tilted pies distort how large a value looks.
+
+The stored spec is Ensemble's own JSON (`PlotConfig` in `packages/shared-types/src/plots.ts`); ECharts and matplotlib both render it. The desktop Hub uses the same UI.
+
+### 5. Matplotlib and the sandbox
 
 `ensemble_plots` is injected into the sandbox; it is not a PyPI package.
 
@@ -168,25 +313,15 @@ The sandbox is a short-lived child of the agent runtime (`ensemble_agent/plots/s
 - After the stack loads, socket connect, `os.system` and `subprocess` are replaced with functions that raise, and an audit hook refuses `open` outside the temp dir, the interpreter prefix and font directories.
 - The runtime makes no network calls on the user's behalf during a run.
 
-On macOS and in the desktop app (`plot_mode` = `sandbox`), the warm worker starts through hub-api's spawn choke point (`workspace/sandbox/cli.ts`), which applies Seatbelt. The profile grants only metadata for ancestors the interpreter's `realpath` needs plus read-only interpreter and worker files; no ancestor contents, sibling files, credentials or extra writes. Linux has no OS sandbox, so plots there use the in-process guards above. Start-up and queue failures return 503 with retry information, distinct from a script error.
+On macOS and in the desktop app (`plot_mode` = `sandbox`), the warm worker starts through hub-api's spawn choke point (`workspace/sandbox/cli.ts`), which applies Seatbelt. The profile grants only metadata for ancestors the interpreter's `realpath` needs plus read-only interpreter and worker files; no ancestor contents, sibling files, credentials or extra writes.
+
+Linux has no OS sandbox, so plots there use the in-process guards above. Start-up and queue failures return 503 with retry information, distinct from a script error.
 
 Stale-directory cleanup skips directories still used as a process's working folder; when processes cannot be inspected it warns and deletes nothing.
 
 This is a process sandbox, not a VM, and it does not need Docker, so it runs on macOS, Windows and Linux.
 
-## 5a. In the browser (Ensemble on the web)
-
-`GET /api/plots/runtime` returns `{ serverPython }`. When it is false, or a render answers 403 `HOST_ACCESS_DENIED`, the page runs the same script in the browser (`lib/plots/render.ts`, `lib/plots/browser-python.ts`):
-
-- `GET /api/plots/:id/render-input` returns what the server's render would run: the datasets (`{ name, columns, rows }`, repeated names numbered) and the code (the plot's own or the generated one). Nothing runs on the server.
-- Python is Pyodide 314.0.7, downloaded through Ensemble's own `/pyodide/…` (a `next.config.ts` rewrite to jsDelivr, so a network or content blocker that stops `cdn.jsdelivr.net` still gets it) and from `cdn.jsdelivr.net` when that fails (`pyodideIndexes`; the desktop app goes straight to the CDN): numpy, pandas, matplotlib and whatever the script imports (`loadPackagesFromImports`; seaborn via micropip). The first use downloads about 30 MB, which the browser caches; the page says so while it starts.
-- The script runs with the runtime's own `ensemble_plots` module and the same steps as `worker.py` (temp folder, `datasets.json`, `user_script.py`, `PLOTS_FORMAT` / `PLOTS_DPI`, Agg backend, figure read back from `out/`). The result has the server's shape (`{ format, data, stdout, stderr }`; a failure gives the message and the line). `lib/plots/python-sources.ts` holds copies of `worker.py`'s `HELPER` and `parse_table.py`; a test keeps them byte-for-byte equal, and the driver is tested under CPython.
-- **Isolation.** The script runs in a module Web Worker (Pyodide 314 loads only as an ES module: `pyodide.mjs` and `pyodide.asm.mjs`; there is no `pyodide.asm.js`, so a classic worker cannot start it). Before it runs, the worker permanently removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `Worker`, IndexedDB and cache storage from its scope and every prototype that defines them, and makes `eval` and every Function constructor refuse, since new JavaScript is the only way left to reach the module worker's `import()`; a script that needs a package the worker did not load gets a fresh worker. A plot script, including one someone else wrote, has no network, storage, page or cookies, so it cannot send data anywhere or call Ensemble as the user. A run stops after 1 minute (3 minutes until the worker's first answer, for every request made before it).
-- Spreadsheet readers run in a second worker that runs only Ensemble's own code.
-- A worker starts Python once and handles one request at a time: a preview and a download asked for together share the download, and a plot cannot lock the network away while another request is still loading packages.
-- The Pyodide files come from this site first; only the fallback is cross-origin (`cdn.jsdelivr.net`). When both fail, the first failure (this site's) is the one reported: the browser gives a bare network or CORS error, and the page says Python could not be downloaded from Ensemble or jsDelivr and quotes the browser (`pythonFailure`). Figures and PNG exports are decoded in the page, not fetched.
-
-## 6. Caching
+### 6. Caching
 
 Follows [CACHING.md](CACHING.md): keep caches small and drop them when the bytes change.
 
@@ -195,84 +330,13 @@ Follows [CACHING.md](CACHING.md): keep caches small and drop them when the bytes
 - Chart config is a small JSON column and is not cached.
 - The browser keeps the open table in memory for the studio only.
 
-## 7. Performance
+### 7. Performance
 
-ECharts and CodeMirror are dynamic imports from the studio and the code pane; the Plots list page does not import them. Loaders use `useDelayedFlag`, so a fast parse does not flash a spinner. The studio reserves its title, controls and figure area while its plot query loads, with Retry on failure. Inline plot cards reserve their saved height, or a 1.6 aspect ratio until the chart dimensions are known. Desk tiles do not import ECharts; the Saved plots tile is a list of links.
+ECharts and CodeMirror are dynamic imports from the studio and the code pane; the Plots list page does not import them. Loaders use `useDelayedFlag`, so a fast parse does not flash a spinner. The studio reserves its title, controls and figure area while its plot query loads, with Retry on failure.
 
-## 8. Tiled workspace
+Inline plot cards reserve their saved height, or a 1.6 aspect ratio until the chart dimensions are known. Desk tiles do not import ECharts; the Saved plots tile is a list of links.
 
-The main surface is a **plot space**: a canvas of chart tiles (`components/plots/workspace.tsx`). An account can create, name and switch between several plot spaces; each is stored as a plot whose config has `kind: "workspace"` (routes in §9). Layout and tile config autosave, and switching saves the current space first. Renaming patches only the title, so it cannot overwrite a queued layout save. `/plots/<space-id>` redirects to `/plots?space=<id>`. A plot space lives inside one Ensemble space ([28](28_ENSEMBLE_SPACES.md)); it organises charts and files and is not a context-isolation boundary. A saved single plot still opens in the studio.
-
-The top bar has the space's title (edit it in place) with the space switcher, a View only badge or Share, and on the right the **Shared columns** chip when names collide, a **Canvas / Code** switch, **Upload**, **Add tile** and **Export figure**, the one primary button. Below 640 CSS px the switch and Upload show only their icons. A tile's header has a grip and its title; Open and Delete show on hover, focus or selection. Right-clicking a tile gives Open, Ask Ensemble ▸ (Explain this chart, Suggest a clearer chart, Write a caption: the chart and its code go with the question), Attach to assistant, Download ▸ PNG / SVG / PDF, Copy image, Copy code, Copy title, Duplicate and Delete (`components/plots/tile-menu.ts`). The open tile's editor has Close (×, or Esc) at the top right; its settings panel is dragged wider or narrower between a quarter and 60% of the editor (arrow keys too; double-click resets), and so is the code beside the figure in the canvas Code view (`components/plots/split.tsx`). The Add tile, Add data and Export figure dialogs share one dialog frame (`components/plots/plot-dialog.tsx`) with a title, a line under it and Close. Styles are in `components/plots/plots.css`.
-
-### Packing
-
-A **12-column grid with vertical compaction** (the Grafana rule; `packages/shared-types/src/plots-pack.ts`). Each tile stores `col`, `row`, `w`, `h`; minimum 3 × 3 so a tile cannot collapse into an unreadable sliver. A gutter separates tiles. The chart is clipped to its tile, and a `ResizeObserver` calls `chart.resize()` (throttled to one animation frame) when the tile's size changes. A tile moved by its header lifts and follows the pointer exactly; a tile resized by its corner keeps its size while a dashed ghost shows the snapped size (columns × rows). Either way the ghost marks the target cells, and the other tiles re-pack only when the snapped place changes and glide there with a transform (FLIP, `lib/motion/drag.ts`), so their charts are not rebuilt. On pointer-up the packing is saved and the tile glides from where it was let go; Esc cancels. Tiles never animate `left`, `top`, `width` or `height`. Overlapping tiles are pushed down, then every tile moves up until it meets another tile or the top. The column is left alone, so a tile parked on the right stays there.
-
-- **Click** selects a tile and opens quick edit on it (title, series colour, line style).
-- **Double-click, Open or Enter** expands it into the focused editor: the chart plus encode, style, lines, code, export and axis side per series. Hover shows resize handles, Open and Delete.
-- **Keyboard**, with the tile focused: arrows move it one cell, Shift+arrows resize, Delete removes (with a toast Undo that puts it back in a free position), Enter opens. Controls inside a tile keep their normal keys. Escape closes the editor; a nested popover takes Escape first.
-- Below 768 CSS px the focused editor stacks the chart above a full-width scrolling settings panel, hides the width grip and keeps Back reachable (`components/plots/focus-editor.tsx`). Settings tabs use Left/Right, Home and End.
-
-### Adding a tile
-
-Add tile opens a gallery of chart types, grouped into Paper figures and Everyday charts, each with its own small preview. The next step is one searchable list of columns from every dataset on the workspace, where the user picks X and Y; the flow never asks which file. A column's type is always shown; its file name only when the column name is not unique.
-
-### Uploads belong to the workspace
-
-The **Add data** dialog takes a drop, a file from **Choose a file**, a public Sheets, Drive, OneDrive or SharePoint link, a paste, and the formats in §2. Progress appears after the shared loading delay. File reading and upload each show their own measured percentage (`loaded / total`), labelled with that stage. Browser parsing, server parsing and fetching a link show a local activity indicator and the actual stage, without a percentage. The column summary appears as soon as the response arrives; no simulated scanning or minimum display time delays it.
-
-The next screen lists the file name, row count, columns and detected types, each overridable. OK keeps the dataset on the workspace; Cancel deletes it.
-
-### Duplicate column names
-
-Columns are **separate by default**, labelled with their file only when names collide. The shared-name choice is **per name** and appears only when a name collides: in the upload summary, and afterwards from a dismissible **Shared columns** chip in the toolbar (hidden when nothing collides). One switch for every duplicate would join a key and a measure alike and hide type mismatches.
-
-- **Keep separate:** two pool entries (`time` from `train.csv`, `time` from `eval.csv`). Right for two measures that share a name.
-- **Join on this column:** offered only when every copy has the same type (otherwise disabled with the reason). Tiles can then plot a measure from one file against one from another, inner-joined on that key.
-
-A pool entry is stored as a dataset id (or a join) plus the column name, separated by a unit separator (`\u001f`, `packages/shared-types/src/plots-pool.ts`); Postgres cannot store a null byte inside JSON.
-
-### Paper figures
-
-Gallery entries, not a second chart engine:
-
-| Gallery entry | Use | Chart |
-|---|---|---|
-| Training curve | Mean over seeds, shaded standard deviation | Line, error as a band |
-| Ablation bars | Grouped bars with error bars | Bar, error as bars |
-| Scaling law | Loss against compute or data | Line, both axes logarithmic |
-| Pareto front | Two objectives, one point per run | Scatter |
-| Confusion matrix | Class against class | Heatmap |
-| Reliability | Confidence against accuracy, with the diagonal | Line plus `y = x` |
-| Run distribution | Spread across seeds | Violin |
-
-A training curve wants a step, a measure and an optional seed: per-seed rows are averaged and the sample standard deviation shaded. An ablation wants a mean and an error column.
-
-An empty space starts with **Upload a table**; there is no sample-data action. With a table and no tiles it offers **Add your first chart**. Add tile and Export figure wait until there is something to add or export. The space switcher is a menu beside the title (each space, then New space). In Add tile each slot names the column chosen for it, the columns list marks which slot each fills, and the slot rules are behind the information icon. On a phone (narrower than 640 CSS pixels) tiles stack at full width in reading order; their saved places do not change. An empty cell is left out of a box or violin plot rather than counted as zero, and a scatter always draws its points. The default major grid is light (opacity 0.25); a minor grid, when on, keeps its contrast. Image grids are not a tile type (the importers do not carry images).
-
-Export of one tile draws that tile's script. **Export figure** for the canvas (`components/plots/export-dialog.tsx`) shows a large preview and offers width and height in inches (default 7 × at least 4.2), DPI (default 150; the preview uses at most 150), font size, 1–3 columns, a shared legend, panel order, and PDF, SVG, PNG or EPS. The script plots each tile's table, including a join, so the file matches the canvas; box, violin and confusion-matrix tiles are drawn as such. Panel labels `(a)`, `(b)`, … sit outside the top-left of each axes.
-
-### Code on the canvas
-
-`load(name)` resolves every dataset on the workspace by its visible name (a repeated name is numbered, `runs 2`, as `render-input` numbers it). `save()` captures the figure. No file path is shown. Both Code panels have **Run** with the figure under the code or, with **Figure beside code**, beside it (§4 item 9). Scripts come from `apps/hub-web/lib/plots/tile-code.ts`.
-
-- **A tile's Code tab** (in the focused editor) shows the matplotlib that draws that tile from its settings: its series and marks (line, bar, scatter, area, step, box, violin, heatmap, histogram, pie), error bars or bands, seed mean and std, axis labels, title, colours, ticks and legend (`matplotlibSource` in `packages/shared-types/src/plots-matplotlib.ts`). It loads the tile's file by name; a tile joined across files has its rows written into the script. The run's figure fills the editor's preview, with a Chart / Code output switch.
-- **Editing it** stores the text on the tile (`code`, up to 40,000 characters). From then on the tile's export and its Export figure panel draw that code; Encode and Style still change the canvas chart but not the code, and both tabs say so. The tile shows a small **Code** mark. **Reset to generated**, or typing the generated text back, clears the edit.
-- **The canvas Code view** (**Code** in the top bar's Canvas / Code switch) is a full-width editor that starts from every tile as one panel figure, with files loaded by name (rows written in only for a join or a seed summary); with no drawable tile it starts from the first file's first two columns. Edits are saved as the plot space's `code`; Reset to generated clears them.
-- **Export figure** with edited canvas code offers a choice, starting on **your edited canvas code** (the script as it is, with its own size and layout, so only DPI applies) or **the tiles**. A tile with edited code is drawn from its code either way: the panel is that script's figure, run with its style changes undone afterwards, and the dialog names those tiles. In PDF, SVG and EPS such a panel is a picture at the chosen DPI; the tile's own Export gives the vector file. A failure in a tile's code names the panel and its line.
-
-`apps/hub-web/lib/plots/tile-code.test.ts` renders every sample tile's generated script, a violin, and a canvas figure with an edited tile through the browser's driver under the agent runtime's Python.
-
-### Plots inside pages
-
-The `@` menu has one Plots category. `@plots:` browses named spaces, then their tiles; saved single plots are under Saved plots. Uploaded tables appear as data-file mentions, found through `@plot:<name>` or `@plots:<name>`. Tile identity includes the space id, so identical tile titles do not select the wrong chart. The entity endpoint is user-scoped and leaves this out when Plots is off.
-
-An inline `@ensemble` request can use a dataset mention to create a saved plot and attach it below its answer. `components/plots/plot-card.tsx` renders real ECharts charts for saved plots and workspace tiles. The embed is page-width, follows the chart's proportions until resized, and has compact/expand and remove controls. Its bottom bar resizes the height (drag or arrow keys, 180 px minimum; Esc during a drag puts it back); the height is saved on the mention, and the card renders once, on release (`components/editor/embed-resize.ts`). Removing it (or Backspace) changes only the document; the saved chart and its files remain. A page's Download draws it as a picture in every format that holds one ([32 §6](32_FILES.md#6-pages)).
-
-On screen, category labels on the x axis turn (32°) only when they would not fit side by side at the chart's measured width (`chartOption` with `width`, `lib/plots/option.ts`); the x title sits below them, clear of the zoom slider, and a still picture for a document (`print`) has no slider.
-
-## 9. API
+### 9. API
 
 `apps/hub-api/src/routes/plots.ts`. The routes are classed `shared` in `sharing/policy.ts`: members of a shared Ensemble space use them like other shared content, and one plot or plot space can be shared on its own (`plot`, `plot_space`; view reads, edit saves) ([29](29_SHARING.md)). Dataset ids in a workspace config are ownership-checked on create and save.
 

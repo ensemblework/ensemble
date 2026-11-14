@@ -1,36 +1,10 @@
 # 01 · Stack, configuration and development
 
-The root [README](../README.md) owns the first-run steps. `.env.example`, `infra/deploy/ensemble.env.example`, package manifests and workflow files own exact configuration, versions and commands. Deployment credentials and operator runbooks stay in the git-ignored `private/` folder.
-
-## 1. Stack at a glance
-
-| Layer | Implementation |
-| --- | --- |
-| Hub | Next.js 15 App Router, React 19, TypeScript, Tailwind, React Query |
-| Editors and views | TipTap/ProseMirror, CodeMirror, React Flow (`@xyflow/react`), ECharts |
-| API | Node 22+, Fastify, Zod, Prisma |
-| Data (dev and hosted) | PostgreSQL 16 with `vector`, `pg_trgm`, `uuid-ossp`; Redis 7 for transient state, rate limits, pub/sub |
-| Durable jobs | `WorkspaceJob` rows; in-process claim, worker and scheduler in hub-api |
-| Data (desktop and CLI) | Local Node API with PGlite and an in-memory Redis stand-in (`lib/memory-redis.ts`); no Docker |
-| Model transport | Python 3.11+ FastAPI runtime for dev and hosted; TypeScript adapters in the local sidecar (`apps/hub-api/src/runtime`) |
-| File originals | Postgres rows, or a private Azure Blob container with `ENSEMBLE_FILE_STORAGE=azure-blob` (`lib/blob-store.ts`) |
-| Plot computation | Browser runtime on the web; Python/server and native workers elsewhere |
-| Desktop and quick capture | Tauri 2 (Rust) |
-| Editor context | MCP SDK server over stdio/HTTP; hosted `/mcp` reads, and writes with a key that allows changes |
-| Realtime | Scoped SSE; page co-editing has its own version protocol |
-| Logging | Pino (API), structlog (Python), plus the app's audit ledger |
-
-## 2. Environment and tenancy
-
-**Accounts and spaces.** Content is space-scoped. Login sessions, connector grants, model keys, paired devices and sharing permissions are separate concerns ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)). Hosted model, connector and agent calls need a verified email. Only verified accounts listed exactly in `ENSEMBLE_OPERATOR_EMAILS` may use host credentials or host execution; public deployments keep `ENSEMBLE_SERVER_RUNNER=off`, so ordinary accounts run code on paired computers. Production refuses to start with `ENSEMBLE_DEV_AUTH_BYPASS` on.
-
-**Connector OAuth.** Login apps (`AUTH_*`) identify a person; connector apps authorize product access. A provider uses `<PROVIDER>_CLIENT_ID`/`_SECRET`, a saved encrypted operator app, or the matching sign-in app. Native callbacks are `HUB_API_PUBLIC_URL/api/connectors/<provider>/callback` (`connectors/oauth.ts`); vendor MCP has its own callback. `connectors/products.ts` owns the Google and Microsoft scopes: read-only mail, opt-in calendar write and availability, supported Drive and Office access ([03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens)).
-
-**Content.** Connecting saves a grant, not content. Sync people reads bounded contact metadata with no model call; search, attach, import and upload bring content in; scheduled fetching reads nothing ([31](31_CONNECTORS_IN_USE.md)).
+Set up the local services, start Ensemble and run the checks for the area you change. The first-run sequence is below; the root README also documents it. Use the commented environment examples for configuration, and keep deployment credentials and operator runbooks in the git-ignored `private/` folder.
 
 ## 3. Local development setup
 
-Prerequisites: Node 22+, the pnpm version pinned in `package.json`, Docker with Compose, Python 3.11+.
+Install Node 22 or later, the pnpm version pinned in `package.json`, Docker with Compose and Python 3.11 or later. From the repository root, copy the environment example, install dependencies, start the database and apply migrations:
 
 ```bash
 cp .env.example .env
@@ -43,7 +17,7 @@ pnpm dev
 
 - The `ensemble_pg` volume persists data. `pnpm db:migrate` (`apps/hub-api/scripts/migrate-deploy.mjs`) runs `prisma migrate deploy`; a database made with `pnpm db:push` is aligned in place and its migrations recorded, without deleting rows. **Never run `prisma migrate reset`.**
 - `scripts/dev.mjs` starts web :3000, API :4000 and agent :5055. `scripts/agent-dev.sh` creates `apps/agent-runtime/.venv` on first use. Run **one** agent runtime; `pnpm dev:agent` starts only that component. Port 5055 avoids macOS's use of 5000.
-- `pnpm run doctor` checks this repo's environment (`pnpm doctor` is pnpm's own command).
+- If startup fails, run `pnpm run doctor` to check this repository’s environment. `pnpm doctor` invokes pnpm’s own command instead.
 
 ### Configuration groups
 
@@ -70,18 +44,6 @@ pnpm dev
 
 `.env.example` also lists `ENSEMBLE_LOG_TO_FILE`, `ENSEMBLE_LOG_RETENTION_DAYS` and `ENSEMBLE_FEATURES`; no code reads them. Modules are gated by `packages/shared-types/src/modules.ts` and `lib/module-gate.ts`.
 
-## 4. Libraries and runtime ownership
-
-Manifests and lockfiles hold exact versions. Beyond §1: the MCP SDK, SimpleWebAuthn, `fflate`, Office/CSV readers and writers, `pdfjs-dist`, `@azure/storage-blob`, `prom-client`, PGlite; `jspdf` serves both the browser and the assistant's server PDF export. Python holds FastAPI, httpx, provider adapters and the plotting stack. Either runtime can resolve encrypted provider keys. `packages/prompts` and `apps/skill-forge` are stubs.
-
-## 5. Data storage (Postgres)
-
-One Prisma migration history manages all tables in the `public` schema. Vector and tsvector columns exist but nothing fills or queries them; an embedding key enables nothing.
-
-`lib/ledger.ts` writes a per-space hash-linked history. No INSERT-only database role protects it, and retention and deletion can remove rows. Its verification checks link continuity, not full content hashes ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)).
-
-SQL account-lifetime constraints differ from Prisma's relation model on purpose. New migrations must keep them; rely on the schema-drift tests rather than generated DROP statements ([00 §7](00_PROJECT_OVERVIEW.md#7-core-domain-model-shared-across-modules)).
-
 ## 6. Model usage policy
 
 ### 6.1 Profiles and discovery
@@ -104,19 +66,71 @@ Run steps and model metrics keep the reported model and token counts. Dollar and
 
 ### 6.4 Included AI
 
-The `ensemble` catalog defaults to **GPT-5 mini and GPT-4.1 mini**; each deployment must exist and have quota. The hosted personal dev/test setup uses Visual Studio Azure credits; Luna, Sol and Grok are not currently included, but remain supported for explicit eligible deployments. Each account gets **20,000 credits per UTC month**, bounded by its environment's operator ceiling and a worst-case reservation. Azure hosted grounding is opt-in because it can incur separate charges. A paired desktop or CLI uses the hosted catalog without receiving Azure credentials ([33](33_INCLUDED_AI.md)).
+The `ensemble` catalog defaults to **GPT-5 mini and GPT-4.1 mini**; each deployment must exist and have quota. The hosted personal dev/test setup uses Visual Studio Azure credits; Luna, Sol and Grok are not currently included, but remain supported for explicit eligible deployments.
 
-## 7. Conventions and logs
+Each account gets **20,000 credits per UTC month**, bounded by its environment's operator ceiling and a worst-case reservation. Azure hosted grounding is opt-in because it can incur separate charges. A paired desktop or CLI uses the hosted catalog without receiving Azure credentials ([33](33_INCLUDED_AI.md)).
+
+## 2. Environment and tenancy
+
+**Accounts and spaces.** Content is space-scoped. Login sessions, connector grants, model keys, paired devices and sharing permissions are separate concerns ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)). Hosted model, connector and agent calls need a verified email.
+
+Only verified accounts listed exactly in `ENSEMBLE_OPERATOR_EMAILS` may use host credentials or host execution; public deployments keep `ENSEMBLE_SERVER_RUNNER=off`, so ordinary accounts run code on paired computers. Production refuses to start with `ENSEMBLE_DEV_AUTH_BYPASS` on.
+
+**Connector OAuth.** Login apps (`AUTH_*`) identify a person; connector apps authorize product access. A provider uses `<PROVIDER>_CLIENT_ID`/`_SECRET`, a saved encrypted operator app, or the matching sign-in app. Native callbacks are `HUB_API_PUBLIC_URL/api/connectors/<provider>/callback` (`connectors/oauth.ts`); vendor MCP has its own callback.
+
+`connectors/products.ts` owns the Google and Microsoft scopes: read-only mail, opt-in calendar write and availability, supported Drive and Office access ([03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens)).
+
+**Content.** Connecting saves a grant, not content. Sync people reads bounded contact metadata with no model call; search, attach, import and upload bring content in; scheduled fetching reads nothing ([31](31_CONNECTORS_IN_USE.md)).
+
+## In the code
+
+`.env.example`, `infra/deploy/ensemble.env.example`, package manifests and workflow files define exact configuration, versions and commands. The root setup guide is `README.md`.
+
+### 1. Stack at a glance
+
+| Layer | Implementation |
+| --- | --- |
+| Hub | Next.js 15 App Router, React 19, TypeScript, Tailwind, React Query |
+| Editors and views | TipTap/ProseMirror, CodeMirror, React Flow (`@xyflow/react`), ECharts |
+| API | Node 22+, Fastify, Zod, Prisma |
+| Data (dev and hosted) | PostgreSQL 16 with `vector`, `pg_trgm`, `uuid-ossp`; Redis 7 for transient state, rate limits, pub/sub |
+| Durable jobs | `WorkspaceJob` rows; in-process claim, worker and scheduler in hub-api |
+| Data (desktop and CLI) | Local Node API with PGlite and an in-memory Redis stand-in (`lib/memory-redis.ts`); no Docker |
+| Model transport | Python 3.11+ FastAPI runtime for dev and hosted; TypeScript adapters in the local sidecar (`apps/hub-api/src/runtime`) |
+| File originals | Postgres rows, or a private Azure Blob container with `ENSEMBLE_FILE_STORAGE=azure-blob` (`lib/blob-store.ts`) |
+| Plot computation | Browser runtime on the web; Python/server and native workers elsewhere |
+| Desktop and quick capture | Tauri 2 (Rust) |
+| Editor context | MCP SDK server over stdio/HTTP; hosted `/mcp` reads, and writes with a key that allows changes |
+| Realtime | Scoped SSE; page co-editing has its own version protocol |
+| Logging | Pino (API), structlog (Python), plus the app's audit ledger |
+
+### 4. Libraries and runtime ownership
+
+Manifests and lockfiles hold exact versions. Beyond §1: the MCP SDK, SimpleWebAuthn, `fflate`, Office/CSV readers and writers, `pdfjs-dist`, `@azure/storage-blob`, `prom-client`, PGlite; `jspdf` serves both the browser and the assistant's server PDF export. Python holds FastAPI, httpx, provider adapters and the plotting stack. Either runtime can resolve encrypted provider keys.
+
+`packages/prompts` and `apps/skill-forge` are stubs.
+
+### 5. Data storage (Postgres)
+
+One Prisma migration history manages all tables in the `public` schema. Vector and tsvector columns exist but nothing fills or queries them; an embedding key enables nothing.
+
+`lib/ledger.ts` writes a per-space hash-linked history. No INSERT-only database role protects it, and retention and deletion can remove rows. Its verification checks link continuity, not full content hashes ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)).
+
+SQL account-lifetime constraints differ from Prisma's relation model on purpose. New migrations must keep them; rely on the schema-drift tests rather than generated DROP statements ([00 §7](00_PROJECT_OVERVIEW.md#7-core-domain-model-shared-across-modules)).
+
+### 7. Conventions and logs
 
 - TypeScript is strict; wire shapes use shared Zod schemas. `pnpm typecheck` also runs `pnpm version:check`. There is no repository-wide ESLint, Prettier, ruff or mypy gate.
 - Writes go through the owning service's transaction, authorization, ledger and Undo paths. The Python `tools/guarded.py` policy covers only its own callers. Follow [AGENTS](../AGENTS.md).
 - Logs go to the console; servers use the journal (`journalctl --user -u ensemble-api` on the home server, `journalctl -u ensemble-api` on a VM). Redaction helpers (`lib/redact.ts`, `ensemble_agent/redact.py`) cover known secret patterns only. Keep credentials and tokens out of prompts and logs.
 
-## 8. CI and deploys
+### 8. CI and deploys
 
 Workflow files are authoritative for pinned action and runtime versions.
 
-**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`; each step and what it covers: [37](37_PAUSED_CHECKS.md#what-runs-now)). It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
+**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`; each step and what it covers: [37](37_PAUSED_CHECKS.md#what-runs-now)).
+
+It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
 
 **`.github/workflows/deploy.yml`** runs after `ci` succeeds on a push to `main`, or by hand (Actions → deploy → Run workflow: `all`, `api`, `app` or `landing`). It does nothing unless the repository variable `DEPLOY_ENABLED` is `true`. One deploy runs at a time.
 
@@ -127,11 +141,17 @@ Workflow files are authoritative for pinned action and runtime versions.
 
 Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_APP`, `VERCEL_PROJECT_ID_LANDING`. The Vercel projects hold build settings (root `apps/hub-web` or `apps/landing`) and the Hub's `NEXT_PUBLIC_*` values. Server secrets stay in the server's env file and never go to GitHub or Vercel.
 
-**Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml`. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds. `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
+**Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml`. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project.
 
-**Public documentation** (`apps/docs`) is published outside GitHub Actions: the Cloudflare Worker `ensemble-docs` (Workers Builds, connected to this repository) builds `main` on every push and serves `apps/docs/out` at `docs.ensemblework.com`. Other branches, `testing` included, do not publish. The fast checks build and test the site. Build, hosting and the index read by `ensemble_docs`: [40](40_PUBLIC_DOCUMENTATION.md).
+After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds.
 
-### Home server (`infra/deploy/home`): `api.ensemblework.com`
+`TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
+
+**Public documentation** (`apps/docs`) is published outside GitHub Actions: the Cloudflare Worker `ensemble-docs` (Workers Builds, connected to this repository) builds `main` on every push and serves `apps/docs/out` at `docs.ensemblework.com`. Other branches, `testing` included, do not publish. The fast checks build and test the site.
+
+Build, hosting and the index read by `ensemble_docs`: [40](40_PUBLIC_DOCUMENTATION.md).
+
+#### Home server (`infra/deploy/home`): `api.ensemblework.com`
 
 - One machine, run as its own user without root. `setup.sh` installs it (safe to rerun); everything lives in `~/ensemble-host`: `app/` checkout, `ensemble.env` (mode 0600, from the "Home server" block of `infra/deploy/ensemble.env.example`), `ensemble.commit`, `node/`, `cloudflared/`, `state/` (including `autodeploy.failed`), `backups/`, `logs/`, `bin/`.
 - Postgres (`pgvector/pgvector:pg16`), Redis and the Cloudflare Tunnel are Docker containers from `compose.yml` with `restart: unless-stopped`; Postgres and Redis listen on loopback ports 15432 and 16379, and the API and agent on 14000 and 15055, so `pnpm dev` can run on the same machine. The tunnel dials out, so the machine needs no open port, router rule or fixed IP.
@@ -141,17 +161,17 @@ Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL
 - File originals and plot tables are stored in a private Azure Blob container (`ENSEMBLE_FILE_STORAGE=azure-blob`, [32 §2](32_FILES.md#2-where-files-live)).
 - **Monitoring** (`infra/deploy/home/observability`, optional, `observability/setup.sh`): Prometheus, Grafana, node-exporter and postgres-exporter in Docker on loopback, hub-api metrics on `ENSEMBLE_METRICS_PORT`, an Azure cost and storage timer, and Grafana on Tailscale devices through `tailscale serve`. Once installed (`~/ensemble-host/observability.env` exists), `update.sh` drops and recreates the analytics views around migrations and rebuilds the dashboards, and the watchdog keeps the containers and timer running ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)).
 
-### VM install (`infra/deploy`)
+#### VM install (`infra/deploy`)
 
 An alternative install of the same pull loop on Ubuntu 24.04 with root: `setup.sh /etc/ensemble.env`, Caddy on 443, system units, `/etc/ensemble.env`, `/etc/ensemble.commit` and `/var/lib/ensemble/autodeploy.failed`. Its logs are under `sudo journalctl -u ensemble-autodeploy`.
 
-### Other workflows
+#### Other workflows
 
 - **`.github/workflows/desktop.yml`** builds and publishes desktop installers on a `desktop-v*` tag, a push to the `desktop` branch, or by hand; it runs no tests and not on pull requests ([DESKTOP](DESKTOP.md), [37](37_PAUSED_CHECKS.md)).
 - **`.github/workflows/full-checks.yml`** runs the paused suites by hand (Actions → full-checks → Run workflow; [37](37_PAUSED_CHECKS.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
 - **`.github/workflows/cli-release.yml`** runs on a `cli-v<version>` tag (matching `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows, builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest. Secrets: `HOMEBREW_TAP_DEPLOY_KEY`, `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), optional `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice ([26 §7](26_CLI.md#7-releases)).
 
-## 9. API regression tests
+### 9. API regression tests
 
 ```bash
 pnpm --filter @ensemble/hub-api test:public
@@ -165,7 +185,7 @@ pnpm --filter @ensemble/hub-api route:inventory:check
 - Work-folder fixtures use `src/test/temporary.ts` (`/private/tmp` on macOS). The device-revocation cross-process test needs a real Redis and skips on `memory://`. Some `hub-web` tests hold the process open after their assertions because of query-cache timers.
 - `pnpm --filter @ensemble/hub-web test` first runs `e2e/assistant-tile-catalog.ts --check`, which keeps the assistant's generated tile metadata in line with the UI. `apps/hub-api/scripts/assistant-eval.ts` runs opt-in real-model checks over synthetic in-memory workspaces and reports token and cache usage; it is not in CI and needs a configured model transport ([34](34_ASSISTANT_ACTIONS.md)).
 
-## 10. Brand, versions and releases
+### 10. Brand, versions and releases
 
 - `pnpm brand:build` (`scripts/build-ensemble-brand.mjs`, Sharp and esbuild) generates icons, native motion bundles and fallback pages from `packages/brand` into the apps and `design/`. `pnpm brand:check` verifies the generated manifest; `node scripts/check-icons.mjs` checks ICO/ICNS containers. In the CLI, `ENSEMBLE_REDUCE_MOTION=1` turns off the brand animation and `NO_COLOR` controls color ([BRAND](BRAND.md)).
 - Root `release.json` owns the version. `pnpm version:sync` (`scripts/release-version.mjs --sync`) writes package manifests, Tauri/Cargo configs and locks, Python metadata (`ensemble_agent/version.py`) and the shared TypeScript constant; `pnpm version:check` rejects differences. Web, API and landing prebuilds, CLI/sidecar packaging and native builds check it. `/health`, public `/api/version`, the Context Bridge server info and the Python runtime report it. `GET /api/version?updates=1` checks published CLI and desktop channels, cached five minutes (30 seconds after a failure).
