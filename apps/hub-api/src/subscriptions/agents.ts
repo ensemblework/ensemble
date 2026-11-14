@@ -43,7 +43,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
-import { addClaudeDesktopSession, codexProject, helpHas, nameCodexThread, sessionTitle } from "../workspace/engines/app-sessions.js";
+import { addClaudeDesktopSession, codexProject, codexProjectThreads, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle } from "../workspace/engines/app-sessions.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 
 export type AgentTurnSpec = {
@@ -401,6 +401,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     // An Ensemble Node's chats share its project folder: in the Codex app they are that project's (app-sessions.ts).
     const group = !session?.resume && session && spec.session?.group ? spec.session.group : null;
     const projectId = group ? await codexProject(server, { id: group.id, name: group.name, folder }) : null;
+    let inProject = projectId !== null;
     const start = (params: typeof settings & { projectId?: string }) =>
       server.request("thread/start", spec.ownTools ? params : { ...params, environments: [] }).catch((error: Error) => {
         if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", params);
@@ -415,7 +416,10 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
           })
         : await start(projectId ? { ...settings, projectId } : settings).catch((error: Error) => {
             // A project removed in the Codex app since: the thread starts outside any project.
-            if (projectId && /project/i.test(error.message)) return start(settings);
+            if (projectId && /project/i.test(error.message)) {
+              inProject = false;
+              return start(settings);
+            }
             throw error;
           })
     ) as { thread?: { id?: string }; model?: string };
@@ -423,6 +427,8 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     if (!threadId) throw agentProblem("codex", "it did not start a conversation");
     // Named after the chat in the Codex app, not after its first message (Ensemble's instructions).
     if (session && !session.resume) await nameCodexThread(server, threadId, sessionTitle(spec.session?.title));
+    // The node's project, with this chat, in the ChatGPT app's sidebar: now, or once the app is closed.
+    if (group && projectId && inProject) await fileCodexAppProject({ id: projectId, name: group.name, folder, thread: threadId }, { earlier: () => codexProjectThreads(server, projectId) }).catch(() => undefined);
     result.model = thread.model ?? model;
     const effort = chosen(spec.effort);
     const turnParams = { threadId, input: codexInput(spec.prompt, files), sandboxPolicy: spec.ownTools ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false }, ...(effort ? { effort } : {}) };

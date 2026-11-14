@@ -163,23 +163,26 @@ function executableIn(folder: string, names: string[], depth: number): string | 
  * The newest version that has the program.
  */
 export function claudeAppCopy(platform = process.platform, home = homedir(), env = process.env): string | null {
+  // Each of the app's profiles keeps its own copy: signed in with a Claude account (`Claude`), or on a gateway
+  // or a cloud provider (`Claude-3p`, in the local folder on Windows). The newest version of any is the one.
   const bases =
     platform === "darwin"
-      ? [join(home, "Library", "Application Support", "Claude", "claude-code")]
+      ? ["Claude", "Claude-3p"].map((profile) => join(home, "Library", "Application Support", profile, "claude-code"))
       : platform === "win32"
-        ? [join(env.APPDATA ?? join(home, "AppData", "Roaming"), "Claude", "claude-code"), join(env.LOCALAPPDATA ?? join(home, "AppData", "Local"), "AnthropicClaude", "claude-code")]
-        : [join(home, ".config", "Claude", "claude-code")];
+        ? [join(env.APPDATA ?? join(home, "AppData", "Roaming"), "Claude", "claude-code"), join(env.LOCALAPPDATA ?? join(home, "AppData", "Local"), "Claude-3p", "claude-code"), join(env.LOCALAPPDATA ?? join(home, "AppData", "Local"), "AnthropicClaude", "claude-code")]
+        : ["Claude", "Claude-3p"].map((profile) => join(env.XDG_CONFIG_HOME || join(home, ".config"), profile, "claude-code"));
   const names = platform === "win32" ? ["claude.exe"] : ["claude"];
-  for (const base of bases) {
-    if (!existsSync(base)) continue;
-    let versions: string[];
+  const copies = bases.flatMap((base) => {
+    if (!existsSync(base)) return [];
     try {
-      versions = newestFirst(readdirSync(base));
+      return readdirSync(base).map((version) => ({ base, version }));
     } catch {
-      continue;
+      return [];
     }
-    for (const version of versions) {
-      const found = executableIn(join(base, version), names, 5);
+  });
+  for (const version of newestFirst([...new Set(copies.map((copy) => copy.version))])) {
+    for (const copy of copies.filter((each) => each.version === version)) {
+      const found = executableIn(join(copy.base, version), names, 5);
       if (found) return found;
     }
   }

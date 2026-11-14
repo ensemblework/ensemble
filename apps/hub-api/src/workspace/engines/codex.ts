@@ -30,7 +30,7 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
-import { codexProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
+import { codexProject, codexProjectThreads, fileCodexAppProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
 import { agentProjectOf } from "../agent-projects.js";
 import { codexProviderKey, codexProviderKeyEnv } from "../../subscriptions/detect.js";
 
@@ -357,6 +357,7 @@ export async function runCodex(
     // A task of an Ensemble project works in that project in the Codex app (app-sessions.ts).
     const project = !options.resume && !options.chat ? agentProjectOf(ctx.job.context) : null;
     const projectId = project ? await codexProject(server, { id: project.id, name: project.name, folder: project.folder ?? ctx.root }) : null;
+    let inProject = projectId !== null;
     // The next message in a chat continues the same Codex thread, with this run's settings.
     const thread = (
       options.resume
@@ -365,7 +366,10 @@ export async function runCodex(
           })
         : await server.request("thread/start", { ...settings, serviceName: "ensemble", ...(projectId ? { projectId } : {}) }).catch((error: Error) => {
             // A project removed in the Codex app since: the thread starts outside any project.
-            if (projectId && /project/i.test(error.message)) return server.request("thread/start", { ...settings, serviceName: "ensemble" });
+            if (projectId && /project/i.test(error.message)) {
+              inProject = false;
+              return server.request("thread/start", { ...settings, serviceName: "ensemble" });
+            }
             throw error;
           })
     ) as { thread?: { id?: string }; model?: string; reasoningEffort?: string | null };
@@ -373,6 +377,8 @@ export async function runCodex(
     if (!threadId) throw new Error("Codex did not start a thread.");
     // Named after the task in the Codex app, not after its prompt.
     if (!options.resume && !options.chat) await nameCodexThread(server, threadId, sessionTitle(ctx.taskTitle));
+    // The project, with this thread, in the ChatGPT app's sidebar: now, or once the app is closed (app-sessions.ts).
+    if (project && projectId && inProject) await fileCodexAppProject({ id: projectId, name: project.name, folder: project.folder ?? ctx.root, thread: threadId }, { earlier: () => codexProjectThreads(server, projectId) }).catch(() => undefined);
     result.model = thread.model ?? null;
     // What Codex says the thread runs: its model, and its thinking level unless the turn sets one (which Codex does not echo).
     const observedEffort = !options.effort && typeof thread.reasoningEffort === "string" && thread.reasoningEffort ? thread.reasoningEffort : null;
