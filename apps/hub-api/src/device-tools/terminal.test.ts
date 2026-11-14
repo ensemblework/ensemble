@@ -7,6 +7,7 @@
  * `script` or no Chromium.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -20,7 +21,7 @@ process.env.ENSEMBLE_REMOTE_STATE_DIR = join(base, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(base, "ensemble-workspace");
 process.env.ENSEMBLE_SECRET_KEY ??= randomBytes(32).toString("base64");
 
-const { keyBytes, keyTokens, namedKey, ptyArgv, terminalEnv, runNodeTerminal } = await import("./terminal.js");
+const { DARWIN_SCRIPT, keyBytes, keyTokens, namedKey, ptyArgv, scriptArgv, terminalEnv, runNodeTerminal } = await import("./terminal.js");
 const { drawn, headlessTerminal, holdAlternateScreen, renderScreen } = await import("../capture/screen.js");
 const { ownToolFolder } = await import("./folders.js");
 const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
@@ -49,11 +50,26 @@ test("keys: text, named keys in braces, Ctrl and Alt, and arrows as the program 
 
 test("the pseudo-terminal sets its size and runs the command through the shell only in the sandbox", () => {
   assert.deepEqual(ptyArgv("linux", { command: "htop", columns: 100, rows: 30, shell: true }), ["script", "-qfec", "stty cols 100 rows 30 2>/dev/null; exec /bin/sh -c 'htop'", "/dev/null"]);
-  assert.deepEqual(ptyArgv("darwin", { command: "echo 'it''s'", columns: 80, rows: 24, shell: true }), ["script", "-q", "/dev/null", "/bin/sh", "-c", "stty cols 80 rows 24 2>/dev/null; exec /bin/sh -c 'echo '\\''it'\\'''\\''s'\\'''"]);
+  assert.deepEqual(ptyArgv("darwin", { command: "echo 'it''s'", columns: 80, rows: 24, shell: true }), ["sh", "-c", DARWIN_SCRIPT, "sh", "stty cols 80 rows 24 2>/dev/null; exec /bin/sh -c 'echo '\\''it'\\'''\\''s'\\'''"]);
   assert.deepEqual(ptyArgv("linux", { command: "top -d 1", columns: 80, rows: 24, shell: false }).at(2), "stty cols 80 rows 24 2>/dev/null; exec 'top' '-d' '1'");
   assert.throws(() => ptyArgv("linux", { command: "ls | head", columns: 80, rows: 24, shell: false }), /not supported/);
   assert.deepEqual(terminalEnv(120, 32, "de_DE.UTF-8"), { TERM: "xterm-256color", COLORTERM: "truecolor", COLUMNS: "120", LINES: "32", LANG: "de_DE.UTF-8", LC_ALL: "de_DE.UTF-8", SHELL: "/bin/sh" });
   assert.equal(terminalEnv(80, 24, "C").LANG, "C.UTF-8");
+});
+
+test("the pseudo-terminal takes keys from the stdin Node gives it (a socket), ends with the program's exit code and leaves nothing running", { skip: process.platform === "win32" || !findOnPath("script") ? "no `script` here" : false, timeout: 20_000 }, async () => {
+  const [program, ...args] = scriptArgv(process.platform, `exec /bin/sh -c 'read name; echo "hello $name"; exit 7'`);
+  const child = spawn(program!, args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += chunk));
+  child.stderr.on("data", (chunk) => (output += chunk));
+  const code = await new Promise<number | null>((resolve) => {
+    child.on("close", resolve);
+    child.stdin.write("Mira\r");
+  });
+  assert.equal(code, 7, output);
+  assert.match(output, /hello Mira/);
+  assert.throws(() => process.kill(-child.pid!, 0), { code: "ESRCH" }, "the copier and `script` end with the program");
 });
 
 test("a screen: 16, 256 and true colours, bold, inverse, underline, wide characters and markup, as text and HTML", async () => {
