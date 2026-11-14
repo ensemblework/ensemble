@@ -22,6 +22,7 @@ import { acpProbe } from "./acp-probe.js";
 import { ANTIGRAVITY_MODELS, antigravityInstalled, antigravitySignedIn } from "./antigravity.js";
 import { claudeControl } from "./claude-control.js";
 import { copilotSavedSignIn, copilotStatus } from "./copilot.js";
+import { withoutHostSession } from "./host-session.js";
 
 /**
  * Variables that would make an agent bill an API key or another account instead of the person's
@@ -45,8 +46,9 @@ const NOT_FOR_AGENTS = [
   "ENSEMBLE_INTERNAL_TOKEN",
 ];
 
+/** An agent's environment: this runtime's, without a Claude host session's own variables (`host-session.ts`), with `extra`, never `NOT_FOR_AGENTS`. */
 export function agentEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...extra };
   for (const key of NOT_FOR_AGENTS) delete env[key];
   return env;
 }
