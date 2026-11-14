@@ -47,7 +47,7 @@ Choose **Sign in** on the page or **Sign in to save history** in the chat. Use y
 
 History appears only in this docs chat, separate from the Hub assistant. Use **Earlier messages** to read older answers. **Clear docs history** removes it after confirmation. Account data export includes it, and deleting the account or choosing Everything in data erasure removes it too.
 
-Guest conversations stay only in the current page's memory. They are not written to browser storage or the database. Signing out clears the visible conversation and ends the shared Ensemble sign-in. A different account gets its own history.
+Guest conversations stay only in the current page's memory. They are not written to browser storage or the database. Signing out clears the visible conversation and ends the shared Ensemble sign-in. A different account gets its own history. If sign-in cannot be checked, retry the check or explicitly continue as a guest.
 
 ## What the helper can answer
 
@@ -131,7 +131,7 @@ Limits return 429 with `Retry-After`; service failures return a short 503 messag
 
 `GET /api/docs/session` returns only the session account's id/name and a login URL. `GET /api/docs/history?before=<turn id>` returns up to 30 owned turns and the next cursor. `DELETE /api/docs/history` clears that account's docs chat. `POST /api/docs/logout` ends the shared session. History requests assert `x-ensemble-docs-account`; mismatches return 409 and missing sessions return 401. No workspace sharing class or API key grants access to these records.
 
-`docs_chats` keeps a generation per account. Clearing increments it under the same row lock that saving takes; a reply from an earlier generation or a revoked session is not saved. `docs_chat_turns` holds question, answer, found, source links and time, with account foreign keys. Account export and erasure include these user-owned tables through their existing schema-based paths. A disconnected request cancels the provider call and does not save an unfinished reply.
+`docs_chats` keeps a generation per account. Each generation is an opaque UUID. Clearing rotates it under the same row lock that saving takes; a reply from an earlier generation or a revoked session is not saved. `docs_chat_turns` holds question, answer, found, source links and time, with account foreign keys. Account export and erasure include these user-owned tables through their existing schema-based paths. A disconnected request cancels the provider call and does not save an unfinished reply.
 
 `docs-helper/policy.ts` rejects obvious identity, coding and instruction-override attempts before retrieval or a model call. The prompt enforces the same scope for other wording, and output validation rejects source paths, model identity and program code. The selected model and medium effort remain fixed.
 

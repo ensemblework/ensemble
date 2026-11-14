@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyRequest } from "fastify";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { readCookie, SESSION_COOKIE, sha256 } from "../lib/auth.js";
@@ -16,7 +17,7 @@ export async function docsIdentity(db: PrismaClient, request: FastifyRequest): P
 export function docsHistory(db: PrismaClient) {
   return {
     async begin(userId: string) {
-      return (await db.docsChat.upsert({ where: { userId }, create: { userId }, update: {}, select: { generation: true } })).generation;
+      return (await db.docsChat.upsert({ where: { userId }, create: { userId }, update: { userId }, select: { generation: true } })).generation;
     },
     async list(userId: string, before?: string) {
       const cursor = before ? await db.docsChatTurn.findFirst({ where: { id: before, userId }, select: { id: true, createdAt: true } }) : null;
@@ -30,16 +31,16 @@ export function docsHistory(db: PrismaClient) {
       const page = rows.slice(0, 30);
       return { turns: page.reverse(), before: more ? page[0]!.id : null };
     },
-    async save(who: DocsIdentity, generation: number, question: string, result: HelperAnswer) {
+    async save(who: DocsIdentity, generation: string, question: string, result: HelperAnswer) {
       return db.$transaction(async (tx) => {
-        const rows = await tx.$queryRaw<{ generation: number }[]>`SELECT generation FROM docs_chats WHERE user_id = ${who.id} FOR UPDATE`;
+        const rows = await tx.$queryRaw<{ generation: string }[]>`SELECT generation FROM docs_chats WHERE user_id = ${who.id} FOR UPDATE`;
         if (rows[0]?.generation !== generation || !await tx.session.findFirst({ where: { id: who.sessionId, userId: who.id, expiresAt: { gt: new Date() } }, select: { id: true } })) return null;
         return tx.docsChatTurn.create({ data: { userId: who.id, question, ...result, sources: result.sources as Prisma.InputJsonValue }, select: { id: true, question: true, answer: true, found: true, sources: true, createdAt: true } });
       });
     },
     async clear(userId: string) {
       await db.$transaction(async (tx) => {
-        await tx.docsChat.upsert({ where: { userId }, create: { userId, generation: 1 }, update: { generation: { increment: 1 } } });
+        await tx.docsChat.upsert({ where: { userId }, create: { userId }, update: { generation: randomUUID() } });
         await tx.docsChatTurn.deleteMany({ where: { userId } });
       });
     },

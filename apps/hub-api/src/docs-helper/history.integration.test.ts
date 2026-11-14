@@ -127,6 +127,8 @@ test("revoked sessions cannot save late answers, and account export and erasure 
   assert.equal(await prisma.docsChatTurn.count({ where: { userId: user.id } }), 0);
   assert.equal(await store.save(who, generation, "connect app", { found: true, answer: "Open Connections.", sources: [] }), null);
   const next = await store.begin(user.id);
+  assert.notEqual(next, generation);
+  assert.equal(await store.save(who, generation, "previous secret", { found: true, answer: "Must not reappear.", sources: [] }), null);
   await prisma.session.delete({ where: { id: who.sessionId } });
   assert.equal(await store.save(who, next, "connect app", { found: true, answer: "Open Connections.", sources: [] }), null);
 });

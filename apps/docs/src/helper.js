@@ -17,10 +17,12 @@ const logout = document.querySelector('#helper-logout');
 const earlier = document.querySelector('#helper-earlier');
 const accountLabel = document.querySelector('#helper-account');
 const clearConfirm = document.querySelector('#helper-clear-confirm');
+const authRecovery = document.querySelector('#helper-auth-recovery');
 const apiBase = new URL(panel.dataset.endpoint).origin;
 const mark = mount(launcher.querySelector('.u-morph'), { size: 32, kind: 'beacon' });
 const waitMark = mount(waiting.querySelector('.u-morph'), { size: 64, kind: 'infinity' });
-let account = null, checked = false, pending = null, turns = [], before = null, sessionRequest = 0, elapsed;
+let account = null, checked = false, pending = null, turns = [], before = null, sessionRequest = 0;
+let epoch = 0, historyFlight = null, mutating = false, deferredSession = false, authError = false, guestMode = false;
 let sync;
 let active = true;
 
@@ -55,8 +57,9 @@ async function request(path, options = {}) {
 function showNotice(text = '') { notice.textContent = text; notice.hidden = !text; }
 function render() {
   turnsElement.replaceChildren();
-  welcome.hidden = turns.length > 0 || Boolean(pending);
-  for (const turn of turns) {
+  welcome.hidden = turns.length > 0 || Boolean(pending) || !checked;
+  const visible = checked ? turns : [];
+  for (const turn of visible) {
     const section = document.createElement('section');
     section.className = 'assistant-turn';
     const user = document.createElement('div'); user.className = 'assistant-user-turn';
@@ -82,73 +85,123 @@ function render() {
   updateControls();
 }
 function updateControls() {
-  submit.disabled = !checked || (!pending && !question.value.trim());
+  submit.disabled = !pending && (!checked || mutating || Boolean(historyFlight) || !question.value.trim());
+  earlier.disabled = !checked || Boolean(historyFlight) || Boolean(pending);
+  document.querySelector('#helper-history').disabled = !checked || Boolean(historyFlight) || Boolean(pending);
+  document.querySelector('#helper-clear').disabled = !checked || mutating;
+  logout.disabled = !checked || mutating;
+  authRecovery.hidden = !authError;
   submit.dataset.pending = String(Boolean(pending));
   submit.setAttribute('aria-label', pending ? 'Stop answering' : 'Send question');
 }
 function updateAccount() {
-  login.hidden = Boolean(account);
-  logout.hidden = !account;
-  accountLabel.textContent = account ? `Saved for ${account.name || 'your account'}` : 'Guest chat. History is not saved.';
-  topLogin.textContent = account ? account.name || 'Your docs chat' : 'Sign in';
-  topLogin.dataset.signedIn = String(Boolean(account));
+  login.hidden = Boolean(account) && checked;
+  logout.hidden = !account || !checked;
+  accountLabel.textContent = !checked ? authError ? 'Sign-in unavailable.' : 'Checking sign-in…' : account ? `Saved for ${account.name || 'your account'}` : 'Guest chat. History is not saved.';
+  topLogin.textContent = account && checked ? account.name || 'Your docs chat' : 'Sign in';
+  topLogin.dataset.signedIn = String(Boolean(account && checked));
 }
+function finishWaiting(operation) {
+  clearInterval(operation?.timer);
+  waiting.hidden = true; waiting.removeAttribute('aria-busy');
+  waitMark.idle(); mark.idle();
+}
+function invalidate(invalidateSession = true) {
+  epoch++; if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
+  if (pending) { const operation = pending; pending = null; operation.controller.abort(); finishWaiting(operation); }
+}
+function emptyConversation() { turns = []; before = null; question.value = ''; question.style.height = ''; }
 async function loadHistory(older = false) {
   if (!account) return;
-  const owner = account.id;
-  const data = await request(`history${older && before ? `?before=${encodeURIComponent(before)}` : ''}`);
-  if (account?.id !== owner) return;
-  const oldHeight = conversation.scrollHeight;
-  turns = older ? [...data.turns, ...turns] : data.turns;
-  before = data.before;
-  render();
-  conversation.scrollTop = older ? conversation.scrollHeight - oldHeight : conversation.scrollHeight;
+  if (historyFlight) return historyFlight.promise;
+  const flight = { owner: account.id, epoch, promise: null };
+  historyFlight = flight;
+  updateControls();
+  flight.promise = (async () => {
+    try {
+      const data = await request(`history${older && before ? `?before=${encodeURIComponent(before)}` : ''}`);
+      if (!active || historyFlight !== flight || epoch !== flight.epoch || account?.id !== flight.owner) return;
+      const oldHeight = conversation.scrollHeight;
+      const merged = older ? [...data.turns, ...turns] : data.turns;
+      const seen = new Set();
+      turns = merged.filter(turn => !seen.has(turn.id) && seen.add(turn.id));
+      before = data.before;
+      render();
+      conversation.scrollTop = older ? conversation.scrollHeight - oldHeight : conversation.scrollHeight;
+      return true;
+    } finally {
+      if (historyFlight === flight) { historyFlight = null; updateControls(); }
+    }
+  })();
+  return flight.promise;
 }
 async function refreshSession() {
+  if (guestMode) return;
+  if (mutating) { deferredSession = true; return; }
   const version = ++sessionRequest;
-  if (account) { turnsElement.style.visibility = "hidden"; accountLabel.textContent = "Checking sign-in…"; }
+  checked = false; authError = false; updateAccount(); render();
   try {
     const data = await request('session');
-    if (version !== sessionRequest) return;
+    if (!active || version !== sessionRequest) return;
     const changed = account?.id !== data.user?.id;
-    if (changed) { pending?.abort(); turns = []; before = null; question.value = ""; }
+    if (changed) {
+      // Invalidate conversation work without invalidating this accepted session response.
+      invalidate(false);
+      emptyConversation();
+    }
     account = data.user;
     const url = new URL(data.loginUrl);
     if (['http:', 'https:'].includes(url.protocol)) login.href = topLogin.href = url.href;
-    checked = true;
-    turnsElement.style.visibility = "";
-    updateAccount();
     if (account && (changed || !turns.length) && !pending) await loadHistory();
-    render();
+    if (!active || version !== sessionRequest) return;
+    checked = true; authError = false; updateAccount(); render();
+    if (notice.dataset.authError) { showNotice(); delete notice.dataset.authError; }
   } catch {
-    if (version !== sessionRequest) return;
-    if (!checked) { checked = true; account = null; updateAccount(); render(); }
-    showNotice('Sign-in status could not load. You can ask as a guest, or reload to check your sign-in.');
+    if (!active || version !== sessionRequest) return;
+    checked = false; authError = true; updateAccount(); render();
+    notice.dataset.authError = 'true';
+    showNotice('Sign-in could not be checked. Retry to restore your history, or continue as a guest.');
   }
 }
-topLogin.addEventListener('click', (event) => { if (account) { event.preventDefault(); open(); } });
-earlier.addEventListener('click', () => loadHistory(true).catch(error => showNotice(error.message)));
+document.querySelector('#helper-retry-session').addEventListener('click', () => refreshSession());
+document.querySelector('#helper-guest').addEventListener('click', () => {
+  invalidate(); emptyConversation(); account = null; checked = true; authError = false; guestMode = true;
+  updateAccount(); render(); showNotice();
+});
+topLogin.addEventListener('click', (event) => { if (account && checked) { event.preventDefault(); open(); } });
+earlier.addEventListener('click', () => { if (checked && !pending) loadHistory(true).catch(error => showNotice(error.message)); });
 document.querySelector('#helper-history').addEventListener('click', () => {
+  if (!checked || pending) return;
   if (!account) { showNotice('Sign in to keep your docs-chat history.'); return; }
   if (before) loadHistory(true).catch(error => showNotice(error.message));
-  else conversation.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  else loadHistory().then(applied => { if (applied) conversation.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }).catch(error => showNotice(error.message));
 });
-logout.addEventListener('click', async () => {
-  pending?.abort();
+async function changeHistory(action) {
+  if (!checked || mutating) return;
+  invalidate(); const version = epoch; mutating = true; checked = false;
+  updateAccount(); render();
+  let failure;
   try {
-    await request('logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    account = null; turns = []; before = null; question.value = ""; updateAccount(); render(); showNotice();
-  } catch (error) { showNotice(error.message); }
-});
-document.querySelector('#helper-clear').addEventListener('click', () => { clearConfirm.hidden = false; });
+    if (action === 'logout') await request('logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    else if (account) await request('history', { method: 'DELETE' });
+    if (version !== epoch || !active) return;
+    emptyConversation();
+    if (action === 'logout') account = null;
+    clearConfirm.hidden = true; showNotice();
+  } catch (error) { failure = error; }
+  finally {
+    if (version === epoch && active) {
+      mutating = false;
+      if (deferredSession || failure) { deferredSession = false; await refreshSession(); }
+      else { checked = true; updateAccount(); render(); }
+      if (failure) showNotice(failure.message);
+    }
+  }
+}
+logout.addEventListener('click', () => changeHistory('logout'));
+document.querySelector('#helper-clear').addEventListener('click', () => { if (checked) clearConfirm.hidden = false; });
 document.querySelector('#helper-keep').addEventListener('click', () => { clearConfirm.hidden = true; });
-document.querySelector('#helper-delete').addEventListener('click', async () => {
-  pending?.abort();
-  try {
-    if (account) await request('history', { method: 'DELETE' });
-    turns = []; before = null; question.value = ""; clearConfirm.hidden = true; render(); showNotice();
-  } catch (error) { showNotice(error.message); }
-});
+document.querySelector('#helper-delete').addEventListener('click', () => changeHistory('clear'));
 question.addEventListener('input', () => {
   question.style.height = 'auto'; question.style.height = `${Math.min(160, question.scrollHeight)}px`; updateControls();
 });
@@ -156,39 +209,43 @@ question.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !
 for (const starter of document.querySelectorAll('[data-docs-question]')) starter.addEventListener('click', () => { question.value = starter.dataset.docsQuestion; form.requestSubmit(); });
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (pending) { pending.abort(); return; }
+  if (pending) { pending.controller.abort(); return; }
   const text = question.value.trim();
-  if (!text || !checked) return;
-  const owner = account?.id ?? null;
-  const controller = new AbortController(); pending = controller;
+  if (!text || !checked || historyFlight || mutating) return;
+  const operation = { controller: new AbortController(), owner: account?.id ?? null, epoch, timer: null };
+  pending = operation;
   let recheck = false;
   const draft = { id: crypto.randomUUID(), question: text, answer: '', sources: [] };
+  const current = () => active && pending === operation && epoch === operation.epoch && (account?.id ?? null) === operation.owner;
   turns.push(draft); question.value = ''; question.style.height = '';
   showNotice(); waiting.hidden = false; waiting.setAttribute('aria-busy', 'true');
   waitMark.loop({ delay: 350, kind: 'infinity' }); mark.loop({ delay: 350, kind: 'beacon' });
   const since = Date.now();
-  elapsed = setInterval(() => { const seconds = Math.floor((Date.now() - since) / 1000); document.querySelector('#helper-elapsed').textContent = seconds >= 10 ? `${seconds}s elapsed` : ''; }, 1000);
+  operation.timer = setInterval(() => { const seconds = Math.floor((Date.now() - since) / 1000); document.querySelector('#helper-elapsed').textContent = seconds >= 10 ? `${seconds}s elapsed` : ''; }, 1000);
   render(); conversation.scrollTop = conversation.scrollHeight;
   try {
-    const result = await request('ask', { method: 'POST', credentials: owner ? 'include' : 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, ...(owner ? { remember: true } : {}) }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(65_000)]) });
-    if (controller.signal.aborted || (account?.id ?? null) !== owner) return;
-    Object.assign(draft, result.turn ?? result);
-    if (owner && !result.saved) showNotice('History changed while this answer was running. This answer was not saved.');
+    const result = await request('ask', { method: 'POST', credentials: operation.owner ? 'include' : 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, ...(operation.owner ? { remember: true } : {}) }), signal: AbortSignal.any([operation.controller.signal, AbortSignal.timeout(65_000)]) });
+    if (!current() || operation.controller.signal.aborted) return;
+    if (operation.owner && !result.saved) {
+      emptyConversation(); recheck = true;
+      showNotice('History changed while this answer was running. This answer was not saved.');
+    } else Object.assign(draft, result.turn ?? result);
   } catch (error) {
-    if (!active || (account?.id ?? null) !== owner) return;
+    if (!current()) return;
     turns = turns.filter(turn => turn !== draft);
     question.value = text;
-    if (!controller.signal.aborted) showNotice(error.message);
-    if (error.status === 401 || error.status === 409) { account = null; turns = []; before = null; question.value = ""; recheck = true; updateAccount(); }
+    if (!operation.controller.signal.aborted) showNotice(error.message);
+    if (error.status === 401 || error.status === 409) { emptyConversation(); recheck = true; }
   } finally {
-    if (pending === controller) pending = null;
-    clearInterval(elapsed); waiting.hidden = true; waiting.removeAttribute('aria-busy');
-    waitMark.idle(); mark.idle(); render(); conversation.scrollTop = conversation.scrollHeight;
-    if (recheck) await refreshSession();
+    clearInterval(operation.timer);
+    if (pending === operation) {
+      pending = null; finishWaiting(operation); render(); conversation.scrollTop = conversation.scrollHeight;
+      if (recheck) await refreshSession();
+    }
   }
 });
-addEventListener('focus', () => { if (!pending) refreshSession(); });
-addEventListener('pagehide', () => { active = false; pending?.abort(); question.value = ''; turns = []; turnsElement.replaceChildren(); waitMark.idle(); mark.idle(); clearInterval(elapsed); });
+addEventListener('focus', () => refreshSession());
+addEventListener('pagehide', () => { active = false; invalidate(); emptyConversation(); turnsElement.replaceChildren(); });
 addEventListener('pageshow', event => { active = true; if (event.persisted) refreshSession(); sync(); });
 refreshSession();
 if (location.hash === '#docs-chat') open();

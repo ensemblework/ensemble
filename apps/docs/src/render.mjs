@@ -184,7 +184,7 @@ ${staticSVG(24, { id: "docs-panel-mark", tone: "auto" })}
 <div id="helper-waiting" role="status" hidden><span class="u-morph" data-loader aria-hidden="true"></span><span>Looking in the docs…</span><span id="helper-elapsed" aria-hidden="true"></span></div>
 </div>
 <div class="assistant-composer-area">
-<p id="helper-notice" role="alert" hidden></p>
+<p id="helper-notice" role="alert" hidden></p><div id="helper-auth-recovery" hidden><button id="helper-retry-session" type="button">Retry sign-in check</button><button id="helper-guest" type="button">Continue as guest</button></div>
 <form id="helper-form" class="assistant-composer"><label class="sr-only" for="helper-question">Your question</label><textarea id="helper-question" name="question" maxlength="500" rows="1" placeholder="Ask about Ensemble…"></textarea><button id="helper-submit" class="assistant-send" type="submit" aria-label="Send question" disabled>${uiIcon("send")}<svg class="helper-stop" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg></button></form>
 </div>
 <p class="helper-disclaimer">AI can make mistakes, please verify</p>

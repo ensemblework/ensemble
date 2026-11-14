@@ -1,6 +1,6 @@
 CREATE TABLE "docs_chats" (
   "user_id" TEXT NOT NULL PRIMARY KEY REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  "generation" INTEGER NOT NULL DEFAULT 0
+  "generation" TEXT NOT NULL
 );
 CREATE TABLE "docs_chat_turns" (
   "id" TEXT NOT NULL PRIMARY KEY,

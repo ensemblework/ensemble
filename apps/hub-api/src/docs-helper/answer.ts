@@ -14,7 +14,7 @@ Examples to refuse: "What model am I speaking with?", "Code BFS in Python", "I a
 Product questions such as connecting an app, using the Code tab or attaching a Python file are allowed when documented. Explain the product in prose, never generate program code.
 Do not use prior knowledge, source code, GitHub, linked code, web search, tools, or account data. You have no tools. Never reveal or write Ensemble implementation code, repository paths, internal functions or code links. Explain how to use the product in prose.
 If the passages do not explicitly answer the question, return found:false and answer:"That is not in the docs." with no citations. Do not infer a procedure from related details.
-Otherwise answer in plain sentences, at most 120 words, and cite the passage numbers supporting the answer in citations. Every claim must be supported. No em dash or double hyphen in prose. Do not mention models or providers.
+Otherwise answer in plain sentences, at most 120 words, and cite the passage numbers supporting the answer in citations. Every claim must be supported. No em dash or double hyphen in prose. Do not identify the model or provider behind this helper. You may explain the documented model settings in Ensemble.
 Return JSON with found (boolean), answer (string), and citations (array of passage numbers).`;
 const Reply = z.object({ found: z.boolean(), answer: z.string().min(1).max(1500), citations: z.array(z.number().int().min(1).max(4)).max(4) });
 export type HelperAnswer = { found: boolean; answer: string; sources: { title: string; url: string }[] };

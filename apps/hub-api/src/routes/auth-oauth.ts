@@ -18,7 +18,7 @@ import { createMorningRoutine } from "../routines/service.js";
 
 const FLOW_COOKIE = ensembleCookieName("login_flow", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const FLOW_SECONDS = 600;
-/** Where a provider sign-in returns: absent for the Hub, "node" for Ensemble Node's site (docs/35). */
+/** Where a provider sign-in returns: absent for the Hub, "node" for Node, "docs" for the docs chat. */
 const RETURN_COOKIE = ensembleCookieName("login_return", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
 /** Ensemble Node's site, when this server serves it. A named return, never a URL from the request. */
@@ -100,7 +100,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       },
     });
     setFlowCookie(reply, request, flow.state, FLOW_SECONDS);
-    // Linking a provider happens in the Hub's settings; only a sign-in can return to Node.
+    // Linking a provider happens in the Hub's settings; only a sign-in can return to Node or the docs.
     const target = !link && back === "docs" ? "docs" : !link && back === "node" && nodeOrigin() ? "node" : !link && mcp ? mcpReturnCookie(flow.state, mcp) : "";
     setReturnCookie(reply, request, target, target ? FLOW_SECONDS : 0);
     reply.header("Cache-Control", "no-store");

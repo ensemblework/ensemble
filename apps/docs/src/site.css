@@ -122,3 +122,6 @@ img { max-width: 100%; height: auto; }
 @media (max-width: 640px) { #docs-helper, #docs-helper[data-expanded="true"] { inset: 8px; width: auto; height: auto; border-radius: 15px; } #helper-question { font-size: 16px; } .helper-account-row { padding: 8px 12px; gap: 8px; font-size: 11px; } .helper-header { padding: 0 12px; gap: 5px; } }
 @media (prefers-reduced-motion: reduce) { .pop-in { animation: none; } }
 @media (max-width: 640px) { #docs-helper .assistant-expand { display: none; } }
+
+#helper-auth-recovery { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+#helper-auth-recovery button { border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised); padding: 6px 10px; font-size: 12px; }

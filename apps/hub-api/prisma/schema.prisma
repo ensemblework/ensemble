@@ -3416,7 +3416,7 @@ model JobEvidence {
 /// Account-owned history for the documentation helper only, never a Hub conversation.
 model DocsChat {
   userId     String @id @map("user_id")
-  generation Int    @default(0)
+  generation String @default(uuid())
   user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("docs_chats")
