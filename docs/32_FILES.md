@@ -1,10 +1,137 @@
 # 32 · Files
 
+Keep original documents in **Files**, preview supported formats, and attach them to tasks, pages or messages. Upload a file directly, or choose **Add from your apps** to import through a connected account.
+
+Open a file to preview it, download the original, attach it to a page or use the supported edit and conversion actions. Files that cannot be previewed still show their details and a download action.
+
+## 1. What each kind of file can do
+
+| File | Preview and actions |
+| --- | --- |
+| PDF | Read pages, use Full screen, or convert to a page and export back |
+| Word (.docx) | Reading or page view; precise assistant text edits; page conversion and export back |
+| PowerPoint (.pptx) | Preview or Present; precise assistant text edits |
+| Excel (.xlsx, .xlsm), CSV and TSV | Grid with sheets where applicable; supported cell and row edits |
+| Older spreadsheets (.xls, .ods, .numbers) | Preview; choose **Make an editable .xlsx copy** before editing |
+| Images | Preview common formats; SVG stays an image rather than active page content |
+| Text and code | Read, make precise text edits, or convert to a page |
+| Audio and video | Use the browser's player |
+| Other documents | Read details and download; follow the format suggestion when preview is unavailable |
+
+### Present slides or use Full screen
+
+Choose **Present** on a slide deck to start at the selected slide. Hidden PowerPoint slides are skipped. Arrow keys, Space, PageDown, Enter or N move forward; left/up, PageUp, Backspace or P move back. Home and End jump to the ends. On touch screens, swipe sideways. F toggles browser fullscreen; Esc ends the presentation.
+
+Other supported viewers offer **Full screen** with their current zoom and unsaved edits. Esc or the close button returns to the file. If browser fullscreen is unavailable, the viewer uses an in-page layer.
+
+### Read a Word document
+
+Narrow previews default to **Reading view**, where text flows in one column. Choose **Page view** for the original page geometry, Fit width and zoom. This changes only the preview, not the file or its exports.
+
+## 3. Limits
+
+| Limit | Hosted account | Desktop or local server |
+| --- | --- | --- |
+| Files kept across all spaces | 20 | No account file-count limit |
+| Combined stored size | 100 MB | No account total-size limit |
+| One file | 25 MB | 100 MB |
+| Image displayed inside a page | 2 MB | 2 MB |
+
+Removed files do not count toward the account allowance. Empty files, programs and raw binaries are refused. A refused upload stays in the upload list with its reason. A server-wide storage limit can also prevent uploads.
+
+### Skip or replace duplicates
+
+When a picked file matches existing content or a name, choose **Skip**, **Keep both**, or **Replace** where the name matches different content. An exact copy is skipped. Replace keeps the existing file identity, so attached pages show its new content. Picking the same file twice in one batch adds it once.
+
+## 5. Bringing files in from apps
+
+Open **Files → Add from your apps**, or use `/file` on a page. Choose the source and file, then import it. Connecting an app or running Sync people does not bring files in by itself.
+
+| Source | What it imports |
+| --- | --- |
+| Google Drive | Files; Google Docs as Word, Sheets as Excel, Slides as PowerPoint and Drawings as PDF |
+| Gmail | Email attachments |
+| OneDrive | Files |
+| Outlook | Email attachments |
+| Dropbox | Files, with Paper as Markdown |
+| Box | Files |
+
+The picker shows whether each source is ready, needs permission, is disconnected or needs operator setup. Follow its steps to the relevant connection setting. Google Drive access may cover only files created or picked through Ensemble; use **Pick from Google Drive** or request the broader search permission when offered.
+
+Imports use your own connection and accept files up to 25 MB. Importing the same item again returns the stored copy. If Google cannot export a large file directly, Ensemble uses its download link where available or explains how to download and upload it yourself.
+
+## 6. Pages
+
+To attach a file to a page, type `@` and its name, use `/file`, or drop or paste the file. It appears as a resizable preview card. Choose **Open** for the full viewer. Removing the card leaves the original in Files.
+
+PDF and Word cards scroll inside their frame. Slide cards keep previous and next controls. Scrolling at a card's edge continues into the page. A shared page or public link can preview only the files that page currently mentions.
+
+### Images in pages
+
+Use `/image`, or paste or drop a PNG, JPEG, GIF or WebP. Images appear in the page at the insertion point. SVG and other file formats become cards. A progress placeholder is replaced by the finished image as one undoable step.
+
+An image must be at most **2 MB (2,097,152 bytes)**, no more than **16,384 pixels on either side**, and at most **40 megapixels**. Damaged images are refused. Images are not automatically compressed or resized. For a larger image, choose **Attach as file** or use `/file` to keep it as a card.
+
+Visitors to a single shared page or public link cannot upload images. Space access and file limits still apply.
+
+### Adjust or remove a page image
+
+Select an image to align it left, center or right; choose 25%, 50%, 75%, 100% or Original width; or edit its alt text. Drag either side handle to resize while keeping its proportions. On the keyboard slider, arrows change width by 5%, and Home or End chooses 10% or 100%.
+
+Each change is undoable. Backspace, Delete or the remove button takes the image off the page while keeping its file in Files. Deleting that file shows **Image unavailable** on pages; restoring it from Trash brings the image back. Duplicated pages and templates share the same file.
+
+Images count toward the hosted file and size allowances. Copying one to a page in another space can leave it unavailable there. There is no image picker for existing Files, caption, crop, rotation or replace-in-place control.
+
+### Export a page or convert back
+
+Use **Download** on a page, task, meeting note or skill to choose PDF, Word, Markdown, web page or plain text. Formatting and tables are preserved where supported. Plots, diagrams and pictures on the page are drawn in supported visual exports; unavailable or non-picture attachments become named links. Plain text names them with links.
+
+A page converted from PDF or Word offers **Export back** under **With the original's formatting**. It keeps the original's page setup and supported styling. PDF maps fonts to standard equivalents; Word reuses the original package. Images in a Word original remain in that original rather than being imported into the editable page.
+
+When PDF's standard fonts cannot draw the text, browser Download opens the web-page version for printing. An assistant's server-generated PDF instead refuses those characters; use Word.
+
+## 7. Agents, the assistant and editors
+
+Attach files to the task page, project page, message or task tags. Agents receive originals, including the source file behind a converted page. The selected model or agent decides what it can read; Ensemble does not run OCR. See [Agents and attachments](38_AGENT_READABLE_FILES.md) for delivery and format limits.
+
+The assistant can find files by name or summary, open originals, make supported precise edits, convert files to pages and export pages to Files. Original edits and exports wait for **Apply**. A stale edit is refused so it cannot overwrite a newer file.
+
+Messages accept up to eight files. The attach button chooses saved Files; import remote files before attaching them there. Node reads files on its owner's messages. An MCP-connected editor can read or upload files but cannot edit an original or delete one.
+
+### Evidence from agent runs
+
+Runs can attach screenshots, video, traces, reports, logs and other files as evidence. These are separate from ordinary Files: they do not count toward its account limits or appear in its search.
+
+Evidence allows up to **100 files per run**, each at most **100 MB**. Credential files, links and files containing saved secret values are refused. Local copies are removed 30 days after the run; a node's own captures expire 30 days after their last change.
+
+With `ensemble evidence off`, only the description reaches the web. A held capture stays on the computer until its owner previews and releases or discards it. Released evidence shown in a message follows that message's audience; held previews remain owner-only.
+
+## 9. Limitations
+
+- Scanned PDFs have no searchable extracted text. Models receive the original and may read the scan themselves.
+- Spreadsheet edits are refused when saving would lose charts, pivots, slicers, macros, controls, comments or workbook links. Workbooks over 15 MB cannot be edited here; a save accepts at most 20,000 cell changes.
+- Sheets over 50,000 rows show their first 50,000 rows and cannot be edited. New rows append at the end. Typing into a formula cell saves the typed value; dependent values refresh when Excel opens the file.
+- **Make an editable .xlsx copy** replaces the stored older-format spreadsheet. Values, formulas and sheets transfer, but some formatting, charts and pictures may not.
+- Legacy Word and PowerPoint files, Apple Keynote and other unsupported formats need conversion for preview.
+- Audio and video can play, but Ensemble does not understand their content or redesign slides.
+
+File summaries are requested once when the file is first read, using the **Summarize files** model setting. Editing the file does not request a new summary. Summaries are at most 250 words and help search and agents identify the right file.
+
+## 11. Connected items opened explicitly
+
+Files home lists uploaded and explicitly imported documents. Open **From your apps** to browse saved connected items such as messages, events, transcripts, issues or items attached to tasks and projects.
+
+The owner can remove a connected item. It leaves the relevant lists, task attachments, context and agent searches and is suppressed from later sync. Removed connected items are not in Trash. Attaching the same item again restores it.
+
+Delete an uploaded document through Files instead of removing its extracted-text item. Space members see only shared item kinds, never the owner's private mail, chats or calendar.
+
+## In the code
+
 People bring common files into Ensemble, uploaded from their computer or imported from a connected app, then preview them, edit them where that makes sense, turn them into pages, attach them inside pages, and let the assistant and agents read them. Tests cover specific contracts with generated files and mocked providers, not perfect fidelity for every document or vendor account.
 
 Code: `apps/hub-api/src/files/` (store, originals, extract and its worker, office-edit, page, page-image, import, attached), routes `apps/hub-api/src/routes/files.ts` and `routes/file-imports.ts`, web `apps/hub-web/components/files/`, `apps/hub-web/lib/files/`, `apps/hub-web/lib/api-files.ts`, `app/(hub)/files`, and in the page editor `components/editor/file-attach.ts` and `page-image.ts`. Formats: `packages/shared-types/src/files.ts`; images in pages: `packages/shared-types/src/page-images.ts`.
 
-## 1. What each kind of file can do
+### 1. What each kind of file can do: implementation reference
 
 The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format comes from the file name, never from the media type a browser or app claimed.
 
@@ -24,7 +151,11 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format 
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
-A file's own screen (`components/files/file-screen.tsx`) is the file under one thin bar: back to Files, the name (its size, pages, source and any notes about it behind the information icon), the viewer's own controls (page, zoom, fit, sheets; `Toolbar` in `viewers/shared.tsx` draws into the bar there), and the actions as icons (Convert to a page, Full screen or Present, Download, Attach to a page, Delete). On a narrow screen the viewer's controls take a second row; on a phone Full screen or Present stays an icon and the other actions share a ⋯ menu, and on touch screens the bar's controls are 40 px. A PDF keeps an 8 px margin around its pages when the viewer is under 640 px wide. Slides in a viewer under 640 px wide fill its width at the top with the slides in a row below; on a touch screen a sideways swipe on the slide moves to the next or previous one. Opening a file and its preview exposes a named loading status. Preview, conversion and export controls use the shared delayed local activity indicator; file transfers keep their measured byte progress.
+A file's own screen (`components/files/file-screen.tsx`) is the file under one thin bar: back to Files, the name (its size, pages, source and any notes about it behind the information icon), the viewer's own controls (page, zoom, fit, sheets; `Toolbar` in `viewers/shared.tsx` draws into the bar there), and the actions as icons (Convert to a page, Full screen or Present, Download, Attach to a page, Delete).
+
+On a narrow screen the viewer's controls take a second row; on a phone Full screen or Present stays an icon and the other actions share a ⋯ menu, and on touch screens the bar's controls are 40 px. A PDF keeps an 8 px margin around its pages when the viewer is under 640 px wide.
+
+Slides in a viewer under 640 px wide fill its width at the top with the slides in a row below; on a touch screen a sideways swipe on the slide moves to the next or previous one. Opening a file and its preview exposes a named loading status. Preview, conversion and export controls use the shared delayed local activity indicator; file transfers keep their measured byte progress.
 
 **Present and Full screen** (on a file's own screen):
 
@@ -54,7 +185,7 @@ A file's own screen (`components/files/file-screen.tsx`) is the file under one t
 
 The hosted site uses blob storage; the desktop app and local servers keep the default.
 
-## 3. Limits
+### 3. Limits: implementation reference
 
 | | Hosted (ensemblework.com) | Desktop and local servers |
 |---|---|---|
@@ -72,7 +203,9 @@ The hosted site uses blob storage; the desktop app and local servers keep the de
 - A server-wide guard, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` (10 GiB by default, counting every stored original including removed ones not yet purged), protects the server's storage (database or blob container) and answers 507 "File storage on this server is full right now."
 - Uploads, imports and edits all check the caps (`lib/hosted-limits.ts`, `files/store.ts`).
 
-**Uploading a file that is already here.** Before sending, the Files screen compares each picked or dropped file with the files kept (`findDuplicates` in `components/files/use-uploads.ts`): same content by SHA-256 (hashed in the browser, only for files the size of one already kept), else the same name. A file picked twice in one batch is added once. When any match, nothing is sent until the person chooses, for all of them (`DuplicateDialog` in `files-screen.tsx`): **Skip** (default), **Keep both** (upload as new files), or, when a name matches with different content, **Replace**, which puts the new bytes into the existing file (`PUT /api/documents/:id/content`) so pages it is attached to show the new version. An exact copy is skipped. Long names on cards wrap to two lines and are shortened in the middle, keeping the extension; the full name is the tooltip.
+**Uploading a file that is already here.** Before sending, the Files screen compares each picked or dropped file with the files kept (`findDuplicates` in `components/files/use-uploads.ts`): same content by SHA-256 (hashed in the browser, only for files the size of one already kept), else the same name. A file picked twice in one batch is added once.
+
+When any match, nothing is sent until the person chooses, for all of them (`DuplicateDialog` in `files-screen.tsx`): **Skip** (default), **Keep both** (upload as new files), or, when a name matches with different content, **Replace**, which puts the new bytes into the existing file (`PUT /api/documents/:id/content`) so pages it is attached to show the new version. An exact copy is skipped. Long names on cards wrap to two lines and are shortened in the middle, keeping the extension; the full name is the tooltip.
 
 ## 4. Keeping the server light
 
@@ -83,7 +216,7 @@ Previews, PDF and Word conversion, export back, and reading old spreadsheet form
 - Images, audio and video are never parsed.
 - A summary is requested once, when the text is first read; edits do not request another. It is made from the file itself (`context/summary-model.ts`): the tier Settings › Assistant › Automations › Summarize files names gets the file as it gets a file attached in chat ([38](38_AGENT_READABLE_FILES.md)), an image or file part for a model with a key or an included model, inside the agent's message for the person's own AI plan (a one-off turn that leaves no session). Pictures, scanned PDFs and slides without text are summarized too; audio, video and unknown formats are not (`summarizedWithoutText` in `files/extract.ts`). A PDF with no text layer (a scan) also goes as pictures of its first 3 pages (`pdfPagePictures`, drawn by pdfjs in the extract worker, the longer side at most 1,600 pixels) to every AI plan but Claude Code, which sees a PDF's pages itself (Codex, which takes no PDFs, gets only the pictures), and to a model with a key that cannot take it as a PDF but reads pictures. Where the pages cannot be drawn (no canvas in that build, a damaged PDF), the summary goes on without them. Ensemble's text of the file stands in only where the file cannot go: larger than one request carries (32 MB), refused by the provider, a kind the agent's message has no place for (Office files on every AI plan, PDFs on Codex), or a reply saying the file could not be opened (`couldNotOpen`); with no text either, the summary fails and keeps the reason. A summary is at most 250 words (`SUMMARY_WORDS`, `capSummary` in `context/summarize.ts`), cut at the last whole sentence; the prompt asks for at most four sentences, so most are 20 to 80 words. Models see each file's summary wherever files are listed for them (`hub_list_files`, the files section of a brief or message, `filesSection` in `files/attached.ts`), and a file is found by words in its summary.
 
-## 5. Bringing files in from apps
+### 5. Bringing files in from apps: implementation reference
 
 Connecting an app or running Sync people adds no file or artifact. Files arrive only through an upload, an app import/attach/save, or an assistant action the person asked for.
 
@@ -98,9 +231,11 @@ Connecting an app or running Sync people adds no file or artifact. Files arrive 
 | Dropbox | Any file (Paper as Markdown) | Dropbox connected |
 | Box | Any file | Box connected |
 
-Each state comes with one plain sentence, short numbered steps and a button to the right place in Settings → Connections: *ready*, *needs permission* (connected, but the product is off or the scope is missing), *not connected*, or *not set up* (whoever runs the server has not registered that app). Importing downloads the file through the person's own connection (25 MB at most; tokens never follow a redirect to another host) and saves it like an upload (`POST /api/documents/import`, `files/import.ts`, `download()` in `connectors/items/sources/*`). Importing the same item again returns the copy already kept.
+Each state comes with one plain sentence, short numbered steps and a button to the right place in Settings → Connections: *ready*, *needs permission* (connected, but the product is off or the scope is missing), *not connected*, or *not set up* (whoever runs the server has not registered that app). Importing downloads the file through the person's own connection (25 MB at most; tokens never follow a redirect to another host) and saves it like an upload (`POST /api/documents/import`, `files/import.ts`, `download()` in `connectors/items/sources/*`).
 
-## 6. Pages
+Importing the same item again returns the copy already kept.
+
+### 6. Pages: implementation reference
 
 - **Attach:** type `@` and a file name, use `/file` (upload, choose from Files, or from your apps), or drop or paste files into the editor; files upload first, then appear as cards. Dropped and pasted PNG, JPEG, GIF and WebP images become images in the page instead (below); `/file` makes a card of any file, images included. Cards are resizable and show a compact preview with Open; on a page you can edit, the card's × takes it off the page (the file stays in Files).
 - **Scrolling a card:** a PDF card shows every page, fitted to the card's width, in its own scroll box with the page count following the scroll (`CompactPdf` in `components/files/viewers/pdf-viewer.tsx`); a Word card scrolls inside its frame; a slide deck keeps its back and next buttons. A wheel that starts with the pointer over a card scrolls the card, and at its top or bottom the rest goes to the page. A page scroll that runs over a card keeps scrolling the page until the wheel has rested for 450 ms (`lib/scroll-handoff.ts`, attached to the card body in `file-embed.tsx` and to the Word frame's window). Pinch-zoom and sideways scrolling stay with the card.
@@ -148,7 +283,9 @@ PNG, JPEG, GIF (animated too) and WebP images show inside a page as images, not 
 
 The editor runs the same checks before sending and renames a file whose extension is wrong for its bytes; a name without an image extension gets one on the server too. The width and height read from the header (turned for EXIF orientations 5–8) come back as `image: { format, width, height }`. Images are never parsed for text; like any file, an image in a page gets a summary when Settings › Assistant › Automations › Summarize files is on (§4), so models can tell which picture is which.
 
-**Page writes** (`assertNewPageImages`): saving a page (`PUT /api/pages/:id`, `PUT /api/tasks/:id/page`), writes by the assistant and agents through `writePageContent` and `hub_create_page`, and the content sent to `POST /api/documents/:id/page` refuse an image they add when it is a `data:` URL over 2 MiB (413), or a file in this space over 2 MiB or not PNG, JPEG, GIF or WebP (413 or 415, naming the `[@name](ensemble://file/<id>)` link that attaches it instead). Images the page already held are kept, so pages saved before the limit still save; restoring a saved version is not checked. Live co-editing (`pages/collab-core.ts`) refuses a step that adds a `data:` image over 2 MiB; moving one the page already holds is fine. Co-editing steps and an agent run's output block (`writeAgentBlock`) are not checked against Files; an image there of a file that breaks the rules shows as unavailable (below).
+**Page writes** (`assertNewPageImages`): saving a page (`PUT /api/pages/:id`, `PUT /api/tasks/:id/page`), writes by the assistant and agents through `writePageContent` and `hub_create_page`, and the content sent to `POST /api/documents/:id/page` refuse an image they add when it is a `data:` URL over 2 MiB (413), or a file in this space over 2 MiB or not PNG, JPEG, GIF or WebP (413 or 415, naming the `[@name](ensemble://file/<id>)` link that attaches it instead).
+
+Images the page already held are kept, so pages saved before the limit still save; restoring a saved version is not checked. Live co-editing (`pages/collab-core.ts`) refuses a step that adds a `data:` image over 2 MiB; moving one the page already holds is fine. Co-editing steps and an agent run's output block (`writeAgentBlock`) are not checked against Files; an image there of a file that breaks the rules shows as unavailable (below).
 
 **Storage and access.** An image is an ordinary Files `Document` (§2), and the page's node names it:
 
@@ -162,7 +299,9 @@ The editor runs the same checks before sending and renames a file whose extensio
 - Who can see it follows file cards: a shared page or public link reads a file only while the page's current content places it (`contentHasFile` in `sharing/gate.ts` reads `attrs.fileId`); any other file answers 403. Space members read it as shared content.
 - Agents: `attrs.fileId` makes it one of the task's attached files (`mentionedFileIds`, `filesOnTask` in `files/attached.ts`), so briefs, `view_attachment`, engine copies and paired-computer downloads include it. Page Markdown writes it as `![alt](ensemble://file/<id>){width=60% align=left natural=1200x800}`, leaving out defaults, and reads that back as the same node (`imageMarkdown` and `markdownToNodes` in `page-markdown.ts`), so an agent rewriting a page keeps its images. Web images stay `![alt](https://…)`. `pageText` shows `[image: <alt> (file id <id>)]`.
 
-**Why a Files row and not bytes in the page.** Images as base64 `data:` URLs in the page JSON were considered and rejected: every save, co-editing step, version checkpoint (up to 30 per page) and search-text rebuild would carry the bytes, a large photo would pass the 1,000,000-character step and 4 MB save limits, and agents and the sharing gate could not refer to an image by id. A Files row reuses what exists: the `original` column or private blob storage (`ENSEMBLE_FILE_STORAGE`), the hosted caps, Trash and purge, backups, reading through a shared page, and attachment for agents. The costs: each image is a file in Files and counts toward the hosted plan's 20 files and 100 MB, and an image copied into a page in another space shows as unavailable there.
+**Why a Files row and not bytes in the page.** Images as base64 `data:` URLs in the page JSON were considered and rejected: every save, co-editing step, version checkpoint (up to 30 per page) and search-text rebuild would carry the bytes, a large photo would pass the 1,000,000-character step and 4 MB save limits, and agents and the sharing gate could not refer to an image by id.
+
+A Files row reuses what exists: the `original` column or private blob storage (`ENSEMBLE_FILE_STORAGE`), the hosted caps, Trash and purge, backups, reading through a shared page, and attachment for agents. The costs: each image is a file in Files and counts toward the hosted plan's 20 files and 100 MB, and an image copied into a page in another space shows as unavailable there.
 
 **Lifecycle.**
 
@@ -173,21 +312,15 @@ The editor runs the same checks before sending and renames a file whose extensio
 
 **Known limitations.**
 
-- Download (PDF, Word, Markdown, web page, text) leaves images out.
+- Download includes supported images in PDF, Word, Markdown and web-page output; plain text keeps their linked names (§6).
 - Images on task pages opened through a shared board are unavailable to its viewers, as file cards are.
 - A mixed drop puts file cards in the line and images below it; pasted HTML keeps each image in place.
 - The editor has no picker for an image already in Files (an agent can place one with Markdown), and no captions, cropping, rotation or replacing an image in place.
 
-**Future work (not built yet).** This is a plan, not current behaviour: today an image over 2 MB is refused. The plan is to accept source images up to 10 MB, compress or resize them before saving so the stored image is close to 2 MB, keep 2 MiB (2,097,152 bytes) as the enforced final limit, and then insert the result into the page. To settle first:
+**Image processing boundary.** Source images over 2 MiB are refused. The editor does not compress or resize them automatically. The format, pixel and byte checks above run before saving; an accepted file keeps its original bytes.
 
-- quality settings: the JPEG/WebP quality to start from and how far to step down;
-- transparency: PNG and WebP alpha would be lost as JPEG, so images with alpha need a format that keeps it;
-- EXIF orientation: apply it before re-encoding, then drop the tag;
-- animated GIFs: re-encoding keeps one frame, so refuse them or keep them as they are;
-- failure: when compression cannot reach the limit, refuse with the same message and never store more than 2 MiB;
-- resource safeguards: check pixel limits before decoding, cap memory and CPU per image, and decide where it runs: in the browser (canvas or `createImageBitmap`, keeping the server light) or on the server (a bounded worker and an image library the server does not have today).
 
-## 7. Agents, the assistant and editors
+### 7. Agents, the assistant and editors: implementation reference
 
 File text is always passed on as information, not instructions. Which files each agent gets, how pictures reach models that read images, and the limits are in [38](38_AGENT_READABLE_FILES.md).
 
@@ -247,7 +380,7 @@ A coding agent can attach files for its owner to see with the run's result: scre
 - Space members may use files like other shared content (viewers read only).
 - Ledger: `document.upload`, `document.import`, `document.update`, `document.cells`, `document.page`, `document.delete`, `artifact.remove`.
 
-## 9. Limitations
+### 9. Limitations: implementation reference
 
 - PDFs without a text layer (scans) have no extracted text, so search does not find their words. Models are given the PDF itself; for its summary, agents and models that cannot see a PDF's pages also get pictures of its first pages.
 - Spreadsheet cell edits are refused for workbooks with charts, pivot tables, slicers, macros, form controls, comments or links to other workbooks, because saving would drop them. Values that depend on edited cells refresh when Excel next opens the file.
@@ -273,7 +406,7 @@ A coding agent can attach files for its owner to see with the run's result: scre
 | `apps/hub-web/lib/export/*.test.ts`, `lib/files/export-back.test.ts` | Markdown table parsing and tables in every Download format; embeds split out of paragraphs, linked names in lists, pictures and their linked captions in PDF, Word, Markdown, the web page and export back, an unreadable bitmap named instead |
 | `apps/hub-web/lib/scroll-handoff.test.ts` | A wheel over a card stays with it; a page scroll running over it stays with the page until the wheel rests; pinch-zoom and sideways scrolling |
 
-## 11. Connected items opened explicitly
+### 11. Connected items opened explicitly: implementation reference
 
 The Files home (`components/files/files-screen.tsx`) shows only uploaded or explicitly imported documents and makes no connected-item list request; **Add from your apps** opens an explicit search/import picker. Direct links to `/files?view=apps` or `&item=…` (`components/files/from-apps.tsx`) open the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app.
 

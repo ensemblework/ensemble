@@ -1,57 +1,61 @@
 # 16 · The Code tab: review, rewrite, commit and a guarded terminal
 
-The **Code** sidebar item opens Code's window on its **Welcome** tab: agent changes to review, recent repositories and recent code runs. A review or a repository opens in the same window as an IDE showing exactly what the agent changed, hunk by hunk: accept or reject each change, edit any file, see the whole file, commit, push, open a pull request, or run git in a small guarded terminal.
-
-## Where Code runs
-
-**On the computer** (desktop app or a local server), Code works on the folders in *Settings → Folders Code can use* and Ensemble's workspace through `/api/code/*`.
-
-**On Ensemble on the web**, the server's own folders, repository operations and shell are operator-only (`lib/hosted-access.ts`); `/api/shell` reports this as `hostCode` (`canUseHostCredentials`, `routes/views.ts`). While it is false (`useHostCode` in `lib/use-module.ts`) the web makes no `/api/code/*` call: Code (`app/(hub)/code/page.tsx`) lists your computers; sidebar prefetch (`lib/prefetch.ts`), the repository lists in Settings and the Assign dialog (including `/api/workspace/*` checkouts and trusted folders) skip those reads; Today's *Reviews* tile points to Code. The API's `HOST_ACCESS_DENIED` is the fallback before the shell loads. The host terminal is off when `ENSEMBLE_TERMINAL=off`, and in hosted production unless `ENSEMBLE_TERMINAL=on`.
-
-On the web the tab works on your paired computers (`lib/code-home.ts`). The Explorer has a section per computer (`components/code/computers-code.tsx`) with its **agent changes to review** and its **repositories** (its Code folders and Ensemble's workspace), read from that computer; the Welcome merges every computer's changes and repositories, naming the computer. Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the passkey-unlocked **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
-
-- only from you, in your browser; never an API key, an agent or the assistant;
-- never git's own files or secrets files; keys in code are hidden and a file holding one is read-only; files over 1 MB are read-only;
-- the computer's switches decide what the web may do: *Show task files on the web* (reading), *Change code from the web* (every change), *Terminal from the web* (Settings → This computer, or `ensemble web`).
-
-The computer must be online with CLI 0.3.8+ or desktop app 0.3.5+ (0.3.9+ / 0.3.6+ for the full editor); otherwise its Explorer section or the editor says what is missing. With no paired computer, the Welcome says so in one line and offers *Pair a computer*.
-
-Failed review or repository queries show the error and Retry; they never claim there is no work. A folder that cannot be opened shows the error with *Try again*, and a file that cannot be read shows its error in the editor; a later read that fails (offline, the computer asleep) keeps the editor as it is. A denied terminal-status request shows an error, not "Opening the terminal…".
-
-Ensemble Node has a separate chat-side original-file editor using this relay and the same colour-theme conversion, including non-Git text folders, autosave with version conflicts, and selected-line quotes. It needs Code API 3 (CLI/desktop 0.6.4+); it does not change this tab's repository reviews or terminal unlock. See [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace).
-
-The task page's *Review changes* opens the same review. A repository the agent cloned is not a change; its edits inside one are.
-
-**A run's files** (`components/code/run-code.tsx`, `/code?job=<id>&file=<path>`) open in a second tab of Code's window, read-only: the changed files (A, M or D with line counts) and *Folder on <computer>* on the left, the file read-only and highlighted (CodeMirror) on the right. On the desktop app and local servers a changed file opens from the copy the computer sent when the run ended (*as the run left it*); *Now* reads it again. **Ensemble on the web keeps no copy** (`keepsRunFileText` in `lib/hosted-access.ts`, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)): every file is read from the computer when opened, so it must be online. The folder is read one folder or file at a time under the rules in [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web); only the person whose computer ran the task sees file text. It needs CLI 0.3.7+ or desktop app 0.3.4+ and *Show task files on the web* (`ensemble browse on`). Full screen fills the window (Esc leaves). The run preview's *Files*, the task's *Agent output* and a run on a computer in the Welcome's *Recent agent runs* link here.
-
----
+Open **Code** in the sidebar, then choose **Review agent changes** or a repository from **Welcome**. Review each change, edit files and use Source control to commit or push. The guarded terminal lets you run supported commands on the selected computer.
 
 ## 1. Using it
 
 ### The window
 
-`/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area. An editor theme colours the surfaces, text and status colours, never the accent: icons, the active tab and selections keep the accent picked in Settings › Appearance, adjusted for the theme's light or dark surfaces.
+`/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area.
 
-- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*. In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and folder sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); the folder's section is named after the repository, and what is folded is kept in `ensemble.code.folds`. Every side panel starts with a heading row; rows are 22 px, as in VS Code.
+An editor theme colours the surfaces, text and status colours, never the accent: icons, the active tab and selections keep the accent picked in Settings › Appearance, adjusted for the theme's light or dark surfaces.
+
+#### Activity bar
+
+*Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*.
+
+In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and folder sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); the folder's section is named after the repository, and what is folded is kept in `ensemble.code.folds`. Every side panel starts with a heading row; rows are 22 px, as in VS Code.
 - **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl/⌘+B shows or hides it.
 - **Terminal panel** under the editor: drag its top edge, 140 px to three quarters of the window; double-click resets (280 px); arrow keys as above. Ctrl+` shows or hides it. On the web it is the selected computer's terminal (§5).
-- **Status bar**: it starts with the computer, as VS Code's remote indicator: its name and an online dot, tinted while it cannot be reached. On the Welcome it is a menu when there are several computers, followed by Ensemble's version there, changes to review, code runs working now and the code size; in a review it opens a menu with the folder's path, *Copy the folder's path*, *Open the terminal here* and *Back to Code*, followed by the items in the next paragraph.
+#### Status bar
+
+it starts with the computer, as VS Code's remote indicator: its name and an online dot, tinted while it cannot be reached.
+
+On the Welcome it is a menu when there are several computers, followed by Ensemble's version there, changes to review, code runs working now and the code size; in a review it opens a menu with the folder's path, *Copy the folder's path*, *Open the terminal here* and *Back to Code*, followed by the items in the next paragraph.
 - **Quick open** (`components/code/quick-open.tsx`, matching in `lib/code-quick-open.ts`): one box at the top of the window, as VS Code's. Ctrl/⌘+P (or the Explorer's *Go to file*) finds a file by fuzzy name, the files opened last first, with Enter going back to the one before; `name.ts:12` opens it at line 12. `>`, Ctrl/⌘+Shift+P or F1 lists the window's commands with their keys (view, save, close, next change, reveal, copy paths, *Ask Ensemble* about the file or selection, new file or folder, Accept all, Discard all, push, colour theme, text size, full screen). `:` or Ctrl+G goes to a line. On the Welcome, Ctrl/⌘+P lists every repository by name and `>` the Welcome's commands. Shortcuts are written as the platform writes them (⇧⌘P on a Mac, Ctrl+Shift+P elsewhere).
 
 Panel sizes, which panels are open, the selected computer and the theme are kept in this browser (`ensemble.code.*`). Below 768 px the side panel is an overlay (below).
 
 ### New files and folders
 
-The Explorer's folder section has *New file*, *New folder*, *Refresh*, *Collapse folders* and *Download* on its heading, as in VS Code; the command palette has *New file…* and *New folder…* too. A new file or folder goes in the folder last clicked (or the open file's): its name is typed in place, Enter makes it and Esc cancels; nothing is asked. A path (`lib/util/new.ts`) makes the folders on the way too. A full path (`/…` or `~/…`) makes it elsewhere, only inside the workspace or a folder Code can use; paths outside the repository are never listed, only typed. Nothing already there is overwritten. A new file opens in the editor. `POST /api/code/create` (`createRepoEntry`, `createInRoots` in `lib/git.ts`); a paired computer answers it from Code API 4 (an older one makes files in folders that exist, not folders).
+1. Select the destination folder in Explorer. If you do not select one, Code uses the open file’s folder.
+2. Choose **New file** or **New folder** from the folder heading or command palette. The heading also offers Refresh, Collapse folders and Download.
+3. Type the name in place. Press Enter to create it or Esc to cancel; there is no extra confirmation. A path (`lib/util/new.ts`) makes the folders on the way too. A full path (`/…` or `~/…`) makes it elsewhere, only inside the workspace or a folder Code can use; paths outside the repository are never listed, only typed. Nothing already there is overwritten. A new file opens in the editor. `POST /api/code/create` (`createRepoEntry`, `createInRoots` in `lib/git.ts`); a paired computer answers it from Code API 4 (an older one makes files in folders that exist, not folders).
 
 ### Explorer, tabs and the editor, as in VS Code
 
-- **Marks**: every file in the explorer, the Changes list, Go to file, the tabs and the path bar has its language mark (TypeScript, React, Python, Java, Go, Rust, Markdown, JSON, YAML, images, lockfiles, Dockerfile, package.json, next.config and about seventy more), and the status bar names its language (`lib/file-kinds.ts`, `components/code/file-icon.tsx`). A file the run or you changed is coloured by its git status, with the letter at the right.
-- **Move and rename**: drag a file or folder onto a folder (or the folder section's empty space for the top) to move it; holding over a closed folder opens it. F2, or *Rename…*, renames in place (the name without its extension is picked). Nothing already there is overwritten, a folder cannot go into itself, and open tabs follow what moved. `POST /api/code/move` (`moveRepoEntry`).
-- **Right-click**: a file has Open, Open preview, Ask Ensemble ▸ (Explain, Find bugs, Suggest improvements, Write tests, Doc comments), Attach file to assistant, New task about this file, Copy path / relative path / name, Rename, Delete (asked in the menu) and Download; a folder has New file, New folder, the copies, Rename, Delete and Download as zip; the empty space has New file/folder, Refresh, Collapse and Download repository as zip. A tab has Close, Close others, Close to the right, Close all, the copies, Reveal in explorer and Download. In the editor it has Ask and Attach for the selection (or the file), New task from selection, Cut · Copy · Paste, Copy path with line, Reveal in explorer and Download. `components/code/code-menus.ts`. `POST /api/code/delete` (`deleteRepoEntry`).
-- **Download**: a file, or a folder or the whole repository as a zip of what git would show (tracked and new files, not ignored ones, never files of keys or secrets), up to 20 MB; more is refused rather than cut short. `GET /api/code/download` (`packRepoEntry`), base64 in JSON so a paired computer answers the same way (Code API 5, CLI 0.6.9 and later; its answers are capped at 3 MB). An older CLI on that computer answers moving, deleting and downloading with "Update Ensemble on …".
+#### Marks
+
+every file in the explorer, the Changes list, Go to file, the tabs and the path bar has its language mark (TypeScript, React, Python, Java, Go, Rust, Markdown, JSON, YAML, images, lockfiles, Dockerfile, package.json, next.config and about seventy more), and the status bar names its language (`lib/file-kinds.ts`, `components/code/file-icon.tsx`). A file the run or you changed is coloured by its git status, with the letter at the right.
+#### Move and rename
+
+drag a file or folder onto a folder (or the folder section's empty space for the top) to move it; holding over a closed folder opens it. F2, or *Rename…*, renames in place (the name without its extension is picked). Nothing already there is overwritten, a folder cannot go into itself, and open tabs follow what moved. `POST /api/code/move` (`moveRepoEntry`).
+#### Right-click
+
+a file has Open, Open preview, Ask Ensemble ▸ (Explain, Find bugs, Suggest improvements, Write tests, Doc comments), Attach file to assistant, New task about this file, Copy path / relative path / name, Rename, Delete (asked in the menu) and Download; a folder has New file, New folder, the copies, Rename, Delete and Download as zip; the empty space has New file/folder, Refresh, Collapse and Download repository as zip. A tab has Close, Close others, Close to the right, Close all, the copies, Reveal in explorer and Download.
+
+In the editor it has Ask and Attach for the selection (or the file), New task from selection, Cut · Copy · Paste, Copy path with line, Reveal in explorer and Download. `components/code/code-menus.ts`. `POST /api/code/delete` (`deleteRepoEntry`).
+#### Download
+
+a file, or a folder or the whole repository as a zip of what git would show (tracked and new files, not ignored ones, never files of keys or secrets), up to 20 MB; more is refused rather than cut short. `GET /api/code/download` (`packRepoEntry`), base64 in JSON so a paired computer answers the same way (Code API 5, CLI 0.6.9 and later; its answers are capped at 3 MB).
+
+An older CLI on that computer answers moving, deleting and downloading with "Update Ensemble on …".
 - **Preview**: only Markdown, HTML, SVG and CSV/TSV have a **Preview** button beside Changes and File (Ctrl+Shift+V): Markdown as a page, HTML in a frame with no scripts, SVG as a picture and tables as a grid. An image opens as the picture itself, on a checkerboard with its size.
-- **Tabs**: the whole tab opens its file; a middle click or Alt+W closes it (Ctrl/⌘+W in the desktop app, where the browser does not keep it); the close button shows on hover and on the file in view, and an unsaved file shows a dot that turns into the close button on hover. Two open files with one name show their folder. The strip scrolls sideways with the wheel and keeps the file in view on screen; Alt+1…8 opens the first to eighth tab, Alt+9 the last, Ctrl+PageDown / PageUp the next or previous, and arrow keys move between focused tabs.
+#### Tabs
+
+the whole tab opens its file; a middle click or Alt+W closes it (Ctrl/⌘+W in the desktop app, where the browser does not keep it); the close button shows on hover and on the file in view, and an unsaved file shows a dot that turns into the close button on hover. Two open files with one name show their folder.
+
+The strip scrolls sideways with the wheel and keeps the file in view on screen; Alt+1…8 opens the first to eighth tab, Alt+9 the last, Ctrl+PageDown / PageUp the next or previous, and arrow keys move between focused tabs.
 - **Breadcrumbs** above the editor: each folder, and the file, shows itself in the Explorer.
 - **Nothing open**: the editor shows what to do next with its keys (*Show all commands*, *Go to file*, *Find in files*, the terminal, the side panel). The first changed file opens by itself once; closing every file leaves the editor empty.
 
@@ -66,11 +70,21 @@ The Explorer's folder section has *New file*, *New folder*, *Refresh*, *Collapse
 
 ### Repository names
 
-`GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use). They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<slug>`, named by the run's model; [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation)) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*. Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`. The Explorer folds run checkouts under *Agent worktrees* (closed until opened, remembered): each row shows the task, its branch and how long ago it was used; the Welcome lists one only when it was used within the review window (14 days) and has a task or an origin.
+`GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use).
+
+They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<slug>`, named by the run's model; [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation)) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*.
+
+Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`.
+
+The Explorer folds run checkouts under *Agent worktrees* (closed until opened, remembered): each row shows the task, its branch and how long ago it was used; the Welcome lists one only when it was used within the review window (14 days) and has a task or an origin.
 
 ### The review
 
-The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (computer, branch with ahead/behind, review progress, line and column (opens *Go to line*), language, line endings, save state, code size). While this browser or the computer is offline a one-line notice says so under the tabs. The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`). While a folder opens, its window frame and explorer geometry stay in place. Opening a folder or file and searching within files show a local progress strip only after the shared loading delay (`IdeProgress`); cached reads paint without it.
+The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (computer, branch with ahead/behind, review progress, line and column (opens *Go to line*), language, line endings, save state, code size).
+
+While this browser or the computer is offline a one-line notice says so under the tabs. The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`). While a folder opens, its window frame and explorer geometry stay in place.
+
+Opening a folder or file and searching within files show a local progress strip only after the shared loading delay (`IdeProgress`); cached reads paint without it.
 
 | You want to… | Do this |
 |---|---|
@@ -92,13 +106,23 @@ The review is an IDE (`components/code/ide.tsx`): the window above with the run'
 | Commit / push | *Source control* |
 | Run git yourself | The terminal button, or Ctrl+` |
 
-**At most 10 files are open** (`MAX_OPEN_FILES` in `lib/code-tabs.ts`). Opening one more closes the oldest open file that has nothing unsaved and is not in view; when every other open file still has an edit being saved, the new one is refused with that reason. A closed file's text is dropped from the browser's memory once it is saved (an edit that failed to save stays until it does). On the web a file over 1 MB opens read-only (`CODE_EDIT_BYTES`), and an answer over 3 MB (`CODE_ANSWER_BYTES`, a file and its versions together) is not shown: open it on the computer. Files and edits pass through Ensemble on the web without being stored: each call is relayed through Redis, held in memory only until it is answered or its time limit passes, then deleted (`devices/file-relay.ts`). Web terminal output is held there for up to an hour so the page can catch up (`RUN_TTL_SECONDS` in `devices/code-routes.ts`). The hosted Redis writes nothing to disk (`--save "" --appendonly no`, `infra/deploy/home/compose.yml`). Nothing about your code is written to the browser's storage either; only the editor's theme, sizes and panels are remembered.
+**At most 10 files are open** (`MAX_OPEN_FILES` in `lib/code-tabs.ts`). Opening one more closes the oldest open file that has nothing unsaved and is not in view; when every other open file still has an edit being saved, the new one is refused with that reason. A closed file's text is dropped from the browser's memory once it is saved (an edit that failed to save stays until it does).
 
-It is an **editor first**. Typing in either view saves automatically: 0.7 s after you stop, on Ctrl/⌘+S, when you switch file or view, and before a commit or push. The status bar and tab show `• Unsaved` → `Saving…` → `Saved`. While this browser or the computer is offline nothing is sent: the edit stays on the page as `• Unsaved, offline` and is saved when both are back (a computer's state is read again every 30 s). A save names the version the editor read (`expectedHash`), so nothing is overwritten if the file changed meanwhile (below). The editor works on LF text; saves restore the file's own line endings and byte-order mark (`lib/code-versions.ts`). No shortcut is a bare letter or an editing key.
+On the web a file over 1 MB opens read-only (`CODE_EDIT_BYTES`), and an answer over 3 MB (`CODE_ANSWER_BYTES`, a file and its versions together) is not shown: open it on the computer. Files and edits pass through Ensemble on the web without being stored: each call is relayed through Redis, held in memory only until it is answered or its time limit passes, then deleted (`devices/file-relay.ts`).
+
+Web terminal output is held there for up to an hour so the page can catch up (`RUN_TTL_SECONDS` in `devices/code-routes.ts`). The hosted Redis writes nothing to disk (`--save "" --appendonly no`, `infra/deploy/home/compose.yml`). Nothing about your code is written to the browser's storage either; only the editor's theme, sizes and panels are remembered.
+
+It is an **editor first**. Typing in either view saves automatically: 0.7 s after you stop, on Ctrl/⌘+S, when you switch file or view, and before a commit or push. The status bar and tab show `• Unsaved` → `Saving…` → `Saved`.
+
+While this browser or the computer is offline nothing is sent: the edit stays on the page as `• Unsaved, offline` and is saved when both are back (a computer's state is read again every 30 s). A save names the version the editor read (`expectedHash`), so nothing is overwritten if the file changed meanwhile (below).
+
+The editor works on LF text; saves restore the file's own line endings and byte-order mark (`lib/code-versions.ts`). No shortcut is a bare letter or an editing key.
 
 On the computer, binary files are not shown and files over 5 MB are not opened.
 
-Below 768 CSS pixels Code's window starts with its side panel closed and the Welcome is one column. The side panel opens as a bounded overlay; choosing a file or tapping outside closes it. This does not change the desktop panel preference. The read-only run browser has a Files / Show code switch instead of squeezing the file list and editor side by side. Editor toolbars and code keep their own horizontal scrolling.
+Below 768 CSS pixels Code's window starts with its side panel closed and the Welcome is one column. The side panel opens as a bounded overlay; choosing a file or tapping outside closes it. This does not change the desktop panel preference. The read-only run browser has a Files / Show code switch instead of squeezing the file list and editor side by side.
+
+Editor toolbars and code keep their own horizontal scrolling.
 
 ### Folders Code can use
 
@@ -125,30 +149,53 @@ If another program writes the file while you have unsaved typing, **nothing is o
 
 In a repository opened from the Explorer the same editor compares with the index: *Stage* (Alt+Y) stages that change as shown, *Discard* (Alt+N) puts the staged lines back.
 
-The theme picker (`components/code/ide-theme.tsx`, shared with plot code panes) saves the selected theme ID and favourites in account settings, and its sanitised palette through `GET/PUT /api/settings/editor-theme/current` (independent of the Code module). Built-ins, Open VSX and imported JSON/JSONC/VSIX colour data restore across browsers and are shared with Node's editor selection. Imports read bounded colour data and never execute extension scripts. Local caches retain recent palettes for fast loading. Code always uses a coding font (Cascadia Code → Consolas, ligatures off) at its own size.
+The theme picker (`components/code/ide-theme.tsx`, shared with plot code panes) saves the selected theme ID and favourites in account settings, and its sanitised palette through `GET/PUT /api/settings/editor-theme/current` (independent of the Code module). Built-ins, Open VSX and imported JSON/JSONC/VSIX colour data restore across browsers and are shared with Node's editor selection.
+
+Imports read bounded colour data and never execute extension scripts. Local caches retain recent palettes for fast loading. Code always uses a coding font (Cascadia Code → Consolas, ligatures off) at its own size.
 
 ---
 
-## 2. What a run is answerable for
+## Where Code runs
 
-Each code run records **two snapshots** of its folder as git trees, using a throwaway index so your staging area is untouched:
+**On the computer** (desktop app or a local server), Code works on the folders in *Settings → Folders Code can use* and Ensemble's workspace through `/api/code/*`.
 
-- **start**: the folder as the job found it, including staged, unstaged and never-added files;
-- **end**: as the job left it.
+**On Ensemble on the web**, the server's own folders, repository operations and shell are operator-only (`lib/hosted-access.ts`); `/api/shell` reports this as `hostCode` (`canUseHostCredentials`, `routes/views.ts`).
 
-Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days** (each in its own commit, `CodeReview.startCommit` and `endCommit`; `pinReviewSnapshots` in `lib/code-commit.ts`) so git's garbage collection cannot remove them. The daily retention pass then unpins them and marks the review expired (`runRetention`); *Show expired* lists those.
+While it is false (`useHostCode` in `lib/use-module.ts`) the web makes no `/api/code/*` call: Code (`app/(hub)/code/page.tsx`) lists your computers; sidebar prefetch (`lib/prefetch.ts`), the repository lists in Settings and the Assign dialog (including `/api/workspace/*` checkouts and trusted folders) skip those reads; Today's *Reviews* tile points to Code.
 
-A run that writes in a repository its folder's snapshot does not cover (another folder it was allowed to write, or a repository nested in a folder that is not one) snapshots that repository at its first write there; its changes are listed with the run's files, and when the run folder itself has none the review is of that repository ([25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)). Code opens a review's repository even outside *Folders Code can use*: Ensemble recorded it.
+The API's `HOST_ACCESS_DENIED` is the fallback before the shell loads. The host terminal is off when `ENSEMBLE_TERMINAL=off`, and in hosted production unless `ENSEMBLE_TERMINAL=on`.
 
-The review is start → end, so work you had before the run is never shown as the agent's; Source control lists it as *Your changes*, unticked. Git-ignored files have no snapshot; changed ones are listed as *Changed, can't be reviewed*. Failed and stopped runs get a review too, and their changes stay in the folder until you decide.
+On the web the tab works on your paired computers (`lib/code-home.ts`). The Explorer has a section per computer (`components/code/computers-code.tsx`) with its **agent changes to review** and its **repositories** (its Code folders and Ensemble's workspace), read from that computer; the Welcome merges every computer's changes and repositories, naming the computer.
 
-*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; in Ensemble's checkout it commits the agent's files on the run's branch with hooks off, while an outside folder is left uncommitted. Only the run's files git still sees are staged (on disk, or tracked and so staged as a deletion); one that is gone, such as a file the run removed again or that was committed and moved since, is skipped instead of failing the commit. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only in Ensemble's checkout, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run pushes the run's branch to its `origin` without force, with the computer's sign-in (`git push -u origin HEAD`).
+Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the passkey-unlocked **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
+
+- only from you, in your browser; never an API key, an agent or the assistant;
+- never git's own files or secrets files; keys in code are hidden and a file holding one is read-only; files over 1 MB are read-only;
+- the computer's switches decide what the web may do: *Show task files on the web* (reading), *Change code from the web* (every change), *Terminal from the web* (Settings → This computer, or `ensemble web`).
+
+The computer must be online with CLI 0.3.8+ or desktop app 0.3.5+ (0.3.9+ / 0.3.6+ for the full editor); otherwise its Explorer section or the editor says what is missing. With no paired computer, the Welcome says so in one line and offers *Pair a computer*.
+
+Failed review or repository queries show the error and Retry; they never claim there is no work. A folder that cannot be opened shows the error with *Try again*, and a file that cannot be read shows its error in the editor; a later read that fails (offline, the computer asleep) keeps the editor as it is. A denied terminal-status request shows an error, not "Opening the terminal…".
+
+Ensemble Node has a separate chat-side original-file editor using this relay and the same colour-theme conversion, including non-Git text folders, autosave with version conflicts, and selected-line quotes. It needs Code API 3 (CLI/desktop 0.6.4+); it does not change this tab's repository reviews or terminal unlock. See [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace).
+
+The task page's *Review changes* opens the same review. A repository the agent cloned is not a change; its edits inside one are.
+
+**A run's files** (`components/code/run-code.tsx`, `/code?job=<id>&file=<path>`) open in a second tab of Code's window, read-only: the changed files (A, M or D with line counts) and *Folder on <computer>* on the left, the file read-only and highlighted (CodeMirror) on the right.
+
+On the desktop app and local servers a changed file opens from the copy the computer sent when the run ended (*as the run left it*); *Now* reads it again. **Ensemble on the web keeps no copy** (`keepsRunFileText` in `lib/hosted-access.ts`, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)): every file is read from the computer when opened, so it must be online.
+
+The folder is read one folder or file at a time under the rules in [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web); only the person whose computer ran the task sees file text. It needs CLI 0.3.7+ or desktop app 0.3.4+ and *Show task files on the web* (`ensemble browse on`). Full screen fills the window (Esc leaves).
+
+The run preview's *Files*, the task's *Agent output* and a run on a computer in the Welcome's *Recent agent runs* link here.
 
 ---
 
 ## 3. Commit, push, pull request
 
-*Source control* (`components/code/commit-panel.tsx`, `GET /api/code/commit-plan`) groups files like the review: **changes from this run (ticked)** and **your changes (unticked)**. The subject follows the 50/72 guide (counter amber past 50, red past 72; description lines over 72 counted), the description is Markdown with *Write | Preview*, and `Co-authored-by: Ensemble agent (<model>) <agent@ensemble.local>` is added when the run's files are included (a box turns it off). Committing run files with undecided changes asks first. Drafts are kept per run on this device.
+Open **Source control** to choose what to commit. It groups **changes from this run**, selected by default, and **your changes**, unselected by default (`components/code/commit-panel.tsx`, `GET /api/code/commit-plan`).
+
+The subject follows the 50/72 guide (counter amber past 50, red past 72; description lines over 72 counted), the description is Markdown with *Write | Preview*, and `Co-authored-by: Ensemble agent (<model>) <agent@ensemble.local>` is added when the run's files are included (a box turns it off). Committing run files with undecided changes asks first. Drafts are kept per run on this device.
 
 The commit is built from **exactly the ticked paths** (`POST /api/code/commit-paths`): a throwaway index from HEAD, each file stored as on disk (`hash-object --no-filters`, so no repository filter runs), hooks never run, and HEAD moves only if it has not moved. Other staged work stays staged. The author is your git config, else your Ensemble account's name and email.
 
@@ -160,7 +207,7 @@ The rest of the panel shows staged and unstaged files (stage, unstage, discard),
 
 ## 4. Which branch the agent works on
 
-The Assign dialog's *Optional information* has *Which branch the agent works on*:
+Before assigning a run, open the Assign dialog’s **Optional information → Which branch the agent works on** and choose:
 
 - **Use as is (default)**: nothing is created or switched. Your own folder is used as it is; Ensemble's checkout stays on the branch it was cloned on.
 - **Existing branch**: the run switches to that branch, any branch, fetching it when it is only on the remote.
@@ -177,30 +224,65 @@ A terminal panel under the editor (resizable, §1) for what would otherwise send
 
 **It is not a shell:**
 
-- **Who**: a **passkey** with user verification (Touch ID, Windows Hello, a phone or a security key) once per session: 30 minutes idle, 8 hours at most, *Lock now* any time. No agent, MCP call, API key, script or the assistant can produce one, and every terminal route refuses anything but a signed-in browser on Ensemble's own page. Adding a passkey needs the account password, or on the web, for an account that signs in with Google or GitHub, a code mailed to the account. On the web the passkey covers only the terminal; review, editing and Source control use your sign-in and the computer's *Change code from the web* switch. A locked terminal (*Lock now*, `lock`, or expiry) refuses commands with `423` and code `TERMINAL_LOCKED` (`lib/terminal-human.ts`), never `401`, so you stay signed in and the panel returns to its unlock button.
-- **What**: one allow-listed program at a time, run by name, never through a shell: no pipes, redirects, `;`, `&&`, `$()` or backticks (`parseCommand`, `checkProgram` in `workspace/guard.ts`). `git` is hardened: hooks off, no fsmonitor, no `ext::` transports, `--force` refused in favour of `--force-with-lease`. Developer tools (`python`, `pip`, `uv`, `node`, `npm`, `pnpm`, `pytest`, `make`, `cargo`, `go` and similar), file tools (`ls`, `cat`, `grep`, `find`, `mkdir`, `cp`, `mv`, `rm` and similar) and `curl`/`wget`. Shell scripts run only as `sh script.sh` inside the sandbox, never `sh -c`. Never: `sudo`, `ssh`, `docker`, `osascript`, `open`, `launchctl`, `security`, `env`, `kill` and the rest of `NEVER`. Destructive commands (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) need you to type `yes`. Built in: `cd`, `pwd`, `clear`, `help`, `lock`.
-- **Where**: Ensemble's workspace, folders tasks ran in, and folders added in *Settings → Terminal and commits*; never above them, never a system or credential folder (`workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable. From the web, a computer without a working sandbox refuses commands (`ensemble sandbox setup`). 15 minutes per command; the web shows up to 1 MB of output.
+#### Who
+
+a **passkey** with user verification (Touch ID, Windows Hello, a phone or a security key) once per session: 30 minutes idle, 8 hours at most, *Lock now* any time. No agent, MCP call, API key, script or the assistant can produce one, and every terminal route refuses anything but a signed-in browser on Ensemble's own page.
+
+Adding a passkey needs the account password, or on the web, for an account that signs in with Google or GitHub, a code mailed to the account.
+
+On the web the passkey covers only the terminal; review, editing and Source control use your sign-in and the computer's *Change code from the web* switch. A locked terminal (*Lock now*, `lock`, or expiry) refuses commands with `423` and code `TERMINAL_LOCKED` (`lib/terminal-human.ts`), never `401`, so you stay signed in and the panel returns to its unlock button.
+#### What
+
+one allow-listed program at a time, run by name, never through a shell: no pipes, redirects, `;`, `&&`, `$()` or backticks (`parseCommand`, `checkProgram` in `workspace/guard.ts`). `git` is hardened: hooks off, no fsmonitor, no `ext::` transports, `--force` refused in favour of `--force-with-lease`.
+
+Developer tools (`python`, `pip`, `uv`, `node`, `npm`, `pnpm`, `pytest`, `make`, `cargo`, `go` and similar), file tools (`ls`, `cat`, `grep`, `find`, `mkdir`, `cp`, `mv`, `rm` and similar) and `curl`/`wget`. Shell scripts run only as `sh script.sh` inside the sandbox, never `sh -c`. Never: `sudo`, `ssh`, `docker`, `osascript`, `open`, `launchctl`, `security`, `env`, `kill` and the rest of `NEVER`.
+
+Destructive commands (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) need you to type `yes`. Built in: `cd`, `pwd`, `clear`, `help`, `lock`.
+#### Where
+
+Ensemble's workspace, folders tasks ran in, and folders added in *Settings → Terminal and commits*; never above them, never a system or credential folder (`workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable.
+
+From the web, a computer without a working sandbox refuses commands (`ensemble sandbox setup`). 15 minutes per command; the web shows up to 1 MB of output.
 - **Record**: the computer's ledger records that a command ran (arguments, folder, exit code; `via: "web"` from the web), **never its output**. Ensemble on the web records the unlock and which computer ran a command, and keeps output only while you read it (an hour at most, in Redis).
 
 *Settings → Terminal and commits* can turn the terminal off on the computer; *Terminal from the web* (Settings → This computer, or `ensemble web terminal off`) turns off only the web's.
 
 ### Passkeys and addresses
 
-A passkey belongs to the **site it was made on** and stays on the device that made it (or your phone or key). On the computer's own page register at `http://localhost:<port>`, not `127.0.0.1`: browsers refuse passkeys on a raw IP. On the web it belongs to the web's address (`app.ensemblework.com`), so one passkey opens the terminal on each paired computer. The fingerprint or PIN never reaches Ensemble.
+A passkey belongs to the **site it was made on** and stays on the device that made it (or your phone or key). On the computer's own page register at `http://localhost:<port>`, not `127.0.0.1`: browsers refuse passkeys on a raw IP. On the web it belongs to the web's address (`app.ensemblework.com`), so one passkey opens the terminal on each paired computer.
+
+The fingerprint or PIN never reaches Ensemble.
 
 On the web, Settings shows **Unlock to manage passkeys**, which runs the same check as the terminal; removing a passkey needs an unlocked session. The buttons stay visible for touch and keyboard users.
 
 ---
 
-## 6. Speed
+## 2. What a run is answerable for
 
-- The review list comes from the database, with each review's file and line counts from git (cached 8 s).
-- A file's four versions load in one call when its tab opens (`GET /api/code/versions`) and stay in the page's query cache; progress counts are cached per file until the file or its accepted text changes.
-- CodeMirror, the merge view and language parsers load only on `/code/review`.
+Each code run records **two snapshots** of its folder as git trees, using a throwaway index so your staging area is untouched:
+
+- **start**: the folder as the job found it, including staged, unstaged and never-added files;
+- **end**: as the job left it.
+
+Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days** (each in its own commit, `CodeReview.startCommit` and `endCommit`; `pinReviewSnapshots` in `lib/code-commit.ts`) so git's garbage collection cannot remove them. The daily retention pass then unpins them and marks the review expired (`runRetention`); *Show expired* lists those.
+
+A run that writes in a repository its folder's snapshot does not cover (another folder it was allowed to write, or a repository nested in a folder that is not one) snapshots that repository at its first write there; its changes are listed with the run's files, and when the run folder itself has none the review is of that repository ([25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)).
+
+Code opens a review's repository even outside *Folders Code can use*: Ensemble recorded it.
+
+The review is start → end, so work you had before the run is never shown as the agent's; Source control lists it as *Your changes*, unticked. Git-ignored files have no snapshot; changed ones are listed as *Changed, can't be reviewed*. Failed and stopped runs get a review too, and their changes stay in the folder until you decide.
+
+*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; in Ensemble's checkout it commits the agent's files on the run's branch with hooks off, while an outside folder is left uncommitted.
+
+Only the run's files git still sees are staged (on disk, or tracked and so staged as a deletion); one that is gone, such as a file the run removed again or that was committed and moved since, is skipped instead of failing the commit. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only in Ensemble's checkout, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run pushes the run's branch to its `origin` without force, with the computer's sign-in (`git push -u origin HEAD`).
+
+---
 
 ## 7. In a space shared with you
 
-Code is view only for people a space is shared with ([29](29_SHARING.md)): they read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal stay with the owner. A paired computer's code on the web is only ever its owner's, whichever space is open. Code's window shows **View only** instead of the terminal and review actions, and the editor is read-only. A single "code" share opens the review list the same way.
+Code is view only for people a space is shared with ([29](29_SHARING.md)): they read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal stay with the owner. A paired computer's code on the web is only ever its owner's, whichever space is open.
+
+Code's window shows **View only** instead of the terminal and review actions, and the editor is read-only. A single "code" share opens the review list the same way.
 
 The **Search and jump** dialog offers **Local repositories** and **Code reviews** as destinations (`/code#local-repositories` opens the Explorer, `/code#reviews` the *Changes to review* panel).
 
@@ -211,3 +293,11 @@ The **Search and jump** dialog offers **Local repositories** and **Code reviews*
 - A process running as you could register a passkey first. Every registration is in the ledger and listed in Settings, so an unexpected one is visible and removable.
 - Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `npm install`, `make` or `pytest` run the repository's code, inside the sandbox.
 - **On the web, Ensemble's server relays the commands.** While the terminal is unlocked, a compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless turned off). The computer still applies its allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
+
+## In the code
+
+### 6. Speed
+
+- The review list comes from the database, with each review's file and line counts from git (cached 8 s).
+- A file's four versions load in one call when its tab opens (`GET /api/code/versions`) and stay in the page's query cache; progress counts are cached per file until the file or its accepted text changes.
+- CodeMirror, the merge view and language parsers load only on `/code/review`.

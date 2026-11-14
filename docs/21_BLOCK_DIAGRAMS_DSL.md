@@ -1,27 +1,14 @@
 # 21 · Block diagrams: Ensemble diagram language
 
-Agents are the primary authors. People edit lightly. The language is line-oriented on purpose: one statement per line, ids you can point at, and a shape named in words. A later step turns that text into a JSON document, lays the blocks out, and draws them. You never have to write the JSON.
+Describe a diagram with one statement per line, or edit its blocks on the canvas. Give each block an ID and a shape named in words, then connect the IDs. Agents usually write the initial diagram; people can refine it in the editor. Ensemble builds the JSON, lays out the blocks and draws them for you.
 
 The editor stores the text. Dragging, connecting, renaming, locking, and reorganizing write back through the printer, into the same language, with positions kept in a `layout` section at the bottom.
 
 Minimum window for the editor: **1024 × 640** CSS pixels. Below that, Ensemble shows a **read-only preview** with pan, zoom, Fit, SVG download and Back to diagrams. Editing controls, dragging nodes, connecting and renaming are disabled; the minimum is unchanged (`apps/hub-web/components/diagrams/editor.tsx`, `canvas.tsx`, `nodes.tsx`).
 
-## Pipeline
-
-```text
-text  →  parse  →  model (JSON)  →  layout  →  render
-```
-
-1. **Parse.** Each line is read on its own. A line that cannot be read is reported with its line number and skipped. Every other line still applies.
-2. **Model.** Version 1 document. Blocks, groups, lines, text boxes, and positions are maps keyed by stable ids (see [JSON model](#json-model)).
-3. **Layout.** ELK layered layout, with crossing minimisation (`packages/block-diagrams/src/layout.ts`). Groups are laid out as frames around their members, nested groups inside their parent, so sibling frames never cover each other or a block outside them. Line labels get room between layers; a label that would still sit on a block or a frame's title is moved into a gap by bending its line. Locked blocks keep their x,y. This runs in a web worker when the browser allows it.
-4. **Render.** The Hub draws with React Flow. The same geometry (SVG paths and the 8 ports) lives in a DOM-free package, so another renderer can replace it.
-
-`parseDiagram(text)` also accepts a Mermaid `flowchart` or `graph`. The editor then rewrites it as Ensemble text.
-
-`src/diagnostics.test.ts` checks a 500-node input against a 250 ms CPU-time budget. Parallel-process preemption is not counted as parser work; browser/UI responsiveness is a separate measurement.
-
 ## One diagram
+
+Start with this login flow. Change the labels to describe your own process, add or remove nodes, and connect them by their IDs.
 
 ```udl
 title Login flow
@@ -49,62 +36,50 @@ Rules of thumb:
 - Put the shape on the block, not on the line.
 - Leave positions out until someone has dragged or pressed Reorganize. The printer adds a `layout` section.
 
-## Grammar
+## Editor
 
-```text
-document   = { statement }
-statement  = title | direction | curve | node | edge | group | text | layout | comment | blank
+Open **Diagrams** to browse the card grid. Choose **New diagram**, then a template or Blank.
 
-comment    = "#" rest-of-line | "//" rest-of-line
-blank      = empty line
+Each card shows the diagram’s drawing (`app/(hub)/diagrams/page.tsx`) (`components/diagrams/diagram-thumb.tsx` renders the SVG once the card nears the screen; a diagram whose blocks have no stored position yet, such as one written as text by an agent or the API, is laid out first with `laidOut` in `layout-client.ts`, as the page card and page exports do), its title and when it changed.
 
-title      = "title" [":"] rest-of-line
-direction  = ( "direction" | "dir" ) [":"] direction-name
-direction-name
-           = "down" | "up" | "left" | "right"
-           | "tb" | "td" | "bt" | "lr" | "rl"
-           | "top-down" | "bottom-up" | "left-right" | "right-left"
+Search filters by title; Recent or Name sorts. Blank is the first template. Open a card’s ⋯ menu to download PNG, SVG, PDF or JPG without opening the diagram, or choose Delete and confirm on the card.
 
-curve      = "curve" curve-name
-curve-name = "straight" | "curved" | "elbow"
+The editor (`components/diagrams/editor.tsx`, styles in `diagrams.css`) has one top bar: a *Diagrams* breadcrumb, the title (edit it in place), the save state, Share, **Canvas only**, **More actions** (Explain this diagram, Duplicate, Version history) and **Export** (PNG, SVG, PDF, JPG; Copy as image; Copy as Mermaid). On the canvas, controls float:
 
-node       = ( "node" | "block" ) id quoted-label { property }
-           | id quoted-label shape-marker
-           | label shape-marker
+- **The dock** (bottom centre): rectangle, rounded, diamond, circle and database in one click; **Add block** with every shape; **Text box**; **Lock**; **Reorganize** with a menu for Fit vertically and Fit horizontally. On a canvas narrower than 640 px the one-click shapes hide.
+- **Opening a diagram whose blocks have no stored position** (written as text): the canvas shows "Arranging blocks…" until layout has placed them (at most 6 seconds), then fades in fitted, instead of showing a rough stack first.
+- **Zoom** (bottom left; centred with the dock on a narrow canvas): out, the zoom level (click for 100%), in, and fit (`ZoomPill` in `canvas.tsx`).
+- **The format bar** (top centre) while something is selected.
+- **Canvas only** puts the canvas in the browser's full screen with the title and save state at the top left and Export and Exit at the top right.
 
-edge       = [ "edge" | "connect" | "link" ] endpoint { arrow endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
-           | [ "edge" | "connect" | "link" ] endpoint arrow endpoint { "," endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
-line-look  = "width" number | "head" number | "bend" number | text-style
+Every tool is a 32 px button (40 px on touch screens) with a tooltip that names it and its shortcut (`components/diagrams/toolbar.tsx`). Menus on the canvas are drawn inside it, so they still show in full screen; ↑ and ↓ move through them and Esc closes them.
 
-group      = "group" id [quoted-label] ["locked"] "{" { statement } "}"
-           | "group" id [quoted-label] ["locked"] newline
-               indented statements
+- **Reorganize** runs layout again and writes the new `layout` section. Locked blocks stay put.
+- **Fit vertically** and **Fit horizontally** do the same with a compact top-down or left-to-right direction, and they update the `direction` line.
+- **Lock** on the selection, or `locked` in the text, is the same flag.
+- **Add a text box** inserts a `text` statement.
+- **Add a block** inserts a `node` statement.
+- **Resize** a selected block or text box from its corners and sides. It cannot go smaller than its text needs: the label on at most three lines with its longest word unbroken, and about half the shape's default size (`minNodeSize` in `shapes.ts`; a circle stays round). The size is the block's `layout` width and height. Renaming keeps a size you chose unless the new text no longer fits.
+- **Alignment guides.** While you drag one block, its left, centre or right edge snaps to another block's (and its top, middle or bottom), within 6 screen pixels, and a red guide shows the match. While you resize, the edge you drag snaps the same way, and the width or height snaps to another block's, marked on both. Hold Alt to move or resize without snapping. Written for Ensemble (`components/diagrams/snap.ts`) after how Excalidraw (MIT) and draw.io (Apache-2.0) snap; React Flow's helper-lines example is a paid Pro example and is not used.
+- **The format bar** floats over the canvas while something is selected: text size (−/+), **B**, *I*, U for blocks, text boxes and line labels (also ⌘B / ⌘I / ⌘U, Ctrl on Windows and Linux); five colours for blocks (blue, green, amber, red, purple, each with a light and a dark version) and *A* for the shape's own colour; line width, arrowhead size, straight / curved / elbow, dashed, *Straighten* and the label for lines; and align left, centre, right, top, middle, bottom, and space evenly (three or more) for several blocks. Every change is written to the text like any other canvas edit.
+- **Line labels.** Double-click a line (or its label), or use the pen in the format bar, to type its label. Enter keeps it, Esc cancels. While typing, the label's pill is the one focus edge (accent border and a 1 px ring); the field inside draws none.
+- **Bend a line** by dragging its middle when it is selected (see [Lines](#lines)).
+- Lines are drawn by `edgeRoute` (`src/route.ts`), shared by the canvas and the SVG export, so a bent or thick line and its arrowhead look the same in both. Each end follows its block live while it is dragged or resized. The stroke stops under the arrowhead, so a thick line never pokes past the tip.
+- Export is PNG, JPG, PDF or SVG of the whole diagram, from the same geometry, in the editor or from the download menu on each row of the Diagrams list (`components/diagrams/download-menu.tsx`). *Settings › Data › Download this space* includes every diagram as PNG, SVG and source text.
+- **Editing requires at least 1024 × 640 CSS pixels.** Smaller windows show only a read-only pan/zoom preview and SVG download; they cannot edit the diagram.
+- On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, ⌘B / ⌘I / ⌘U style the selected text, and Delete removes the selection. ⌘/Ctrl + = (or +) and ⌘/Ctrl + − zoom the canvas in and out and ⌘/Ctrl + 0 fits the diagram, like the zoom buttons; the browser's page zoom keys do this only while the diagram is open and the cursor is not in the text. **Lock** needs a selection: with nothing selected its tooltip says to select blocks or text boxes first. Line labels sit above the blocks on a background, so a block does not hide them; a selected block comes above them (`components/diagrams/edge.tsx`). Dragging several selected blocks moves them all and saves all of them. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
 
-text       = ( "text" | "textbox" ) id quoted-label ["locked"] { text-style }
+Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is only the renderer and the save buttons.
 
-layout     = "layout" [ "{" ] { layout-line } [ "}" ]
-layout-line= id x y [width height] ["locked" | "pinned"]
+### History browser
 
-id         = letter { letter | digit | "_" | "-" }
-endpoint   = id-or-quoted-label [ "." port ]
-arrow      = ">" | "->" | "=>" | "→" | "-->" | "~~>"
-           | "--" | ".."
-           | "<>" | "<->" | "<-->"
-           | "<" | "<-" | "<--"
-property   = "shape" shape | "color" color | "locked" | "pinned" | text-style
-           | "(" [shape-list] | "[" [shape-list]
-text-style = "font" number | "bold" | "italic" | "underline"
-shape-list = value { "," value } [missing ")" or "]"]
-shape-marker = property that names a shape
-```
+**More actions › Version history** (`components/diagrams/diagram-more.tsx`) opens the shared `components/history/version-history.tsx` dialog also used by pages. Entries are grouped by day and show the saved time and title; Restore asks once before it replaces the diagram.
 
-Keywords are case-insensitive. A colon right after a keyword is optional (`title: Login`). Comments are whole lines only, so a label may contain `#`.
-
-Ids are the map keys. Matching is case-insensitive. If a line names a label instead of an id and two blocks share that label, the first one wins and the parser warns.
+When the work a diagram was drawn from has changed, a notice under the top bar offers **Refresh with AI**, which asks the assistant with the current diagram as context.
 
 ## Shapes
 
-Nineteen shapes. The name on the right is what the printer writes.
+Choose one of the nineteen shapes below. You can use any alias in the first column; saving writes the canonical name from the second column.
 
 | Write this | Means | Typical use |
 |---|---|---|
@@ -206,11 +181,15 @@ edge api > db
 edge api > cache curve curved : "optional"
 ```
 
-**One line per pair of blocks.** Two blocks have at most one line between them. A second line between the same two blocks (either way round) is folded into the first, with a note in Problems and a *Remove this line* fix: a line the other way round adds its arrowhead, so `a > b` and `b > a` become one two-way arrow, and different labels are kept, joined with ` / `. The canvas does not draw a second line between joined blocks (it says they are already connected), and the assistant's `add_edge` on a joined pair changes the line that is there.
+**One line per pair of blocks.** Two blocks have at most one line between them. A second line between the same two blocks (either way round) is folded into the first, with a note in Problems and a *Remove this line* fix: a line the other way round adds its arrowhead, so `a > b` and `b > a` become one two-way arrow, and different labels are kept, joined with ` / `.
+
+The canvas does not draw a second line between joined blocks (it says they are already connected), and the assistant's `add_edge` on a joined pair changes the line that is there.
 
 `width`, `head`, `bend` and the text style come after the label (when the label is quoted) and are written by the printer in that order: `edge a > b : "calls" curve curved width 2 head 14 bend -30 font 12 italic`. In an unquoted label, words such as `bold` stay part of the label.
 
-A bend moves with the blocks: it is a distance from the straight line between the two ends, so the line keeps its curve when either block is dragged. On the canvas, select a line and drag its middle (its label, or the dot) to bend it; dragging it back near the straight line snaps it straight. A label whose line is not selected lets the pointer through to a block under it, so a label never stops a block from being dragged; click the line, or its label where no block is under it, to select it.
+A bend moves with the blocks: it is a distance from the straight line between the two ends, so the line keeps its curve when either block is dragged.
+
+On the canvas, select a line and drag its middle (its label, or the dot) to bend it; dragging it back near the straight line snaps it straight. A label whose line is not selected lets the pointer through to a block under it, so a label never stops a block from being dragged; click the line, or its label where no block is under it, to select it.
 
 ## Text size and emphasis
 
@@ -231,7 +210,7 @@ A size outside 8–48 is kept inside it, with a note. A block that is too small 
 
 ## Groups
 
-Groups are labeled frames. They can nest. Members are the blocks, text boxes, and groups written inside them.
+Use a group to draw a labeled frame around related blocks or text. Put its members inside braces or indent them beneath the group. Groups can contain other groups.
 
 Braces:
 
@@ -275,11 +254,13 @@ edge api > db
 
 Deleting a group on the canvas keeps its members and moves them up to the parent.
 
-On the canvas a frame is drawn around its members: 16 px at the sides and bottom, 40 px on top for the title, and at least as wide as the title. Drag a group by its title or its border to move it with everything inside it, as one undo step. Click the title to select the group; Lock and Delete then act on it. The inside of a frame lets clicks through, so the blocks in it stay easy to grab (`apps/hub-web/components/diagrams/canvas.tsx`, `nodes.tsx`).
+On the canvas a frame is drawn around its members: 16 px at the sides and bottom, 40 px on top for the title, and at least as wide as the title. Drag a group by its title or its border to move it with everything inside it, as one undo step. Click the title to select the group; Lock and Delete then act on it.
+
+The inside of a frame lets clicks through, so the blocks in it stay easy to grab (`apps/hub-web/components/diagrams/canvas.tsx`, `nodes.tsx`).
 
 ## Text boxes
 
-A text box is not a shape. It is free text you can drag. It does not take connectors.
+Add a text box for a free-standing caption or note. You can drag it, but cannot attach connectors to it.
 
 ```udl
 title Cutoff
@@ -570,7 +551,77 @@ form "Enter login" (parallelogram)
 start > form
 ```
 
-## JSON model
+## Grammar
+
+```text
+document   = { statement }
+statement  = title | direction | curve | node | edge | group | text | layout | comment | blank
+
+comment    = "#" rest-of-line | "//" rest-of-line
+blank      = empty line
+
+title      = "title" [":"] rest-of-line
+direction  = ( "direction" | "dir" ) [":"] direction-name
+direction-name
+           = "down" | "up" | "left" | "right"
+           | "tb" | "td" | "bt" | "lr" | "rl"
+           | "top-down" | "bottom-up" | "left-right" | "right-left"
+
+curve      = "curve" curve-name
+curve-name = "straight" | "curved" | "elbow"
+
+node       = ( "node" | "block" ) id quoted-label { property }
+           | id quoted-label shape-marker
+           | label shape-marker
+
+edge       = [ "edge" | "connect" | "link" ] endpoint { arrow endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
+           | [ "edge" | "connect" | "link" ] endpoint arrow endpoint { "," endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
+line-look  = "width" number | "head" number | "bend" number | text-style
+
+group      = "group" id [quoted-label] ["locked"] "{" { statement } "}"
+           | "group" id [quoted-label] ["locked"] newline
+               indented statements
+
+text       = ( "text" | "textbox" ) id quoted-label ["locked"] { text-style }
+
+layout     = "layout" [ "{" ] { layout-line } [ "}" ]
+layout-line= id x y [width height] ["locked" | "pinned"]
+
+id         = letter { letter | digit | "_" | "-" }
+endpoint   = id-or-quoted-label [ "." port ]
+arrow      = ">" | "->" | "=>" | "→" | "-->" | "~~>"
+           | "--" | ".."
+           | "<>" | "<->" | "<-->"
+           | "<" | "<-" | "<--"
+property   = "shape" shape | "color" color | "locked" | "pinned" | text-style
+           | "(" [shape-list] | "[" [shape-list]
+text-style = "font" number | "bold" | "italic" | "underline"
+shape-list = value { "," value } [missing ")" or "]"]
+shape-marker = property that names a shape
+```
+
+Keywords are case-insensitive. A colon right after a keyword is optional (`title: Login`). Comments are whole lines only, so a label may contain `#`.
+
+Ids are the map keys. Matching is case-insensitive. If a line names a label instead of an id and two blocks share that label, the first one wins and the parser warns.
+
+## In the code
+
+### Pipeline
+
+```text
+text  →  parse  →  model (JSON)  →  layout  →  render
+```
+
+1. **Parse.** Each line is read on its own. A line that cannot be read is reported with its line number and skipped. Every other line still applies.
+2. **Model.** Version 1 document. Blocks, groups, lines, text boxes, and positions are maps keyed by stable ids (see [JSON model](#json-model)).
+3. **Layout.** ELK layered layout, with crossing minimisation (`packages/block-diagrams/src/layout.ts`). Groups are laid out as frames around their members, nested groups inside their parent, so sibling frames never cover each other or a block outside them. Line labels get room between layers; a label that would still sit on a block or a frame's title is moved into a gap by bending its line. Locked blocks keep their x,y. This runs in a web worker when the browser allows it.
+4. **Render.** The Hub draws with React Flow. The same geometry (SVG paths and the 8 ports) lives in a DOM-free package, so another renderer can replace it.
+
+`parseDiagram(text)` also accepts a Mermaid `flowchart` or `graph`. The editor then rewrites it as Ensemble text.
+
+`src/diagnostics.test.ts` checks a 500-node input against a 250 ms CPU-time budget. Parallel-process preemption is not counted as parser work; browser/UI responsiveness is a separate measurement.
+
+### JSON model
 
 Schema version is `1`. Do not author this by hand. It is the contract between the parser, the layout, the canvas, and the database. Ids are keys so a later collaboration layer can store each map as a Y.Map. The row in the database also has its own integer `version` that increments on each save. That number is the document revision, not this schema version.
 
@@ -607,41 +658,8 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 }
 ```
 
-`font` (on nodes, texts and edges), `width`, `head` and `bend` are optional; a document without them is plain text and default lines. `direction` is `down`, `up`, `left`, or `right`. `curve` is `straight`, `curved`, or `elbow`, on the diagram and on each line. A document saved before curves existed is read as `straight`. `line` is `solid` or `dashed`. `color` is a palette name, a hex color, or `null`. `port` is one of the eight names, or `null`.
+`font` (on nodes, texts and edges), `width`, `head` and `bend` are optional; a document without them is plain text and default lines. `direction` is `down`, `up`, `left`, or `right`. `curve` is `straight`, `curved`, or `elbow`, on the diagram and on each line. A document saved before curves existed is read as `straight`. `line` is `solid` or `dashed`.
+
+`color` is a palette name, a hex color, or `null`. `port` is one of the eight names, or `null`.
 
 `direction: down` flows top to bottom. `right` flows left to right.
-
-## Editor
-
-The Diagrams list (`app/(hub)/diagrams/page.tsx`) is a grid of cards, each with the diagram's drawing (`components/diagrams/diagram-thumb.tsx` renders the SVG once the card nears the screen; a diagram whose blocks have no stored position yet, such as one written as text by an agent or the API, is laid out first with `laidOut` in `layout-client.ts`, as the page card and page exports do), its title and when it changed. Search filters by title; Recent or Name sorts. **New diagram** opens the templates (Blank first); a card's ⋯ menu downloads PNG, SVG, PDF or JPG without opening it, or deletes after a confirm on the card.
-
-The editor (`components/diagrams/editor.tsx`, styles in `diagrams.css`) has one top bar: a *Diagrams* breadcrumb, the title (edit it in place), the save state, Share, **Canvas only**, **More actions** (Explain this diagram, Duplicate, Version history) and **Export** (PNG, SVG, PDF, JPG; Copy as image; Copy as Mermaid). On the canvas, controls float:
-
-- **The dock** (bottom centre): rectangle, rounded, diamond, circle and database in one click; **Add block** with every shape; **Text box**; **Lock**; **Reorganize** with a menu for Fit vertically and Fit horizontally. On a canvas narrower than 640 px the one-click shapes hide.
-- **Opening a diagram whose blocks have no stored position** (written as text): the canvas shows "Arranging blocks…" until layout has placed them (at most 6 seconds), then fades in fitted, instead of showing a rough stack first.
-- **Zoom** (bottom left; centred with the dock on a narrow canvas): out, the zoom level (click for 100%), in, and fit (`ZoomPill` in `canvas.tsx`).
-- **The format bar** (top centre) while something is selected.
-- **Canvas only** puts the canvas in the browser's full screen with the title and save state at the top left and Export and Exit at the top right.
-
-Every tool is a 32 px button (40 px on touch screens) with a tooltip that names it and its shortcut (`components/diagrams/toolbar.tsx`). Menus on the canvas are drawn inside it, so they still show in full screen; ↑ and ↓ move through them and Esc closes them.
-
-- **Reorganize** runs layout again and writes the new `layout` section. Locked blocks stay put.
-- **Fit vertically** and **Fit horizontally** do the same with a compact top-down or left-to-right direction, and they update the `direction` line.
-- **Lock** on the selection, or `locked` in the text, is the same flag.
-- **Add a text box** inserts a `text` statement.
-- **Add a block** inserts a `node` statement.
-- **Resize** a selected block or text box from its corners and sides. It cannot go smaller than its text needs: the label on at most three lines with its longest word unbroken, and about half the shape's default size (`minNodeSize` in `shapes.ts`; a circle stays round). The size is the block's `layout` width and height. Renaming keeps a size you chose unless the new text no longer fits.
-- **Alignment guides.** While you drag one block, its left, centre or right edge snaps to another block's (and its top, middle or bottom), within 6 screen pixels, and a red guide shows the match. While you resize, the edge you drag snaps the same way, and the width or height snaps to another block's, marked on both. Hold Alt to move or resize without snapping. Written for Ensemble (`components/diagrams/snap.ts`) after how Excalidraw (MIT) and draw.io (Apache-2.0) snap; React Flow's helper-lines example is a paid Pro example and is not used.
-- **The format bar** floats over the canvas while something is selected: text size (−/+), **B**, *I*, U for blocks, text boxes and line labels (also ⌘B / ⌘I / ⌘U, Ctrl on Windows and Linux); five colours for blocks (blue, green, amber, red, purple, each with a light and a dark version) and *A* for the shape's own colour; line width, arrowhead size, straight / curved / elbow, dashed, *Straighten* and the label for lines; and align left, centre, right, top, middle, bottom, and space evenly (three or more) for several blocks. Every change is written to the text like any other canvas edit.
-- **Line labels.** Double-click a line (or its label), or use the pen in the format bar, to type its label. Enter keeps it, Esc cancels. While typing, the label's pill is the one focus edge (accent border and a 1 px ring); the field inside draws none.
-- **Bend a line** by dragging its middle when it is selected (see [Lines](#lines)).
-- Lines are drawn by `edgeRoute` (`src/route.ts`), shared by the canvas and the SVG export, so a bent or thick line and its arrowhead look the same in both. Each end follows its block live while it is dragged or resized. The stroke stops under the arrowhead, so a thick line never pokes past the tip.
-- Export is PNG, JPG, PDF or SVG of the whole diagram, from the same geometry, in the editor or from the download menu on each row of the Diagrams list (`components/diagrams/download-menu.tsx`). *Settings › Data › Download this space* includes every diagram as PNG, SVG and source text.
-- **Editing requires at least 1024 × 640 CSS pixels.** Smaller windows show only a read-only pan/zoom preview and SVG download; they cannot edit the diagram.
-- On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, ⌘B / ⌘I / ⌘U style the selected text, and Delete removes the selection. ⌘/Ctrl + = (or +) and ⌘/Ctrl + − zoom the canvas in and out and ⌘/Ctrl + 0 fits the diagram, like the zoom buttons; the browser's page zoom keys do this only while the diagram is open and the cursor is not in the text. **Lock** needs a selection: with nothing selected its tooltip says to select blocks or text boxes first. Line labels sit above the blocks on a background, so a block does not hide them; a selected block comes above them (`components/diagrams/edge.tsx`). Dragging several selected blocks moves them all and saves all of them. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
-
-Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is only the renderer and the save buttons.
-
-### History browser
-
-**More actions › Version history** (`components/diagrams/diagram-more.tsx`) opens the shared `components/history/version-history.tsx` dialog also used by pages. Entries are grouped by day and show the saved time and title; Restore asks once before it replaces the diagram. When the work a diagram was drawn from has changed, a notice under the top bar offers **Refresh with AI**, which asks the assistant with the current diagram as context.

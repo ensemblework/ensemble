@@ -1,10 +1,103 @@
 # 41 · Agent sessions
 
+Continue an agent session when the next task builds on earlier work. Start a new one when the work needs a separate conversation. A session belongs to the coding agent on the computer that ran it.
+
+Find sessions in **Assign → Continue an earlier task**, Ensemble Node's **Sessions** page, or `ensemble sessions`. The Hub has no standalone session list.
+
+## At a glance
+
+| Session | When it continues | When it is cleaned up |
+| --- | --- | --- |
+| Coding tasks and terminal chats | You continue an earlier task, or Ensemble selects a fitting session | After all its tasks are retired, or when you delete it |
+| Node's own coding session | The node continues its work | After seven days without a run starting or finishing |
+| Assistant chat on an AI plan | Each message while the agent and conversation still match | With the chat, when replaced, or after 30 unused days |
+| Routine on an AI plan | Each routine run | With the routine, or after twice the gap to its next run, bounded to 30–90 days |
+| Ask Ensemble on an AI plan | Each ask on the same page or surface, in order | 30 minutes after the last answer |
+| Node conversation on an AI plan | Each message in that conversation | After seven unused days |
+| One-off summary, triage or title | Never | When the completion ends |
+
+Settings → Agents → **Agent sessions** has three switches, all on by default: **One folder per project**, **Continue a fitting agent session**, and **Clean up agent sessions**.
+
+## 1. Coding sessions
+
+To continue explicitly:
+
+1. Open **Assign → Continue an earlier task**.
+2. Choose the session that contains the relevant work.
+3. Review its computer, folder, agent and model settings.
+4. Start the next task.
+
+The run uses the session's computer, folder and agent. It keeps the model, thinking, context and fast-mode settings unless you name replacements. Changing one option preserves the others. A different agent or computer cannot resume that same session.
+
+If the agent's conversation is missing or expired, Ensemble starts a new session in the same folder with the full brief and the earlier result. The task page explains that the earlier conversation was not remembered. A session deleted through Ensemble is also restarted separately; it is never reopened.
+
+Continuing a task keeps its existing folder grant, including across a chain of runs.
+
+## 2. One folder per project
+
+Leave **Settings → Agents → Agent sessions → One folder per project** on to group eligible project tasks in one working folder. A task with an explicit folder, repository, earlier session or other assigned workspace keeps that choice.
+
+Project-folder runs take turns so two runs do not change the same folder at once. The folder includes the project's current brief: its summary, notes, page, repositories, people and upcoming deliverables. The agent is told to reread it when it changes.
+
+Renaming a project keeps its folder and sessions. A removed folder is recreated when needed; projects with the same name receive distinct folders. Turning the switch off stops this automatic grouping for new work.
+
+## 3. In the agents' own apps
+
+Ensemble attempts to give sessions meaningful titles and group project work in the agent's app. This is best effort and never fails the task.
+
+| Agent app | What to expect |
+| --- | --- |
+| ChatGPT app with Codex | Supported versions show task titles and Ensemble projects. Project-sidebar changes wait until the app is closed, then appear when you reopen it |
+| Claude app, Code tab | Supported profiles receive named session records. Reopen an already-running app to see new records |
+| GitHub Copilot | Sessions group by working folder; new chat sessions receive a title |
+| Cursor | ACP sessions are separate from the app's history and terminal resume history |
+| Antigravity | Ensemble's agent-server sessions are separate from the Antigravity app's history |
+
+Your own project names and manual project choices are preserved. Removing a project in the agent's app does not make Ensemble recreate it automatically. Claude's cloud chat Projects are separate from its Code-tab folders.
+
+## 4. Choosing a session
+
+With **Continue a fitting agent session** on, a new task can reuse an idle session of the same agent on that computer. Candidates must belong to the same account, space and project, or both have no project. Sessions do not cross those boundaries.
+
+Ensemble compares linked tasks, deliverables, meetings, page context, named files or issues, topic similarity and available context space. It uses deterministic matching, without a model call. Busy, old, deleted, unavailable or overly full sessions are excluded.
+
+The run card states which session was continued and why. If the relevant session is too full, a fresh one can receive its last report instead. When the match is uncertain, Ensemble starts fresh.
+
+Choose **Assign → More options → Always start a new agent session** to skip matching for one run. Turn off the setting to disable automatic matching generally. Explicit folders, repositories, pull requests, chats, retries and Node plans follow their own choices.
+
+## 5. Assistant chats on an AI plan
+
+An assistant chat normally uses one conversation with the plan's agent. Each later message resumes it while the same agent and conversation position still match. A failed exchange does not by itself break continuity.
+
+Changing model or computer, losing the agent session, or rotating a long session can start a fresh one with Ensemble's recent conversation context. For agents that keep their initial instructions, small instruction changes are sent as updates; major changes or 80 messages trigger a fresh session.
+
+If you use a Claude or Copilot session outside Ensemble and its transcript shows new prompts, the next Ensemble turn starts separately. That prevents the outside conversation from entering the chat. Other agents may not provide that transcript check.
+
+### Ask Ensemble sessions
+
+Repeated asks on the same page use one short session per person. They are answered one at a time in the order received. A missing session restarts with up to eight previous asks and answers. It is deleted 30 minutes after the last answer.
+
+Page asks use **Settings → Assistant → Ask Ensemble model**, normally Medium. Surface asks, such as Today or Board, use the chat's default tier. The two choices are separate.
+
+## 6. Deleting and cleaning up
+
+Delete a coding session from Node's **Sessions** page. A node's deletion request appears as an owner-only confirmation card. Every computer that ran the session must be online and support deletion; otherwise Ensemble tells you which computer to connect or update and leaves the session visible.
+
+Deleting a session cancels its queued runs and removes the agent's saved conversation. Ensemble's run records, project folders and files remain. Continuing one of its old tasks starts a separate session.
+
+Automatic cleanup checks every 15 minutes. A coding session becomes eligible when all its tasks are deleted for at least ten minutes, or are done or dropped beyond the completed-retention window and not pinned. Active or queued work is left alone. Offline computers and failed deletions are retried later.
+
+Deleting an assistant chat stops its reply and requests deletion of its agent session and scratch folder. Offline computers are asked again when they reconnect. Deleting a routine removes its conversation in the same way.
+
+Deleting a project keeps its folder and agent sessions. Its Ensemble-created Codex project is removed after ten minutes in Trash, leaving time for Undo. Restoring the project after that can create a new Codex project for its next task.
+
+## In the code
+
 A session is one saved conversation with the person's own agent (Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code) on their computer. Ensemble starts sessions for task runs and terminal chats ([30](30_ENGINES.md)), for assistant chats, asks and routines on an AI plan ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)), and for Ensemble Node ([35 §8](35_ENSEMBLE_NODE.md#8-work-on-a-computer)). This page covers how sessions are continued, chosen, grouped by project, shown in the agents' own apps, deleted and cleaned up.
 
 Paths below are under `apps/hub-api/src/` unless qualified.
 
-## At a glance
+### At a glance: implementation reference
 
 | Session | One per | Continued | Deleted from the agent |
 | --- | --- | --- | --- |
@@ -26,7 +119,7 @@ Settings → Agents → **Agent sessions** has the three switches, all on by def
 
 Sessions are listed by `ensemble sessions` ([26](26_CLI.md)), Assign's *Continue an earlier task*, Ensemble Node's Sessions page ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)) and `GET /api/agent/sessions`. The Hub has no session list.
 
-## 1. Coding sessions
+### 1. Coding sessions: implementation reference
 
 A coding session (`workspace/sessions.ts`) is one conversation with a coding agent (Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code), carried across the runs that continue each other (`continueFromJobId`) with the same agent. It is derived from the runs, not stored: its id is its first run's id, its agent session is the newest `engine` event in it, and the chain's resource key keeps it to one turn at a time.
 
@@ -38,9 +131,13 @@ A coding session (`workspace/sessions.ts`) is one conversation with a coding age
 - `GET /api/agent/sessions?taskId=&deviceId=&q=&limit=` lists the person's sessions, newest first, each with agent, model, computer, folder, first and latest task, a one-line summary of the latest report, status (`working`, `waiting`, `queued`, `idle`) and whether it can be resumed; `GET /api/agent/sessions/:id` reads one, and a job's detail carries its `session`. The web shows no session list.
 - Ensemble Node's nodes start and drive sessions, each node only its own ([35 §8](35_ENSEMBLE_NODE.md#8-work-on-a-computer)). A **steer** is a run that continues the one it interrupts, with `context.steer {update}` (the claim spec's `steer` on a paired computer); resuming the session, the agent gets only the change (`steerPrompt`), and with the session gone it gets the whole brief with the update in its instructions.
 
-## 2. One folder per project
+### 2. One folder per project: implementation reference
 
-The person's own agents keep their sessions by working folder (Claude Code's projects, Codex's and Cursor's workspaces, Copilot's sessions by folder), so an Ensemble project gets one folder for its tasks (`workspace/agent-projects.ts`): `<workspace>/projects/<name>`. A folder alone is not a project in every agent's app, so Ensemble also files its sessions there itself (§3). A task in a project that the person's own agent does, and that would otherwise get a new folder (no earlier task continued, no folder, repository, chat or Ensemble Node plan), works there, and the agent's app lists it with the project's other work. The folder is a git repository like a run's own; runs in it take turns (the `dir:` resource key, and the queue's same-project rule). Session lists (the Sessions page, Continue an earlier task, `ensemble sessions`) show such a session's folder as `projects/<name>`, from the folder its computer reported for the run (the `prepared` event); a run in a folder of its own shows "its own checkout".
+The person's own agents keep their sessions by working folder (Claude Code's projects, Codex's and Cursor's workspaces, Copilot's sessions by folder), so an Ensemble project gets one folder for its tasks (`workspace/agent-projects.ts`): `<workspace>/projects/<name>`. A folder alone is not a project in every agent's app, so Ensemble also files its sessions there itself (§3).
+
+A task in a project that the person's own agent does, and that would otherwise get a new folder (no earlier task continued, no folder, repository, chat or Ensemble Node plan), works there, and the agent's app lists it with the project's other work. The folder is a git repository like a run's own; runs in it take turns (the `dir:` resource key, and the queue's same-project rule).
+
+Session lists (the Sessions page, Continue an earlier task, `ensemble sessions`) show such a session's folder as `projects/<name>`, from the folder its computer reported for the run (the `prepared` event); a run in a folder of its own shows "its own checkout".
 
 - The project's brief (name, summary, notes, project page, repositories, people and their roles, upcoming deliverables) is Markdown with a hash (`projectBrief`). The web server builds it when a computer claims the run (the claim's `project`, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)); a local-only computer builds it from its own database. Older computers ignore it and work in a new folder.
 - Before the agent starts, the brief goes into the folder's `AGENTS.md` between Ensemble's markers (the rest of the file is the folder's own), with `CLAUDE.md` and `GEMINI.md` importing it (`@AGENTS.md`), only when the hash differs from the one last written there. Those three files are kept out of the repository (`.git/info/exclude`). Runs in the folder can change them, so Ensemble never reads or writes them through a link: it reads a plain file only (`O_NOFOLLOW`) and writes a new file renamed over the old one. A continued run in the folder gets the same check (`bringProject` in `workspace/agent.ts`).
@@ -48,7 +145,7 @@ The person's own agents keep their sessions by working folder (Claude Code's pro
 - Which folder is which project's, and the hash of the brief each last got, is kept in `projects/.ensemble-projects.json`, beside the folders and outside any of them, so nothing a run writes in a project folder can point Ensemble at another. A renamed project keeps its folder (and its agents' sessions); one removed is made again under its name; another project with the same name gets its short id after the name. Opening a project's task in the agent's own app ([30 §4](30_ENGINES.md#4-in-the-agents-own-app-or-a-terminal)) opens the project's folder too.
 - Off with Settings → Agents → Agent sessions → *One folder per project* (`orchestration.projectFolders`). Apps' own "Projects" (claude.ai, ChatGPT) have no API an agent run can use; the working folder is what the coding agents group by.
 
-## 3. In the agents' own apps
+### 3. In the agents' own apps: implementation reference
 
 An agent names a session after its first message, which for Ensemble is its instructions, and its desktop app lists only what it knows. So Ensemble does the following, best effort and never failing a turn (`workspace/engines/app-sessions.ts`):
 
@@ -60,7 +157,7 @@ An agent names a session after its first message, which for Ensemble is its inst
 | Cursor | | | ACP sessions (`~/.cursor/acp-sessions`) are in neither the Cursor app's history nor `agent --resume`: Cursor keeps the three apart |
 | Antigravity | | | Ensemble runs Google's own agent server with its own home and sign-in, not the Antigravity app, which keeps its own history |
 
-## 4. Choosing a session
+### 4. Choosing a session: implementation reference
 
 A new run by the person's own agent that would start a new session in a new folder (no `session`, `continueFromJobId`, folder, repository, pull request or chat; not an Ensemble Node plan or a retry) may continue one of the agent's sessions that fits the task (`workspace/session-choice/`). No model takes part: the same records always give the same decision, in milliseconds.
 
@@ -80,22 +177,56 @@ A new run by the person's own agent that would start a new session in a new fold
 - **Tuning** (`config.ts`, `SessionChoiceConfig`). Every number and word list above is one versioned config with its defaults in code. On the web server, `ENSEMBLE_SESSION_CHOICE_CONFIG` names a JSON file with only the fields to change (for example `{"version": "2026-12-01.1", "weights": {"topic": 8}, "bands": {"confident": 7}}`); it is checked, read again within a minute of a change, and sent with every claim, so computers decide with it from their next run without a release. An invalid file is logged and the defaults apply. A local-only computer reads the same variable on itself. Change `version` with every change.
 - **Records** (`SessionChoice`, table `session_choices`). Every decision: the run, task, agent, computer and project, `decision` (continue or new), `band`, the session continued or the best candidate, its score and reason, `note` (`new-session`: asked for; `too-full`; `unavailable`: the session could not take the run; `not-linked`: the web refused the session the computer named), `configVersion` and `configHash`, and every candidate's `signals`, `parts` and score, best first. When the run ends, `outcome`: its status, duration, tokens, and for a continued session whether the agent really resumed it (the agent's session id stayed the same). A computer keeps the record and sends it to the web in the web's ids (`POST /api/devices/self/jobs/:id/session-choice`, under the job's lease), which links the run to the session it continued (only one of the same account and agent on that computer). Kept for the history window (`historyRetentionDays`). To calibrate, read the rows (bands near the thresholds, `note = 'new-session'`, `outcome->>'resumed'`) and score their stored `signals` again under other weights with `scoreCandidate`: no text is needed.
 
-## 5. Assistant chats on an AI plan
+### 5. Assistant chats on an AI plan: implementation reference
 
-**One chat, one session** (`subscriptions/turn-sessions.ts`). A chat (its conversation id, the spec's `session.key`) is one session of the agent on the computer that runs it; a new chat is a new session. The computer keeps `<state>/assistant-sessions.json` (chat → agent, session id, the instructions the session was given, its folder and how many days it is kept) and a folder per chat, `<state>/assistant/<key>`, for the turn's files, instructions and MCP config. A turn resumes the chat's session when the agent is the same and the chat is where that session left it (`session.position`, the chat's messages before this one that a session took part in, matches what the session's last turn left; a turn on another model or computer moves it on); it sends only the message. A message that got no answer (its computer was offline, the turn failed before replying) and a failed exchange (the message and its error) do not count (`sessionPosition` in `assistant/agent.ts`), so a routine whose run failed while its computer slept goes on in the same session. For an agent that keeps the instructions from a session's first message (Copilot, Cursor's agent, the ACP agents), changed instructions do not start a new session, since a node's instructions change on most messages (the skills matched to the message, a new memory, the room). The message is led by what changed instead (`instructionsUpdate`: "Your instructions changed since this conversation began", the lines now part of them and the lines no longer part of them). When more than half of the lines changed, or after 80 messages in one session (`ROTATE_MESSAGES`), it starts a new session with the chat so far. A session replaced in the store (a new one for the same chat) is deleted from the agent at once, with its folder when the folder is the chat's own.
+**One chat, one session** (`subscriptions/turn-sessions.ts`). A chat (its conversation id, the spec's `session.key`) is one session of the agent on the computer that runs it; a new chat is a new session. The computer keeps `<state>/assistant-sessions.json` (chat → agent, session id, the instructions the session was given, its folder and how many days it is kept) and a folder per chat, `<state>/assistant/<key>`, for the turn's files, instructions and MCP config.
 
-**A group of chats, one project folder.** A turn may name a group (`session.group {id, name}`, with `session.keepDays`): its agent then works in the group's project folder (`projectFolder` in `workspace/agent-projects.ts`, `<workspace>/projects/<name>`), so the agent's own app lists the group's sessions together, as it groups sessions by folder; the turn's own files stay in the chat's folder. An Ensemble Node's turns use the node as the group ("<Name> (Ensemble Node)") and keep a session 7 days unused ([30 §10.2](30_ENGINES.md#102-a-nodes-brain)). Turns of one chat run one at a time; otherwise it starts one, with the chat so far (`session.history`, the last 12 messages) before the message. A session the agent cannot reopen, or an agent too old to keep one, falls back to a new session or none, with the chat so far. Sessions unused for 30 days (or the chat's `keepDays`) are dropped and deleted from the agent. A computer before `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) gets the chat so far in front of every message; a one-off completion (`complete` on a subscription: triage, a summary, a title) keeps no session, and leaves none in the agent: Claude Code runs it with `--no-session-persistence` and Codex in an ephemeral thread, while the session Copilot (named with `--session-id` from 1.0.78), Cursor's agent and the ACP agents save is deleted once the turn is over (`dropOneOff`), in the folder the turn ran in (Gemini CLI, OpenCode and Grok Build find a session by the folder it began in), which is removed after.
+A turn resumes the chat's session when the agent is the same and the chat is where that session left it (`session.position`, the chat's messages before this one that a session took part in, matches what the session's last turn left; a turn on another model or computer moves it on); it sends only the message.
 
-**A session used outside Ensemble** (`subscriptions/session-touch.ts`). The person can open an Ensemble chat's session in the agent's own app or terminal. After each turn the computer notes how many prompts the agent's own transcript of the session holds (`prompts` in the store: Claude Code's `~/.claude/projects/<folder>/<id>.jsonl` user prompts, Copilot's `user.message` events in `session-state/<id>/events.jsonl`). When the count is higher before the next turn, someone sent it prompts of their own: the chat goes on in a new session with Ensemble's own history, so nothing said there enters the chat, and the touched session is kept unresumed (`retired`) and deleted with the chat or when its entry expires. Other agents, and a transcript the computer cannot read, are resumed without this check.
+A message that got no answer (its computer was offline, the turn failed before replying) and a failed exchange (the message and its error) do not count (`sessionPosition` in `assistant/agent.ts`), so a routine whose run failed while its computer slept goes on in the same session.
 
-**Ask Ensemble: one short session per page** (`assistant/ask-sessions.ts`). An inline ask (`@ensemble` in a page, task, project, deliverable or meeting notes; `POST /api/pages/:kind/:id/ensemble`) runs on the tier in Settings → Assistant → *Ask Ensemble model* (`assistant.askTier`, Medium unless changed; the chat's default tier is separate). When that tier is an AI plan, each page has one session per person who asks there (`session.key` `ask-<kind>-<hash of person, kind and id>`, sent without `position`, so the computer resumes it however many asks came before): asking again continues it. Asks on one page by one person are answered one after another in the order they were made (`askInLine`, taken when the request arrives; the waiting ask shows "Waiting for the answer before this one…"), never two at once and never one ahead of an earlier one. When the page's session is gone (deleted in the agent's app), the new one is given the page's earlier asks and answers of that session (`askHistory`, at most 8). Thirty minutes after the last answer (fixed, not a setting) the session is deleted from the person's computers the way a deleted chat's is (§6): the account's pending ask sessions are kept in the preference `assistant.ask-sessions` and the scheduler's minute tick sweeps them, so a restart does not lose one; an ask that never reported back is cleared two hours after it began. The session is sent with `keepDays: 1`, so a computer that cannot delete on request yet drops it itself a day later. An ask on a surface (`POST /api/ensemble/invoke`: Today, a board, Needs me, Code; on the chat's default tier) follows the same rules, with one session per surface and the records it is about (`anchorKey`).
+For an agent that keeps the instructions from a session's first message (Copilot, Cursor's agent, the ACP agents), changed instructions do not start a new session, since a node's instructions change on most messages (the skills matched to the message, a new memory, the room). The message is led by what changed instead (`instructionsUpdate`: "Your instructions changed since this conversation began", the lines now part of them and the lines no longer part of them).
 
-## 6. Deleting and cleaning up
+When more than half of the lines changed, or after 80 messages in one session (`ROTATE_MESSAGES`), it starts a new session with the chat so far. A session replaced in the store (a new one for the same chat) is deleted from the agent at once, with its folder when the folder is the chat's own.
 
-**Deleting a session** (`deleteAgentSession` in `workspace/delete-session.ts`). The person deletes a session from Ensemble Node's Sessions page, and a node asks for it with an owner-only confirmation card ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Every computer that ran the session must be online and report `sessionDelete: 1` ([26](26_CLI.md)); otherwise nothing is hidden and the person is told which computer to connect or update. Under the session's lock its queued runs are cancelled, then each computer deletes the agent's own saved history and Ensemble marks the session deleted. Ensemble's run records, project folders and files stay. A run that continues a deleted session's runs starts a session of its own (§1).
+**A group of chats, one project folder.** A turn may name a group (`session.group {id, name}`, with `session.keepDays`): its agent then works in the group's project folder (`projectFolder` in `workspace/agent-projects.ts`, `<workspace>/projects/<name>`), so the agent's own app lists the group's sessions together, as it groups sessions by folder; the turn's own files stay in the chat's folder. An Ensemble Node's turns use the node as the group ("<Name> (Ensemble Node)") and keep a session 7 days unused ([30 §10.2](30_ENGINES.md#102-a-nodes-brain)).
 
-**Cleaning up sessions** (`workspace/session-cleanup.ts`). The scheduler sweeps each account every 15 minutes (`orchestration.cleanSessions`, on by default): a session goes from its agent (`deleteAgentSession`, ledgered as `workspace.session.delete` by `system` with `reason: "retired"`) once every task in it is retired: deleted at least 10 minutes ago (so Undo still finds it), or done or dropped longer than the completed window and not pinned. A session with a run still queued or going waits for the next sweep; one with a task still in use is looked at again after 6 hours, and one on a computer that is offline or too old to delete sessions after an hour (`context.sessionCleanup.nextAt` on its runs), so it never holds up the sessions behind it. A failed deletion is tried again a day later. Each sweep reads a session once, however many of its runs match, looks at no more than 60 and deletes at most 20. Just before anything changes, under the session's lock, the deletion checks again that the session has the same runs, none of them going, and every task still retired (`guard` of `deleteAgentSession`); otherwise it leaves the session alone. Ensemble's run records, project folders and files stay. A computer deletes the sessions of its own local tasks itself and leaves those of runs claimed from the web to the web. An assistant chat's agent session that has gone unused for 30 days is deleted from the agent too, with its folder (`subscriptions/turn-sessions.ts`). A coding session an Ensemble Node started for itself (its task's `sourceRef` is `node:<id>`, which stays open) goes once none of its runs started or finished in 7 days (`NODE_SESSION_IDLE_DAYS`, `ENSEMBLE_NODE_SESSION_IDLE_DAYS`), with the same lock and checks; a person's own open task still keeps its session.
+Turns of one chat run one at a time; otherwise it starts one, with the chat so far (`session.history`, the last 12 messages) before the message. A session the agent cannot reopen, or an agent too old to keep one, falls back to a new session or none, with the chat so far. Sessions unused for 30 days (or the chat's `keepDays`) are dropped and deleted from the agent.
 
-**Deleting a chat deletes its session** (`assistant/delete-chat.ts`, `remote/assistant-session-delete.ts`). `DELETE /api/assistant/conversations/:id` stops a reply still running, deletes the chat and its messages, then asks each of the person's computers that runs assistant turns to drop that chat's session: `dropSession` removes the store entry, deletes the session in the agent itself (`deleteNativeSession`, the delete used when a chat's session is replaced, for every subscription agent) and the chat's own folder, after any turn of that chat still running there has ended. A computer that is away, or does not confirm, is asked again when its event stream next opens, and while it is online every 5 minutes from the scheduler's minute tick (`retryAssistantSessionDeletes`); pending requests are kept per computer in the `assistant.session-deletes` preference for 30 days (the time after which a computer drops an unused session itself), and those of a computer no longer paired are dropped. On the desktop app or CLI runtime the session is dropped directly. Deleting a routine deletes its conversation the same way (`dropRoutineChat` in `routines/service.ts`), from the Routines page or the assistant; a routine's turns keep their session unused for twice the gap to the routine's next run, 30 to 90 days (`routineKeepDays`), so a weekly or monthly routine stays in one session.
+A computer before `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) gets the chat so far in front of every message; a one-off completion (`complete` on a subscription: triage, a summary, a title) keeps no session, and leaves none in the agent: Claude Code runs it with `--no-session-persistence` and Codex in an ephemeral thread, while the session Copilot (named with `--session-id` from 1.0.78), Cursor's agent and the ACP agents save is deleted once the turn is over (`dropOneOff`), in the folder the turn ran in (Gemini CLI, OpenCode and Grok Build find a session by the folder it began in), which is removed after.
+
+**A session used outside Ensemble** (`subscriptions/session-touch.ts`). The person can open an Ensemble chat's session in the agent's own app or terminal. After each turn the computer notes how many prompts the agent's own transcript of the session holds (`prompts` in the store: Claude Code's `~/.claude/projects/<folder>/<id>.jsonl` user prompts, Copilot's `user.message` events in `session-state/<id>/events.jsonl`).
+
+When the count is higher before the next turn, someone sent it prompts of their own: the chat goes on in a new session with Ensemble's own history, so nothing said there enters the chat, and the touched session is kept unresumed (`retired`) and deleted with the chat or when its entry expires. Other agents, and a transcript the computer cannot read, are resumed without this check.
+
+**Ask Ensemble: one short session per page** (`assistant/ask-sessions.ts`). An inline ask (`@ensemble` in a page, task, project, deliverable or meeting notes; `POST /api/pages/:kind/:id/ensemble`) runs on the tier in Settings → Assistant → *Ask Ensemble model* (`assistant.askTier`, Medium unless changed; the chat's default tier is separate). When that tier is an AI plan, each page has one session per person who asks there (`session.key` `ask-<kind>-<hash of person, kind and id>`, sent without `position`, so the computer resumes it however many asks came before): asking again continues it.
+
+Asks on one page by one person are answered one after another in the order they were made (`askInLine`, taken when the request arrives; the waiting ask shows "Waiting for the answer before this one…"), never two at once and never one ahead of an earlier one. When the page's session is gone (deleted in the agent's app), the new one is given the page's earlier asks and answers of that session (`askHistory`, at most 8).
+
+Thirty minutes after the last answer (fixed, not a setting) the session is deleted from the person's computers the way a deleted chat's is (§6): the account's pending ask sessions are kept in the preference `assistant.ask-sessions` and the scheduler's minute tick sweeps them, so a restart does not lose one; an ask that never reported back is cleared two hours after it began. The session is sent with `keepDays: 1`, so a computer that cannot delete on request yet drops it itself a day later.
+
+An ask on a surface (`POST /api/ensemble/invoke`: Today, a board, Needs me, Code; on the chat's default tier) follows the same rules, with one session per surface and the records it is about (`anchorKey`).
+
+### 6. Deleting and cleaning up: implementation reference
+
+**Deleting a session** (`deleteAgentSession` in `workspace/delete-session.ts`). The person deletes a session from Ensemble Node's Sessions page, and a node asks for it with an owner-only confirmation card ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Every computer that ran the session must be online and report `sessionDelete: 1` ([26](26_CLI.md)); otherwise nothing is hidden and the person is told which computer to connect or update. Under the session's lock its queued runs are cancelled, then each computer deletes the agent's own saved history and Ensemble marks the session deleted.
+
+Ensemble's run records, project folders and files stay. A run that continues a deleted session's runs starts a session of its own (§1).
+
+**Cleaning up sessions** (`workspace/session-cleanup.ts`). The scheduler sweeps each account every 15 minutes (`orchestration.cleanSessions`, on by default): a session goes from its agent (`deleteAgentSession`, ledgered as `workspace.session.delete` by `system` with `reason: "retired"`) once every task in it is retired: deleted at least 10 minutes ago (so Undo still finds it), or done or dropped longer than the completed window and not pinned.
+
+A session with a run still queued or going waits for the next sweep; one with a task still in use is looked at again after 6 hours, and one on a computer that is offline or too old to delete sessions after an hour (`context.sessionCleanup.nextAt` on its runs), so it never holds up the sessions behind it. A failed deletion is tried again a day later.
+
+Each sweep reads a session once, however many of its runs match, looks at no more than 60 and deletes at most 20. Just before anything changes, under the session's lock, the deletion checks again that the session has the same runs, none of them going, and every task still retired (`guard` of `deleteAgentSession`); otherwise it leaves the session alone. Ensemble's run records, project folders and files stay.
+
+A computer deletes the sessions of its own local tasks itself and leaves those of runs claimed from the web to the web. An assistant chat's agent session that has gone unused for 30 days is deleted from the agent too, with its folder (`subscriptions/turn-sessions.ts`).
+
+A coding session an Ensemble Node started for itself (its task's `sourceRef` is `node:<id>`, which stays open) goes once none of its runs started or finished in 7 days (`NODE_SESSION_IDLE_DAYS`, `ENSEMBLE_NODE_SESSION_IDLE_DAYS`), with the same lock and checks; a person's own open task still keeps its session.
+
+**Deleting a chat deletes its session** (`assistant/delete-chat.ts`, `remote/assistant-session-delete.ts`). `DELETE /api/assistant/conversations/:id` stops a reply still running, deletes the chat and its messages, then asks each of the person's computers that runs assistant turns to drop that chat's session: `dropSession` removes the store entry, deletes the session in the agent itself (`deleteNativeSession`, the delete used when a chat's session is replaced, for every subscription agent) and the chat's own folder, after any turn of that chat still running there has ended.
+
+A computer that is away, or does not confirm, is asked again when its event stream next opens, and while it is online every 5 minutes from the scheduler's minute tick (`retryAssistantSessionDeletes`); pending requests are kept per computer in the `assistant.session-deletes` preference for 30 days (the time after which a computer drops an unused session itself), and those of a computer no longer paired are dropped. On the desktop app or CLI runtime the session is dropped directly.
+
+Deleting a routine deletes its conversation the same way (`dropRoutineChat` in `routines/service.ts`), from the Routines page or the assistant; a routine's turns keep their session unused for twice the gap to the routine's next run, 30 to 90 days (`routineKeepDays`), so a weekly or monthly routine stays in one session.
 
 **Deleting a project.** A project's folder and its agents' sessions stay; its Codex project in the ChatGPT app is removed once the project has been in Trash 10 minutes (§3, [25 §4.9](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#49-subscriptions-and-included-models)).

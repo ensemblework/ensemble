@@ -1,6 +1,6 @@
 # Check the Mac app
 
-A hand test for a desktop build on a Mac ([DESKTOP](../DESKTOP.md)). Automated tests do not cover Touch ID, OS notifications, Gatekeeper or installer removal.
+Use this checklist to verify a [desktop build](../DESKTOP.md) on a Mac. Test installation, account connection, task execution and settings before checking the release. Touch ID, OS notifications, Gatekeeper and installer removal need these manual checks.
 
 Build the disk image on the Mac, from the repo root:
 
@@ -8,7 +8,7 @@ Build the disk image on the Mac, from the repo root:
 pnpm desktop:dmg
 ```
 
-The script prints the path to the unsigned `.dmg`. The app and its Node/Prisma sidecar are built for this Mac's chip; use the Apple silicon installer on M-series Macs and the Intel one on Intel Macs.
+Open the unsigned `.dmg` at the path printed by the script. Use the Apple silicon installer on M-series Macs and the Intel installer on Intel Macs. The app and its Node/Prisma sidecar are built for the Mac’s chip.
 
 ## Install and run
 
@@ -16,7 +16,7 @@ The script prints the path to the unsigned `.dmg`. The app and its Node/Prisma s
   macOS 14 and earlier: right-click the app, Open, then Open again.
   macOS 15 and later: double-click once, then System Settings → Privacy & Security → Open Anyway.
 
-- [ ] **Window and icon.** The window opens. The Dock icon is the Satin Gold Woven Chorus mark on its Deep Petrol tile.
+- [ ] **Window and icon.** Confirm that the window opens and the Dock shows the Satin Gold Woven Chorus mark on its Deep Petrol tile.
 
 - [ ] **First run.** With no `~/Library/Application Support/com.ensemblework.desktop/mode.json`, the start page asks *With your Ensemble account* or *Only on this computer*. For the local-only checks below choose *Only on this computer*; the bundled Hub opens, and Settings → Account offers *Move to your Ensemble account*.
 
@@ -43,7 +43,7 @@ These steps pair an app kept local only from an earlier version; an app with an 
   (`ENSEMBLE_SITE_URL` only chooses the site the window loads; the address here is the remote-tasks API.)
   In the browser, assign a small task with Run on set to this Mac. It runs on the Mac.
 
-- [ ] **Rename.** Rename the Mac under Connected computers; the name survives the next heartbeat.
+- [ ] **Rename.** Rename the Mac under Connected computers. Wait for its next heartbeat and confirm that the name remains.
 
 - [ ] **Revoke.** In the browser: Connected computers → Revoke on that Mac. Within seconds the desktop shows: "Removed from Ensemble on the web. Pair again to keep running remote tasks."
 

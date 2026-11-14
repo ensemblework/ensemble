@@ -1,8 +1,8 @@
 # Ensemble documentation
 
-Guides to how Ensemble works today, with the code paths that implement it. Start with the [overview](00_PROJECT_OVERVIEW.md) (what works and its limits), then the guide for your area. Setup is in the root [README](../README.md); [AGENTS](../AGENTS.md) says which doc to update with which code.
+Bring tasks, pages, files and agents into one workspace. Start with the [overview](00_PROJECT_OVERVIEW.md), then open the [Hub guide](02_MODULE_INTERACTION_HUB_UI.md) to find your way around. To bring existing work with you, see [Imports](27_IMPORTS.md) and [Connected apps](31_CONNECTORS_IN_USE.md).
 
-The public site is built from these same sources for [docs.ensemblework.com](https://docs.ensemblework.com). [40 · Public documentation](40_PUBLIC_DOCUMENTATION.md) describes its build, hosting and Context Bridge lookup.
+Read these guides at [docs.ensemblework.com](https://docs.ensemblework.com). Search for a topic or open **Ask the docs** to ask a question about the published guides.
 
 ## Product and architecture
 
@@ -58,3 +58,7 @@ The public site is built from these same sources for [docs.ensemblework.com](htt
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
 Operator-specific hosting, accounts and credentials are in the git-ignored `private/` folder.
+
+## In the code
+
+The root [README](../README.md) has development setup. [AGENTS](../AGENTS.md) maps code changes to the docs that describe them. [Public documentation](40_PUBLIC_DOCUMENTATION.md) explains the site build, hosting, helper and Context Bridge lookup.

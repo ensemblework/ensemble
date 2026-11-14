@@ -1,26 +1,36 @@
 # 07 · Access, approvals, audit, retention and metrics
 
-The Hub assistant, assigned agents, external engines and the grant-scoped Context Bridge have different permissions; no single policy table governs all four.
+Choose permissions for the work you want to allow, review activity and usage, and control how long your data stays. The Hub assistant, assigned agents, external engines and Context Bridge each have their own access rules.
 
 ## 1. Identity & access
 
-Browser sign-in uses hashed session cookies, a password or configured Google/GitHub/Microsoft login, and separate verification and recovery tokens. Signing in with a provider does not grant connector access. Hosted model, connector and agent operations require a verified email. Host credentials and filesystem execution are operator-only (`lib/hosted-access.ts`); everyone else pairs their own computer.
+Sign in with a password or a configured Google, GitHub or Microsoft account. Verify your email before using hosted models, connected apps or agents. Signing in with a provider does not connect its other products.
+
+Pair your own computer for filesystem work; host credentials and execution are reserved for operators. Browser sign-in uses hashed session cookies and separate verification and recovery tokens (`lib/hosted-access.ts`).
 
 A space scopes content by `userId`; the actor is `accountId`. Sharing adds route and resource checks in `sharing/policy.ts`, `gate.ts` and `context.ts`; unclassified routes stay owner-only. A viewer or editor never uses the owner's private credentials, reminders or account settings ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
 
 Account export and deletion use `lib/account-data.ts`. Deletion includes owned spaces and checks for active work, including a run on the person's computer in a shared space. Account-lifetime foreign keys stop late writes from recreating erased rows. Third-party copies and infrastructure backups have their own lifetimes.
 
-Account-scoped `ActivePlace` leases enforce separate simultaneous-place limits for Ensemble and Node independently of sharing presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)). Each pool admits three; one pool's replacement cannot affect the other. Leases are excluded from account exports and cascade away with their session/account. Guarded record saves compare `_base` under a row lock and preserve conflicting values for the person's choice ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+Account-scoped `ActivePlace` leases enforce separate simultaneous-place limits for Ensemble and Node independently of sharing presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)). Each pool admits three; one pool's replacement cannot affect the other. Leases are excluded from account exports and cascade away with their session/account.
 
-External MCP clients use a static key or hosted OAuth ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). `mcp_oauth_clients` holds registered app metadata and hashed client secrets; `mcp_oauth_requests` holds browser-bound consent and hashed codes; `mcp_oauth_grants` binds an account, owned default space, client, resource and scopes; access keys in `api_tokens` and hashed refresh tokens reference that grant. Every access checks expiry, revocation, resource and current ownership. Code/refresh claims are atomic. Known refresh replay invalidates the entire grant, and disconnect/self-logout cannot leave a live refresh family.
+Guarded record saves compare `_base` under a row lock and preserve conflicting values for the person's choice ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+
+External MCP clients use a static key or hosted OAuth ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
+
+`mcp_oauth_clients` holds registered app metadata and hashed client secrets; `mcp_oauth_requests` holds browser-bound consent and hashed codes; `mcp_oauth_grants` binds an account, owned default space, client, resource and scopes; access keys in `api_tokens` and hashed refresh tokens reference that grant. Every access checks expiry, revocation, resource and current ownership.
+
+Code/refresh claims are atomic. Known refresh replay invalidates the entire grant, and disconnect/self-logout cannot leave a live refresh family.
 
 Rotation is the default and mandatory for public/CIMD clients. A confidential client can explicitly register persistent linking for a vendor that requires it: secret authentication on every refresh, stable credential, extended 30-day expiry and no scope restoration after narrowing. Revocation and ownership checks are unchanged.
 
-OAuth connection metadata belongs to the authorizing account, including when its default space differs. Export returns app/grant metadata without authentication tables or secrets. Workspace erasure keeps connection configuration; account/default-space deletion cascades through grants and tokens. Consent mutations need the current browser session, matching web origin and CSRF proof. Provider sign-in carries its MCP return in a signed, flow-bound cookie, not an arbitrary redirect.
+OAuth connection metadata belongs to the authorizing account, including when its default space differs. Export returns app/grant metadata without authentication tables or secrets. Workspace erasure keeps connection configuration; account/default-space deletion cascades through grants and tokens. Consent mutations need the current browser session, matching web origin and CSRF proof.
+
+Provider sign-in carries its MCP return in a signed, flow-bound cookie, not an arbitrary redirect.
 
 ### 1.1 Completed and deleted data retention
 
-`jobs/retention.ts` and `jobs/skill-mining.ts` apply these windows:
+Keep an item by pinning or reopening it before its retention window expires. These settings determine when completed work moves to Trash and when Trash is permanently removed:
 
 | Setting / data | Default and behaviour |
 | --- | --- |
@@ -39,7 +49,9 @@ Pinning, reopening, active jobs, a learning pass waiting for its model or a conf
 
 ### 1.2 Private reminders and platform notifications
 
-`dispatchDueReminders` turns due reminders into in-app notifications. In-app notifications are unread items, not a log: the bell lists only unread ones ([02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-notifications-and-private-reminders)) and retention removes old rows. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission. Quiet hours defer ordinary popups; Needs me can notify urgently. Nothing alarms while Ensemble is closed. Private reminders are excluded from shared context, and from the editor bridge's briefs and search; an editor's key reads and changes them only through the reminder actions ([CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
+`dispatchDueReminders` turns due reminders into in-app notifications. In-app notifications are unread items, not a log: the bell lists only unread ones ([02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-notifications-and-private-reminders)) and retention removes old rows. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission.
+
+Quiet hours defer ordinary popups; Needs me can notify urgently. Nothing alarms while Ensemble is closed. Private reminders are excluded from shared context, and from the editor bridge's briefs and search; an editor's key reads and changes them only through the reminder actions ([CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
 
 ### 1.3 The operator's interaction log and dashboards
 
@@ -54,7 +66,9 @@ Ensemble on the web logs how signed-in people use the Hub, for the operator's ow
 
 ### 1.4 The AI activity log
 
-`lib/ai-activity.ts` keeps what each person's AI work sent and got back, for 30 days, so the operator can look into how Ensemble served them and build features on it (disclosed in the privacy policy). It is always on; `ENSEMBLE_AI_ACTIVITY=off` turns it off for a deployment, and this repository's own tests run without it unless a test turns it on. One `ai_activity` row per entry (migration `20261127100000_ai_activity`), on the account of the person whose work it was (`keysFor`, like metrics: work in a space shared with you is on your account):
+`lib/ai-activity.ts` keeps what each person's AI work sent and got back, for 30 days, so the operator can look into how Ensemble served them and build features on it (disclosed in the privacy policy). It is always on; `ENSEMBLE_AI_ACTIVITY=off` turns it off for a deployment, and this repository's own tests run without it unless a test turns it on.
+
+One `ai_activity` row per entry (migration `20261127100000_ai_activity`), on the account of the person whose work it was (`keysFor`, like metrics: work in a space shared with you is on your account):
 
 | `kind` | What it holds | Where it is logged |
 | --- | --- | --- |
@@ -65,9 +79,17 @@ Ensemble on the web logs how signed-in people use the Hub, for the operator's ow
 | `server.log` | Ensemble on the web's own warnings and errors (pino's `logMethod` hook, `app.ts`), with their stack, for the account whose request (or work naming its `userId`) logged them | `captureLogLine` |
 | `runner.log` | A computer's warnings and errors, all its owner's | `captureLogLine` on the computer |
 
-Each entry also has `purpose` ("Hub chat", "Ask Ensemble", "Document summary", "Triage"…), `refs` (what it belongs to: `conversation`, `message`, `session`, `page`, `task`, `project`, `meeting`, `file`, `job`, `run`, `turn`, `device`) and `meta`. Callers set the purpose and refs once for a piece of work (`withAiContext`: an assistant turn, a file's summary, an automation's `complete`); a call that comes back as another request (a relayed tool call, an agent's hook) keeps its turn's (`bindAiContext`). Before anything is queued, keys and known secret shapes are removed (`redactText`, fields named like keys or passwords), a picture or file sent inline becomes its type and size, a string keeps 16,000 characters and an input or output 64,000, a stack 16,000. The same server or computer log line again within a minute is counted on the next one kept (`meta.repeated`), and at most 300 log lines a minute are kept per process.
+Each entry also has `purpose` ("Hub chat", "Ask Ensemble", "Document summary", "Triage"…), `refs` (what it belongs to: `conversation`, `message`, `session`, `page`, `task`, `project`, `meeting`, `file`, `job`, `run`, `turn`, `device`) and `meta`.
 
-Writing never slows or fails the work: entries queue in memory and go to the database in batches each second (2,000 at most queued; an account deleted meanwhile only loses its own rows). A paired computer sends its entries every few seconds to `POST /api/devices/self/activity` ([25 §4.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#41-account-and-device-routes)) instead, with its runs' web ids; the web stores them on the account the computer is paired with, keeps a run only when it is that account's, adds its task and the computer, and cuts and cleans them again. A server without the route (older) or a computer that works only locally keeps them in its own database. Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §1.1); they are included in the account export and removed by Delete context, Delete everything and account deletion (§6).
+Callers set the purpose and refs once for a piece of work (`withAiContext`: an assistant turn, a file's summary, an automation's `complete`); a call that comes back as another request (a relayed tool call, an agent's hook) keeps its turn's (`bindAiContext`).
+
+Before anything is queued, keys and known secret shapes are removed (`redactText`, fields named like keys or passwords), a picture or file sent inline becomes its type and size, a string keeps 16,000 characters and an input or output 64,000, a stack 16,000.
+
+The same server or computer log line again within a minute is counted on the next one kept (`meta.repeated`), and at most 300 log lines a minute are kept per process.
+
+Writing never slows or fails the work: entries queue in memory and go to the database in batches each second (2,000 at most queued; an account deleted meanwhile only loses its own rows). A paired computer sends its entries every few seconds to `POST /api/devices/self/activity` ([25 §4.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#41-account-and-device-routes)) instead, with its runs' web ids; the web stores them on the account the computer is paired with, keeps a run only when it is that account's, adds its task and the computer, and cuts and cleans them again. A server without the route (older) or a computer that works only locally keeps them in its own database.
+
+Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §1.1); they are included in the account export and removed by Delete context, Delete everything and account deletion (§6).
 
 ## 2. Action policy (the gates)
 
@@ -85,13 +107,50 @@ Writing never slows or fails the work: entries queue in memory and go to the dat
 
 `workspace/policy.ts`, `guard.ts`, `trust.ts`, `git-gate.ts`, engine adapters and the OS sandbox enforce assigned-run rules ([24](24_DESKTOP_SANDBOXING.md)). Review only means fewer prompts, **not read-only file access**. Unattended picks recommended answers and reports them; it grants no new filesystem rights. There is no undo window for sends or other external writes.
 
-## 3. Audit ledger
+## 5. Metrics and included AI
 
-`lib/ledger.ts` appends to `audit_ledger` in one serialized per-user transaction: actor, action, task/run/approval links, payload, previous hash and SHA-256 hash, with a monotonic timestamp. Shared-space actions add `payload.byAccountId`; metrics go to the actor's own account.
+Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider filters to apply them to every aggregate: reported tokens, daily activity, models, purposes and recent calls. Usage belongs to you, including work in a shared space.
 
-`POST /api/ledger/verify` checks only that each row's `prevHash` matches the previous row's `hash` in timestamp order; it does not recompute payload hashes.
+`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing.
 
-**Limits:** this is application-written, hash-linked history. There is no `verify-ledger` or `db:harden` command, INSERT-only database role, OpenTelemetry export or immutable audit store. Configured retention and account deletion delete history. It is not compliance-grade immutable storage.
+Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
+
+Included AI is separate: `included/budget.ts` reserves and settles each account's usage and the operator's global ceiling. `included_usage` keeps call metadata and token counts, not prompts or replies, until workspace erasure or account deletion; erasure scrubs call details and keeps minimal settlement records.
+
+`included_credit_balances` enforces the allowance by an email-derived HMAC key, month and charged amount, survives account deletion and re-signup with the same email, and is removed by the scheduler two days after its month ends. `included_periods` keeps aggregate operator spend ([33](33_INCLUDED_AI.md)).
+
+## 6. Data erasure
+
+To delete a hosted account, open **Settings → Data → Danger zone**. Choose account deletion, type the exact `DELETE` phrase and enter your password. Social-login accounts must have signed in recently. Active runs must finish or stop before deletion can proceed.
+
+For an explanation of metrics, open **About usage**.
+
+To erase part of your data while keeping the account:
+
+1. Open **Settings → Data → Danger zone**.
+2. Choose **Context** or **Everything**.
+3. Type `delete people and app information` or `delete everything` exactly. Paste and drop are disabled.
+4. Review the final dialog and confirm. Active jobs block erasure with a 409.
+
+The scopes below are implemented by `lib/workspace-data.ts`, using current Prisma metadata. **Context** (people and app information) also removes the AI activity log (§1.4), which holds that context in its prompts.
+
+**Everything** removes workspace content, metrics, baselines, the AI activity log, audit history and plot dataset files, and keeps authentication, devices, connector and model configuration, settings and monthly credit consumption; the ledger keeps only a content-free deletion receipt. Deletion and receipt commit together under the shared `FOR NO KEY UPDATE` user lock.
+
+The web client sends the request straight to the API, not through the web rewrite proxy. The server checks the exact phrase. Account deletion is a separate, broader action.
+
+`GET /api/metrics/summary` first runs `repairErasedUsage`: once per Everything receipt (tracked in the `hub.usage-erasure-repair` preference) it preserves monthly credit charges, then removes metric events and baselines at or before that receipt. Later usage stays.
+
+`account_deletion_logs` keeps only an HMAC-derived email key, deletion time and expiry, with no readable email, profile, feedback or account link. The same email overwrites the earlier entry and may sign up again. Entries expire after **90 days**; the scheduler purges them even when no accounts remain. After restoring a backup or with the scheduler off, the operator must check this cleanup.
+
+`pnpm --filter @ensemble/hub-api deletion-log:erase` removes one entry, reading the address from stdin without printing it. The public privacy policy discloses the log. This guide describes code behaviour, not legal compliance.
+
+### Google data disclosures
+
+The public [Google data and Limited Use disclosure](https://ensemblework.com/privacy#google-user-data) and [terms](https://ensemblework.com/terms) are rendered by `apps/landing/app/privacy/page.tsx` and `terms/page.tsx`.
+
+They distinguish encrypted OAuth credentials from saved/imported content, calendar refresh from manual contact sync, selected AI-provider transfers from model training, and disconnect from workspace/account deletion. `components/connectors/connector-detail.tsx` links that disclosure in the Google connector before consent and while connected.
+
+These pages describe the hosted service and its policy commitments; they are not a certification of Google approval, universal provider zero retention, end-to-end content encryption or a fixed cross-provider deletion deadline.
 
 ## 4. Reliability and dependent actions
 
@@ -101,26 +160,18 @@ Revision/hash/version preconditions protect page, file and skill edits. Scoped t
 
 Health and readiness report API and dependency state; the scheduler records its tick. There is no production canary, dead-letter screen or automatic mid-command crash recovery.
 
-## 5. Metrics and included AI
+## In the code
 
-`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` (`routes/runs.ts`) serves aggregates. Metrics belong to the person, including work in a shared space. The UI shows AI calls over 14/30/90 days with provider filters applied before every aggregate: reported tokens, daily activity, models, purposes and recent calls. Calls without token reports still count, and missing counts or prices show as missing. Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
+`jobs/retention.ts` and `jobs/skill-mining.ts` apply the retention windows described above.
 
-Included AI is separate: `included/budget.ts` reserves and settles each account's usage and the operator's global ceiling. `included_usage` keeps call metadata and token counts, not prompts or replies, until workspace erasure or account deletion; erasure scrubs call details and keeps minimal settlement records. `included_credit_balances` enforces the allowance by an email-derived HMAC key, month and charged amount, survives account deletion and re-signup with the same email, and is removed by the scheduler two days after its month ends. `included_periods` keeps aggregate operator spend ([33](33_INCLUDED_AI.md)).
+### 3. Audit ledger
 
-## 6. Data erasure
+`lib/ledger.ts` appends to `audit_ledger` in one serialized per-user transaction: actor, action, task/run/approval links, payload, previous hash and SHA-256 hash, with a monotonic timestamp. Shared-space actions add `payload.byAccountId`; metrics go to the actor's own account.
 
-Hosted account deletion is in Settings → Data → Danger zone, not Account. Its button opens a confirmation with the exact `DELETE` phrase and password, or the recent-sign-in requirement for social accounts. It retains the API's active-run checks. Metrics' general reporting explanation is available from About usage rather than a persistent paragraph.
+`POST /api/ledger/verify` checks only that each row's `prevHash` matches the previous row's `hash` in timestamp order; it does not recompute payload hashes.
 
-Settings → Data offers erasure scopes through `lib/workspace-data.ts`, driven by current Prisma metadata. **Context** (people and app information) also removes the AI activity log (§1.4), which holds that context in its prompts. **Everything** removes workspace content, metrics, baselines, the AI activity log, audit history and plot dataset files, and keeps authentication, devices, connector and model configuration, settings and monthly credit consumption; the ledger keeps only a content-free deletion receipt. Deletion and receipt commit together under the shared `FOR NO KEY UPDATE` user lock. The web client sends the request straight to the API, not through the web rewrite proxy. Active jobs block erasure with a 409. The Danger zone asks for a scope, the typed phrase `delete everything` or `delete people and app information` (paste and drop disabled), then a confirmation dialog; the server checks the exact phrase. Account deletion is a separate, broader action.
+**Limits:** this is application-written, hash-linked history. There is no `verify-ledger` or `db:harden` command, INSERT-only database role, OpenTelemetry export or immutable audit store. Configured retention and account deletion delete history. It is not compliance-grade immutable storage.
 
-`GET /api/metrics/summary` first runs `repairErasedUsage`: once per Everything receipt (tracked in the `hub.usage-erasure-repair` preference) it preserves monthly credit charges, then removes metric events and baselines at or before that receipt. Later usage stays.
-
-`account_deletion_logs` keeps only an HMAC-derived email key, deletion time and expiry, with no readable email, profile, feedback or account link. The same email overwrites the earlier entry and may sign up again. Entries expire after **90 days**; the scheduler purges them even when no accounts remain. After restoring a backup or with the scheduler off, the operator must check this cleanup. `pnpm --filter @ensemble/hub-api deletion-log:erase` removes one entry, reading the address from stdin without printing it. The public privacy policy discloses the log. This guide describes code behaviour, not legal compliance.
-
-### Google data disclosures
-
-The public [Google data and Limited Use disclosure](https://ensemblework.com/privacy#google-user-data) and [terms](https://ensemblework.com/terms) are rendered by `apps/landing/app/privacy/page.tsx` and `terms/page.tsx`. They distinguish encrypted OAuth credentials from saved/imported content, calendar refresh from manual contact sync, selected AI-provider transfers from model training, and disconnect from workspace/account deletion. `components/connectors/connector-detail.tsx` links that disclosure in the Google connector before consent and while connected. These pages describe the hosted service and its policy commitments; they are not a certification of Google approval, universal provider zero retention, end-to-end content encryption or a fixed cross-provider deletion deadline.
-
-## 7. Tests
+### 7. Tests
 
 API auth, isolation and public-signup suites send real Fastify requests to an isolated migrated database with mocked providers; Postgres/Redis CI covers integration and constraints; OS tests exercise sandbox boundaries. They do not prove live notifications, calendar writes or provider billing. There is no `eval/` corpus or productivity baseline in the repo.

@@ -1,6 +1,52 @@
 # Web and CLI testing and production promotion
 
-The live test Hub and its separate `ensemble-test` CLI are the team's feedback loop for UI, features and fixes. They use the same Hub/API/CLI source as production with isolated data and configuration. The web pipeline runs focused checks without desktop or cross-platform sandbox builds. Matching testing CLI packages build after the test site publishes, without delaying the web deployment. Production retains its full checks.
+Use the test Hub and the separate `ensemble-test` CLI to try changes with isolated accounts and data. Start development on `testing`, check the deployed result, then open a promotion PR to `main`.
+
+Both branches run the same focused checks. The slower suites are available through **full-checks**; run them before a risky change ([37](37_PAUSED_CHECKS.md)). Testing CLI packages build after the test site publishes, so they do not delay the web deployment. Desktop and cross-platform sandbox builds are separate.
+
+## Daily development
+
+- Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
+- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) are listed step by step in [37](37_PAUSED_CHECKS.md#what-runs-now). The Vercel build remains a real production frontend build.
+- A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
+- After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
+- PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
+- Testing has no docs site of its own: `docs.ensemblework.com` is published only from `main` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)).
+- Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
+
+## Install the testing CLI
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://github.com/ensemblework/ensemble/releases/download/cli-testing-latest/install.sh | sh
+ensemble-test login
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/ensemblework/ensemble/releases/download/cli-testing-latest/install.ps1 | iex
+ensemble-test login
+```
+
+After installation:
+
+1. Approve the code at `https://test.ensemblework.com/link`.
+2. Add work folders with `ensemble-test folders add <path>`.
+3. Run `ensemble-test runner install` for a separate login service.
+4. Use `ensemble-test mcp setup` to add a testing editor connection. It keeps the stable `ensemble` entry.
+5. Run `ensemble-test update` to install a newer testing version.
+
+Production uses `ensemble login` and the production website. A code, account or pairing from one environment cannot authorize the other.
+
+## Promotion to production
+
+Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
+
+A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit on `testing` before the promotion PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
+
+Bring the released `main` back into `testing` after promotion (a fast-forward when `testing` has nothing newer) so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
 
 ## Environments
 
@@ -25,56 +71,30 @@ Testing copies released **code**, not production accounts, sessions, pages, conn
 
 Both environments offer **GPT-5 mini and GPT-4.1 mini** from the Visual Studio Azure subscription; their accounts and Ensemble credit ledgers remain isolated. Paired stable and testing CLIs read their own server's catalog. Luna, Sol and Grok are not currently included, and paid Azure grounding is off by default. Availability, future eligible model opt-in and the difference between an environment model ceiling and an all-resource Azure budget are in [33](33_INCLUDED_AI.md); subscription/resource values belong in `private/HOSTING.md`.
 
-## Daily development
+## In the code
 
-- Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
-- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) are listed step by step in [37](37_PAUSED_CHECKS.md#what-runs-now). The Vercel build remains a real production frontend build.
-- A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
-- After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
-- PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
-- Testing has no docs site of its own: `docs.ensemblework.com` is published only from `main` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)).
-- Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
-
-Local browser validation of active places (`apps/hub-web/e2e/active-places.mjs`) uses `mobile-ui-fixture.ts` with `MOBILE_FIXTURE_PATH`, a local `HUB_WEB` and local `NEXT_PUBLIC_HUB_API`; it exercises two windows, conflicting/disjoint settings, the fourth-tab chooser and released-slot reuse without hosted accounts or screenshots.
-
-## Install the testing CLI
-
-macOS and Linux:
-
-```bash
-curl -fsSL https://github.com/ensemblework/ensemble/releases/download/cli-testing-latest/install.sh | sh
-ensemble-test login
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://github.com/ensemblework/ensemble/releases/download/cli-testing-latest/install.ps1 | iex
-ensemble-test login
-```
-
-Approve the code at `https://test.ensemblework.com/link`. Production uses `ensemble login` and the production website instead. A code, account or pairing from one environment cannot authorize the other. Add test work folders with `ensemble-test folders add <path>`; `ensemble-test runner install` installs a separate login service. `ensemble-test update` reads only the testing update manifest. `ensemble-test mcp setup` writes an `ensemble-test` editor entry without replacing `ensemble`.
-
-The testing executable is compiled for `https://api-test.ensemblework.com`: `--api`, saved configuration, login replies and runner pairing cannot switch it to production. It ignores production `ENSEMBLE_API_URL`, tokens, config/data overrides and discovery files. Test-specific overrides are `ENSEMBLE_TEST_CONFIG_DIR`, `ENSEMBLE_TEST_DATA_HOME`, `ENSEMBLE_TEST_TOKEN` and `ENSEMBLE_TEST_API_URL` (the latter must still name the test API). Its database, encryption key, pairing, trusted folders, workspace, runtime lock, service and update cache are separate from the production CLI and native app. No production data migration runs. See [26 §1.1](26_CLI.md#11-testing-cli) for paths.
-
-Testing downloads live in the GitHub `cli-testing-latest` **prerelease**, never Homebrew, Scoop, stable npm, stable CLI releases or the desktop updater. `channel.json` records the source commit, backend and unique `<release>-testing.<build>` version. All targets must pass their package smoke checks before the channel manifest is published. Versioned archives and checksums remain available while an earlier installer finishes.
-
-## Promotion to production
-
-Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
-
-A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit on `testing` before the promotion PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
-
-Bring the released `main` back into `testing` after promotion (a fast-forward when `testing` has nothing newer) so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
+The testing channel uses separate deployment, cookie and runtime configuration. Exact safeguards and package contracts follow.
 
 ## Implementation and safeguards
 
 `.github/workflows/test-web.yml` owns fast checks and test deployment. Deployment is enabled by `TEST_DEPLOY_ENABLED=true`; it uses `ENSEMBLE_TEST_API_URL`, `VERCEL_PROJECT_ID_TEST` and the existing Vercel account credentials. No server secrets are uploaded to Vercel or GitHub.
 
-`infra/deploy/testing/compose.yml` owns distinct Postgres/Redis containers and volume plus the test tunnel; `TEST_HOST_UID`/`TEST_HOST_GID` let the tunnel read its owner's private credential files. The `ensemble-test-api` user unit runs the API; `ensemble-test-deploy.timer` checks the reviewed deployment pointer every 30 seconds. `deploy.mjs` refuses production database/Redis endpoints, a missing cookie namespace, the production file container, shared state paths, enabled server execution or a Node website other than `node-test.ensemblework.com`. It fast-forwards, installs when dependency manifests changed, refreshes only the testing containers and user units, generates Prisma, dumps the test database before migrations, restarts only the test API and records success after readiness.
+`infra/deploy/testing/compose.yml` owns distinct Postgres/Redis containers and volume plus the test tunnel; `TEST_HOST_UID`/`TEST_HOST_GID` let the tunnel read its owner's private credential files. The `ensemble-test-api` user unit runs the API; `ensemble-test-deploy.timer` checks the reviewed deployment pointer every 30 seconds. `deploy.mjs` refuses production database/Redis endpoints, a missing cookie namespace, the production file container, shared state paths, enabled server execution or a Node website other than `node-test.ensemblework.com`.
+
+It fast-forwards, installs when dependency manifests changed, refreshes only the testing containers and user units, generates Prisma, dumps the test database before migrations, restarts only the test API and records success after readiness.
 
 `ensembleCookieName` in `packages/shared-types/src/cookie-site.ts` applies the optional namespace consistently to session, active-space and OAuth-flow cookies. Middleware, server rendering and the API use the same names, so testing does not replace or clear production's cookies.
 
 The test deploy also rejects an encryption key that is not 32 bytes encoded as base64, matching `lib/secrets.ts`. A passing liveness probe alone does not validate encrypted-credential or credit-accounting operations.
 
 Operator-specific setup, credentials, service repair and DNS values belong in the git-ignored `private/HOSTING.md`.
+
+Local browser validation of active places (`apps/hub-web/e2e/active-places.mjs`) uses `mobile-ui-fixture.ts` with `MOBILE_FIXTURE_PATH`, a local `HUB_WEB` and local `NEXT_PUBLIC_HUB_API`; it exercises two windows, conflicting/disjoint settings, the fourth-tab chooser and released-slot reuse without hosted accounts or screenshots.
+
+### Testing executable and release contract
+
+The testing executable is compiled for `https://api-test.ensemblework.com`: `--api`, saved configuration, login replies and runner pairing cannot switch it to production. It ignores production `ENSEMBLE_API_URL`, tokens, config/data overrides and discovery files. Test-specific overrides are `ENSEMBLE_TEST_CONFIG_DIR`, `ENSEMBLE_TEST_DATA_HOME`, `ENSEMBLE_TEST_TOKEN` and `ENSEMBLE_TEST_API_URL` (the latter must still name the test API). Its database, encryption key, pairing, trusted folders, workspace, runtime lock, service and update cache are separate from the production CLI and native app. No production data migration runs.
+
+See [26 §1.1](26_CLI.md#11-testing-cli) for paths.
+
+Testing downloads live in the GitHub `cli-testing-latest` **prerelease**, never Homebrew, Scoop, stable npm, stable CLI releases or the desktop updater. `channel.json` records the source commit, backend and unique `<release>-testing.<build>` version. All targets must pass their package smoke checks before the channel manifest is published. Versioned archives and checksums remain available while an earlier installer finishes.
