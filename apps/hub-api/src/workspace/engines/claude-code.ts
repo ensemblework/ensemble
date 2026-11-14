@@ -28,6 +28,7 @@ import { ensembleDataDenies } from "../data-denies.js";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE, holdsProtected, SECRET_PATHS, within, workspaceFolders, workspaceRoot } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { claudeBinary } from "../../subscriptions/detect.js";
+import { withoutHostSession } from "../../subscriptions/host-session.js";
 import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
@@ -253,7 +254,7 @@ export async function runClaudeCode(
     ...(name ? ["--name", name] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
-  const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true), MCP_TOOL_TIMEOUT: String(86_400_000) };
+  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true), MCP_TOOL_TIMEOUT: String(86_400_000) };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
