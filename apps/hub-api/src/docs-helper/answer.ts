@@ -13,7 +13,7 @@ Otherwise answer in plain sentences, at most 120 words, and cite the passage num
 Return JSON with found (boolean), answer (string), and citations (array of passage numbers).`;
 const Reply = z.object({ found: z.boolean(), answer: z.string().min(1).max(1500), citations: z.array(z.number().int().min(1).max(4)).max(4) });
 export type HelperAnswer = { found: boolean; answer: string; sources: { title: string; url: string }[] };
-const source = (passage: Passage) => ({ title: `${passage.title}: ${passage.heading}`, url: passage.url });
+const source = (passage: Passage) => ({ title: passage.title.endsWith(passage.heading) ? passage.title : `${passage.title}: ${passage.heading}`, url: passage.url });
 function miss(passages: Passage[]): HelperAnswer {
   return { found: false, answer: "That is not in the docs. Try the closest guide or search for a related topic.", sources: passages.length ? [source(passages[0]!)] : [{ title: "Browse the documentation", url: DOCS_HOME }] };
 }

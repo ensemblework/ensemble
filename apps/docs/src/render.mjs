@@ -83,7 +83,7 @@ export function pageHtml(page, pages, sourceRef, endpoint = "https://api.ensembl
     "README.md": "Documentation home", "00": "Overview", "02": "The Hub", "03": "Context", "04": "Personal skills", "05": "Scheduled work", "06": "Assigned agents", "07": "Access and activity", "11": "Assistant", "16": "Code", "20_PLOTS": "Plots", "20_QUICK": "Quick capture", "21_BLOCK_DIAGRAMS_CHEATSHEET": "Diagram cheat sheet", "21": "Diagrams", "24": "Execution permissions", "25": "Your computers", "26": "CLI", "27": "Imports", "28": "Spaces", "29": "Sharing", "30": "Your own agents", "31": "Connected apps", "32": "Files", "33": "Included AI", "34": "Assistant actions", "35": "Ensemble Node", "38": "Agent attachments", "39": "Agent tools", "40": "Using these docs", "41": "Agent sessions", "DESKTOP.md": "Desktop app", "CONTEXT_BRIDGE.md": "Connect an editor",
   };
   const navigation = pages.filter((entry) => !entry.parent).map((entry) => {
-    const label = Object.entries(guideLabels).find(([prefix]) => entry.file.startsWith(prefix))?.[1] ?? entry.title;
+    const label = Object.entries(guideLabels).sort(([a], [b]) => b.length - a.length).find(([prefix]) => entry.file.startsWith(prefix))?.[1] ?? entry.title;
     return `<a href="${e(entry.path)}"${entry.path === page.path || page.sourceFile === entry.file ? ' aria-current="page"' : ""}>${e(label)}</a>`;
   }).join("\n");
   const toc = page.toc.map(({ heading, id }) => `<a href="#${e(id)}">${e(heading.replace(/^\d+[. ·]+/, ""))}</a>`).join("\n");
