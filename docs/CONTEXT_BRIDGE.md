@@ -97,7 +97,7 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 
 ### 4.1 OAuth for AI apps
 
-An app adds the same `/mcp` URL and discovers `/.well-known/oauth-protected-resource/mcp` (also served at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`. Unauthenticated MCP gets a 401 Bearer challenge with `resource_metadata`. `HUB_API_PUBLIC_URL` is the issuer's HTTPS origin; HTTP loopback is allowed only in development. Metadata endpoints do not inherit cookies, keys or space headers.
+An app adds the same `/mcp` URL and discovers `/.well-known/oauth-protected-resource/mcp` (also served at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`. Unauthenticated MCP gets a 401 Bearer challenge with `resource_metadata`. `HUB_API_PUBLIC_URL` is the issuer's HTTPS origin; HTTP loopback is allowed only in development. Metadata and OAuth endpoints (`/.well-known/…`, `/oauth/…`) never take a cookie, key or space header as the person's identity, so a key sent there unlocks nothing and is not refused; `/oauth/token` and `/oauth/revoke` read `Authorization` only as the app's client authentication.
 
 `POST /oauth/register` supports public clients (`none`) and confidential `client_secret_basic` or `client_secret_post` clients. HTTPS client IDs can use CIMD; the public document must match its URL, include its name and redirects, and support `none`. Fetches are public-only, DNS-pinned, without user credentials or redirects, bounded to 5 seconds and 32 KB. Registered redirects match exactly; an HTTP loopback callback may vary only its port.
 
