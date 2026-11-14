@@ -30,6 +30,7 @@ import { parseItemRef, type GraphKind } from "../context/graph/refs.js";
 import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
 import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
+import { noteProjectDeleted } from "../workspace/project-delete.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -417,6 +418,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       }),
     ]);
     await appendLedger({ userId: request.userId, actor: "me", action: "project.delete", payload: { id } });
+    // The Codex projects Ensemble made for it on the person's computers go once it has stayed in Trash 10 minutes.
+    void noteProjectDeleted(prisma, request.userId, id).catch((error: unknown) => app.log.warn({ err: error }, "Could not note a deleted project for its computers"));
     return reply.code(204).send();
   });
 

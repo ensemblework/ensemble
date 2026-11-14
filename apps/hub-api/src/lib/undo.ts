@@ -561,6 +561,10 @@ async function runEntry(db: PrismaClient, userId: string, entryId: string | unde
     throw new UndoConflict(entry.label);
   }
   await flipStoredCalls(db, userId, entry.id, direction);
+  // A project put back in Trash (its deletion redone, its creation undone): its Codex projects on the person's
+  // computers go too, as when it was deleted (workspace/project-delete.ts).
+  const trashed = patches.filter((patch) => patch.model === "project" && (patch.kind === "create" ? direction === "undo" : (direction === "undo" ? patch.fields.deletedAt?.before : patch.fields.deletedAt?.after) != null));
+  if (trashed.length) void import("../workspace/project-delete.js").then(({ noteProjectDeleted }) => Promise.all(trashed.map((patch) => noteProjectDeleted(db, userId, patch.id)))).catch(() => undefined);
   for (const patch of patches.filter(item => item.model === "preference" && item.fields.value)) {
     const row = await db.preference.findFirst({ where: { id: patch.id, key: "hub.settings" }, select: { value: true } });
     const parsed = row ? Settings.safeParse(row.value) : null;

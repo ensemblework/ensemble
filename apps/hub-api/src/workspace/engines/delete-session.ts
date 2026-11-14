@@ -92,6 +92,36 @@ async function rpcDelete(program: string, args: string[], env: NodeJS.ProcessEnv
   }
 }
 
+/** Requests to an app-server of this computer's own Codex, with its experimental API (threads, projects). Null when Codex is not installed. */
+export async function withCodexServer<T>(run: (rpc: RpcConnection) => Promise<T>): Promise<{ value: T } | null> {
+  const program = await codexBinary();
+  if (!program) return null;
+  let value: T | undefined;
+  await rpcDelete(program, ["app-server"], codexEnv(), async rpc => {
+    await rpc.request("initialize", { clientInfo: { name: "ensemble", version: "1" }, capabilities: { experimentalApi: true } });
+    rpc.notify("initialized");
+    value = await run(rpc);
+  });
+  return { value: value as T };
+}
+
+/** A Codex older than its app-server projects: it has none. */
+export const noCodexProjects = (error: unknown): boolean => error instanceof Error && /method not found|unknown variant/i.test(error.message);
+
+/**
+ * Deletes projects from Codex (`project/delete`), which leaves their threads in no project. One already
+ * gone counts as deleted, and so does every project of a Codex without projects, or of a computer without Codex.
+ */
+export async function deleteCodexProjects(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await withCodexServer(async rpc => {
+    for (const projectId of ids) {
+      try { await rpc.request("project/delete", { projectId }); }
+      catch (error) { if (!(error instanceof Error && (error.message === `project not found: ${projectId}` || noCodexProjects(error)))) throw error; }
+    }
+  });
+}
+
 export async function deleteNativeSession(engine: CodeEngine, sessionId: string, cwd: string): Promise<void> {
   SessionId.parse(sessionId);
   if (engine === "claude-code" || engine === "cursor-agent") {
@@ -117,14 +147,11 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     return;
   }
   if (engine === "codex") {
-    const program = await codexBinary();
-    if (!program) throw new Error("Install or update Codex on this computer to delete its saved thread.");
-    await rpcDelete(program, ["app-server"], codexEnv(), async rpc => {
-      await rpc.request("initialize", { clientInfo: { name: "ensemble", version: "1" }, capabilities: { experimentalApi: true } });
-      rpc.notify("initialized");
+    const done = await withCodexServer(async rpc => {
       try { await rpc.request("thread/delete", { threadId: sessionId }); }
       catch (error) { if (!(error instanceof Error && absentSession(error.message, sessionId))) throw error; }
     });
+    if (!done) throw new Error("Install or update Codex on this computer to delete its saved thread.");
     return;
   }
   if (engine === "antigravity") {

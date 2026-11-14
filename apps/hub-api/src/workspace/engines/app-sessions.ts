@@ -10,7 +10,8 @@
  *   ChatGPT app's sidebar shows only the projects in its own file, `.codex-global-state.json` in Codex's
  *   home, which the app reads when it starts and writes back whole while it runs. So Ensemble adds the
  *   project there, with Ensemble's threads in it, only while the app is closed, and owes it until then
- *   (`<state>/codex-app-projects.json`).
+ *   (`<state>/codex-app-projects.json`). Deleting the Ensemble project takes it out the same way, then
+ *   out of Codex (`removeCodexAppProjects`).
  * - Claude's desktop app lists in its Code tab only sessions it has a record for, in the profile it runs
  *   on: `Claude` (signed in with a Claude account) or `Claude-3p` (on a gateway or a cloud provider), each
  *   with `claude-code-sessions/<account>/<org>/local_<id>.json`. A new session of Ensemble's gets the
@@ -59,9 +60,22 @@ export function forgetHelpForTests(): void {
 }
 
 type Rpc = { request: (method: string, params?: unknown) => Promise<unknown> };
-type CodexProjectRow = { id: string; name: string; roots?: Array<{ path: string }>; metadata?: Record<string, string> };
+export type CodexProjectRow = { id: string; name: string; roots?: Array<{ path: string }>; metadata?: Record<string, string> };
 
 const samePath = (a: string, b: string) => resolve(a).replace(/[\\/]+$/, "") === resolve(b).replace(/[\\/]+$/, "");
+
+/** Every project of Codex's app-server, a page at a time (at most 2,000). */
+export async function listCodexProjects(server: Rpc): Promise<CodexProjectRow[]> {
+  const rows: CodexProjectRow[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 20; page += 1) {
+    const listed = (await server.request("project/list", { limit: 100, ...(cursor ? { cursor } : {}) })) as { data?: CodexProjectRow[]; nextCursor?: unknown };
+    rows.push(...(listed.data ?? []));
+    cursor = typeof listed.nextCursor === "string" && listed.nextCursor ? listed.nextCursor : null;
+    if (!cursor) break;
+  }
+  return rows;
+}
 
 /**
  * The Codex project for an Ensemble project: the one carrying Ensemble's id, else the one for its folder,
@@ -70,8 +84,7 @@ const samePath = (a: string, b: string) => resolve(a).replace(/[\\/]+$/, "") ===
  */
 export async function codexProject(server: Rpc, project: { id: string; name: string; folder: string }): Promise<string | null> {
   try {
-    const listed = (await server.request("project/list", { limit: 200 })) as { data?: CodexProjectRow[] };
-    const rows = listed.data ?? [];
+    const rows = await listCodexProjects(server);
     const ours = rows.find((row) => row.metadata?.ensembleProjectId === project.id) ?? rows.find((row) => (row.roots ?? []).some((root) => samePath(root.path, project.folder)));
     if (ours) {
       if (ours.metadata?.ensembleProjectId === project.id && ours.name !== project.name) {
@@ -79,13 +92,23 @@ export async function codexProject(server: Rpc, project: { id: string; name: str
       }
       return ours.id;
     }
-    const created = (await server.request("project/create", {
-      name: project.name,
-      roots: [{ path: project.folder }],
-      metadata: { ensembleProjectId: project.id },
-      idempotencyKey: `ensemble-project:${project.id}`,
-    })) as { project?: { id?: string } };
-    return created.project?.id ?? null;
+    // Codex keeps a key with the project it made, after that project is deleted too (the Ensemble project was
+    // deleted, then brought back from Trash): the next key makes a new one.
+    for (let generation = 1; generation <= 20; generation += 1) {
+      const created = (await server
+        .request("project/create", {
+          name: project.name,
+          roots: [{ path: project.folder }],
+          metadata: { ensembleProjectId: project.id },
+          idempotencyKey: generation === 1 ? `ensemble-project:${project.id}` : `ensemble-project:${project.id}:${generation}`,
+        })
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.message.startsWith("idempotency key refers to deleted project:")) return null;
+          throw error;
+        })) as { project?: { id?: string } } | null;
+      if (created) return created.project?.id ?? null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -387,9 +410,10 @@ export async function codexAppOpen(where: Place & { processes?: boolean } = {}):
 /**
  * A Codex project Ensemble files in the ChatGPT app's sidebar, by its app-server id: its name and folder,
  * the threads still to file, and what was filed (`filedAt`, `filedName`). `removed`: the person removed it
- * in the app, and it is never filed again.
+ * in the app, or deleted its Ensemble project, and it is never filed again. `deleting`: its Ensemble project
+ * was deleted, and it is still to leave the sidebar, then Codex.
  */
-type Owed = { name: string; folder: string; threads: string[]; filedAt?: number; filedName?: string; removed?: boolean };
+type Owed = { name: string; folder: string; threads: string[]; filedAt?: number; filedName?: string; removed?: boolean; deleting?: boolean };
 type OwedStore = Record<string, Owed>;
 export type SidebarOptions = Place & {
   /** Ensemble's record of what it owes the sidebar; default `<state>/codex-app-projects.json`. */
@@ -398,8 +422,11 @@ export type SidebarOptions = Place & {
   now?: number;
   /** How long to wait before trying again while the app is open; null: not again. */
   retryMs?: number | null;
+  /** Deletes projects from Codex (`project/delete`), one already gone counting as deleted; default: this computer's Codex. */
+  deleteProjects?: (ids: string[]) => Promise<void>;
 };
-export type SidebarResult = "filed" | "owed" | "nothing";
+/** `filed`: the sidebar got a project or threads; `removed`: a project left the sidebar or Codex; `owed`: something waits for the app to close. */
+export type SidebarResult = "filed" | "removed" | "owed" | "nothing";
 
 const RETRY_MS = 2 * 60_000;
 const MAX_OWED_THREADS = 200;
@@ -422,12 +449,21 @@ const isObject = (value: unknown) => value === undefined || (typeof value === "o
 /** Every part of the app's file Ensemble reads or changes is absent or has the shape the app writes; otherwise the file is left alone. */
 const sidebarShaped = (state: Record<string, unknown>) =>
   ["local-projects", "thread-project-assignments", "thread-project-membership-host-ids", "app-server-pending-project-deletions-by-host", "app-server-project-id-by-legacy-project-id-by-host"].every((key) => isObject(state[key])) &&
-  ["project-order", "projectless-thread-ids"].every((key) => state[key] === undefined || Array.isArray(state[key]));
+  ["project-order", "pinned-project-ids", "projectless-thread-ids"].every((key) => state[key] === undefined || Array.isArray(state[key]));
 const objectAt = (state: Record<string, unknown>, key: string): Record<string, unknown> => {
   const value = state[key];
   return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
 };
 const listAt = (state: Record<string, unknown>, key: string): string[] => (Array.isArray(state[key]) ? (state[key] as unknown[]).filter((item): item is string => typeof item === "string") : []);
+/** The app-server projects the app shows under the person's own local project (theirs for the same folder): app-server id to local id. */
+const mappedIds = (state: Record<string, unknown>, projects: Record<string, unknown>) =>
+  new Map(Object.values(objectAt(state, "app-server-project-id-by-legacy-project-id-by-host")).flatMap((byLegacy) => (byLegacy && typeof byLegacy === "object" ? Object.entries(byLegacy as Record<string, unknown>).flatMap(([legacy, server]) => (typeof server === "string" && Object.hasOwn(projects, legacy) ? [[server, legacy] as const] : [])) : [])));
+/** The id the sidebar shows an app-server project under: its own, or the person's own project's; null when it is not shown. */
+function shownIn(state: Record<string, unknown>): (serverId: string) => string | null {
+  const projects = objectAt(state, "local-projects");
+  const mapped = mappedIds(state, projects);
+  return (serverId) => mapped.get(serverId) ?? (Object.hasOwn(projects, serverId) ? serverId : null);
+}
 
 /**
  * Applies what is owed to the app's state: a project the app does not show gets an entry (its id is the
@@ -443,7 +479,7 @@ function applyOwed(state: Record<string, unknown>, owed: Array<[string, Owed]>, 
   const hosts = objectAt(state, "thread-project-membership-host-ids");
   const projectless = new Set(listAt(state, "projectless-thread-ids"));
   const deleting = new Set(Object.values(objectAt(state, "app-server-pending-project-deletions-by-host")).flatMap((byProject) => (byProject && typeof byProject === "object" ? Object.entries(byProject as Record<string, { projectId?: unknown }>).flatMap(([local, row]) => [local, String(row?.projectId ?? "")]) : [])));
-  const mapped = new Map(Object.values(objectAt(state, "app-server-project-id-by-legacy-project-id-by-host")).flatMap((byLegacy) => (byLegacy && typeof byLegacy === "object" ? Object.entries(byLegacy as Record<string, unknown>).flatMap(([legacy, server]) => (typeof server === "string" && Object.hasOwn(projects, legacy) ? [[server, legacy] as const] : [])) : [])));
+  const mapped = mappedIds(state, projects);
   let changed = false;
   for (const [serverId, entry] of owed) {
     const id = mapped.get(serverId) ?? serverId;
@@ -477,18 +513,53 @@ function applyOwed(state: Record<string, unknown>, owed: Array<[string, Owed]>, 
 }
 
 /**
- * Files what Ensemble owes the ChatGPT app's sidebar, while the app is closed; while it is open, tries
- * again every few minutes. Never touches a file it cannot read whole.
+ * Takes projects out of the app's state the way the app does when the person removes one: out of
+ * `local-projects`, `project-order` and `pinned-project-ids`, with their threads moved from
+ * `thread-project-assignments` to `projectless-thread-ids`. Everything else in the file stays.
+ */
+function applyRemovals(state: Record<string, unknown>, ids: string[]): boolean {
+  const projects = objectAt(state, "local-projects");
+  const gone = new Set(ids.filter((id) => Object.hasOwn(projects, id)));
+  if (!gone.size) return false;
+  for (const id of gone) delete projects[id];
+  state["local-projects"] = projects;
+  for (const key of ["project-order", "pinned-project-ids"]) if (Array.isArray(state[key])) state[key] = listAt(state, key).filter((id) => !gone.has(id));
+  const assignments = objectAt(state, "thread-project-assignments");
+  const projectless = listAt(state, "projectless-thread-ids");
+  let moved = false;
+  for (const [thread, assignment] of Object.entries(assignments)) {
+    const row = assignment as { projectKind?: unknown; projectId?: unknown } | null;
+    if (row?.projectKind !== "local" || typeof row.projectId !== "string" || !gone.has(row.projectId)) continue;
+    delete assignments[thread];
+    if (!projectless.includes(thread)) projectless.push(thread);
+    moved = true;
+  }
+  if (moved) Object.assign(state, { "thread-project-assignments": assignments, "projectless-thread-ids": projectless });
+  return true;
+}
+
+/** Projects out of Codex through this computer's own Codex (delete-session.ts). */
+const deleteWithCodex = async (ids: string[]) => (await import("./delete-session.js")).deleteCodexProjects(ids);
+
+/**
+ * Does what Ensemble owes the ChatGPT app's sidebar while the app is closed: files projects and threads,
+ * and takes out the projects of deleted Ensemble projects. While it is open, tries again every few
+ * minutes. Never touches a file it cannot read whole. A deleted project's Codex project goes once the
+ * sidebar does not show it, never before: the app imports again, when it next starts, an entry whose
+ * project Codex no longer has.
  */
 export function syncCodexAppProjects(options: SidebarOptions = {}): Promise<SidebarResult> {
   return serial(async () => {
     const path = await owedPath(options);
     const store = ((await readObject(path)) ?? {}) as OwedStore;
-    const owed = Object.entries(store).filter(([, entry]) => entry && typeof entry === "object" && owedNow(entry));
-    if (!owed.length) return "nothing";
-    // No sidebar file: the ChatGPT app has not run here yet.
+    const entries = Object.entries(store).filter(([, entry]) => entry && typeof entry === "object");
+    const owed = entries.filter(([, entry]) => owedNow(entry));
+    const deleting = entries.filter(([, entry]) => entry.deleting === true);
+    if (!owed.length && !deleting.length) return "nothing";
+    // No sidebar file: the ChatGPT app has not run here yet, and shows nothing.
     const sidebar = join(codexHome(options), SIDEBAR);
-    if (!(await exists(sidebar))) return "nothing";
+    const hasSidebar = await exists(sidebar);
+    if (!hasSidebar && !deleting.length) return "nothing";
     const open = options.appOpen ?? (() => codexAppOpen(options));
     const later = (): SidebarResult => {
       const wait = options.retryMs === undefined ? RETRY_MS : options.retryMs;
@@ -501,20 +572,49 @@ export function syncCodexAppProjects(options: SidebarOptions = {}): Promise<Side
       }
       return "owed";
     };
-    if (await open()) return later();
-    const state = await readObject(sidebar);
-    if (!state || !sidebarShaped(state)) return "owed";
-    const changed = applyOwed(state, owed, options.now ?? Date.now());
-    if (changed) {
-      // Checked again just before writing: the app writes the whole file back while it runs.
-      if (await open()) return later();
-      const text = JSON.stringify(state);
-      await replaceFile(sidebar, text);
-      await replaceFile(`${sidebar}.bak`, text).catch(() => undefined);
+    let filed = false;
+    let removed = false;
+    let waits = false;
+    let shownAs = (_serverId: string): string | null => null;
+    if (hasSidebar) {
+      const closed = !(await open());
+      const state = await readObject(sidebar);
+      if (!state || !sidebarShaped(state)) return closed ? "owed" : later();
+      if (closed) {
+        filed = applyOwed(state, owed, options.now ?? Date.now());
+        const before = shownIn(state);
+        removed = applyRemovals(state, deleting.map(([id]) => id).filter((id) => before(id) === id));
+        if (filed || removed) {
+          // Checked again just before writing: the app writes the whole file back while it runs.
+          if (await open()) return later();
+          const text = JSON.stringify(state);
+          await replaceFile(sidebar, text);
+          await replaceFile(`${sidebar}.bak`, text).catch(() => undefined);
+        }
+      } else waits = owed.length > 0;
+      shownAs = shownIn(state);
+    }
+    // Out of the sidebar, or never in it: the project goes from Codex too. One the app shows as the person's own stays.
+    const gone: string[] = [];
+    for (const [id, entry] of deleting) {
+      const shown = shownAs(id);
+      if (shown === null) gone.push(id);
+      else if (shown !== id) delete entry.deleting;
+      else waits = true;
+    }
+    if (gone.length) {
+      try {
+        await (options.deleteProjects ?? deleteWithCodex)(gone);
+        for (const id of gone) delete store[id]!.deleting;
+        removed = true;
+      } catch {
+        waits = true;
+      }
     }
     await mkdir(dirname(path), { recursive: true });
     await replaceFile(path, JSON.stringify(store), 0o600);
-    return changed ? "filed" : "nothing";
+    if (waits) return later();
+    return filed ? "filed" : removed ? "removed" : "nothing";
   });
 }
 
@@ -536,6 +636,26 @@ export async function fileCodexAppProject(project: { id: string; name: string; f
     await replaceFile(path, JSON.stringify(store), 0o600);
   });
   return syncCodexAppProjects(options);
+}
+
+/**
+ * The Codex projects Ensemble made for an Ensemble project that was deleted: each leaves the ChatGPT app's
+ * sidebar while the app is closed (owed until then), its threads set apart as projectless, and then leaves
+ * Codex (`project/delete`, which leaves those threads in no project). None is filed again. `owed`: one is
+ * still in the sidebar of an open app, or Codex could not delete it yet.
+ */
+export async function removeCodexAppProjects(ids: string[], options: SidebarOptions = {}): Promise<"removed" | "owed" | "nothing"> {
+  if (!ids.length) return "nothing";
+  const path = await owedPath(options);
+  await serial(async () => {
+    const store = ((await readObject(path)) ?? {}) as OwedStore;
+    for (const id of ids) store[id] = { ...(store[id] ?? { name: "", folder: "" }), threads: [], removed: true, deleting: true };
+    await mkdir(dirname(path), { recursive: true });
+    await replaceFile(path, JSON.stringify(store), 0o600);
+  });
+  await syncCodexAppProjects(options);
+  const store = ((await readObject(path)) ?? {}) as OwedStore;
+  return ids.some((id) => store[id]?.deleting) ? "owed" : "removed";
 }
 
 /** Tests: no retry left waiting. */

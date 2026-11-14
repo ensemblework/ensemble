@@ -25,6 +25,7 @@ Task / deliverable / assistant / CLI assignment
 | --- | --- |
 | Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; interaction-log purge once a day ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
 | Device leases | `devices/lease.ts` settles expired remote claims as interrupted |
+| Deletions on computers | Asks the person's online computers again for what they have not confirmed: a deleted chat's agent session (`assistant/delete-chat.ts`), and the Codex projects of a project 10 minutes in Trash (`workspace/project-delete.ts`, [30](30_ENGINES.md), In the agents' own apps) |
 | Blob sweep | At most hourly, only when the server's blob store is on (`jobs/blob-sweep.ts`): removes file originals and plot tables nothing uses once an hour old, and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)) |
 | Reminders | Dispatch due in-app reminders, including ones missed while down |
 | Assistant routines | `routines/service.ts` runs due active routines through the assistant, up to five per person per tick, each in its own conversation with `assistant.defaultTier`. Morning brief is one built-in routine, scheduled at most once per local day. `routines.enabled` stops all of them ([02 §3.10a](02_MODULE_INTERACTION_HUB_UI.md#310a-routines)) |

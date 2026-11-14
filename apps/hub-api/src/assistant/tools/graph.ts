@@ -14,6 +14,7 @@ import {
 } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk } from "../types.js";
 import { isGuestIn } from "../../sharing/context.js";
+import { noteProjectDeleted } from "../../workspace/project-delete.js";
 
 /** Searches one Hub chat turn may make; then the model reads what it found or answers (web-research playbook). */
 export const WEB_SEARCHES_PER_TURN = 3;
@@ -225,6 +226,8 @@ export const graphTools = [
         throw new Error("Not part of this template.");
       }
       const result = await inTransaction(ctx, (tx) => softDelete(tx, ctx.userId, input.kind, input.id, "agent"));
+      // A project's Codex projects on the person's computers go once it has stayed in Trash 10 minutes.
+      if (input.kind === "project") void noteProjectDeleted(ctx.prisma, ctx.userId, input.id).catch(() => undefined);
       return toolOk(`Moved “${result.label}” to Trash.`, { ok: true }, { invalidate: [input.kind] });
     },
   }),
