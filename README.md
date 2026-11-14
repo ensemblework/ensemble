@@ -52,7 +52,7 @@ Hosted Google data access, productivity use, selected-provider AI processing, st
 
 Checks for the area you change are listed in [AGENTS.md](AGENTS.md#commands); the API baseline is `pnpm --filter @ensemble/hub-api test:public` (in-memory PGlite, mocked providers, no model quota).
 
-Hosted MCP OAuth and client compatibility checks: `pnpm --filter @ensemble/hub-api test:mcp-oauth`. The shared fast CI also checks named catalog/legacy MCP behavior, consent UI, provider returns and Grok editor setup without real model calls.
+Hosted MCP OAuth and client compatibility checks: `pnpm --filter @ensemble/hub-api test:mcp-oauth`. The shared fast CI also checks named catalog/legacy MCP behavior, consent UI and middleware routes, provider returns and Grok editor setup without real model calls.
 
 ## Other apps
 
