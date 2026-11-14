@@ -199,20 +199,32 @@ test("an Ensemble project is one Codex project: found by Ensemble's id or its fo
   assert.deepEqual(calls.map(([method]) => method), ["project/list"], "and it keeps the person's name");
   assert.equal(await codexProject({ request: async () => { throw new Error("Method not found: project/list"); } }, project), null, "an older Codex has no projects");
 
-  // Its Codex project was deleted with the Ensemble project, which came back from Trash: Codex keeps the key with
-  // the deleted project, so the next key makes a new one.
-  calls.length = 0;
-  const restored = {
-    request: async (method: string, params?: unknown) => {
-      calls.push([method, params]);
-      if (method === "project/list") return { data: [] };
-      const key = (params as { idempotencyKey?: string }).idempotencyKey;
-      if (key === "ensemble-project:p-1") throw new Error("idempotency key refers to deleted project: ensemble-project:p-1");
-      return { project: { id: "made-again" } };
-    },
-  };
-  assert.equal(await codexProject(restored, project), "made-again");
-  assert.deepEqual(calls.filter(([method]) => method === "project/create").map(([, params]) => (params as { idempotencyKey: string }).idempotencyKey), ["ensemble-project:p-1", "ensemble-project:p-1:2"]);
+  // Codex keeps the key of a project it deleted. The person removed the project in the ChatGPT app (which deletes
+  // it from Codex): it stays removed, and the thread starts outside any project.
+  const keys = mkdtempSync(join(tmpdir(), "codex-keys-"));
+  try {
+    const state = { state: join(keys, "codex-app-projects.json") };
+    calls.length = 0;
+    const restored = {
+      request: async (method: string, params?: unknown) => {
+        calls.push([method, params]);
+        if (method === "project/list") return { data: [] };
+        const key = (params as { idempotencyKey?: string }).idempotencyKey;
+        if (key === "ensemble-project:p-1") throw new Error("idempotency key refers to deleted project: ensemble-project:p-1");
+        return { project: { id: "made-again" } };
+      },
+    };
+    const created = () => calls.filter(([method]) => method === "project/create").map(([, params]) => (params as { idempotencyKey: string }).idempotencyKey);
+    assert.equal(await codexProject(restored, project, state), null, "removed in the app: not made again");
+    assert.deepEqual(created(), ["ensemble-project:p-1"]);
+    // Ensemble deleted it with the Ensemble project, which came back from Trash: the next key makes a new one.
+    calls.length = 0;
+    writeFileSync(state.state, JSON.stringify({ "old-codex-project": { name: "Launch", folder: "/w", threads: [], removed: true, deletedFor: "p-1" }, "another": { name: "B", folder: "/b", threads: [], removed: true, deletedFor: "p-2" } }));
+    assert.equal(await codexProject(restored, project, state), "made-again");
+    assert.deepEqual(created(), ["ensemble-project:p-1", "ensemble-project:p-1:2"]);
+  } finally {
+    rmSync(keys, { recursive: true, force: true });
+  }
   // Found on a later page of Codex's projects.
   const paged = {
     request: async (method: string, params?: unknown) => {

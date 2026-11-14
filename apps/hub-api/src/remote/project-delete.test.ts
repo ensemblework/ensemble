@@ -41,6 +41,8 @@ test("only the Codex projects carrying the deleted project's id go, from the sid
     assert.deepEqual(state["project-order"], ["their-local", OTHER]);
     assert.deepEqual(state["thread-project-assignments"], { "t-2": { projectKind: "local", projectId: OTHER } });
     assert.deepEqual(state["projectless-thread-ids"], ["t-1"]);
+    // Recorded as Ensemble's own deletion for this project, so the project gets a new Codex project if it comes back from Trash.
+    assert.equal((JSON.parse(readFileSync(options.state, "utf8")) as Record<string, { deletedFor?: string }>)[OURS]?.deletedFor, PROJECT);
 
     // A computer where Ensemble never made one for it: nothing to do.
     assert.deepEqual(await removeProjectHere("1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e", options), { found: 0, owed: false });

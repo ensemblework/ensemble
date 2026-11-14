@@ -33,7 +33,7 @@ export type RemoveOptions = SidebarOptions & { projects?: () => Promise<CodexPro
  */
 export async function removeProjectHere(projectId: string, options: RemoveOptions = {}): Promise<{ found: number; owed: boolean }> {
   const ids = (await (options.projects ?? codexProjects)()).filter((row) => row.metadata?.ensembleProjectId === projectId).map((row) => row.id);
-  return { found: ids.length, owed: (await removeCodexAppProjects(ids, options)) === "owed" };
+  return { found: ids.length, owed: (await removeCodexAppProjects(ids, options, projectId)) === "owed" };
 }
 
 export async function answerProjectDelete(client: Pick<HostedClient, "answerCode">, input: unknown, remove: (projectId: string) => Promise<{ found: number; owed: boolean }> = removeProjectHere): Promise<void> {

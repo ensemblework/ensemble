@@ -82,7 +82,7 @@ export async function listCodexProjects(server: Rpc): Promise<CodexProjectRow[]>
  * else a new one. Renamed with the Ensemble project. Null when this Codex has no projects (older than its
  * app-server projects) or refuses: the thread then starts outside any project, as before.
  */
-export async function codexProject(server: Rpc, project: { id: string; name: string; folder: string }): Promise<string | null> {
+export async function codexProject(server: Rpc, project: { id: string; name: string; folder: string }, options: Pick<SidebarOptions, "state"> = {}): Promise<string | null> {
   try {
     const rows = await listCodexProjects(server);
     const ours = rows.find((row) => row.metadata?.ensembleProjectId === project.id) ?? rows.find((row) => (row.roots ?? []).some((root) => samePath(root.path, project.folder)));
@@ -92,9 +92,12 @@ export async function codexProject(server: Rpc, project: { id: string; name: str
       }
       return ours.id;
     }
-    // Codex keeps a key with the project it made, after that project is deleted too (the Ensemble project was
-    // deleted, then brought back from Trash): the next key makes a new one.
-    for (let generation = 1; generation <= 20; generation += 1) {
+    // Codex keeps a key with the project it made after that project is deleted. A key freed by Ensemble's own
+    // deletion (the Ensemble project went to Trash and came back) gives way to the next one; a key freed by
+    // the person removing the project in the ChatGPT app does not, so that project stays removed and the
+    // thread starts outside any project.
+    const freed = await deletedByEnsemble(project.id, options);
+    for (let generation = 1; generation <= freed + 1; generation += 1) {
       const created = (await server
         .request("project/create", {
           name: project.name,
@@ -411,9 +414,10 @@ export async function codexAppOpen(where: Place & { processes?: boolean } = {}):
  * A Codex project Ensemble files in the ChatGPT app's sidebar, by its app-server id: its name and folder,
  * the threads still to file, and what was filed (`filedAt`, `filedName`). `removed`: the person removed it
  * in the app, or deleted its Ensemble project, and it is never filed again. `deleting`: its Ensemble project
- * was deleted, and it is still to leave the sidebar, then Codex.
+ * was deleted, and it is still to leave the sidebar, then Codex. `deletedFor`: the Ensemble project whose
+ * deletion removed it, so that project may get a new Codex project if it comes back (`codexProject`).
  */
-type Owed = { name: string; folder: string; threads: string[]; filedAt?: number; filedName?: string; removed?: boolean; deleting?: boolean };
+type Owed = { name: string; folder: string; threads: string[]; filedAt?: number; filedName?: string; removed?: boolean; deleting?: boolean; deletedFor?: string };
 type OwedStore = Record<string, Owed>;
 export type SidebarOptions = Place & {
   /** Ensemble's record of what it owes the sidebar; default `<state>/codex-app-projects.json`. */
@@ -638,18 +642,24 @@ export async function fileCodexAppProject(project: { id: string; name: string; f
   return syncCodexAppProjects(options);
 }
 
+/** How many Codex projects Ensemble itself removed for an Ensemble project (`deletedFor`): the keys it freed. */
+async function deletedByEnsemble(projectId: string, options: Pick<SidebarOptions, "state">): Promise<number> {
+  const store = ((await readObject(await owedPath(options).catch(() => "")).catch(() => null)) ?? {}) as OwedStore;
+  return Object.values(store).filter((entry) => entry && typeof entry === "object" && entry.deletedFor === projectId).length;
+}
+
 /**
  * The Codex projects Ensemble made for an Ensemble project that was deleted: each leaves the ChatGPT app's
  * sidebar while the app is closed (owed until then), its threads set apart as projectless, and then leaves
  * Codex (`project/delete`, which leaves those threads in no project). None is filed again. `owed`: one is
  * still in the sidebar of an open app, or Codex could not delete it yet.
  */
-export async function removeCodexAppProjects(ids: string[], options: SidebarOptions = {}): Promise<"removed" | "owed" | "nothing"> {
+export async function removeCodexAppProjects(ids: string[], options: SidebarOptions = {}, deletedFor?: string): Promise<"removed" | "owed" | "nothing"> {
   if (!ids.length) return "nothing";
   const path = await owedPath(options);
   await serial(async () => {
     const store = ((await readObject(path)) ?? {}) as OwedStore;
-    for (const id of ids) store[id] = { ...(store[id] ?? { name: "", folder: "" }), threads: [], removed: true, deleting: true };
+    for (const id of ids) store[id] = { ...(store[id] ?? { name: "", folder: "" }), threads: [], removed: true, deleting: true, ...(deletedFor ? { deletedFor } : {}) };
     await mkdir(dirname(path), { recursive: true });
     await replaceFile(path, JSON.stringify(store), 0o600);
   });
