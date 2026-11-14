@@ -170,8 +170,8 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
   const home = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-claude-app-"));
   try {
     const base = join(home, "Library", "Application Support", "Claude", "claude-code");
-    const program = (version: string) => {
-      const folder = join(base, version, "8433d0d9cd0d", "claude.app", "Contents", "MacOS");
+    const program = (version: string, at = base) => {
+      const folder = join(at, version, "8433d0d9cd0d", "claude.app", "Contents", "MacOS");
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, "claude"), "#!/bin/sh\n");
       chmodSync(join(folder, "claude"), 0o755);
@@ -183,6 +183,14 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
     mkdirSync(join(base, "2.1.300"), { recursive: true });
     assert.equal(claudeAppCopy("darwin", home, {}), newest, "an empty newer folder is skipped");
     assert.deepEqual(newestFirst(["2.1.29", "2.1.300", "notes", "2.1.293"]), ["2.1.300", "2.1.293", "2.1.29"]);
+    // The app on a gateway or a cloud provider keeps its own, newer copy in its third-party profile.
+    const gateway = program("2.1.321", join(home, "Library", "Application Support", "Claude-3p", "claude-code"));
+    assert.equal(claudeAppCopy("darwin", home, {}), gateway);
+    const local = join(home, "AppData", "Local");
+    const windows = join(local, "Claude-3p", "claude-code", "2.1.321");
+    mkdirSync(windows, { recursive: true });
+    writeFileSync(join(windows, "claude.exe"), "");
+    assert.equal(claudeAppCopy("win32", home, { APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: local }), join(windows, "claude.exe"));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
