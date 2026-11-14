@@ -10,6 +10,7 @@ const EXACT = new Set([
   "/forgot",
   "/reset",
   "/verify",
+  "/oauth",
   "/link",
   "/today",
   "/morning-brief",

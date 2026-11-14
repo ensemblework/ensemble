@@ -101,7 +101,7 @@ An app adds the same `/mcp` URL and discovers `/.well-known/oauth-protected-reso
 
 `POST /oauth/register` supports public clients (`none`) and confidential `client_secret_basic` or `client_secret_post` clients. HTTPS client IDs can use CIMD; the public document must match its URL, include its name and redirects, and support `none`. Fetches are public-only, DNS-pinned, without user credentials or redirects, bounded to 5 seconds and 32 KB. Registered redirects match exactly; an HTTP loopback callback may vary only its port.
 
-`GET /oauth/authorize` requires authorization-code flow and PKCE S256. The person signs in at the web `/oauth` page, checks the app's name and domains, and approves its requested read/write/app grants and default owned space. Consent is bound to that browser session and expires after 10 minutes. Email signup and Google/GitHub/Microsoft sign-in retain the consent return. All the account's owned spaces remain reachable; shared spaces do not.
+`GET /oauth/authorize` requires authorization-code flow and PKCE S256. The standalone web `/oauth` page is public, but its consent API requires the signed-in browser session. It preserves the request rather than detouring through onboarding. The person checks the app's name and domains, and approves its requested read/write/app grants and default owned space. Consent is bound to that browser session and expires after 10 minutes. Email signup and Google/GitHub/Microsoft sign-in retain the consent return. All the account's owned spaces remain reachable; shared spaces do not.
 
 | Scope | Permission |
 |---|---|

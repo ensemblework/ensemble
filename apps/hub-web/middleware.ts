@@ -9,7 +9,7 @@ import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
 
 const SESSION_COOKIE = ensembleCookieName("session", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
-const PUBLIC = new Set(["/login", "/signup", "/forgot", "/reset", "/verify"]);
+const PUBLIC = new Set(["/login", "/signup", "/forgot", "/reset", "/verify", "/oauth"]);
 const API = resolveHubApi({
   NEXT_PUBLIC_HUB_API: process.env.NEXT_PUBLIC_HUB_API,
   NODE_ENV: process.env.NODE_ENV,
