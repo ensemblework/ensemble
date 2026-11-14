@@ -8,6 +8,7 @@ import { appendCookie, readCookie, SESSION_COOKIE, sha256, startSession, account
 import { authWebOrigin, emailConfigured, sendAccountEmail } from "../lib/auth-email.js";
 import { exchangeLoginCode, LoginProvider, loginAuthorizationUrl, newOAuthFlow, type LoginProfile } from "../lib/auth-oauth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
+import { DOCS_RETURN } from "../docs-helper/paths.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
 import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -74,7 +75,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
   app.get("/api/auth/oauth/:provider/start", async (request, reply) => {
     const { provider } = z.object({ provider: LoginProvider }).parse(request.params);
     const { link, return: back, mcp_request: mcp } = z.object({
-      link: z.enum(["1"]).optional(), return: z.enum(["node"]).optional(),
+      link: z.enum(["1"]).optional(), return: z.enum(["node", "docs"]).optional(),
       mcp_request: z.string().regex(MCP_OAUTH_REQUEST_PATTERN).optional(),
     }).parse(request.query);
     let sessionId: string | null = null;
@@ -100,7 +101,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
     });
     setFlowCookie(reply, request, flow.state, FLOW_SECONDS);
     // Linking a provider happens in the Hub's settings; only a sign-in can return to Node.
-    const target = !link && back === "node" && nodeOrigin() ? "node" : !link && mcp ? mcpReturnCookie(flow.state, mcp) : "";
+    const target = !link && back === "docs" ? "docs" : !link && back === "node" && nodeOrigin() ? "node" : !link && mcp ? mcpReturnCookie(flow.state, mcp) : "";
     setReturnCookie(reply, request, target, target ? FLOW_SECONDS : 0);
     reply.header("Cache-Control", "no-store");
     return reply.redirect(url);
@@ -108,6 +109,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
 
   app.get("/api/auth/oauth/:provider/callback", async (request, reply) => {
     const returnCookie = readCookie(request, RETURN_COOKIE);
+    const docs = returnCookie === "docs";
     const node = returnCookie === "node" ? nodeOrigin() : null;
     const destination = new URL("/login", node ?? authWebOrigin());
     let mcp: string | null = null;
@@ -186,6 +188,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       if (!flow.userId) await startSession(reply, user.id, request);
       await appendLedger({ userId: user.id, actor: "me", action: flow.userId ? "auth.link" : "auth.oauth", payload: { provider, ...(node ? { site: "node" } : {}) } });
+      if (docs && !flow.userId) return reply.redirect(DOCS_RETURN);
       if (node && !flow.userId) {
         // Ensemble Node: its own welcome covers a new account (and the email code when one was sent).
         destination.pathname = created || verificationSent ? "/welcome" : "/";
@@ -206,7 +209,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
         : error instanceof Error && status < 500 ? error.message : "Sign-in could not be completed. Try again or contact the operator.";
       // Provider/JWT errors can include tokens. Log classification, never their bodies.
       request.log.warn({ provider: z.object({ provider: z.string() }).safeParse(request.params).data?.provider, status }, "provider sign-in failed");
-      destination.search = new URLSearchParams({ error: message, ...(mcp ? { next: `/oauth?request=${mcp}` } : {}) }).toString();
+      destination.search = new URLSearchParams({ error: message, ...(mcp ? { next: `/oauth?request=${mcp}` } : docs ? { next: DOCS_RETURN } : {}) }).toString();
       return reply.redirect(destination.toString());
     }
   });

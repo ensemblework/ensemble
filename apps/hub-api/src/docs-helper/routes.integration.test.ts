@@ -25,11 +25,11 @@ test("public helper ignores account cookies, API keys and internal identity head
     assert.equal(response.headers["set-cookie"], undefined);
   }
 });
-test("CORS permits the docs POST without credentials and does not widen other routes", async () => {
+test("CORS permits docs sessions only on the docs routes and does not widen other routes", async () => {
   const allowed = await app.inject({ method: "OPTIONS", url: "/api/docs/ask", headers: { origin: "https://docs.ensemblework.com", "access-control-request-method": "POST", "access-control-request-headers": "content-type" } });
   assert.equal(allowed.statusCode, 204);
   assert.equal(allowed.headers["access-control-allow-origin"], "https://docs.ensemblework.com");
-  assert.equal(allowed.headers["access-control-allow-credentials"], undefined);
+  assert.equal(allowed.headers["access-control-allow-credentials"], "true");
   const denied = await app.inject({ method: "GET", url: "/api/tasks", headers: { origin: "https://docs.ensemblework.com" } });
   assert.equal(denied.statusCode, 401);
   assert.equal(denied.headers["access-control-allow-origin"], undefined);

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { PASSWORD_RULE, passwordProblem, mcpRequestFromLoginNext } from "@ensemble/shared-types";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
-import { INVITE_ONLY, safeLoginNext, showInviteNote, signupPanel } from "@/lib/signup-ui";
+import { DOCS_LOGIN_RETURN, INVITE_ONLY, safeLoginNext, showInviteNote, signupPanel } from "@/lib/signup-ui";
 import { SignInLogo } from "./connectors/provider-logo";
 import { EnsembleLogo } from "./brand/Logo";
 import { Spinner } from "./ui";
@@ -16,6 +16,7 @@ import { PasswordField } from "./password-field";
 import { inAccountApp, showAppAccountScreen } from "@/lib/native-app";
 
 export function authRedirectTarget(mode: "login" | "signup", result: { verificationSent?: boolean; user?: unknown }, next: string | null): string {
+  if (next === DOCS_LOGIN_RETURN) return DOCS_LOGIN_RETURN;
   if (mode === "signup" && next && mcpRequestFromLoginNext(next)) {
     return result.verificationSent ? `/verify?next=${encodeURIComponent(next)}` : next;
   }
@@ -31,6 +32,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [turnstileToken, setTurnstileToken] = useState("");
   const [resetChallenge, setResetChallenge] = useState(0);
   const [providerError, setProviderError] = useState("");
+  const [docsReturn, setDocsReturn] = useState(false);
   const [mcpRequest, setMcpRequest] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -41,6 +43,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     const query = new URLSearchParams(window.location.search);
     setProviderError(query.get("error") ?? "");
     setMcpRequest(mcpRequestFromLoginNext(query.get("next")));
+    setDocsReturn(query.get("next") === DOCS_LOGIN_RETURN);
     setAppWindow(inAccountApp());
     setHandoffExpired(query.get("expired") === "desktop");
   }, []);
@@ -125,7 +128,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         {!appWindow && !closed && status.data?.providers.length ? (
           <div className="mt-5 space-y-2">
             {status.data.providers.map((provider) => (
-              <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start${mcpRequest ? `?mcp_request=${encodeURIComponent(mcpRequest)}` : ""}`} className="btn flex w-full justify-center py-2">
+              <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start${mcpRequest ? `?mcp_request=${encodeURIComponent(mcpRequest)}` : docsReturn ? "?return=docs" : ""}`} className="btn flex w-full justify-center py-2">
                 <SignInLogo provider={provider} /> Continue with {provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft"}
               </a>
             ))}
@@ -194,7 +197,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           {mode === "signup" ? (
             <>
               Already have an account?{" "}
-              <Link href={`/login${mcpRequest ? `?next=${encodeURIComponent(`/oauth?request=${mcpRequest}`)}` : ""}`} className="inline-flex min-h-6 items-center text-accent hover:underline">
+              <Link href={`/login${mcpRequest ? `?next=${encodeURIComponent(`/oauth?request=${mcpRequest}`)}` : docsReturn ? `?next=${encodeURIComponent(DOCS_LOGIN_RETURN)}` : ""}`} className="inline-flex min-h-6 items-center text-accent hover:underline">
                 Sign in
               </Link>
             </>
@@ -203,7 +206,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           ) : (
             <>
               New here?{" "}
-              <Link href={`/signup${mcpRequest ? `?next=${encodeURIComponent(`/oauth?request=${mcpRequest}`)}` : ""}`} className="inline-flex min-h-6 items-center text-accent hover:underline">
+              <Link href={`/signup${mcpRequest ? `?next=${encodeURIComponent(`/oauth?request=${mcpRequest}`)}` : docsReturn ? `?next=${encodeURIComponent(DOCS_LOGIN_RETURN)}` : ""}`} className="inline-flex min-h-6 items-center text-accent hover:underline">
                 Create an account
               </Link>
             </>

@@ -1822,6 +1822,8 @@ model ReminderDesktopBinding {
 /// The first account created on an instance adopts ENSEMBLE_DEV_USER_ID so data
 /// made before sign-in existed stays with its owner.
 model User {
+  docsChat              DocsChat?
+  docsChatTurns         DocsChatTurn[]
   id                    String                @id @default(uuid())
   email                 String                @unique
   name                  String                @default("")
@@ -3409,4 +3411,27 @@ model JobEvidence {
   @@index([nodeId, createdAt])
   @@index([variantOf])
   @@map("job_evidence")
+}
+
+/// Account-owned history for the documentation helper only, never a Hub conversation.
+model DocsChat {
+  userId     String @id @map("user_id")
+  generation Int    @default(0)
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("docs_chats")
+}
+
+model DocsChatTurn {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  question  String
+  answer    String
+  found     Boolean
+  sources   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt, id])
+  @@map("docs_chat_turns")
 }

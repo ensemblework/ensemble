@@ -86,3 +86,5 @@ pnpm --filter @ensemble/brand test
 Tests cover palette contrast, motion normalization, unique SVG IDs, reduced motion during a running loop, delayed-loader cancellation, every working pose, settling, and terminal fallbacks. A brand guard (`apps/hub-web/lib/brand-guard.test.ts`) scans shipping source, excluding build caches. The desktop startup screen is covered by the desktop Rust tests.
 
 Installed apps get a new identity only through a release.
+
+The docs helper shares launcher and resize geometry through `packages/brand/assistant.js`; the Hub component entry points re-export those functions. Its build copies the Hub assistant styles and uses the same 32px Beacon launcher and 64px Infinity wait, with reduced-motion behavior from the shared engine.

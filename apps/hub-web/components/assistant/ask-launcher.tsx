@@ -7,59 +7,11 @@ import { createPortal } from "react-dom";
 import { BrandMorph } from "../motion/brand-morph";
 import { usePersistentState } from "@/lib/prefs";
 
-/** `free` was an earlier anywhere-on-screen spot; it is read as the nearer of the two edges. */
-export type LauncherSpot = { edge: "bottom" | "right"; t: number } | { edge: "free"; x: number; y: number };
-/** The work area in window coordinates: `left` and `top` are where the sidebar and the top bar end, `width` and `height` its right and bottom edges. */
-export type EdgeSpot = { edge: "bottom" | "right"; t: number };
-export type LauncherBounds = { width: number; height: number; top: number; left?: number };
-
-export const LAUNCHER_SIZE = 44;
-const MARGIN = 16;
-/** A bar at the foot of the work area (marked `data-launcher-floor`) appeared or went: measure again. */
+import { LAUNCHER_SIZE, DEFAULT_LAUNCHER_SPOT, normalizeSpot, launcherPosition, snapLauncher, type LauncherSpot, type LauncherBounds } from "@ensemble/brand/assistant";
+export { LAUNCHER_SIZE, DEFAULT_LAUNCHER_SPOT, normalizeSpot, launcherPosition, snapLauncher, type LauncherSpot, type EdgeSpot, type LauncherBounds } from "@ensemble/brand/assistant";
 export const LAUNCHER_FLOOR_EVENT = "ensemble:launcher-floor";
 const DRAG_THRESHOLD = 4;
-export const DEFAULT_LAUNCHER_SPOT: EdgeSpot = { edge: "bottom", t: 1 };
-
-const clamp01 = (value: number) => (Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1);
-
-export function normalizeSpot(value: unknown): EdgeSpot {
-  const spot = value as Partial<LauncherSpot> | null;
-  if (spot?.edge === "free") {
-    const x = clamp01(Number(spot.x));
-    const y = clamp01(Number(spot.y));
-    return 1 - x < 1 - y ? { edge: "right", t: y } : { edge: "bottom", t: x };
-  }
-  if (!spot || (spot.edge !== "bottom" && spot.edge !== "right")) return DEFAULT_LAUNCHER_SPOT;
-  return { edge: spot.edge, t: clamp01(Number(spot.t)) };
-}
-
-/**
- * Where the launcher sits: along the bottom or the right edge of the work area, which starts after the
- * sidebar and below the top bar, so the button never covers either. A stored spot is a fraction along its
- * edge, so it survives any window size.
- */
-export function launcherPosition(spot: LauncherSpot, bounds: LauncherBounds): { x: number; y: number } {
-  spot = normalizeSpot(spot);
-  const minX = (bounds.left ?? 0) + MARGIN;
-  const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
-  const minY = bounds.top + MARGIN;
-  const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
-  if (spot.edge === "right") return { x: maxX, y: Math.round(minY + spot.t * (maxY - minY)) };
-  return { x: Math.round(minX + spot.t * (maxX - minX)), y: maxY };
-}
-
-/** The nearest allowed spot to a pointer: on the bottom edge or the right edge, whichever is closer. */
-export function snapLauncher(point: { x: number; y: number }, bounds: LauncherBounds): LauncherSpot {
-  const half = LAUNCHER_SIZE / 2;
-  const minX = (bounds.left ?? 0) + MARGIN;
-  const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
-  const minY = bounds.top + MARGIN;
-  const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
-  const x = point.x - half;
-  const y = point.y - half;
-  if (maxX - x < maxY - y) return { edge: "right", t: clamp01((y - minY) / Math.max(1, maxY - minY)) };
-  return { edge: "bottom", t: clamp01((x - minX) / Math.max(1, maxX - minX)) };
-}
+const clamp01 = (value: number) => Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
 
 /**
  * `hidden` keeps it mounted while the chat or a task is open, so it reappears where it was

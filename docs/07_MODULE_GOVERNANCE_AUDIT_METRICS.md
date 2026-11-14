@@ -160,6 +160,12 @@ Revision/hash/version preconditions protect page, file and skill edits. Scoped t
 
 Health and readiness report API and dependency state; the scheduler records its tick. There is no production canary, dead-letter screen or automatic mid-command crash recovery.
 
+## Docs-chat history
+
+Guest docs questions leave no saved transcript. Signing in saves questions, answers and source links only in the docs chat. It does not create Hub assistant conversations or grant the docs helper access to workspace content.
+
+Clear that history inside the docs chat. Account export includes it; account deletion and Everything erasure remove it. A pending answer cannot restore cleared history. Switching accounts hides the earlier account's conversation. See [Public documentation](40_PUBLIC_DOCUMENTATION.md).
+
 ## In the code
 
 `jobs/retention.ts` and `jobs/skill-mining.ts` apply the retention windows described above.
