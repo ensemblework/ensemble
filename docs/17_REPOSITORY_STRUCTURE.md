@@ -146,6 +146,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | Model provider, plot export | `apps/agent-runtime/`, and `apps/hub-api/src/runtime/` for the in-process path |
 | Shared API or domain shape | `packages/shared-types/` |
 | Editor access to context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
+| Agent sessions: continuing, choosing, project folders, clean-up | `apps/hub-api/src/workspace/` (`sessions.ts`, `session-choice/`, `session-cleanup.ts`, `delete-session.ts`, `agent-projects.ts`, `engines/app-sessions.ts`), `apps/hub-api/src/subscriptions/turn-sessions.ts` ([41](41_AGENT_SESSIONS.md)) |
 | Ensemble Node (nodes, rooms, node turns) | `apps/hub-api/src/node/`, the CLI's Node tab in `apps/cli/src/tui/node.ts`; the website is the separate `ensemblework/ensemble-node` repository ([35](35_ENSEMBLE_NODE.md)) |
 | CLI, installers, releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
 | Spaces | `apps/hub-api/src/spaces/`, the space cookie in `apps/hub-api/src/lib/auth.ts`, `apps/hub-web/components/shell/space-switcher.tsx`, `apps/hub-web/app/(hub)/spaces/` ([28](28_ENSEMBLE_SPACES.md)) |

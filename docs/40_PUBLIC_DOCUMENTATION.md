@@ -17,9 +17,16 @@ pnpm --filter @ensemble/docs build
 pnpm --filter @ensemble/docs test
 ```
 
-The static publish directory is `apps/docs/out`, built from the repository root with Node 22+ and the pnpm version in `package.json`. Cloudflare Pages can build it with `pnpm --filter @ensemble/docs build` or publish the resulting directory. Its custom hostname to attach in the existing Cloudflare zone is **`docs.ensemblework.com`**. Use a separate docs site, not the Hub app origin, and leave the public pages outside Cloudflare Access or any login gate.
+The static publish directory is `apps/docs/out`, built from the repository root with Node 22+ and the pnpm version in `package.json`. The build supplies Cloudflare `_headers` and `_redirects`, including a same-origin content policy and a 60-second cache lifetime for the search index.
 
-Hostname attachment is an operator action outside the repository. The build supplies Cloudflare `_headers` and `_redirects`, including a same-origin content policy and a short cache lifetime for the search index. The shared fast CI checks build the site and test lookup; they do not publish it, change DNS or promote production. Operator credentials and deployment account values stay in `private/`.
+The site is the Cloudflare Worker `ensemble-docs`, serving `apps/docs/out` as static assets at the custom domain **`docs.ensemblework.com`**, outside Cloudflare Access or any login gate. Workers Builds, connected to this repository, builds every push to `main` and deploys it; preview builds are off, so `testing` and other branches publish nothing. Its build installs only this package (the variable `SKIP_DEPENDENCY_INSTALL=1` stops the full monorepo install):
+
+```bash
+corepack pnpm install --frozen-lockfile --filter @ensemble/docs && corepack pnpm --filter @ensemble/docs build
+npx wrangler deploy --name ensemble-docs --assets apps/docs/out --compatibility-date 2026-11-01
+```
+
+The fast checks build the site and test lookup ([37](37_PAUSED_CHECKS.md#what-runs-now)); GitHub Actions does not publish it. Operator account values stay in `private/`.
 
 ## 3. Lookup through the Context Bridge
 
