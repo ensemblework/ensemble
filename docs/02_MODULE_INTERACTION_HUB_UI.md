@@ -400,3 +400,7 @@ Connect guides offer CLI setup, a hosted MCP URL with a key (read, or read and c
 ## 18. Downloads
 
 Page/task exports, original-file downloads, space archives and account exports are separate operations. Exported timestamps carry an explicit offset where the format includes local time. A file-backed page can export back from the browser where supported; server assistant exports rebuild supported documents. Format limits: [32](32_FILES.md). Space archives: [28 §5](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting). Full export: Account. Downloads use the same access checks as reading.
+
+## Public documentation API
+
+`POST /api/docs/ask` answers anonymous questions from published docs only. It accepts no account context or credentials, creates no chat, and uses a separate rate-limited allowance. Its public access class bypasses identity and sharing resolution; other routes keep their existing sharing classes. See [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).

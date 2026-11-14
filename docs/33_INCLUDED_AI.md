@@ -60,6 +60,8 @@ So calls in flight cannot overrun either limit, and the ceiling is checked again
 - **Not on a local-only computer.** A desktop app or CLI not connected to an account lists included models as unavailable (`code: "included_local_only"` on the `/api/models` row) and refuses every included call with `included_local_only`: a desktop app kept local only ([DESKTOP](DESKTOP.md) §1.2) shows *Your own models only* with **Move to your Ensemble account**; a runtime not yet paired shows *Included models need your Ensemble account* with **Connect this computer**; the CLI a notice pointing at `/login`.
 - Server workspace jobs stay operator-only ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
 
+The public documentation helper uses the same configured GPT-5 mini deployment, with fixed medium reasoning, without an account. It has a separate bounded anonymous service allowance and does not charge account credits or write account usage rows. Its request, retention and limits are in [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).
+
 ## 5. When a call cannot run
 
 | Code | Status | When | What people read |

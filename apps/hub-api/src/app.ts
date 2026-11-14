@@ -33,6 +33,7 @@ import { collabRoutes } from "./routes/collab.js";
 import { miscRoutes } from "./routes/misc.js";
 import { assistantRoutes } from "./routes/assistant.js";
 import { internalRoutes } from "./routes/internal.js";
+import { DOCS_ASK_PATH, docsCors, docsHelperRoutes } from "./docs-helper/routes.js";
 import { includedRoutes } from "./routes/included.js";
 import { IncludedLimitError } from "./included/errors.js";
 import { settingsRoutes } from "./routes/settings.js";
@@ -103,6 +104,7 @@ export function bypassesGlobalAuth(path: string): boolean {
   // /api/engine/ask and /api/engine/tool authenticate with their run's own secret (workspace/engines/registry.ts),
   // /api/engine/assistant/* with the assistant turn's (subscriptions/bridge.ts).
   return (
+    path === DOCS_ASK_PATH ||
     PUBLIC_PATHS.has(path) ||
     /^\/api\/desktop\/update\/(darwin|windows|linux)\/(aarch64|x86_64)\/\d+\.\d+\.\d+$/.test(path) ||
     isPublicAuthPath(path) ||
@@ -129,6 +131,7 @@ export type BuildAppOptions = {
   onResponse?: (request: FastifyRequest, reply: FastifyReply) => void;
   corsPolicy?: CorsPolicy;
   authOAuth?: Parameters<typeof authOAuthRoutes>[1];
+  docsHelper?: Parameters<typeof docsHelperRoutes>[1];
   mcpOAuth?: Parameters<typeof mcpOAuthRoutes>[1];
 };
 
@@ -172,7 +175,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const policy = options.corsPolicy ?? hubCorsPolicy();
   const desktop = policy.desktop;
   await app.register(compress, { global: true, threshold: 1024 });
-  await app.register(cors, corsPluginOptions(policy));
+  await app.register(cors, () => async (request: FastifyRequest) => request.url.split("?")[0] === DOCS_ASK_PATH ? docsCors : corsPluginOptions(policy));
 
   app.addHook("onRequest", async (request, reply) => {
     if (desktop && !desktopHostAllowed(request.headers.host)) {
@@ -186,6 +189,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       if (error instanceof BadPathError) return reply.code(400).send({ error: "Malformed path." });
       throw error;
     }
+    // Public docs never resolve a session, key, account or space.
+    if (path === DOCS_ASK_PATH) return;
     // MCP discovery and publishing proofs never inherit a browser or key's space; OAuth endpoints authenticate clients themselves.
     if (isMcpPublicPath(path)) {
       const limited = consumeRateLimit(rateLimiter, request, path, rateLimitConfig());
@@ -312,6 +317,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     assistantRoutes,
     internalRoutes,
     includedRoutes,
+    docsHelperRoutes,
     settingsRoutes,
     contextRoutes,
     skillRoutes,
@@ -363,6 +369,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (routes === authOAuthRoutes) await app.register(authOAuthRoutes, options.authOAuth ?? {});
     else if (routes === mcpOAuthRoutes) {
       if (!desktop) await app.register(mcpOAuthRoutes, options.mcpOAuth ?? {});
+    }
+    else if (routes === docsHelperRoutes) {
+      if (!desktop) await app.register(docsHelperRoutes, options.docsHelper ?? {});
     }
     else await app.register(routes);
   }

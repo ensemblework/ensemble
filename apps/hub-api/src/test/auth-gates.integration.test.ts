@@ -38,7 +38,7 @@ for (const route of sortedRoutes(routes)) {
     });
   }
 
-  if (route.auth !== "cors-preflight" && isMcpPublicPath(sampleRoutePath(route.path))) {
+  if (route.auth !== "cors-preflight" && (isMcpPublicPath(sampleRoutePath(route.path)) || route.path === "/api/docs/ask")) {
     // MCP discovery and the OAuth endpoints never take an Ensemble cookie or key as an identity (app.ts, docs/CONTEXT_BRIDGE.md),
     // so a scoped key there unlocks nothing and is not refused: an MCP app's access token is a bridge key it may still send while it rediscovers.
     for (const [scope, key] of [["device", device], ["bridge", bridge]] as const) {

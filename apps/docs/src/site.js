@@ -52,3 +52,23 @@ form.addEventListener("submit", (event) => {
 });
 input.value = new URL(location.href).searchParams.get("q") ?? "";
 if (input.value) void search();
+
+const theme = document.querySelector("#theme-toggle");
+function themeLabel() {
+  const light = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "light" : matchMedia("(prefers-color-scheme: light)").matches;
+  theme.textContent = light ? "Dark theme" : "Light theme";
+}
+theme.hidden = false;
+themeLabel();
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", themeLabel);
+theme.addEventListener("click", () => {
+  document.documentElement.dataset.theme = theme.textContent === "Dark theme" ? "dark" : "light";
+  try { localStorage.setItem("ensemble.docs.theme", document.documentElement.dataset.theme); } catch { /* Session-only when storage is blocked. */ }
+  themeLabel();
+});
+
+const navigation = document.querySelector(".sidebar details");
+const desktopLayout = matchMedia("(min-width: 761px)");
+function sizeNavigation() { navigation.open = desktopLayout.matches; }
+sizeNavigation();
+desktopLayout.addEventListener("change", sizeNavigation);

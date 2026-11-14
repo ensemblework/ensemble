@@ -4,6 +4,8 @@ Ensemble is a shared workspace for a person and their agents: tasks, pages, proj
 
 This page maps what works today and its limits; each row links to the guide that owns the details.
 
+The [public docs](40_PUBLIC_DOCUMENTATION.md) include local search and an anonymous docs-only helper with linked sources. It cannot read your Ensemble account.
+
 ## Principles
 
 1. **Work keeps its context.** A task links a project, repositories, people, files, meeting notes and skills; its page and run history stay with it.

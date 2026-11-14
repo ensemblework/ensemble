@@ -39,7 +39,7 @@ runs:
         pnpm --filter @ensemble/docs build
         pnpm --filter @ensemble/docs test
         pnpm --filter @ensemble/context-bridge exec node --import tsx --test --test-name-pattern="documentation through the bridge" test/mcp.test.ts
-        pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/bridge/docs.test.ts src/routes/mcp.integration.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/bridge/docs.test.ts src/docs-helper/helper.test.ts src/docs-helper/routes.integration.test.ts src/routes/mcp.integration.test.ts
     - name: Focused web and API regressions
       shell: bash
       run: |
