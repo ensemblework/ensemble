@@ -144,6 +144,8 @@ export function compileSeatbeltProfile(policy: SeatbeltPolicy): string {
     ...writes.map((path) => `(subpath ${quote(path)})`),
     `(literal "/dev/null")`,
     `(literal "/dev/zero")`,
+    // A new pseudo-terminal (`script`, device-tools/terminal.ts): openpty opens /dev/ptmx to write. Bubblewrap's /dev has one too.
+    `(literal "/dev/ptmx")`,
     `(regex #"^/dev/tty")`,
     `(regex #"^/dev/fd/")`,
     `(literal "/dev/stdout")`,

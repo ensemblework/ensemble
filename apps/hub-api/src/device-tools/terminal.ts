@@ -127,14 +127,28 @@ export function keyBytes(token: KeyToken, applicationCursor: boolean): string {
 const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
 /**
+ * On macOS, `script` between Node and the terminal. A child's stdin from Node is a socket, and macOS
+ * `script` exits at once when its stdin is a socket ("tcgetattr/ioctl: Operation not supported on
+ * socket"), so `cat` copies stdin into a pipe for it. `cat` first prints its pid, which is read off the
+ * pipe so it can be stopped when `script` ends; the shell then exits with `script`'s exit code (the
+ * command's). `$1` is the line `script` runs. The system's own programs by path: the command's PATH may
+ * reach into its folder.
+ */
+export const DARWIN_SCRIPT = `/bin/sh -c 'echo $$; exec /bin/cat' | { read copier; /usr/bin/script -q /dev/null /bin/sh -c "$1"; code=$?; kill "$copier" 2>/dev/null; exit "$code"; }`;
+
+/** A shell line run in a pseudo-terminal by `script`, the util-linux one on Linux, the BSD one on macOS. */
+export function scriptArgv(platform: string, line: string): string[] {
+  return platform === "darwin" ? ["sh", "-c", DARWIN_SCRIPT, "sh", line] : ["script", "-qfec", line, "/dev/null"];
+}
+
+/**
  * The pseudo-terminal's command: `script` sets the terminal's size and runs the node's command in it
  * (through the shell in the sandbox, where shell syntax is the sandbox's to contain; as one program
  * outside it).
  */
 export function ptyArgv(platform: string, input: { command: string; columns: number; rows: number; shell: boolean }): string[] {
   const program = input.shell ? `/bin/sh -c ${shellQuote(input.command)}` : parseCommand(input.command).map(shellQuote).join(" ");
-  const line = `stty cols ${input.columns} rows ${input.rows} 2>/dev/null; exec ${program}`;
-  return platform === "darwin" ? ["script", "-q", "/dev/null", "/bin/sh", "-c", line] : ["script", "-qfec", line, "/dev/null"];
+  return scriptArgv(platform, `stty cols ${input.columns} rows ${input.rows} 2>/dev/null; exec ${program}`);
 }
 
 /** The terminal's environment: a colour terminal of its size, in this computer's language (UTF-8). */

@@ -457,8 +457,8 @@ test("a sensitive tab refuses capture and actions, pauses the live view, and com
 });
 
 test("Ensemble's own sign-in code reads a sensitive tab, keeps it open, shows it only on a screen, and keeps it through a browser restart", { skip, timeout: 90_000 }, async () => {
-  // No display here, whatever this machine has: the tab cannot be shown in a window.
-  const broker = newBroker({ env: { PATH: process.env.PATH } });
+  // No display here, whatever this machine has: the tab cannot be shown in a window. (macOS and Windows always have one.)
+  const broker = newBroker({ env: { PATH: process.env.PATH }, platform: "linux" });
   try {
     const op = broker.operation("job-signin");
     const opened = await op.open(`${base}/next`);

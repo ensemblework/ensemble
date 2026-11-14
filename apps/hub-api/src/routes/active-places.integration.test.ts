@@ -2,10 +2,25 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test, { after, before } from "node:test";
 import { createHttpHarness, HTTP_TEST_PASSWORD, type HttpHarness, type HttpUser } from "../test/http.js";
+import { activePlacesRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
 
 let h: HttpHarness;
+const covered = new Map<string, Set<RouteCheck>>();
 before(async () => { h = await createHttpHarness(); });
-after(async () => { await h?.close(); });
+after(async () => {
+  try {
+    for (const [route, checks] of Object.entries(activePlacesRouteCoverage)) {
+      for (const check of checks) assert.ok(covered.get(route)?.has(check), `Unexecuted coverage claim: ${check} ${route}`);
+    }
+  } finally {
+    await h?.close();
+  }
+});
+function track(route: string, check: RouteCheck): void {
+  const checks = covered.get(route) ?? new Set<RouteCheck>();
+  checks.add(check);
+  covered.set(route, checks);
+}
 const windowInput = (surface: "hub" | "node" | "desktop" = "hub") => ({ id: randomUUID(), seq: 1, surface });
 const heartbeat = (user: HttpUser, input: ReturnType<typeof windowInput>) => user.inject({ method: "POST", url: "/api/auth/places", payload: input });
 
@@ -30,11 +45,13 @@ test("closing and expiry free slots; delayed heartbeats cannot undo closing", as
   const user = await h.asUser();
   const windows = Array.from({ length: 4 }, () => windowInput());
   for (const input of windows.slice(0, 3)) assert.equal((await heartbeat(user, input)).statusCode, 200);
+  track("POST /api/auth/places", "happy-path");
   assert.equal((await heartbeat(user, windows[3]!)).statusCode, 409);
   const released = await user.inject({ method: "POST", url: "/api/auth/places/release", payload: { ...windows[0], seq: 2 } });
   assert.equal(released.statusCode, 204);
   assert.equal((await heartbeat(user, windows[0]!)).statusCode, 409);
   assert.equal((await heartbeat(user, windows[3]!)).statusCode, 200);
+  track("POST /api/auth/places/release", "happy-path");
   await h.prisma.activePlace.updateMany({ where: { userId: user.id, windowId: windows[1]!.id }, data: { lastSeen: new Date(Date.now() - 61_000) } });
   assert.equal((await heartbeat(user, windowInput())).statusCode, 200);
 });
@@ -60,6 +77,7 @@ test("replacement evicts one place, never its shared session; evicted heartbeats
   assert.equal(replaced.json().places.length, 3);
   const evicted = await heartbeat(user, { ...windows[1]!, seq: 2 });
   assert.equal(evicted.json().code, "PLACE_REPLACED");
+  track("POST /api/auth/places/continue", "happy-path");
   assert.equal((await user.inject({ url: "/api/tasks", headers: { "x-ensemble-place": windows[1]!.id } })).statusCode, 409);
   assert.equal((await user.inject({ url: "/api/tasks", headers: { "x-ensemble-place": windows[0]!.id } })).statusCode, 200);
   assert.equal((await user.inject({ url: "/api/auth/me" })).statusCode, 200);
@@ -87,8 +105,12 @@ test("leases are account-private, survive space changes and are removed with the
   const input = windowInput();
   await heartbeat(user, input);
   assert.equal((await other.inject({ url: "/api/auth/places" })).json().places.length, 0);
+  track("GET /api/auth/places", "isolation");
   await other.inject({ method: "POST", url: "/api/auth/places/continue", payload: { ...windowInput(), replace: input.id } });
-  assert.equal((await user.inject({ url: "/api/auth/places" })).json().places.length, 1);
+  const mine = (await user.inject({ url: "/api/auth/places" })).json().places;
+  assert.deepEqual(mine.map((place: { windowId: string }) => place.windowId), [input.id]);
+  track("GET /api/auth/places", "happy-path");
+  track("POST /api/auth/places/continue", "isolation");
   const space = await h.prisma.user.create({ data: { email: `${randomUUID()}@spaces.ensemble.invalid`, name: "Work", ownerId: user.id } });
   const switched = await h.app.inject({ url: "/api/tasks", headers: { cookie: `${user.cookie}; ensemble_space=${space.id}`, "x-ensemble-place": input.id } });
   assert.equal(switched.statusCode, 200, switched.body);

@@ -59,7 +59,8 @@ const { setRunLoginSink, awaitRunLogin } = await import("../logins/run.js");
 
 // The test site answers as signin.example.test (another site, where the broker raises sign-ins by itself) and as 127.0.0.1 (this computer's own address, where it only hints).
 const SITE_HOST = "signin.example.test";
-configureBrowser({ privacy: async () => ({}), env: { ...process.env, DISPLAY: "", WAYLAND_DISPLAY: "" }, args: [`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`] });
+// A computer without a screen: a Linux one with no display (macOS and Windows always have one).
+configureBrowser({ privacy: async () => ({}), env: { ...process.env, DISPLAY: "", WAYLAND_DISPLAY: "" }, platform: "linux", args: [`--host-resolver-rules=MAP ${SITE_HOST} 127.0.0.1`] });
 const chromium = browserBroker().chromium(true);
 const noBrowser = chromium ? false : "no Chromium on this computer (`ensemble capture setup` installs one)";
 

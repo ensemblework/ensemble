@@ -146,7 +146,8 @@ const skip = chromium ? false : "no Chromium with a window on this computer (`en
 
 /** A broker as the runtime has it: the shared profile, no screen unless `display`. */
 function newBroker(name: string, display = false): InstanceType<typeof BrowserBroker> {
-  return new BrowserBroker({ dataHome: join(scratch, name), args: ARGS, privacy: async () => ({}), env: { ...process.env, DISPLAY: display ? ":99" : "", WAYLAND_DISPLAY: "" } });
+  // Without a display, a Linux computer's: macOS and Windows always have one.
+  return new BrowserBroker({ dataHome: join(scratch, name), args: ARGS, privacy: async () => ({}), env: { ...process.env, DISPLAY: display ? ":99" : "", WAYLAND_DISPLAY: "" }, ...(display ? {} : { platform: "linux" }) });
 }
 
 after(async () => {
