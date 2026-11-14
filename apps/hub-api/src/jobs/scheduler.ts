@@ -28,6 +28,7 @@ import { runDueRoutines } from "../routines/service.js";
 import { sweepWhenDue } from "../workspace/session-cleanup.js";
 import { sweepAskSessions } from "../assistant/ask-sessions.js";
 import { retryAssistantSessionDeletes } from "../assistant/delete-chat.js";
+import { sendProjectDeletes } from "../workspace/project-delete.js";
 import { purgeMcpOAuth } from "../mcp-oauth/service.js";
 
 const RETENTION_TIME = "03:30";
@@ -86,6 +87,8 @@ async function tick(app: FastifyInstance): Promise<void> {
   void sweepAskSessions(app).catch((error: unknown) => app.log.error({ err: error }, "ask session sweep failed"));
   // Deleted chats' agent sessions that an online computer has not confirmed dropping yet (assistant/delete-chat.ts).
   void retryAssistantSessionDeletes(app).catch((error: unknown) => app.log.error({ err: error }, "chat session delete retry failed"));
+  // Deleted projects' Codex projects on the person's computers, once 10 minutes in Trash (workspace/project-delete.ts).
+  void sendProjectDeletes(app).catch((error: unknown) => app.log.error({ err: error }, "project delete on computers failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {

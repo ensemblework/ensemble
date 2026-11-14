@@ -12,6 +12,7 @@ import {
   codexProjectThreads,
   fileCodexAppProject,
   removeClaudeDesktopSessions,
+  removeCodexAppProjects,
   sessionTitle,
   stopCodexAppRetryForTests,
   syncCodexAppProjects,
@@ -198,6 +199,41 @@ test("an Ensemble project is one Codex project: found by Ensemble's id or its fo
   assert.deepEqual(calls.map(([method]) => method), ["project/list"], "and it keeps the person's name");
   assert.equal(await codexProject({ request: async () => { throw new Error("Method not found: project/list"); } }, project), null, "an older Codex has no projects");
 
+  // Codex keeps the key of a project it deleted. The person removed the project in the ChatGPT app (which deletes
+  // it from Codex): it stays removed, and the thread starts outside any project.
+  const keys = mkdtempSync(join(tmpdir(), "codex-keys-"));
+  try {
+    const state = { state: join(keys, "codex-app-projects.json") };
+    calls.length = 0;
+    const restored = {
+      request: async (method: string, params?: unknown) => {
+        calls.push([method, params]);
+        if (method === "project/list") return { data: [] };
+        const key = (params as { idempotencyKey?: string }).idempotencyKey;
+        if (key === "ensemble-project:p-1") throw new Error("idempotency key refers to deleted project: ensemble-project:p-1");
+        return { project: { id: "made-again" } };
+      },
+    };
+    const created = () => calls.filter(([method]) => method === "project/create").map(([, params]) => (params as { idempotencyKey: string }).idempotencyKey);
+    assert.equal(await codexProject(restored, project, state), null, "removed in the app: not made again");
+    assert.deepEqual(created(), ["ensemble-project:p-1"]);
+    // Ensemble deleted it with the Ensemble project, which came back from Trash: the next key makes a new one.
+    calls.length = 0;
+    writeFileSync(state.state, JSON.stringify({ "old-codex-project": { name: "Launch", folder: "/w", threads: [], removed: true, deletedFor: "p-1" }, "another": { name: "B", folder: "/b", threads: [], removed: true, deletedFor: "p-2" } }));
+    assert.equal(await codexProject(restored, project, state), "made-again");
+    assert.deepEqual(created(), ["ensemble-project:p-1", "ensemble-project:p-1:2"]);
+  } finally {
+    rmSync(keys, { recursive: true, force: true });
+  }
+  // Found on a later page of Codex's projects.
+  const paged = {
+    request: async (method: string, params?: unknown) => {
+      if (method !== "project/list") return assert.fail(`no ${method}`);
+      return (params as { cursor?: string }).cursor === "page-2" ? { data: [{ id: "c-2", name: "Launch", metadata: { ensembleProjectId: "p-1" } }], nextCursor: null } : { data: [{ id: "other", name: "Other" }], nextCursor: "page-2" };
+    },
+  };
+  assert.equal(await codexProject(paged, project), "c-2");
+
   const asked: unknown[] = [];
   assert.deepEqual(await codexProjectThreads({ request: async (_method, params) => (asked.push(params), { data: [{ id: "t-1" }, { id: 7 }, { id: "t-2" }] }) }, "c-1"), ["t-1", "t-2"]);
   assert.deepEqual(asked, [{ projectId: "c-1", archived: false, useStateDbOnly: true, limit: 100 }]);
@@ -376,5 +412,93 @@ test("without the ChatGPT app's file, or with one it cannot read, Ensemble leave
     stopCodexAppRetryForTests();
     rmSync(none.home, { recursive: true, force: true });
     rmSync(broken.home, { recursive: true, force: true });
+  }
+});
+
+test("deleting its Ensemble project takes the project out of the ChatGPT app's sidebar once the app is closed, then out of Codex; its threads become projectless and nothing else changes", async () => {
+  const theirs = "038badda-6afe-4e96-bbe5-6417efb7b753";
+  const where = codexHomeWith(sidebarState({ "pinned-project-ids": [theirs] }));
+  try {
+    let open = false;
+    const deleted: string[][] = [];
+    const options = { home: where.home, platform: "darwin" as const, env: {}, state: where.owed, appOpen: async () => open, retryMs: null, now: 5000, deleteProjects: async (ids: string[]) => void deleted.push(ids) };
+    const project = { id: SERVER_ID, name: "Launch", folder: "/w/projects/launch", thread: "new-thread" };
+    assert.equal(await fileCodexAppProject(project, { ...options, earlier: async () => ["earlier-thread", "theirs-thread", "set-apart"] }), "filed");
+    // The person pins it and moves a thread of their own into it in the app.
+    const filed = json(where.file);
+    filed["pinned-project-ids"] = [theirs, SERVER_ID];
+    (filed["thread-project-assignments"] as Record<string, unknown>)["moved-in"] = { projectKind: "local", projectId: SERVER_ID };
+    writeFileSync(where.file, JSON.stringify(filed));
+
+    // The app is open: the file is not touched, and Codex keeps the project the app still shows.
+    open = true;
+    const before = readFileSync(where.file, "utf8");
+    assert.equal(await removeCodexAppProjects([SERVER_ID], options), "owed");
+    assert.equal(readFileSync(where.file, "utf8"), before);
+    assert.equal(deleted.length, 0, "an app that shows it would make it again when it next starts");
+    assert.deepEqual(json(where.owed)[SERVER_ID], { name: "Launch", folder: project.folder, threads: [], filedAt: 5000, filedName: "Launch", removed: true, deleting: true });
+
+    open = false;
+    assert.equal(await syncCodexAppProjects(options), "removed");
+    const state = json(where.file);
+    const expected = sidebarState({
+      "pinned-project-ids": [theirs],
+      "thread-project-membership-host-ids": { "theirs-thread": "local", "new-thread": "local", "earlier-thread": "local" },
+      "projectless-thread-ids": ["set-apart", "new-thread", "earlier-thread", "moved-in"],
+    });
+    assert.deepEqual(state, expected, "out of the projects, their order and the pins; its threads set apart as projectless, the rest as it was");
+    assert.equal(readFileSync(`${where.file}.bak`, "utf8"), readFileSync(where.file, "utf8"), "its backup copy too");
+    assert.deepEqual(deleted, [[SERVER_ID]], "then out of Codex");
+    assert.deepEqual(json(where.owed)[SERVER_ID], { name: "Launch", folder: project.folder, threads: [], filedAt: 5000, filedName: "Launch", removed: true });
+
+    // Never filed again, and nothing more to do.
+    const after = readFileSync(where.file, "utf8");
+    assert.equal(await fileCodexAppProject({ ...project, thread: "late-thread" }, options), "nothing");
+    assert.equal(await syncCodexAppProjects(options), "nothing");
+    assert.equal(readFileSync(where.file, "utf8"), after);
+    assert.deepEqual(deleted, [[SERVER_ID]]);
+  } finally {
+    rmSync(where.home, { recursive: true, force: true });
+  }
+});
+
+test("a deleted project's Codex project that no sidebar shows goes from Codex at once; the person's own project stays; a refusal is tried again", async () => {
+  const where = codexHomeWith(sidebarState());
+  const none = codexHomeWith(null);
+  try {
+    const deleted: string[][] = [];
+    const options = { home: where.home, platform: "darwin" as const, env: {}, state: where.owed, appOpen: async () => true, retryMs: null, now: 5000, deleteProjects: async (ids: string[]) => void deleted.push(ids) };
+    // Still waiting to be filed while the app is open: the app has never shown it, so Codex deletes it now.
+    assert.equal(await fileCodexAppProject({ id: SERVER_ID, name: "Launch", folder: "/w/projects/launch", thread: "t-1" }, options), "owed");
+    const before = readFileSync(where.file, "utf8");
+    assert.equal(await removeCodexAppProjects([SERVER_ID], options), "removed");
+    assert.deepEqual(deleted, [[SERVER_ID]]);
+    assert.equal(await syncCodexAppProjects({ ...options, appOpen: async () => false }), "nothing", "and it is never filed");
+    assert.equal(readFileSync(where.file, "utf8"), before);
+
+    // The app shows the Codex project as the person's own project for the folder: both stay.
+    deleted.length = 0;
+    assert.equal(await removeCodexAppProjects(["01a1cafe-17e6-79d1-896b-d54f71063efb"], { ...options, appOpen: async () => false }), "removed");
+    assert.equal(deleted.length, 0);
+    assert.equal(readFileSync(where.file, "utf8"), before);
+
+    // No ChatGPT app here: Codex deletes it at once.
+    assert.equal(await removeCodexAppProjects(["other-project"], { ...options, home: none.home, state: none.owed }), "removed");
+    assert.deepEqual(deleted, [["other-project"]]);
+    assert.deepEqual(json(none.owed)["other-project"], { name: "", folder: "", threads: [], removed: true });
+
+    // Codex refuses for now: owed, and done on the next try.
+    let refuse = true;
+    const flaky = { ...options, home: none.home, state: none.owed, deleteProjects: async (ids: string[]) => (refuse ? Promise.reject(new Error("Codex did not start")) : void deleted.push(ids)) };
+    assert.equal(await removeCodexAppProjects(["third-project"], flaky), "owed");
+    assert.equal((json(none.owed)["third-project"] as { deleting?: boolean }).deleting, true);
+    refuse = false;
+    assert.equal(await syncCodexAppProjects(flaky), "removed");
+    assert.deepEqual(deleted.at(-1), ["third-project"]);
+    assert.equal(await removeCodexAppProjects([], flaky), "nothing");
+  } finally {
+    stopCodexAppRetryForTests();
+    rmSync(where.home, { recursive: true, force: true });
+    rmSync(none.home, { recursive: true, force: true });
   }
 });

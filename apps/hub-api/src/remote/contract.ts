@@ -562,6 +562,13 @@ export const CodeAnswer = z.object({
 export type CodeAnswer = z.infer<typeof CodeAnswer>;
 
 /**
+ * `capabilities.projectDelete`: 1: `project.delete {id, projectId}` on the event stream, once an Ensemble
+ * project has been in Trash 10 minutes: the Codex projects Ensemble made for it on this computer go
+ * (`remote/project-delete.ts`). Answered on `ROUTES.codeAnswer` with `{deleted: true, found, owed}`.
+ */
+export const PROJECT_DELETE_API = 1;
+
+/**
  * `terminal.request` on the event stream: the web terminal, unlocked with a passkey on the web. `status`
  * gives the folders it may use, `cd` resolves a folder, `run` starts one allow-listed command (its output
  * goes to `ROUTES.terminalOutput` under the request id), `kill` stops a run.

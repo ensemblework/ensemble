@@ -74,6 +74,7 @@ import { loginDeviceRoutes } from "./logins.js";
 import { takeoverDeviceRoutes } from "./takeovers.js";
 import { liveSessionDeviceRoutes } from "./live-sessions.js";
 import { drainAssistantSessionDeletes } from "../assistant/delete-chat.js";
+import { drainProjectDeletes } from "../workspace/project-delete.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -971,7 +972,11 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
     // Chats deleted while this computer was away: their agent sessions here go once the stream is listening.
-    const drain = setTimeout(() => void drainAssistantSessionDeletes(app, device).catch(() => undefined), 2_000);
+    // Projects deleted while it was away: the Codex projects Ensemble made for them here go too.
+    const drain = setTimeout(() => {
+      void drainAssistantSessionDeletes(app, device).catch(() => undefined);
+      void drainProjectDeletes(app, device).catch(() => undefined);
+    }, 2_000);
     drain.unref?.();
     await sseHandler(request, reply, `device:${device.id}`);
   });
