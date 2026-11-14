@@ -17,6 +17,7 @@ The live test Hub and its separate `ensemble-test` CLI are the team's feedback l
 | CLI | Separate `ensemble-test`, test backend only; `cli-testing-latest` prerelease | `ensemble`, production account and desktop-shared runtime; stable `cli-v*` releases |
 | Ensemble Node website | `https://node-test.ensemblework.com`, Vercel project `ensemble-node-test`, from `ensemblework/ensemble-node` branch `testing`; marked Testing, not indexed | `https://node.ensemblework.com`, Vercel project `ensemble-node`, from its `main` |
 | Native app, landing page | No testing releases or replica deployments | Existing release/deploy pipelines |
+| Public docs | None | `docs.ensemblework.com`, Cloudflare Worker `ensemble-docs` built from `main` |
 
 Each Node website talks only to its own API: the testing API's `ENSEMBLE_NODE_WEB_ORIGIN` names `node-test.`, production's names `node.`, and the Node build refuses settings that name the other environment's API or Hub. The Node repository has its own fast `test-web.yml` and promotion (its `docs/04`). Node's backend is this API's `node` module, so promote Ensemble before Node.
 
@@ -27,14 +28,14 @@ Both environments offer **GPT-5 mini and GPT-4.1 mini** from the Visual Studio A
 ## Daily development
 
 - Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
-- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) cover versions, shared/API/web/CLI types, focused board/page/comment/motion and readable checkout naming regressions, connector consent and Google privacy disclosures, Node original-file/theme isolation and direct queued-session questions, agent sessions filed in the Claude app's Code tab and the ChatGPT app's sidebar, a deleted project's Codex projects leaving that sidebar and Codex, namespaced authentication, CLI channel isolation, in-memory API isolation, included mini-default/credit-ledger/grounding-opt-in regressions, deployment guards and the route inventory. The Vercel build remains a real production frontend build.
+- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) are listed step by step in [37](37_PAUSED_CHECKS.md#what-runs-now). The Vercel build remains a real production frontend build.
 - A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
 - After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
 - PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
-- Fast checks also build the public docs and verify their read-only MCP lookup. The separate Cloudflare docs hostname is not published by the test Hub workflow ([40](40_PUBLIC_DOCUMENTATION.md)).
+- Testing has no docs site of its own: `docs.ensemblework.com` is published only from `main` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)).
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
 
-The fast checks include account-place and guarded-save API/client regressions. Local browser validation (`apps/hub-web/e2e/active-places.mjs`) uses `mobile-ui-fixture.ts` with `MOBILE_FIXTURE_PATH`, a local `HUB_WEB` and local `NEXT_PUBLIC_HUB_API`; it exercises two windows, conflicting/disjoint settings, the fourth-tab chooser and released-slot reuse without hosted accounts or screenshots.
+Local browser validation of active places (`apps/hub-web/e2e/active-places.mjs`) uses `mobile-ui-fixture.ts` with `MOBILE_FIXTURE_PATH`, a local `HUB_WEB` and local `NEXT_PUBLIC_HUB_API`; it exercises two windows, conflicting/disjoint settings, the fourth-tab chooser and released-slot reuse without hosted accounts or screenshots.
 
 ## Install the testing CLI
 
@@ -60,9 +61,11 @@ Testing downloads live in the GitHub `cli-testing-latest` **prerelease**, never 
 
 ## Promotion to production
 
-Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds. Native/CLI releases keep their versioned tag requirements.
+Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
 
-Bring the released `main` back into `testing` after promotion so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
+A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit on `testing` before the promotion PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
+
+Bring the released `main` back into `testing` after promotion (a fast-forward when `testing` has nothing newer) so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
 
 ## Implementation and safeguards
 

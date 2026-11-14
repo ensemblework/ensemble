@@ -1,4 +1,4 @@
-# Ensemble diagrams — cheat sheet
+# Ensemble diagrams: cheat sheet
 
 One statement per line. Quote labels. Refer to ids, not to the words inside the quotes.
 

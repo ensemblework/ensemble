@@ -17,19 +17,19 @@ The language reference is `docs/21_BLOCK_DIAGRAMS_DSL.md`. This skill is how to 
 
 Reads:
 
-- `hub_list_diagrams` — diagrams this person already has.
-- `hub_get_diagram` — one diagram’s text, so you can edit it.
-- `hub_validate_diagram` — parse the text and return diagnostics. It does not save.
-- `hub_explain_diagram` — a plain-language reading of one diagram. Use it when they ask what a diagram says, including someone who does not write software.
-- `hub_diagram_context` — the bounded text of a task, project, deliverable, or page: title, notes, page text, deliverables, tasks, meeting notes, and linked repo ids. Call this before drawing from a task, project, deliverable, or page.
-- `hub_repo_overview` — a compact summary of a repository. A saved link is enough. You do not clone, and you do not call GitHub yourself. The server uses an allowed checkout, a cached shallow mirror, or the GitHub API.
-- `hub_repo_read_file` — one file from that same checkout or mirror, when a heading is ambiguous.
+- `hub_list_diagrams`: diagrams this person already has.
+- `hub_get_diagram`: one diagram’s text, so you can edit it.
+- `hub_validate_diagram`: parse the text and return diagnostics. It does not save.
+- `hub_explain_diagram`: a plain-language reading of one diagram. Use it when they ask what a diagram says, including someone who does not write software.
+- `hub_diagram_context`: the bounded text of a task, project, deliverable, or page: title, notes, page text, deliverables, tasks, meeting notes, and linked repo ids. Call this before drawing from a task, project, deliverable, or page.
+- `hub_repo_overview`: a compact summary of a repository. A saved link is enough. You do not clone, and you do not call GitHub yourself. The server uses an allowed checkout, a cached shallow mirror, or the GitHub API.
+- `hub_repo_read_file`: one file from that same checkout or mirror, when a heading is ambiguous.
 
 Writes (the person presses Apply; until then say “Ready to apply”, not “I created it”):
 
-- `hub_create_diagram` — `title`, `text`, and optional `links` (`task`, `deliverable`, `project`, `repo`, or `page`, each with an id you already have).
-- `hub_edit_diagram` — semantic edits that keep ids, locks, and layout: `add_node`, `remove_node`, `rename_node`, `add_edge`, `remove_edge`, `move_to_group`, `set_node`, `set_curve`, `set_edge`, or one `patch` find/replace. Prefer this when a diagram already exists.
-- `hub_update_diagram` — replace the whole `text`, or a single unique `find` / `replace`. Keep ids.
+- `hub_create_diagram`: `title`, `text`, and optional `links` (`task`, `deliverable`, `project`, `repo`, or `page`, each with an id you already have).
+- `hub_edit_diagram`: semantic edits that keep ids, locks, and layout: `add_node`, `remove_node`, `rename_node`, `add_edge`, `remove_edge`, `move_to_group`, `set_node`, `set_curve`, `set_edge`, or one `patch` find/replace. Prefer this when a diagram already exists.
+- `hub_update_diagram`: replace the whole `text`, or a single unique `find` / `replace`. Keep ids.
 
 If a name is not in `hub_diagram_context`, a repo overview, a file you read, or the person’s message, it is not in the diagram.
 

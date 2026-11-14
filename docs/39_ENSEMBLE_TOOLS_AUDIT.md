@@ -27,7 +27,7 @@ OAuth clients use the same Context Bridge grants and allowlist through named `en
 | Board overview and layouts | `hub_read_layout`; `hub_edit_layout` (the space owner's only) | Same | MCP reads them (`hub_read_layout`, `hub_read_surface`) |
 | Projects and deliverables | List, create, update, complete, delete | Same | Allowlist: all but deleting; MCP deletes too |
 | Pages and notes | List, read, create, append or rewrite, block edits, move, delete, export to a file, file to page | Same | Allowlist: the same, one page at a time (MCP: many with `hub_delete_pages`); a page into a task (`hub_manage_record`) |
-| Page history, templates, copies | — | — | — |
+| Page history, templates, copies | None | None | None |
 | Comments | Read, add, edit, resolve, delete internal comments (`hub_read_record_details`, `hub_manage_record`) | Same | Allowlist: same |
 | Meeting notes | List, read, write, change, delete; suggest tasks; import from a meeting app (waits for Apply) | Same | Allowlist: list, read, write, change, suggest tasks; MCP also deletes, and with apps allowed imports |
 | People | List, add, change, delete; import an app's people | Same | Allowlist: list, add, change (role, team, relationship); MCP also deletes, and with apps allowed brings in an app's people |
@@ -48,8 +48,8 @@ OAuth clients use the same Context Bridge grants and allowlist through named `en
 | Code folders and agent changes | Reads them | Same, plus its own hands on the computer | MCP reads them; a run: its own folder |
 | Trash and Completed | Read them; restore a trashed record | Same | Allowlist: restore a trashed record |
 | The web | `hub_web_search`, `hub_read_web_page` (public pages and PDFs, no sign-in or scripts) | Same, plus the browser and capture tools, `web_task`, `browser_shop` | A run: the computer's browser and capture tools |
-| Ensemble Node itself | — | Rooms, crews, nodes, routines, memories (`node_*`) | — |
-| Ensemble's web app in a browser | — | Refused (§4) | Told not to (§4) |
+| Ensemble Node itself | None | Rooms, crews, nodes, routines, memories (`node_*`) | None |
+| Ensemble's web app in a browser | None | Refused (§4) | Told not to (§4) |
 
 ## 3. Gaps and where they stand
 

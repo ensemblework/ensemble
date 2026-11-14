@@ -1,4 +1,4 @@
-# 16 · The Code tab — review, rewrite, commit (and a guarded terminal)
+# 16 · The Code tab: review, rewrite, commit and a guarded terminal
 
 The **Code** sidebar item opens Code's window on its **Welcome** tab: agent changes to review, recent repositories and recent code runs. A review or a repository opens in the same window as an IDE showing exactly what the agent changed, hunk by hunk: accept or reject each change, edit any file, see the whole file, commit, push, open a pull request, or run git in a small guarded terminal.
 
@@ -168,7 +168,7 @@ The Assign dialog's *Optional information* has *Which branch the agent works on*
 
 ---
 
-## 5. The terminal — for you only
+## 5. The terminal, for you only
 
 A terminal panel under the editor (resizable, §1) for what would otherwise send you to a shell: make or switch a branch, install a package, run tests, commit and push. It opens:
 
