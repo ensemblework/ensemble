@@ -356,6 +356,11 @@ test("without the ChatGPT app's file, or with one it cannot read, Ensemble leave
     assert.equal(existsSync(none.owed), false, "nothing kept for an app that never ran here");
     assert.equal(await fileCodexAppProject(project, { ...options, home: broken.home, state: broken.owed }), "owed");
     assert.equal(readFileSync(broken.file, "utf8"), "{\"local-projects\": {");
+    // A part Ensemble would change in a shape it does not know: nothing is rewritten.
+    const odd = JSON.stringify(sidebarState({ "local-projects": [{ id: "x" }] }));
+    writeFileSync(broken.file, odd);
+    assert.equal(await syncCodexAppProjects({ ...options, home: broken.home, state: broken.owed }), "owed");
+    assert.equal(readFileSync(broken.file, "utf8"), odd);
     // CODEX_HOME moves the file.
     const moved = codexHomeWith(sidebarState());
     try {

@@ -418,6 +418,11 @@ async function owedPath(options: SidebarOptions): Promise<string> {
 }
 
 const owedNow = (entry: Owed) => !entry.removed && (!entry.filedAt || entry.threads.length > 0 || entry.filedName !== entry.name);
+const isObject = (value: unknown) => value === undefined || (typeof value === "object" && value !== null && !Array.isArray(value));
+/** Every part of the app's file Ensemble reads or changes is absent or has the shape the app writes; otherwise the file is left alone. */
+const sidebarShaped = (state: Record<string, unknown>) =>
+  ["local-projects", "thread-project-assignments", "thread-project-membership-host-ids", "app-server-pending-project-deletions-by-host", "app-server-project-id-by-legacy-project-id-by-host"].every((key) => isObject(state[key])) &&
+  ["project-order", "projectless-thread-ids"].every((key) => state[key] === undefined || Array.isArray(state[key]));
 const objectAt = (state: Record<string, unknown>, key: string): Record<string, unknown> => {
   const value = state[key];
   return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
@@ -498,7 +503,7 @@ export function syncCodexAppProjects(options: SidebarOptions = {}): Promise<Side
     };
     if (await open()) return later();
     const state = await readObject(sidebar);
-    if (!state) return "owed";
+    if (!state || !sidebarShaped(state)) return "owed";
     const changed = applyOwed(state, owed, options.now ?? Date.now());
     if (changed) {
       // Checked again just before writing: the app writes the whole file back while it runs.
