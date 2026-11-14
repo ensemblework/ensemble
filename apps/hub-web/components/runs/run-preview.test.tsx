@@ -61,7 +61,7 @@ const job: RunJob = {
   delivery: "local",
   accessMode: "read-write",
   unattended: false,
-  folder: "rea-run",
+  folder: "/workspace/runs/rea-summary",
   repoUrl: null,
   branch: null,
   turns: 4,
@@ -100,6 +100,8 @@ test("a run opens on Results with three tabs: facts, timeline with tool timings,
   const text = sheet.textContent ?? "";
   assert.match(text, /Summarise the rea repo/);
   assert.match(text, /Ensemble agent/);
+  assert.match(text, /Checkoutrea-summary/, "the run shows the readable checkout name");
+  assert.equal(sheet.querySelector('[title="/workspace/runs/rea-summary"]')?.textContent, "Checkoutrea-summary", "the full path is available without replacing the task title");
   assert.match(text, /copilot/);
   assert.match(text, /mai-code-1\.1-flash/);
   assert.match(text, /gemini-2\.5-flash/, "the model that answered is shown");
@@ -167,6 +169,33 @@ test("tool JSON renders readable newlines, raw/copy preserve the record, and Sai
   } finally {
     if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
+    await act(async () => root.unmount());
+    host.remove();
+    client.clear();
+  }
+});
+
+test("the checkout fact handles Windows paths, unprepared runs and existing UUID folders without changing the task title", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    for (const [folder, label] of [
+      ["C:\\workspace\\runs\\graph-shortest-path", "graph-shortest-path"],
+      [null, "Not prepared"],
+      ["/workspace/runs/00000000-0000-4000-8000-000000000001", "Its own checkout"],
+    ] as const) {
+      await act(async () => {
+        client.setQueryData(["run", run.id], { run, job: { ...job, folder } });
+        root.render(<QueryClientProvider client={client}><RunPreview runId={run.id} onClose={() => {}} /></QueryClientProvider>);
+      });
+      const sheet = document.querySelector('[role="dialog"]')!;
+      assert.match(sheet.textContent ?? "", /Summarise the rea repo/);
+      assert.ok(sheet.textContent?.includes(`Checkout${label}`));
+      assert.ok(!sheet.textContent?.includes("00000000-0000-4000-8000-000000000001"));
+    }
+  } finally {
     await act(async () => root.unmount());
     host.remove();
     client.clear();

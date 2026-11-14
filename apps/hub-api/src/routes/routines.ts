@@ -7,7 +7,8 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { loadSettings } from "../lib/settings.js";
 import { isGuestIn } from "../sharing/context.js";
-import { createRoutine, deleteRoutine, dropRoutineChat, findRoutine, listRoutines, RoutineError, routineView, runRoutine, updateRoutine, WEEKDAYS } from "../routines/service.js";
+import { createRoutine, cronFor, deleteRoutine, dropRoutineChat, findRoutine, listRoutines, RoutineError, routineView, runRoutine, updateRoutine, WEEKDAYS } from "../routines/service.js";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 
 export const CadenceInput = z.object({
   every: z.enum(["hour", "day", "weekday", "week", "month"]).optional(),
@@ -17,8 +18,8 @@ export const CadenceInput = z.object({
   cron: z.string().max(120).optional(),
 });
 
-const Create = z.object({ title: z.string().max(200), instruction: z.string().max(8000), cadence: CadenceInput, paused: z.boolean().optional() });
-const Patch = z.object({ title: z.string().max(200).optional(), instruction: z.string().max(8000).optional(), cadence: CadenceInput.optional(), status: z.enum(["active", "paused"]).optional() });
+const Create = z.object({ title: z.string().max(200), instruction: z.string().max(100_000), cadence: CadenceInput, paused: z.boolean().optional() });
+const Patch = z.object({ title: z.string().max(200).optional(), instruction: z.string().max(100_000).optional(), cadence: CadenceInput.optional(), status: z.enum(["active", "paused"]).optional() });
 
 export async function routineRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -53,7 +54,16 @@ export async function routineRoutes(app: FastifyInstance): Promise<void> {
     if (!owner(request, reply)) return reply;
     const { id } = request.params as { id: string };
     try {
-      return { routine: await updateRoutine(prisma, request.userId, id, Patch.parse(request.body)) };
+      const body = Patch.parse(request.body);
+      const routine = await prisma.$transaction(async (tx) => {
+        await lockSave(tx, "assistant_routines", request.userId, id);
+        const current = await findRoutine(tx, request.userId, id);
+        const base = saveBase(request);
+        const proposed = { ...body, ...(body.cadence ? { cadence: { cron: cronFor(body.cadence) } } : {}) };
+        const changed = guardedSave({ ...current, cadence: { cron: current.cron } }, proposed, base ? { ...base, cadence: { cron: base.cron } } : undefined);
+        return updateRoutine(tx, request.userId, id, changed);
+      });
+      return { routine };
     } catch (error) {
       return failed(reply, error);
     }

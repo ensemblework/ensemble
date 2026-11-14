@@ -20,6 +20,8 @@ import { loadSettings, saveSettings } from "../lib/settings.js";
 import { avatarId, defaultAvatarId, isAvatarId, parseAvatar, passwordProblem } from "@ensemble/shared-types";
 import { randomUUID } from "node:crypto";
 import { forgetPerson } from "../sharing/presence.js";
+import { createMorningRoutine } from "../routines/service.js";
+import { revokeMcpOAuthGrant } from "../mcp-oauth/service.js";
 
 const Credentials = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -128,14 +130,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const data = { email: body.email, name: body.name, avatar: defaultAvatarId(randomUUID()), passwordHash: await hashPassword(body.password), lastLoginAt: new Date(), emailVerifiedAt: null };
     const user = await prisma.$transaction(async (tx) => {
-      if (!first) return tx.user.create({ data });
+      const create = async (id?: string) => {
+        const user = await tx.user.create({ data: { ...data, ...(id ? { id } : {}) } });
+        await createMorningRoutine(tx, user.id);
+        return user;
+      };
+      if (!first) return create();
       const placeholder = await tx.user.findUnique({ where: { id: env.ENSEMBLE_DEV_USER_ID }, include: { authIdentities: { select: { id: true } } } });
-      if (placeholder?.passwordHash || placeholder?.authIdentities.length) return tx.user.create({ data });
-      if (!placeholder) return tx.user.create({ data: { id: env.ENSEMBLE_DEV_USER_ID, ...data } });
+      if (placeholder?.passwordHash || placeholder?.authIdentities.length) return create();
+      if (!placeholder) return create(env.ENSEMBLE_DEV_USER_ID);
       const claimed = await tx.user.updateMany({
         where: { id: placeholder.id, passwordHash: null, authIdentities: { none: {} } }, data,
       });
-      return claimed.count === 1 ? tx.user.findUniqueOrThrow({ where: { id: placeholder.id } }) : tx.user.create({ data });
+      if (claimed.count !== 1) return create();
+      const user = await tx.user.findUniqueOrThrow({ where: { id: placeholder.id } });
+      await createMorningRoutine(tx, user.id);
+      return user;
     }).catch((error: unknown) => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         throw Object.assign(new Error("An account with that email already exists. Sign in instead."), { statusCode: 409 });
@@ -388,7 +398,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/tokens", async (request) => {
     const tokens = await prisma.apiToken.findMany({
-      where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] } },
+      where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] }, oauthGrantId: null },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });
@@ -414,6 +424,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.delete("/api/tokens/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const token = await prisma.apiToken.findFirst({ where: { id, userId: request.userId, revokedAt: null } });
+    if (token?.oauthGrantId) {
+      await prisma.$transaction(tx => revokeMcpOAuthGrant(tx, token.oauthGrantId!, new Date()));
+      return reply.code(204).send();
+    }
     if (token?.scope === "device") {
       const device = await prisma.device.findFirst({ where: { tokenId: token.id, userId: request.userId, revokedAt: null } });
       if (device) {

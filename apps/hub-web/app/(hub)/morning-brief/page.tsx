@@ -1,2 +1,5 @@
-import { MorningBriefPage } from "@/components/morning-brief";
-export default MorningBriefPage;
+import { redirect } from "next/navigation";
+
+export default function Page() {
+  redirect("/routines?routine=morning-brief");
+}

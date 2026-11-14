@@ -22,6 +22,7 @@ import { upgradeCodeFolders } from "./lib/code-folders.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
 import { startPageSearchBackfill } from "./pages/search-backfill.js";
 import { startNode } from "./node/runs.js";
+import { syncCodexAppProjects } from "./workspace/engines/app-sessions.js";
 
 export type HubServer = {
   port: number;
@@ -49,6 +50,8 @@ export async function startHub(): Promise<HubServer> {
   // The browser broker and the capture service live on the computer only (docs/25 §10), never on the hosted server.
   const stopCapture = desktop ? (await import("./capture/runtime.js")).startCaptureRuntime(app) : async () => {};
   const stopRemote = desktop && process.env.ENSEMBLE_REMOTE_LOOP !== "off" ? startRemote(app) : async () => {};
+  // Projects owed to the ChatGPT app's sidebar are filed once the app is found closed (workspace/engines/app-sessions.ts).
+  if (desktop) void syncCodexAppProjects().catch(() => undefined);
   const deviceRevokeBus = await startDeviceRevokeBus();
   if (!deviceRevokeBus) {
     app.log.warn("Redis pub/sub is down, so a revoked computer is disconnected only on this API process");

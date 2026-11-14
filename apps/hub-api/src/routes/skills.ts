@@ -1,6 +1,5 @@
 import { keysFor } from "../sharing/context.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
-import { ensureMorningSkill, renderMorningBrief, MORNING_SKILL_SLUG } from "../cowork/morning-skill.js";
 import { loadSettings } from "../lib/settings.js";
 import { complete } from "../lib/runtime.js";
 /**
@@ -12,6 +11,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
+import { guardedSave, saveBase } from "../lib/save-conflict.js";
 
 const KEEP_VERSIONS = 3;
 
@@ -34,7 +34,6 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
 
   app.get("/api/skills", async (request) => {
-    await ensureMorningSkill(prisma, request.userId);
     const skills = await prisma.skill.findMany({
       where: { userId: request.userId, deletedAt: null },
       orderBy: [{ enabled: "desc" }, { name: "asc" }],
@@ -106,20 +105,21 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM skills WHERE id = ${id} AND user_id = ${request.userId} FOR UPDATE`;
       const current = await tx.skill.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
-      if (body.expectedVersion !== undefined && body.expectedVersion !== current.version) throw Object.assign(new Error("The skill changed. Read it again before editing."), { statusCode: 409 });
-      bodyChanged = body.body !== undefined && body.body !== current.body;
+      const changed = guardedSave(current, body, saveBase(request));
+      if (!saveBase(request) && body.expectedVersion !== undefined && body.expectedVersion !== current.version) throw Object.assign(new Error("The skill changed. Read it again before editing."), { statusCode: 409 });
+      bodyChanged = changed.body !== undefined && changed.body !== current.body;
       const next = await tx.skill.update({
         where: { id },
         data: {
-          name: body.name,
-          description: body.description,
-          enabled: body.enabled,
-          ...(bodyChanged ? { body: body.body, version: current.version + 1, ...(skill.slug === MORNING_SKILL_SLUG ? { scope: { purpose: "morning-brief", customized: true } } : {}) } : {}),
+          name: changed.name,
+          description: changed.description,
+          enabled: changed.enabled,
+          ...(bodyChanged ? { body: changed.body, version: current.version + 1 } : {}),
         },
       });
       if (bodyChanged) {
         await tx.skillVersion.create({
-          data: { skillId: id, version: next.version, body: body.body!, note: body.note ?? "edited by you" },
+          data: { skillId: id, version: next.version, body: changed.body!, note: body.note ?? "edited by you" },
         });
         const stale = await tx.skillVersion.findMany({
           where: { skillId: id },
@@ -154,7 +154,6 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
     const { prompt } = z.object({ prompt: z.string().trim().max(20_000).default("Show an example using this skill.") }).parse(request.body ?? {});
     const skill = await prisma.skill.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!skill) return reply.code(404).send({ error: "Skill not found." });
-    if (skill.slug === MORNING_SKILL_SLUG) return renderMorningBrief(prisma, request.userId);
     const settings = await loadSettings(prisma, request.userId);
     const result = await complete({ userId: request.userId, settings, tier: "easy", purpose: "Test skill", system: `Follow this skill to produce a sample. You have no tools and must not claim to have taken actions.\n\n${skill.body}`, prompt });
     return { title: skill.name, body: result.text };

@@ -63,7 +63,7 @@ async function cleanup(userId: string) {
   await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
 }
 
-test("capture, brief, ask, nudges, meetings, and weekly recap", async (t) => {
+test("capture, notifications, ask, nudges, meetings, and weekly recap", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const owner = await user("owner");
   const other = await user("other");
@@ -71,7 +71,6 @@ test("capture, brief, ask, nudges, meetings, and weekly recap", async (t) => {
   try {
     await saveSettings(prisma, owner.id, {
       timezone: "UTC",
-      morningBrief: { enabled: true, time: "00:00" },
       staleNudge: { enabled: true, untouchedDays: 14 },
     });
     const person = await prisma.person.create({ data: { userId: owner.id, name: "Priya Shah", email: "priya@example.com" } });
@@ -90,17 +89,10 @@ test("capture, brief, ask, nudges, meetings, and weekly recap", async (t) => {
     assert.ok(taskBody.task.due);
     assert.ok(taskBody.undoEntryId);
 
-    const brief = await app.inject({ method: "POST", url: "/api/brief/deliver" });
-    assert.equal(brief.statusCode, 200);
-    const briefBody = brief.json() as { delivered: boolean; notification: { id: string; channel: string; kind: string } };
-    assert.equal(briefBody.delivered, true);
-    assert.equal(briefBody.notification.kind, "morning_brief");
-    assert.equal(briefBody.notification.channel, "hub");
-    const again = await app.inject({ method: "GET", url: "/api/brief/today" });
-    assert.equal(again.json().reason, "already");
+    const notification = await prisma.notification.create({ data: { userId: owner.id, kind: "routine", title: "Morning brief", body: "Your day ahead" } });
     const notes = await app.inject({ method: "GET", url: "/api/notifications" });
-    assert.ok(notes.json().notifications.some((row: { kind: string }) => row.kind === "morning_brief"));
-    const read = await app.inject({ method: "POST", url: `/api/notifications/${briefBody.notification.id}/read` });
+    assert.ok(notes.json().notifications.some((row: { kind: string }) => row.kind === "routine"));
+    const read = await app.inject({ method: "POST", url: `/api/notifications/${notification.id}/read` });
     assert.equal(read.json().updated, 1);
 
     const quiet = await prisma.task.create({
@@ -226,13 +218,8 @@ test("cowork edge cases: dates, ownership, nudges, meetings, recap bounds", asyn
   try {
     await saveSettings(prisma, owner.id, {
       timezone: "UTC",
-      morningBrief: { enabled: false, time: "08:00" },
       staleNudge: { enabled: true, untouchedDays: 14 },
     });
-    const off = await app.inject({ method: "POST", url: "/api/brief/deliver" });
-    assert.equal(off.statusCode, 200);
-    assert.equal(off.json().delivered, false);
-    assert.equal(off.json().reason, "off");
 
     const blank = await app.inject({ method: "POST", url: "/api/capture", payload: { text: "   " } });
     assert.equal(blank.statusCode, 400);
@@ -303,9 +290,7 @@ test("cowork edge cases: dates, ownership, nudges, meetings, recap bounds", asyn
     const restored = await prisma.task.findUnique({ where: { id: disposable.id } });
     assert.equal(restored?.deletedAt, null);
 
-    await saveSettings(prisma, owner.id, { morningBrief: { enabled: true, time: "00:00" } });
-    const brief = await app.inject({ method: "POST", url: "/api/brief/deliver" });
-    const noteId = brief.json().notification.id as string;
+    const noteId = (await prisma.notification.create({ data: { userId: owner.id, kind: "routine", title: "Morning brief" } })).id;
     const stolen = await otherApp.inject({ method: "POST", url: `/api/notifications/${noteId}/read` });
     assert.equal(stolen.statusCode, 404);
     const marked = await app.inject({ method: "POST", url: "/api/notifications/read" });

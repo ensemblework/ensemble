@@ -1589,6 +1589,7 @@ model AuthToken {
 model AssistantRoutine {
   id                 String    @id @default(uuid())
   userId             String    @map("user_id")
+  builtInKey         String?   @map("built_in_key")
   title              String
   /// What the assistant does each time, in the person's words.
   instruction        String
@@ -1610,6 +1611,7 @@ model AssistantRoutine {
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
   @@index([userId])
+  @@unique([userId, builtInKey])
   @@index([status, nextRunAt])
   @@map("assistant_routines")
 }
@@ -1873,6 +1875,7 @@ model User {
   /// A picture avatar, `role.gender.n` (packages/shared-types/src/avatars.ts). Null: initials.
   avatar                String?
   sessions              Session[]
+  activePlaces          ActivePlace[]
   interactionEvents     InteractionEvent[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
@@ -1884,6 +1887,9 @@ model User {
   personIdentities      PersonIdentity[]
   projectLinks          ProjectLink[]
   apiTokens             ApiToken[]
+  mcpOAuthRequests      McpOAuthRequest[]
+  mcpOAuthGrants        McpOAuthGrant[]       @relation("McpOAuthSpace")
+  mcpOAuthConnections   McpOAuthGrant[]       @relation("McpOAuthAccount")
   devicePairings        DevicePairing[]
   diagrams              BlockDiagram[]
   diagramLinks          DiagramLink[]
@@ -2108,9 +2114,30 @@ model Session {
   /// Null is fail-closed: no optional modules.
   modules   String?
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  places    ActivePlace[]
 
   @@index([userId])
   @@map("sessions")
+}
+
+/// Short account-wide leases, independent of the active space or sharing presence.
+model ActivePlace {
+  userId    String   @map("user_id")
+  windowId  String   @map("window_id")
+  sessionId String   @map("session_id")
+  surface   String
+  label     String
+  lastSeen  DateTime @map("last_seen")
+  seq       Int
+  released  Boolean  @default(false)
+  revoked   Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, windowId])
+  @@index([userId, lastSeen])
+  @@index([sessionId])
+  @@map("active_places")
 }
 
 /// Personal tokens. Shown once, stored hashed.
@@ -2118,26 +2145,105 @@ model Session {
 /// `device` can only call `/api/devices/self/*`, and only while its Device is not revoked.
 /// Any other scope is rejected and grants nothing.
 model ApiToken {
-  id         String    @id @default(uuid())
-  userId     String    @map("user_id")
-  name       String
-  tokenHash  String    @unique @map("token_hash")
-  prefix     String
-  scope      String    @default("full")
+  id           String         @id @default(uuid())
+  userId       String         @map("user_id")
+  name         String
+  tokenHash    String         @unique @map("token_hash")
+  prefix       String
+  scope        String         @default("full")
   /// A `bridge` key that may also update tasks through the Context Bridge (status, notes, new proposed tasks).
-  canWrite   Boolean   @default(false) @map("can_write")
+  canWrite     Boolean        @default(false) @map("can_write")
   /// A `bridge` key may use the connected apps (built-in app tools, app items, remote MCP) through the bridge.
-  canUseApps Boolean   @default(false) @map("can_use_apps")
+  canUseApps   Boolean        @default(false) @map("can_use_apps")
   /// The account that made the key: a `bridge` or `full` key may act in that account's other spaces (`x-ensemble-space`, lib/auth.ts `keyAccount`).
-  accountId  String?   @map("account_id")
-  lastUsedAt DateTime? @map("last_used_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  revokedAt  DateTime? @map("revoked_at")
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  devices    Device[]
+  accountId    String?        @map("account_id")
+  lastUsedAt   DateTime?      @map("last_used_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  revokedAt    DateTime?      @map("revoked_at")
+  expiresAt    DateTime?      @map("expires_at")
+  oauthGrantId String?        @map("oauth_grant_id")
+  oauthScopes  String[]       @default([]) @map("oauth_scopes")
+  oauthGrant   McpOAuthGrant? @relation(fields: [oauthGrantId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  devices      Device[]
 
   @@index([userId])
   @@map("api_tokens")
+}
+
+model McpOAuthClient {
+  id                String            @id
+  name              String
+  redirectUris      String[]          @map("redirect_uris")
+  authMethod        String            @map("auth_method")
+  refreshMode       String            @default("rotate") @map("refresh_mode")
+  secretHash        String?           @map("secret_hash")
+  metadataExpiresAt DateTime?         @map("metadata_expires_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  requests          McpOAuthRequest[]
+  grants            McpOAuthGrant[]
+
+  @@map("mcp_oauth_clients")
+}
+
+/// Single-use, browser-bound consent and authorization codes. Secrets are hashed.
+model McpOAuthRequest {
+  id              String         @id
+  clientId        String         @map("client_id")
+  redirectUri     String         @map("redirect_uri")
+  resource        String
+  requestedScopes String[]       @map("requested_scopes")
+  state           String?
+  codeChallenge   String         @map("code_challenge")
+  expiresAt       DateTime       @map("expires_at")
+  sessionHash     String?        @map("session_hash")
+  csrfHash        String?        @map("csrf_hash")
+  accountId       String?        @map("account_id")
+  spaceId         String?        @map("space_id")
+  scopes          String[]       @default([])
+  decision        String         @default("pending")
+  codeHash        String?        @unique @map("code_hash")
+  usedAt          DateTime?      @map("used_at")
+  client          McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  account         User?          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([accountId])
+  @@map("mcp_oauth_requests")
+}
+
+model McpOAuthGrant {
+  id            String                 @id @default(uuid())
+  userId        String                 @map("user_id")
+  accountId     String                 @map("account_id")
+  clientId      String                 @map("client_id")
+  resource      String
+  scopes        String[]
+  createdAt     DateTime               @default(now()) @map("created_at")
+  lastUsedAt    DateTime?              @map("last_used_at")
+  revokedAt     DateTime?              @map("revoked_at")
+  space         User                   @relation("McpOAuthSpace", fields: [userId], references: [id], onDelete: Cascade)
+  account       User                   @relation("McpOAuthAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  client        McpOAuthClient         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tokens        ApiToken[]
+  refreshTokens McpOAuthRefreshToken[]
+
+  @@index([accountId, createdAt])
+  @@map("mcp_oauth_grants")
+}
+
+/// Rotating refresh tokens retain their hash after use to detect replay.
+model McpOAuthRefreshToken {
+  tokenHash String        @id @map("token_hash")
+  grantId   String        @map("grant_id")
+  expiresAt DateTime      @map("expires_at")
+  scopes    String[]
+  usedAt    DateTime?     @map("used_at")
+  grant     McpOAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
+  @@index([expiresAt])
+  @@map("mcp_oauth_refresh_tokens")
 }
 
 /// Written and read by agent-runtime only (docs/11 §5). Encrypted with the shared secret key.

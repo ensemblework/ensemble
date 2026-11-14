@@ -4,7 +4,7 @@
  * hub-api checks on each one that the key's account owns that space.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { HubCallOptions, HubClient } from "./hub.js";
 
@@ -92,10 +92,10 @@ function refused(error: unknown) {
  * `server.registerTool` for Ensemble's tools: each gets an optional `space`, resolved to an id before
  * the call and kept in `scope` while it runs, so every hub request it makes carries that space.
  */
-export function spacedRegistrar(server: McpServer, resolve: (wanted: string) => Promise<string>, scope: AsyncLocalStorage<string>): RegisterTool {
+export function spacedRegistrar(server: McpServer, resolve: (wanted: string) => Promise<string>, scope: AsyncLocalStorage<string>, registered?: (name: string, tool: RegisteredTool) => void): RegisterTool {
   const register = server.registerTool.bind(server) as unknown as (name: string, config: LooseConfig, cb: LooseCallback) => ReturnType<RegisterTool>;
-  const spaced = (name: string, config: LooseConfig, cb: LooseCallback) =>
-    register(name, { ...config, inputSchema: { ...(config.inputSchema ?? {}), space: SPACE_ARG } }, async (args, extra) => {
+  const spaced = (name: string, config: LooseConfig, cb: LooseCallback) => {
+    const entry = register(name, { ...config, inputSchema: { ...(config.inputSchema ?? {}), space: SPACE_ARG } }, async (args, extra) => {
       const { space, ...rest } = args;
       const wanted = typeof space === "string" ? space.trim() : "";
       if (!wanted) return cb(rest, extra);
@@ -107,5 +107,8 @@ export function spacedRegistrar(server: McpServer, resolve: (wanted: string) => 
       }
       return scope.run(id, () => cb(rest, extra));
     });
+    registered?.(name, entry);
+    return entry;
+  };
   return spaced as unknown as RegisterTool;
 }

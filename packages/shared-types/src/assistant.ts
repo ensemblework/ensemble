@@ -437,13 +437,6 @@ export const QuietHours = z.object({
 });
 export type QuietHours = z.infer<typeof QuietHours>;
 
-/** In-app only. Nothing here sends mail. */
-export const MorningBriefSettings = z.object({
-  enabled: z.boolean().default(true),
-  time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).default("08:00"),
-});
-export type MorningBriefSettings = z.infer<typeof MorningBriefSettings>;
-
 /** Which of the person's model tiers (Settings › Assistant › Models) an automation runs on. */
 export const AutomationTier = z.enum(["easy", "medium", "high", "max"]);
 export type AutomationTier = z.infer<typeof AutomationTier>;
@@ -586,7 +579,6 @@ export const Settings = z.object({
   code: CodeSettingsShape.default({}),
   fetch: FetchSettings.default({}),
   quietHours: QuietHours.default({}),
-  morningBrief: MorningBriefSettings.default({}),
   routines: RoutineSettings.default({}),
   staleNudge: StaleNudgeSettings.default({}),
   automations: AutomationSettings.default({}),

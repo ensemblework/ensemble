@@ -17,7 +17,7 @@ import { loadSettings } from "../lib/settings.js";
 import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 import { retentionDue } from "../lib/clock.js";
 import { evaluateWatchers } from "../ensemble/watchers.js";
-import { deliverMorningBrief, ensureStaleNotice } from "../cowork/service.js";
+import { ensureStaleNotice } from "../cowork/service.js";
 import { sweepExpiredDeviceLeases } from "../devices/lease.js";
 import { sweepStoredBlobs } from "./blob-sweep.js";
 import { purgeInteractionEvents } from "../analytics/telemetry.js";
@@ -28,6 +28,8 @@ import { runDueRoutines } from "../routines/service.js";
 import { sweepWhenDue } from "../workspace/session-cleanup.js";
 import { sweepAskSessions } from "../assistant/ask-sessions.js";
 import { retryAssistantSessionDeletes } from "../assistant/delete-chat.js";
+import { sendProjectDeletes } from "../workspace/project-delete.js";
+import { purgeMcpOAuth } from "../mcp-oauth/service.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -74,6 +76,7 @@ async function tick(app: FastifyInstance): Promise<void> {
   if (Date.now() - lastInteractionPurge > 86_400_000) {
     lastInteractionPurge = Date.now();
     void purgeInteractionEvents(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "interaction log purge failed"));
+    void purgeMcpOAuth(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "MCP OAuth expiry purge failed"));
   }
   void sweepStoredBlobs(app.prisma)
     .then((swept) => {
@@ -84,6 +87,8 @@ async function tick(app: FastifyInstance): Promise<void> {
   void sweepAskSessions(app).catch((error: unknown) => app.log.error({ err: error }, "ask session sweep failed"));
   // Deleted chats' agent sessions that an online computer has not confirmed dropping yet (assistant/delete-chat.ts).
   void retryAssistantSessionDeletes(app).catch((error: unknown) => app.log.error({ err: error }, "chat session delete retry failed"));
+  // Deleted projects' Codex projects on the person's computers, once 10 minutes in Trash (workspace/project-delete.ts).
+  void sendProjectDeletes(app).catch((error: unknown) => app.log.error({ err: error }, "project delete on computers failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {
@@ -96,7 +101,6 @@ async function tick(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(app.prisma, userId);
     const now = localClock(settings.timezone);
     void dispatchDueReminders(app, userId).catch((error: unknown) => app.log.error({ err: error }, "reminder dispatch failed"));
-    void deliverMorningBrief(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "morning brief failed"));
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));

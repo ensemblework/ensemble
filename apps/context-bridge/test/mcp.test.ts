@@ -98,7 +98,7 @@ describe("task updates through the bridge", () => {
         const tool = tools.find((row) => row.name === name);
         assert.ok(tool, name);
         assert.equal(tool.annotations?.readOnlyHint, false, name);
-        assert.equal(tool.annotations?.destructiveHint, false, name);
+        assert.equal(tool.annotations?.destructiveHint, true, name);
       }
       const updated = await client.callTool({ name: "ensemble_update_task", arguments: { task: `ensemble://task/${IDS.task}`, status: "in_progress", note: "Started on the retry helper." } });
       assert.notEqual(updated.isError, true, textOf(updated));
@@ -112,6 +112,36 @@ describe("task updates through the bridge", () => {
     } finally {
       await readOnly.close();
       await writer.close();
+    }
+  });
+});
+
+describe("documentation through the bridge", () => {
+  it("finds a heading and explicitly misses unknown words with a read-only key", async () => {
+    const mock = await startMockHub();
+    const server = buildServer({ hub: hubFor(mock.url), canWrite: false, canUseApps: false });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "ensemble-docs-test", version: "0.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      assert.ok(TOOL_NAMES.includes("ensemble_docs"));
+      const tool = (await client.listTools()).tools.find(({ name }) => name === "ensemble_docs");
+      assert.equal(tool?.title, "Search Ensemble documentation");
+      assert.equal(tool?.annotations?.readOnlyHint, true);
+      const known = await client.callTool({ name: "ensemble_docs", arguments: { query: "Three ways to reach it", limit: 1 } });
+      assert.notEqual(known.isError, true, textOf(known));
+      assert.match(textOf(known), /"found": true/);
+      assert.match(textOf(known), /context_bridge\/#1-three-ways-to-reach-it/);
+      const unknown = await client.callTool({ name: "ensemble_docs", arguments: { query: "zzzzquasar" } });
+      assert.notEqual(unknown.isError, true, textOf(unknown));
+      assert.match(textOf(unknown), /"found": false/);
+      assert.match(textOf(unknown), /No published documentation/);
+      assert.deepEqual(mock.writes, []);
+    } finally {
+      await client.close();
+      await server.close();
+      await mock.close();
     }
   });
 });
@@ -330,6 +360,7 @@ describe("MCP client against a mocked hub-api", () => {
       ensemble_brief: {},
       ensemble_context: { item: `ensemble://task/${IDS.task}` },
       ensemble_search: { query: "retry" },
+      ensemble_docs: { query: "Three ways to reach it" },
       ensemble_read: { kind: "task", id: IDS.task },
       ensemble_tasks: { status: "in_progress" },
       ensemble_projects: {},

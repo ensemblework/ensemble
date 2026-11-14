@@ -23,18 +23,19 @@ Task / deliverable / assistant / CLI assignment
 
 | Job | Behaviour |
 | --- | --- |
-| Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; interaction-log purge once a day ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
+| Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; daily interaction-log and MCP OAuth expiry purges (`purgeMcpOAuth`, [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Device leases | `devices/lease.ts` settles expired remote claims as interrupted |
+| Deletions on computers | Asks the person's online computers again for what they have not confirmed: a deleted chat's agent session (`assistant/delete-chat.ts`), and the Codex projects of a project 10 minutes in Trash (`workspace/project-delete.ts`, [30](30_ENGINES.md), In the agents' own apps) |
 | Blob sweep | At most hourly, only when the server's blob store is on (`jobs/blob-sweep.ts`): removes file originals and plot tables nothing uses once an hour old, and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)) |
 | Reminders | Dispatch due in-app reminders, including ones missed while down |
-| Morning brief | Once per local day at/after its set time, from the day after account creation |
+| Assistant routines | `routines/service.ts` runs due active routines through the assistant, up to five per person per tick, each in its own conversation with `assistant.defaultTier`. Morning brief is one built-in routine, scheduled at most once per local day. `routines.enabled` stops all of them ([02 §3.10a](02_MODULE_INTERACTION_HUB_UI.md#310a-routines)) |
 | Stale notices, watchers | Built-in conditions only, not user programs |
 | Retention | Daily at/after 03:30 local time; a missed day catches up ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)) |
 | Scheduled fetch | Due only with `ENSEMBLE_SCHEDULED_FETCH=on`; even then `fetchAll(..., "schedule")` in `connectors/sync.ts` reads no provider |
 | Meeting prep | With Settings › Automations › Prepare for recurring meetings on: a prep brief for each event of a series starting within `minutesBefore` that has earlier notes, at most 3 a tick and once per event (`cowork/prep.ts` `runMeetingPreps`, [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)) |
 | Calendar refresh | Every 30 minutes per person with a calendar on Today (`calendar/sync.ts` `refreshCalendarsIfDue`, one claim per 30-minute slot): reads Google Calendar, Outlook and calendar links and merges copies of one event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)). `ENSEMBLE_CALENDAR_REFRESH=off` stops it |
 
-Two in-process workers run beside the scheduler: file summaries (`context/enrich-documents.ts`, every 1.5 s) and the meeting AI pass (`connectors/meetings/ai.ts`, every 3 s, `ENSEMBLE_MEETING_AI=off` stops it, [03 §4.3](03_MODULE_CONTEXT_ENGINE.md#43-meeting-processing)); each honours its switch in `settings.automations`. Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler, mail-to-task pipeline or user-defined routine. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
+Two in-process workers run beside the scheduler: file summaries (`context/enrich-documents.ts`, every 1.5 s) and the meeting AI pass (`connectors/meetings/ai.ts`, every 3 s, `ENSEMBLE_MEETING_AI=off` stops it, [03 §4.3](03_MODULE_CONTEXT_ENGINE.md#43-meeting-processing)); each honours its switch in `settings.automations`. Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler or mail-to-task pipeline. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
 
 ## 3. Task state and model selection
 

@@ -12,9 +12,15 @@ While development moves fast, every push and pull request into `testing` **and**
 | `cli-v<version>` tag | `cli-release.yml` | Builds on five targets, each packaged CLI smoke-run (seconds), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
 | `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on four targets; no tests | ~22 min (the Intel Mac build) |
 
-The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*): `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api` (with its tests), `hub-web` and the CLI, the CLI channel-isolation tests, focused board, page, comment and session-cookie web tests, the in-memory page-board, cookie-namespace and production-guard API tests, the testing deploy guard, the release-script tests and the route inventory.
+The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*): `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api` (with its tests), `hub-web` and the CLI, the CLI channel-isolation tests, focused board, page, comment, morning-brief and session-cookie web tests, the in-memory morning-brief migration/scheduler and signup regressions, page-board, cookie-namespace and production-guard API tests, agent sessions filed in the Claude app's Code tab and the ChatGPT app's sidebar, a deleted project's Codex projects leaving that sidebar and Codex, the testing deploy guard, the release-script tests and the route inventory.
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
+
+The fast action also runs active-place admission/release/replacement, account isolation and key exemption, field-level save merges/conflicts and the Hub chooser/dialog. API fixtures run serially against in-memory PGlite.
+
+The fast checks also export the public documentation and test its page links, literal extracts, explicit misses and read-only hosted MCP authentication ([40](40_PUBLIC_DOCUMENTATION.md)). That check does not publish a docs site or change DNS.
+
+Hosted MCP OAuth and named catalog checks run in the same fast action: browser/session/origin/CSRF consent, PKCE and client/resource binding, single-use codes, refresh narrowing and replay, family revocation, a real MCP SDK handshake, legacy tool compatibility, the web consent form, provider returns and Grok Build's native MCP setup command. These use local/in-memory fixtures and no paid model calls ([Context Bridge](CONTEXT_BRIDGE.md)).
 
 ## Paused
 

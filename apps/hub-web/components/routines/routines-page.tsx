@@ -160,7 +160,7 @@ function Editor({ initial, saving, error, onSave, onCancel, saveLabel }: { initi
         placeholder="What should the assistant do each time? Write it so it stands on its own: it runs while you are away."
         aria-label="What the assistant does each time"
         rows={3}
-        maxLength={4000}
+        maxLength={100_000}
         className="mt-2 w-full resize-none bg-transparent text-[14px] leading-6 text-ink outline-none placeholder:text-faint"
       />
       <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
@@ -413,7 +413,7 @@ export function RoutinesPage() {
                   <RoutineCard
                     key={routine.id}
                     routine={routine}
-                    focused={focus === routine.id}
+                    focused={focus === routine.id || Boolean(focus && focus === routine.builtInKey)}
                     onEdit={() => {
                       setComposing(null);
                       setError("");

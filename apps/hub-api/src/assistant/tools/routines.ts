@@ -50,7 +50,7 @@ export const routineTools = [
       "Add a routine: work the assistant does by itself on a schedule (a daily inbox digest, a Monday plan for the week, tidying the board on Fridays). Only when the person asks for something recurring. instruction is what to do each time, in plain words, complete on its own. A calendar meeting that repeats is a calendar event, not a routine.",
     input: z.object({
       title: z.string().min(1).max(120).describe("A short name: \"Morning inbox digest\"."),
-      instruction: z.string().min(1).max(4000).describe("What to do each run, e.g. \"Read my unread Gmail from the last day and list what needs a reply, most urgent first.\""),
+      instruction: z.string().min(1).max(100_000).describe("What to do each run, e.g. \"Read my unread Gmail from the last day and list what needs a reply, most urgent first.\""),
       ...Schedule,
     }),
     isWrite: true,
@@ -73,7 +73,7 @@ export const routineTools = [
       routineId: z.string().uuid(),
       action: z.enum(["edit", "pause", "resume", "delete"]).default("edit"),
       title: z.string().min(1).max(120).optional(),
-      instruction: z.string().min(1).max(4000).optional(),
+      instruction: z.string().min(1).max(100_000).optional(),
       ...Schedule,
     }),
     isWrite: true,

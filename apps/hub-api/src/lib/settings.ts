@@ -5,6 +5,8 @@ import { isHosted } from "./hosted-access.js";
 import { checkConnectorLimit, withHostedUserLock } from "./hosted-limits.js";
 import { keysFor } from "../sharing/context.js";
 import { withIncludedDefaults } from "../included/defaults.js";
+import { guardedSave } from "./save-conflict.js";
+import { lockUserTransaction } from "./user-lock.js";
 
 const KEY = "hub.settings";
 
@@ -36,11 +38,12 @@ export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClie
   return raw?.timezone && raw.timezoneMode === undefined ? { ...base, timezoneMode: "auto" } : base;
 }
 
-export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, spaceOrUser: string, patch: unknown): Promise<SettingsType> {
+export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, spaceOrUser: string, patch: unknown, base?: Plain): Promise<SettingsType> {
   const userId = keysFor(spaceOrUser);
   const write = async (db: PrismaClient | Prisma.TransactionClient) => {
     const current = await loadSettings(db, userId);
-    const next = Settings.parse(deepMerge(current as unknown as Plain, isPlain(patch) ? patch : {}));
+    const changed = guardedSave(current, isPlain(patch) ? patch : {}, base);
+    const next = Settings.parse(deepMerge(current, changed));
     checkConnectorLimit(next.connections);
     await db.preference.upsert({
       where: { userId_key: { userId, key: KEY } },
@@ -50,5 +53,10 @@ export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClie
     return next;
   };
   if (isHosted()) return withHostedUserLock(prisma, userId, write, isPlain(patch) && "connections" in patch);
+  if ("$transaction" in prisma) return prisma.$transaction(async (tx) => {
+    await lockUserTransaction(tx, userId);
+    return write(tx);
+  });
+  await lockUserTransaction(prisma, userId);
   return write(prisma);
 }

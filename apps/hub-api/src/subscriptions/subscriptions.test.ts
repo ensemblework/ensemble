@@ -14,8 +14,9 @@ import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
-import { claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { agentEnv, claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
+import { withoutHostSession } from "./host-session.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings } from "./own-tools.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
@@ -65,6 +66,51 @@ test("Codex keeps the variable its own model provider reads its key from; other 
     setCodexProviderKeyForTests(null);
     if (saved === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = saved;
+  }
+});
+
+test("A runtime started inside a Claude app session gives agents none of that session's variables, and the person's own settings", () => {
+  // A command run by a Code tab session in the Claude app on a gateway: the session's marks, the app's sign-in, and the app's provider.
+  const hostSession = {
+    CLAUDECODE: "1",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_SESSION_ID: "5c1e8a5e-0000-4000-8000-000000000001",
+    CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/cc-socks/4242.sock",
+    CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret",
+    CLAUDE_PID: "4242",
+    AI_AGENT: "claude-code_2-1-321_agent",
+    CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p",
+    CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+    CLAUDE_CODE_HOST_AUTH_ENV_VAR: "ANTHROPIC_AUTH_TOKEN",
+    CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH: "1",
+    CLAUDE_CODE_HOST_SESSION_ID: "local_0001",
+    CLAUDE_CODE_DESKTOP_SKILL_SWITCHES: "1",
+    CLAUDE_AGENT_SDK_VERSION: "0.3.321",
+    CLAUDE_CODE_OAUTH_SCOPES: "",
+    CLAUDE_CODE_USE_GATEWAY: "",
+    CLAUDE_CODE_USE_BEDROCK: "",
+    CLAUDE_CODE_USE_VERTEX: "",
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:4141",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+  };
+  const own = { CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CONFIG_DIR: "/Users/mira/.claude", DISABLE_TELEMETRY: "1" };
+  const plain = { PATH: "/usr/bin:/bin", HOME: "/Users/mira", ...own };
+  assert.deepEqual(withoutHostSession({ ...hostSession, ...plain }), plain);
+  // Where the app does not manage the provider, the provider settings are the person's own and stay.
+  const ownProvider = { CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BEDROCK_BASE_URL: "https://bedrock.example.com", ANTHROPIC_DEFAULT_OPUS_MODEL: "eu.anthropic.claude-opus-5-5", AWS_BEARER_TOKEN_BEDROCK: "own-key" };
+  assert.deepEqual(withoutHostSession({ CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "claude-desktop", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "0", ...ownProvider, ...plain }), { ...ownProvider, ...plain });
+  assert.deepEqual(withoutHostSession({ ...ownProvider, ...plain }), { ...ownProvider, ...plain }, "a terminal's environment passes as it is");
+  assert.deepEqual(withoutHostSession({ ClaudeCode: "1", claude_code_entrypoint: "claude-desktop", Path: "C:\\Windows" }), { Path: "C:\\Windows" }, "Windows names have no case");
+  // Every agent, chat turn and check runs with it; Ensemble's own additions stay.
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, hostSession, own);
+    const env = agentEnv({ ENSEMBLE_RUN: "job.secret" });
+    for (const name of Object.keys(hostSession)) assert.equal(env[name], undefined, name);
+    for (const [name, value] of Object.entries(own)) assert.equal(env[name], value, name);
+    assert.equal(env.ENSEMBLE_RUN, "job.secret");
+  } finally {
+    process.env = saved;
   }
 });
 
@@ -170,8 +216,8 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
   const home = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-claude-app-"));
   try {
     const base = join(home, "Library", "Application Support", "Claude", "claude-code");
-    const program = (version: string) => {
-      const folder = join(base, version, "8433d0d9cd0d", "claude.app", "Contents", "MacOS");
+    const program = (version: string, at = base) => {
+      const folder = join(at, version, "8433d0d9cd0d", "claude.app", "Contents", "MacOS");
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, "claude"), "#!/bin/sh\n");
       chmodSync(join(folder, "claude"), 0o755);
@@ -183,6 +229,14 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
     mkdirSync(join(base, "2.1.300"), { recursive: true });
     assert.equal(claudeAppCopy("darwin", home, {}), newest, "an empty newer folder is skipped");
     assert.deepEqual(newestFirst(["2.1.29", "2.1.300", "notes", "2.1.293"]), ["2.1.300", "2.1.293", "2.1.29"]);
+    // The app on a gateway or a cloud provider keeps its own, newer copy in its third-party profile.
+    const gateway = program("2.1.321", join(home, "Library", "Application Support", "Claude-3p", "claude-code"));
+    assert.equal(claudeAppCopy("darwin", home, {}), gateway);
+    const local = join(home, "AppData", "Local");
+    const windows = join(local, "Claude-3p", "claude-code", "2.1.321");
+    mkdirSync(windows, { recursive: true });
+    writeFileSync(join(windows, "claude.exe"), "");
+    assert.equal(claudeAppCopy("win32", home, { APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: local }), join(windows, "claude.exe"));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

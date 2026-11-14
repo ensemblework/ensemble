@@ -28,6 +28,8 @@ declare module "fastify" {
     tokenSpaceId?: string;
     /** A `bridge` or `full` key: the account whose own spaces it may act in, when known (lib/auth.ts `keyAccount`). */
     tokenAccountId?: string;
+    tokenOAuthGrantId?: string;
+    tokenOAuthScopes?: string[];
     /** Null means no optional modules. */
     modules: string | null;
   }

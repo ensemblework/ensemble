@@ -52,6 +52,8 @@ A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scope
 
 `identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers. A `bridge` or `full` key may name another space its own account owns (`x-ensemble-space`); a space shared with that account answers 403, because the bridge's routes are owner-only here and its reads and actions act as the space's owner ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
 
+Hosted OAuth MCP uses the same owned-space boundary. A grant is linked to the authorizing account and default space; access and refresh check current ownership, so a transferred or deleted default space stops that connection. OAuth consent/connection routes (`/api/mcp-oauth/*`) are `personal`, not access to the viewed space, and require an actual browser session. Public discovery and OAuth protocol routes do not inherit a browser's sharing scope; they validate their own client/code proofs ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
+
 **An Ensemble Node acting for its owner** ([35 §5.2](35_ENSEMBLE_NODE.md#52-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id. It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space. It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it. Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
 
 `ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
@@ -75,7 +77,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 | `runner` | editors; the handler limits it to the runner | assign, stop, retry, answering a run's question, `POST /api/runs/:id/feedback` |
 | `prefs` | the handler decides per key | §3 |
 | `self`, `live`, `open` | always | auth, spaces, sharing, links, events, presence, catalogues, health |
-| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/skill`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
+| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/today`, `/api/routines*`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
 
 Notes: `POST /api/pages/delete-many` (shared) checks every id, keeps descendants in the same space and records one Undo entry. `POST /api/skills/:id/test` (shared) runs with the acting person's credentials. Run feedback starts a follow-up only for the run's runner and repeats the assignment checks.
 
@@ -180,7 +182,7 @@ Only growth past a limit is refused, so an oversized page can still be shortened
 
 **Tests.** `components/editor/collab.test.ts` runs three real block editors against the hub-api authority with random network delays (concurrent typing and Undo, offline, restarts, crashes, outside writes, expired sessions, drafts, duplicated tabs, refusals, limits, Trash, carets) and requires identical editors and stored page with every word once. Also `components/pages/use-collab.test.tsx`, `page-diff.test.ts`, `packages/shared-types/src/page-merge.test.ts`, and hub-api `src/pages/collab.test.ts` and `collab.integration.test.ts`.
 
-Meeting notes are not live: they save whole documents without a revision, so the last save wins (`components/meetings/notes-fields.tsx`).
+Meeting notes are not live: whole-document saves carry the copy edited as `_base`. Disjoint fields merge; overlapping saves keep both values and ask which to save (`components/meetings/notes-fields.tsx`, [02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Account place leases are independent of shared-space presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
 
 ## 6. Routes
 

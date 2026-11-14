@@ -31,6 +31,7 @@ export const useLive = () => useContext(LiveContext);
 const INVALIDATES: Record<string, string[][]> = {
   task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"]],
   page: [["page"], ["pages"], ["boards"]],
+  "settings.changed": [["settings"]],
   board: [["boards"], ["pages"], ["tasks"]],
   workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"]],
   device: [["devices"], ["workspace"]],
@@ -45,12 +46,12 @@ const INVALIDATES: Record<string, string[][]> = {
   "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
   notification: [["notifications"]],
   diagram: [["diagrams"]],
-  context: [["people"], ["projects"], ["repos"], ["graph"], ["entities"], ["artifacts"], ["desk-live"]],
+  context: [["people"], ["projects"], ["project"], ["repos"], ["graph"], ["entities"], ["artifacts"], ["desk-live"]],
   sync: [["connections"], ["calendar"], ["artifacts"], ["shell"]],
   "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
-  routine: [["routines"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],
+  routine: [["routines"], ["morning-brief"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],
   "undo.changed": [["shell"], ["tasks"], ["assistant-messages"], ["ensemble-replies"]],
   // You did something that can be undone: the top bar's Undo label names it.
   "undo.recorded": [["shell"]],

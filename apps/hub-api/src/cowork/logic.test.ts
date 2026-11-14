@@ -299,11 +299,9 @@ test("ask answer keeps source links and finds useful words", () => {
   assert.match(empty.answer, /couldn't find/i);
 });
 
-test("morning brief time is a real clock time", () => {
-  assert.equal(Settings.parse({}).morningBrief.time, "08:00");
-  assert.equal(Settings.parse({ morningBrief: { time: "07:30" } }).morningBrief.time, "07:30");
-  assert.throws(() => Settings.parse({ morningBrief: { time: "99:99" } }));
-  assert.throws(() => Settings.parse({ morningBrief: { time: "8:00" } }));
+test("morning brief settings are not a second routine control", () => {
+  assert.ok(!("morningBrief" in Settings.parse({ morningBrief: { time: "07:30", enabled: false } })));
+  assert.equal(Settings.parse({}).routines.enabled, true);
 });
 
 test("shortcuts never bind OS or Super keys", () => {

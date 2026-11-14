@@ -12,7 +12,8 @@ import { nodeWebOrigin } from "../lib/node-origin.js";
 import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup.js";
 import { appendLedger } from "../lib/ledger.js";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
-import { defaultAvatarId } from "@ensemble/shared-types";
+import { defaultAvatarId, MCP_OAUTH_REQUEST_PATTERN } from "@ensemble/shared-types";
+import { createMorningRoutine } from "../routines/service.js";
 
 const FLOW_COOKIE = ensembleCookieName("login_flow", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const FLOW_SECONDS = 600;
@@ -42,10 +43,26 @@ function setFlowCookie(reply: FastifyReply, request: FastifyRequest, state: stri
   })));
 }
 
-function setReturnCookie(reply: FastifyReply, request: FastifyRequest, value: "node" | "", age: number): void {
+function setReturnCookie(reply: FastifyReply, request: FastifyRequest, value: string, age: number): void {
   appendCookie(reply, sessionCookieHeader(RETURN_COOKIE, value, age, sessionCookieSecure({
     nodeEnv: process.env.NODE_ENV, protocol: request.protocol, forwardedProto: request.headers["x-forwarded-proto"],
   })));
+}
+
+function mcpReturnCookie(state: string, request: string): string {
+  const signature = createHmac("sha256", env.ENSEMBLE_INTERNAL_TOKEN).update(`${state}:${request}`).digest("base64url");
+  return `mcp.${request}.${signature}`;
+}
+
+function mcpReturnRequest(state: string, cookie: string | null): string | null {
+  if (!cookie?.startsWith("mcp.")) return null;
+  const [, request] = cookie.split(".");
+  const expected = Buffer.from(mcpReturnCookie(state, request ?? ""));
+  const actual = Buffer.from(cookie);
+  if (!request || !MCP_OAUTH_REQUEST_PATTERN.test(request) || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    throw Object.assign(new Error("The app sign-in return expired or changed. Start the connection again."), { statusCode: 400 });
+  }
+  return request;
 }
 
 type CodeExchange = typeof exchangeLoginCode;
@@ -56,7 +73,10 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
 
   app.get("/api/auth/oauth/:provider/start", async (request, reply) => {
     const { provider } = z.object({ provider: LoginProvider }).parse(request.params);
-    const { link, return: back } = z.object({ link: z.enum(["1"]).optional(), return: z.enum(["node"]).optional() }).parse(request.query);
+    const { link, return: back, mcp_request: mcp } = z.object({
+      link: z.enum(["1"]).optional(), return: z.enum(["node"]).optional(),
+      mcp_request: z.string().regex(MCP_OAUTH_REQUEST_PATTERN).optional(),
+    }).parse(request.query);
     let sessionId: string | null = null;
     if (link) {
       requireBrowserSession(request);
@@ -80,23 +100,27 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
     });
     setFlowCookie(reply, request, flow.state, FLOW_SECONDS);
     // Linking a provider happens in the Hub's settings; only a sign-in can return to Node.
-    setReturnCookie(reply, request, back === "node" && !link && nodeOrigin() ? "node" : "", back === "node" && !link && nodeOrigin() ? FLOW_SECONDS : 0);
+    const target = !link && back === "node" && nodeOrigin() ? "node" : !link && mcp ? mcpReturnCookie(flow.state, mcp) : "";
+    setReturnCookie(reply, request, target, target ? FLOW_SECONDS : 0);
     reply.header("Cache-Control", "no-store");
     return reply.redirect(url);
   });
 
   app.get("/api/auth/oauth/:provider/callback", async (request, reply) => {
-    const node = readCookie(request, RETURN_COOKIE) === "node" ? nodeOrigin() : null;
+    const returnCookie = readCookie(request, RETURN_COOKIE);
+    const node = returnCookie === "node" ? nodeOrigin() : null;
     const destination = new URL("/login", node ?? authWebOrigin());
+    let mcp: string | null = null;
     reply.header("Cache-Control", "no-store");
     setFlowCookie(reply, request, "", 0);
-    if (node) setReturnCookie(reply, request, "", 0);
+    if (returnCookie) setReturnCookie(reply, request, "", 0);
     try {
       const { provider } = z.object({ provider: LoginProvider }).parse(request.params);
       const query = z.object({ state: z.string().min(20).max(200), code: z.string().max(4096).optional(), error: z.string().max(200).optional() }).parse(request.query);
       if (!matchesCookie(query.state, readCookie(request, FLOW_COOKIE))) {
         throw Object.assign(new Error("Sign-in expired or did not start in this browser. Try again."), { statusCode: 400 });
       }
+      mcp = mcpReturnRequest(query.state, returnCookie);
       const flow = await prisma.$transaction(async (tx) => {
         const row = await tx.authFlow.findUnique({ where: { id: sha256(query.state) } });
         if (!row || row.expiresAt <= new Date() || row.provider !== provider) {
@@ -148,6 +172,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
             throw Object.assign(new Error("Email verification is not configured. Use Google or GitHub, or contact the operator."), { statusCode: 503 });
           }
           account = await tx.user.create({ data: { email: profile.email, name: profile.name, avatar: defaultAvatarId(randomUUID()), emailVerifiedAt: profile.verified ? new Date() : null } });
+          await createMorningRoutine(tx, account.id);
           created = true;
         }
         await tx.authIdentity.create({ data: { userId: account.id, provider, subject: profile.subject, email: profile.email } });
@@ -167,6 +192,10 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
         destination.search = verificationSent ? "?verify=1" : "";
         return reply.redirect(destination.toString());
       }
+      if (mcp && !flow.userId) {
+        const next = `/oauth?request=${encodeURIComponent(mcp)}`;
+        return reply.redirect(`${authWebOrigin()}${verificationSent ? `/verify?${new URLSearchParams({ next })}` : next}`);
+      }
       destination.pathname = flow.userId ? "/settings" : verificationSent ? "/verify" : user.onboardingCompletedAt ? "/today" : "/start";
       destination.search = flow.userId ? "?linked=1" : verificationSent ? "?next=/start" : "";
       return reply.redirect(destination.toString());
@@ -177,7 +206,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
         : error instanceof Error && status < 500 ? error.message : "Sign-in could not be completed. Try again or contact the operator.";
       // Provider/JWT errors can include tokens. Log classification, never their bodies.
       request.log.warn({ provider: z.object({ provider: z.string() }).safeParse(request.params).data?.provider, status }, "provider sign-in failed");
-      destination.search = new URLSearchParams({ error: message }).toString();
+      destination.search = new URLSearchParams({ error: message, ...(mcp ? { next: `/oauth?request=${mcp}` } : {}) }).toString();
       return reply.redirect(destination.toString());
     }
   });

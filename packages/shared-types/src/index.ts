@@ -34,5 +34,6 @@ export * from "./subscriptions.js";
 export * from "./claude-models.js";
 export * from "./seal.js";
 export * from "./takeover.js";
+export * from "./mcp-oauth.js";
 
 export * from "./version.js";

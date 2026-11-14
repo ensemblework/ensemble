@@ -1,16 +1,15 @@
-import { ensureMorningSkill } from "../cowork/morning-skill.js";
-import { briefPromptAvailable, claimBriefPrompt, finishBriefPrompt } from "../cowork/brief-prompt.js";
+import { morningBriefView } from "../routines/service.js";
 import { accountIdOf } from "../lib/auth.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PageDocument } from "@ensemble/shared-types";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 import {
   actOnNudge,
   askEnsemble,
   attachMeetingNotes,
   commitQuickCapture,
   declineMeetingAttach,
-  deliverMorningBrief,
   endMeetingSession,
   ensureStaleNotice,
   getMeetingSession,
@@ -29,6 +28,7 @@ import {
   trashMeetingSession,
   weeklyRecap,
   setMeetingProject,
+  meetingContent,
 } from "../cowork/service.js";
 
 const textBody = z.object({ text: z.string().min(1).max(2000) });
@@ -48,42 +48,7 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
     return markNotificationRead(db, request.userId, id);
   });
 
-  app.get("/api/brief/today", async (request) => deliverMorningBrief(db, request.userId));
-
-  app.post("/api/brief/deliver", async (request) => deliverMorningBrief(db, request.userId));
-
-  app.get("/api/brief/skill", async (request) => {
-    const skill = await ensureMorningSkill(db, request.userId);
-    const notification = await db.notification.findFirst({ where: { userId: request.userId, kind: "morning_brief" }, orderBy: { createdAt: "desc" } });
-    const scope = skill.scope as { customized?: boolean } | null;
-    return { skill: { id: skill.id, body: skill.body }, notification, customize: Boolean(!skill.deletedAt && !scope?.customized && await briefPromptAvailable(db, accountIdOf(request))) };
-  });
-
-  app.post("/api/brief/prompt", async request => {
-    const { action } = z.object({ action: z.enum(["show", "dismiss"]) }).strict().parse(request.body);
-    const account = accountIdOf(request);
-    if (action === "dismiss") {
-      await finishBriefPrompt(db, account, "dismissed");
-      return { show: false };
-    }
-    return { show: await claimBriefPrompt(db, account) };
-  });
-
-  app.patch("/api/brief/skill", async (request) => {
-    const { instructions } = z.object({ instructions: z.string().trim().min(1).max(20_000) }).parse(request.body);
-    const initial = await ensureMorningSkill(db, request.userId);
-    const body = `# My morning brief\n\n${instructions}\n\nUse only the supplied context. Never invent tasks or facts. Do not send anything to anyone.\n`;
-    const skill = await db.$transaction(async (tx) => {
-      const current = await tx.skill.findUniqueOrThrow({ where: { id: initial.id } });
-      const next = await tx.skill.update({ where: { id: initial.id }, data: { body, scope: { purpose: "morning-brief", customized: true }, version: { increment: 1 }, enabled: true, deletedAt: null } });
-      await tx.skillVersion.create({ data: { skillId: next.id, version: current.version + 1, body, note: "Personal morning brief preferences" } });
-      const stale = await tx.skillVersion.findMany({ where: { skillId: next.id }, orderBy: { version: "desc" }, skip: 3, select: { id: true } });
-      await tx.skillVersion.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } });
-      await finishBriefPrompt(tx, accountIdOf(request), "saved");
-      return next;
-    });
-    return { skill };
-  });
+  app.get("/api/brief/today", async (request) => morningBriefView(db, request.userId));
 
   app.post("/api/capture/preview", async (request) => {
     const body = textBody.parse(request.body);
@@ -116,13 +81,17 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const body = z
       .object({ notes: z.string().max(100_000).optional(), content: PageDocument.optional(), title: z.string().trim().min(1).max(200).optional(), projectId: z.string().uuid().nullable().optional() })
-      .strict()
       .refine((value) => value.notes !== undefined || value.content !== undefined || value.title !== undefined || value.projectId !== undefined, "Supply notes, content, a title or a project.")
       .parse(request.body);
-    const { projectId, ...notes } = body;
-    if (projectId !== undefined && notes.notes === undefined && notes.content === undefined && notes.title === undefined) return setMeetingProject(db, request.userId, id, projectId);
-    if (projectId !== undefined) await setMeetingProject(db, request.userId, id, projectId);
-    return saveMeetingNotes(db, request.userId, id, notes);
+    return db.$transaction(async (tx) => {
+      await lockSave(tx, "meeting_sessions", request.userId, id);
+      const current = await tx.meetingSession.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const comparable = { ...current, content: meetingContent(current) };
+      const { projectId, ...notes } = guardedSave(comparable, body, saveBase(request));
+      if (projectId !== undefined && !Object.keys(notes).length) return setMeetingProject(tx, request.userId, id, projectId);
+      if (projectId !== undefined) await setMeetingProject(tx, request.userId, id, projectId);
+      return saveMeetingNotes(tx, request.userId, id, notes);
+    });
   });
 
   app.post("/api/meetings/sessions/:id/end", async (request) => {

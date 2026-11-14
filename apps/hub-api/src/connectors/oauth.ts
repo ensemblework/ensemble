@@ -14,6 +14,7 @@ import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
 import { isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { loadSettings } from "../lib/settings.js";
 import { prisma } from "../lib/prisma.js";
+import { publicApiUrl } from "../lib/public-api.js";
 import { getAccount, oauthApp, saveAccount, type Account, type AccountProvider, type OAuthApp } from "./accounts.js";
 import { GOOGLE_PRODUCT_SCOPES, productState, scopesFor, suiteForProvider } from "./products.js";
 
@@ -467,8 +468,7 @@ export const OAUTH_PROVIDERS: AccountProvider[] = ["google", "microsoft", "githu
 
 export const providerLabel = (provider: AccountProvider): string => specFor(provider)?.label ?? provider;
 
-export const publicApiUrl = (): string =>
-  (process.env.HUB_API_PUBLIC_URL ?? `http://localhost:${env.HUB_API_PORT}`).replace(/\/$/, "");
+export { publicApiUrl };
 
 export const redirectUri = (provider: string): string => `${publicApiUrl()}/api/connectors/${provider}/callback`;
 
