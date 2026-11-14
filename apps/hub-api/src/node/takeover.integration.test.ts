@@ -435,6 +435,10 @@ test("the owner signs in from the web with a one-time code, in a clean browser: 
     const password = await spot(owner.takeover.id, 'input[name="password"]');
     await owner.send([{ t: "mouse", type: "down", ...password }, { t: "mouse", type: "up", ...password }, { t: "text", text: CANARY }, { t: "key", type: "down", key: "Enter" }, { t: "key", type: "up", key: "Enter" }]);
     await until(() => /\/login\/code$/.test(shown(owner.takeover.id).url), "the code page");
+    // The owner types the code once their view shows the code page, as a person would. The relay keeps only the
+    // newest frame, so the page is read until one shows it, rather than hoping a later read still finds it.
+    const codePage = (frame?: { header: Record<string, unknown> } | null) => /\/login\/code$/.test(String(frame?.header.url ?? ""));
+    await until(async () => owner.seen.some(codePage) || codePage((await owner.frame()).frame), "the code page in the owner's view");
     assert.ok(code, "the site sent a code to the owner's phone");
     await until(async () => (await shown(owner.takeover.id).find('input[name="code"]')) !== null, "the code field");
     script = (transcript) => (transcript.includes("signed in to") ? { calls: [{ name: "browser_snapshot", arguments: { tab } }], then: "2 payments are waiting." } : { text: "ok" });
@@ -445,7 +449,7 @@ test("the owner signs in from the web with a one-time code, in a clean browser: 
     let ended = await owner.frame();
     for (let tries = 0; ended.state !== "ended" && tries < 20; tries += 1) ended = await owner.frame();
     assert.deepEqual([ended.state, ended.reason], ["ended", "signed_in"]);
-    assert.ok(owner.seen.some((frame) => /\/login\/code$/.test(String(frame.header.url))), "the owner saw the code page");
+    assert.ok(owner.seen.some(codePage), "the owner saw the code page");
     const stats = takeoverStats(owner.takeover.id);
     assert.equal(stats, null, "nothing left on the computer");
     assert.equal(browserBroker().ownerTab(tab).sensitive, false, "the tab is the node's again");
@@ -648,6 +652,8 @@ test("input sent several at a time, its requests overtaking each other, is appli
     const sizes = [...computer.postedAt.values()].map((item) => item.bytes).sort((a, b) => a - b);
     const pct = (list: number[], p: number) => Math.round(list[Math.min(list.length - 1, Math.floor(list.length * p))] ?? NaN);
     console.log(`takeover latency: key→applied p50 ${pct(keyMs, 0.5)} ms, p95 ${pct(keyMs, 0.95)} ms (${keyMs.length} keys, 4 in flight); frame→page p50 ${pct(frameMs, 0.5)} ms, p95 ${pct(frameMs, 0.95)} ms (${frameMs.length} frames); frame size p50 ${Math.round(pct(sizes, 0.5) / 1024)} KB, p95 ${Math.round(pct(sizes, 0.95) / 1024)} KB`);
+    // A quiet machine's number: `test:public` runs this file on its own after the others (package.json), whose browsers
+    // and databases, all at once, make a key's trip several times slower.
     assert.ok(pct(keyMs, 0.5) < 150, "a key is applied within 150 ms");
     assert.equal((await owner.end(false)).statusCode, 200);
     await reader;
