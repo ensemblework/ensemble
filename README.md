@@ -107,6 +107,8 @@ The fast checks also build the public documentation and test its read-only MCP l
 
 `release.json` is the version for web, API, desktop, quick capture and CLI: change it, run `pnpm version:sync`, commit the derived files together (`pnpm version:check` runs before typecheck and builds). A `cli-v<version>` tag runs `cli-release.yml` ([docs/26 §7](docs/26_CLI.md#7-releases)); a `desktop-v<version>` tag publishes the desktop installers ([docs/DESKTOP.md](docs/DESKTOP.md)). Brand assets come from `packages/brand` through `pnpm brand:build` / `pnpm brand:check` ([docs/BRAND.md](docs/BRAND.md)).
 
+The shared fast checks include account-place admission and guarded-save regressions ([docs/02](docs/02_MODULE_INTERACTION_HUB_UI.md), [docs/36](docs/36_WEB_TESTING.md)).
+
 ## License
 
 [FSL-1.1-MIT](LICENSE.md) (Functional Source License, MIT future license). You may use, change and redistribute Ensemble for any purpose, including at work, except to offer a product or service that competes with it. Each release becomes available under the MIT license two years after it is published.

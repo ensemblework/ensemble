@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Settings } from "@ensemble/shared-types";
+import { Settings } from "@ensemble/shared-types";
 import { findSettingsTarget, flashSetting, scrollSettingIntoView, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
 import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
@@ -63,6 +63,20 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<Settings | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const pending = useRef<Plain>({});
+  const base = useRef<Settings | null>(null);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const draftKey = useRef<string | null>(null);
+  const draftPatch = useRef<Plain>({});
+  const persist = useCallback(() => {
+    if (!draftKey.current || !base.current) return;
+    try {
+      if (Object.keys(draftPatch.current).length) sessionStorage.setItem(draftKey.current, JSON.stringify({ base: base.current, patch: draftPatch.current }));
+      else sessionStorage.removeItem(draftKey.current);
+    } catch {
+      setSaveError("This tab could not keep a settings draft. Keep it open until saving finishes.");
+    }
+  }, []);
   const timer = useRef<number | undefined>(undefined);
   const mainRef = useRef<HTMLDivElement>(null);
   const scrolled = useRef<string | null>(null);
@@ -70,8 +84,30 @@ export default function SettingsPage() {
   const [jumps, setJumps] = useState(0);
 
   useEffect(() => {
-    if (query.data && !draft) setDraft(query.data.settings);
-  }, [query.data, draft]);
+    if (query.data && !inFlight.current && !Object.keys(pending.current).length) {
+      if (!draftKey.current && query.data.scope) {
+        draftKey.current = `ensemble.settings-draft:${query.data.scope}`;
+        try {
+          const stored: unknown = JSON.parse(sessionStorage.getItem(draftKey.current) ?? "null");
+          if (isPlain(stored) && isPlain(stored.patch)) {
+            const before = Settings.safeParse(stored.base);
+            if (before.success) {
+              base.current = before.data;
+              pending.current = stored.patch;
+              draftPatch.current = stored.patch;
+              setDraft(merge(before.data, stored.patch) as Settings);
+              setSaveError("Unsaved settings were kept in this tab.");
+              return;
+            }
+          }
+        } catch {
+          setSaveError("This tab could not read its settings draft.");
+        }
+      }
+      base.current = query.data.settings;
+      setDraft(query.data.settings);
+    }
+  }, [query.data]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -171,34 +207,57 @@ export default function SettingsPage() {
     else go();
   }, [location.tab]);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async function save(): Promise<void> {
+    if (inFlight.current) { await inFlight.current; return save(); }
     const patch = pending.current;
+    const before = base.current;
     pending.current = {};
     if (!Object.keys(patch).length) return;
     setSaving("saving");
-    try {
-      const result = await api.saveSettings(patch);
+    const work = (async () => { try {
+      const result = await api.saveSettings(patch, before ?? undefined);
+      base.current = result.settings;
+      draftPatch.current = pending.current;
+      persist();
       client.setQueryData(["settings"], result);
+      setDraft(merge(result.settings, pending.current) as Settings);
+      setSaveError(null);
       setSaving("saved");
     } catch (error) {
-      toast((error as Error).message, { tone: "error" });
+      pending.current = merge(patch, pending.current);
+      setSaveError((error as Error).message);
       setSaving("idle");
-      await client.invalidateQueries({ queryKey: ["settings"] });
-      setDraft(null);
-    }
-  }, [client, toast]);
+    } })();
+    inFlight.current = work;
+    await work;
+    inFlight.current = null;
+  }, [client, persist]);
 
   const patch = useCallback(
     (value: Plain) => {
       setDraft((current) => (current ? (merge(current as unknown as Plain, value) as unknown as Settings) : current));
       pending.current = merge(pending.current, value);
+      draftPatch.current = merge(draftPatch.current, value);
+      persist();
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), 500);
     },
-    [flush],
+    [flush, persist],
   );
 
-  useEffect(() => () => void flush(), [flush]);
+  useEffect(() => {
+    const leave = (event: BeforeUnloadEvent) => {
+      if (!inFlight.current && !Object.keys(pending.current).length) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", leave);
+    return () => {
+      window.removeEventListener("beforeunload", leave);
+      window.clearTimeout(timer.current);
+      void flush();
+    };
+  }, [flush]);
 
   if (query.isError && !draft) {
     const message = query.error instanceof ApiError ? query.error.message : "Settings didn't load.";
@@ -225,7 +284,7 @@ export default function SettingsPage() {
             title="Settings"
             actions={
               <span className="text-[12px] text-muted" aria-live="polite">
-                {saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}
+                {saveError ? <><span role="alert">{saveError}</span> <button type="button" className="btn" onClick={() => void flush()}>Retry save</button></> : saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}
               </span>
             }
           />

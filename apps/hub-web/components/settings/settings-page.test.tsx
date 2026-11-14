@@ -5,6 +5,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Settings } from "@ensemble/shared-types";
+import { mergeSaveObject } from "@ensemble/shared-types/save-merge";
 import { catalogWith } from "../connectors/test-fixtures.js";
 import SettingsPage from "../../app/(hub)/settings/page.js";
 
@@ -77,12 +78,18 @@ async function mount(url: string, answers: Record<string, unknown> = {}) {
   const realFetch = globalThis.fetch;
   const calls: string[] = [];
   const bodies: Array<{ path: string; method: string; body: unknown }> = [];
+  let savedSettings = (answers["/api/settings"] as { settings?: Settings } | undefined)?.settings ?? SETTINGS;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     calls.push(path);
-    if (init?.method && init.method !== "GET") bodies.push({ path, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
+    const payload = init?.body ? JSON.parse(String(init.body)) : {};
+    const { _base, ...patch } = payload;
+    if (init?.method && init.method !== "GET") bodies.push({ path, method: init.method, body: patch });
+    if (path === "/api/settings") {
+      if (init?.method === "PATCH") savedSettings = Settings.parse(mergeSaveObject(savedSettings, patch));
+      return json({ settings: savedSettings });
+    }
     if ((!init?.method || init.method === "GET") && path in answers) return json(answers[path]);
-    if (path === "/api/settings") return json({ settings: SETTINGS });
     if (path === "/api/subscriptions") return json(SUBSCRIPTIONS);
     if (path === "/api/subscriptions/sign-in") return json({ message: "A sign-in window is opening on Studio Mac. Finish signing in there." }, 202);
     if (path === "/api/connectors/catalog") return json({ entries: catalogWith({ github: { connected: true, account: "mira-chen" } }) });

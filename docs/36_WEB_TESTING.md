@@ -34,6 +34,8 @@ Both environments offer **GPT-5 mini and GPT-4.1 mini** from the Visual Studio A
 - Fast checks also build the public docs and verify their read-only MCP lookup. The separate Cloudflare docs hostname is not published by the test Hub workflow ([40](40_PUBLIC_DOCUMENTATION.md)).
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
 
+The fast checks include account-place and guarded-save API/client regressions. Local browser validation (`apps/hub-web/e2e/active-places.mjs`) uses `mobile-ui-fixture.ts` with `MOBILE_FIXTURE_PATH`, a local `HUB_WEB` and local `NEXT_PUBLIC_HUB_API`; it exercises two windows, conflicting/disjoint settings, the fourth-tab chooser and released-slot reuse without hosted accounts or screenshots.
+
 ## Install the testing CLI
 
 macOS and Linux:

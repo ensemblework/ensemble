@@ -12,7 +12,7 @@ The Skills page (`apps/hub-web/app/(hub)/skills`) autosaves the body 900 ms afte
 
 The UI keeps the editor, enablement, history and any recorded evidence. It does not expose test/score controls or an unfinished learning promotion. The test and score API routes remain available to clients (§6).
 
-`PATCH /api/skills/:id` locks the row; an optional `expectedVersion` that differs from the current version returns 409 "The skill changed. Read it again before editing." The Markdown body is what agents follow.
+`PATCH /api/skills/:id` locks the row. Hub edits include `_base`: disjoint fields merge, and overlapping changes return 409 `SAVE_CONFLICT` for the person to choose ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Without `_base`, an optional `expectedVersion` that differs from the current version returns 409 "The skill changed. Read it again before editing." The Markdown body is what agents follow.
 
 ## 2. Using skills
 

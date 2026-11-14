@@ -11,6 +11,7 @@ import { answerRequestedMove, createTask, updateTask } from "../services/tasks.j
 import { accountIdOf } from "../lib/auth.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
 import { NODE_TASK } from "../lib/node-tasks.js";
+import { guardedSave, lockSave, saveBase, SaveConflictError } from "../lib/save-conflict.js";
 
 export function serializeTask(task: {
   due: Date | null;
@@ -119,10 +120,14 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
         return { task: serializeTask(answered.task), undoEntryId: null, answered: answered.message };
       }
       task = await prisma.$transaction(async (tx) => {
-        const updated = await updateTask(tx, userId, id, body, "me");
+        await lockSave(tx, "tasks", userId, id);
+        const current = await tx.task.findFirst({ where: { id, userId, deletedAt: null } });
+        if (!current) throw Object.assign(new Error("That task is not on your board."), { statusCode: 404 });
+        const updated = await updateTask(tx, userId, id, guardedSave(serializeTask(current), body, saveBase(request)), "me");
         return { updated, undoEntryId: lastUndoId(tx) ?? null };
       });
     } catch (error) {
+      if (error instanceof SaveConflictError) throw error;
       const message = error instanceof Error ? error.message : "Task not found.";
       const status = (error as { statusCode?: number }).statusCode ?? (message.includes("not on your board") ? 404 : 400);
       return reply.code(status).send({ error: message });

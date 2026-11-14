@@ -132,6 +132,8 @@ Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL
 
 The fast checks also cover readable checkout naming (`workspace/checkout-folder.test.ts`): selected-model requests, safe title fallback, concurrent reservations, name collisions, continuation, task labels and folder grants. They cover confirmed session deletion: hosted stop/acknowledgement/retry and account isolation, local native-history propagation, exact-file preservation and continuation gating. Native fixture tests use disposable history, not real agent accounts or model calls.
 
+Active-place and conditional-save regressions run in the same fast action: three-place admission, expiry, release and replacement, key exemption, row-locked field merges and conflict resolution, plus the Hub chooser/dialog. API fixtures use migrated in-memory PGlite; those files run serially.
+
 ### Home server (`infra/deploy/home`) — serves `api.ensemblework.com`
 
 - One machine, run as its own user without root. `setup.sh` installs it (safe to rerun); everything lives in `~/ensemble-host`: `app/` checkout, `ensemble.env` (mode 0600, from the "Home server" block of `infra/deploy/ensemble.env.example`), `ensemble.commit`, `node/`, `cloudflared/`, `state/` (including `autodeploy.failed`), `backups/`, `logs/`, `bin/`.

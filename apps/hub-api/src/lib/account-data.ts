@@ -3,7 +3,7 @@ import { privateIdentifier } from "./secrets.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 const scopedModels = Prisma.dmmf.datamodel.models.filter((model) => model.fields.some((field) => field.name === "userId" && field.kind === "scalar"));
-const PRIVATE_TABLES = new Set(["sessions", "api_tokens", "oauth_tokens", "model_credentials", "email_tokens", "auth_flows", "terminal_passkeys", "device_pairings"]);
+const PRIVATE_TABLES = new Set(["sessions", "active_places", "api_tokens", "oauth_tokens", "model_credentials", "email_tokens", "auth_flows", "terminal_passkeys", "device_pairings"]);
 const PRIVATE_COLUMNS = ["credit_key", "password_hash", "secret", "access_token", "refresh_token", "token_hash", "code_verifier", "nonce"];
 const SECRET_FIELDS = new Set(["secret", "password", "passwordhash", "clientsecret", "token", "accesstoken", "refreshtoken", "apikey", "apitoken", "tokenhash", "codeverifier", "nonce", "credentials", "pat"]);
 

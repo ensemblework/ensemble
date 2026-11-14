@@ -84,6 +84,7 @@ const docOf = (session: MeetingSessionRecord): PageDocument => session.content ?
 type Draft = { title: string; content: PageDocument };
 // Retain an unsuccessful draft across SPA navigation; only an authorized session renders it.
 const drafts = new Map<string, Draft>();
+const bases = new Map<string, { title: string; content: PageDocument | null; notes: string }>();
 const writes = new Map<string, Promise<unknown>>();
 
 /** An editor can reopen while the previous instance is still saving. */
@@ -118,6 +119,7 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
   const [failed, setFailed] = useState(false);
   const [removing, setRemoving] = useState(false);
   const savedTitle = useRef(session.title);
+  const base = useRef(bases.get(session.id) ?? { title: session.title, content: session.content ?? null, notes: session.notes });
 
   const flush = async (): Promise<boolean> => {
     if (timer.current) clearTimeout(timer.current);
@@ -129,11 +131,18 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
     if (mounted.current) { setStatus("Saving…"); setFailed(false); }
     const work = (async () => {
       try {
-        const result = await saveInOrder(session.id, () => api.updateMeeting(session.id, snapshot));
+        const result = await saveInOrder(session.id, () => api.updateMeeting(session.id, snapshot, base.current));
+        base.current = { title: result.session.title, content: result.session.content ?? null, notes: result.session.notes };
+        bases.set(session.id, base.current);
         savedTitle.current = result.session.title;
         known.current = JSON.stringify(result.session.content ?? null);
+        if (!pending.current) {
+          latest.current = { title: result.session.title, content: docOf(result.session) };
+          setDraft(latest.current);
+          setRemote({ doc: latest.current.content, stamp: Date.now() });
+        }
         client.setQueryData<Awaited<ReturnType<typeof api.meetingSession>>>(["meeting-session", session.id], (cached) => cached ? { ...cached, session: result.session } : cached);
-        if (drafts.get(session.id) === submitted) drafts.delete(session.id);
+        if (drafts.get(session.id) === submitted) { drafts.delete(session.id); bases.delete(session.id); }
         if (mounted.current) setStatus(pending.current ? "Unsaved changes" : "Saved");
         void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
         return true;
@@ -156,6 +165,7 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
   const edit = (next: Draft) => {
     latest.current = next;
     drafts.set(session.id, next);
+    bases.set(session.id, base.current);
     pending.current = true;
     setDraft(next);
     setStatus("Unsaved changes");
@@ -183,11 +193,15 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
   // Notes changed elsewhere (the assistant, another tab) show here when nothing is waiting to save.
   useEffect(() => {
     const incoming = JSON.stringify(session.content ?? null);
-    if (incoming === known.current || pending.current || saving.current || !session.content) return;
+    if (pending.current || saving.current) return;
+    base.current = { title: session.title, content: session.content ?? null, notes: session.notes };
+    savedTitle.current = session.title;
+    setDraft((value) => ({ ...value, title: session.title }));
+    if (incoming === known.current || !session.content) return;
     known.current = incoming;
     latest.current = { ...latest.current, content: session.content };
     setRemote({ doc: session.content, stamp: Date.now() });
-  }, [session.content]);
+  }, [session.content, session.title, session.notes]);
 
   const onMentionClick = useCallback((mention: PageMention) => {
     const href = mentionHref(mention);

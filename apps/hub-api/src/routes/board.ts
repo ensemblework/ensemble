@@ -10,6 +10,7 @@ import { assertOwned, createReminder, softDelete } from "../services/records.js"
 import { collabHub } from "../pages/live.js";
 import { accountIdOf } from "../lib/auth.js";
 import { answerRequestedMove } from "../services/tasks.js";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -197,15 +198,20 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const existing = await prisma.deliverable.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!existing) return reply.code(404).send({ error: "Deliverable not found." });
-    const deliverable = await prisma.deliverable.update({
+    const deliverable = await prisma.$transaction(async (tx) => {
+      await lockSave(tx, "deliverables", request.userId, id);
+      const current = await tx.deliverable.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const changed = guardedSave({ ...current, due: current.due?.toISOString() ?? null }, body, saveBase(request));
+      return tx.deliverable.update({
       where: { id },
       data: {
-        title: body.title,
-        notes: body.notes,
-        status: body.status,
-        due: body.due === undefined ? undefined : body.due ? new Date(body.due) : null,
-        completedAt: body.status === "completed" ? new Date() : body.status === "upcoming" ? null : undefined,
+        title: changed.title,
+        notes: changed.notes,
+        status: changed.status,
+        due: changed.due === undefined ? undefined : changed.due ? new Date(changed.due) : null,
+        completedAt: changed.status === "completed" ? new Date() : changed.status === "upcoming" ? null : undefined,
       },
+      });
     });
     sseHub.publish(request.userId, { event: "deliverable", data: { id } });
     return { deliverable };

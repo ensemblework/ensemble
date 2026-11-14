@@ -28,6 +28,8 @@ import { NODE_TASK, ON_BOARD } from "../lib/node-tasks.js";
 import { GraphError, itemNeighbors, relationsOf } from "../context/graph/neighbors.js";
 import { parseItemRef, type GraphKind } from "../context/graph/refs.js";
 import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
+import { lockUserTransaction } from "../lib/user-lock.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -242,7 +244,11 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const found = await prisma.person.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!found) return reply.code(404).send({ error: "Person not found." });
-    const person = await prisma.person.update({ where: { id }, data: body });
+    const person = await prisma.$transaction(async (tx) => {
+      await lockSave(tx, "people", request.userId, id);
+      const current = await tx.person.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      return tx.person.update({ where: { id }, data: guardedSave(current, body, saveBase(request)) });
+    });
     sseHub.publish(request.userId, { event: "context", data: { kind: "people", id } });
     return { person };
   });
@@ -338,15 +344,37 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     if (body.personIds && body.people) return reply.code(400).send({ error: "Send people or personIds, not both." });
     const found = await prisma.project.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!found) return reply.code(404).send({ error: "Project not found." });
-    const { personIds, people, repoIds, content, ...fields } = body;
-    const members = people
-      ? new Map(people.map((row) => [row.id, row.role]))
-      : personIds
-        ? new Map(personIds.map((personId) => [personId, undefined as string | null | undefined]))
-        : null;
-    const page = content !== undefined ? meetingNotesFields({ content }) : null;
-    const data = { ...fields, ...(page ? { notes: page.notes, content: page.content } : {}) };
+    let savedProject;
     await prisma.$transaction(async (tx) => {
+      await lockSave(tx, "projects", request.userId, id);
+      const current = await tx.project.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const membersNow = await tx.projectPerson.findMany({ where: { projectId: id }, select: { personId: true, role: true }, orderBy: { createdAt: "asc" } });
+      const reposNow = await tx.projectRepo.findMany({ where: { projectId: id }, select: { repoId: true } });
+      const base = saveBase(request);
+      const peopleBefore = Array.isArray(base?.people) ? base.people.flatMap((row: unknown) => {
+        if (!row || typeof row !== "object") return [];
+        const member = row as { id?: string; person?: { id?: string }; role?: string | null };
+        const personId = member.id ?? member.person?.id;
+        return personId ? [{ id: personId, role: member.role ?? null }] : [];
+      }) : [];
+      const normalizedBase = base ? {
+        ...base,
+        ...(body.people ? { people: peopleBefore } : {}),
+        ...(body.personIds ? { personIds: base.personIds ?? peopleBefore.map((row) => row.id) } : {}),
+        ...(body.repoIds ? { repoIds: base.repoIds ?? (Array.isArray(base.repoLinks) ? base.repoLinks.flatMap((row) => {
+          const repo = row as { repo?: { id?: string } };
+          return repo.repo?.id ? [repo.repo.id] : [];
+        }) : []) } : {}),
+      } : undefined;
+      const comparable = { ...current, people: membersNow.map((row) => ({ id: row.personId, role: row.role })), personIds: membersNow.map((row) => row.personId), repoIds: reposNow.map((row) => row.repoId) };
+      const { personIds, people, repoIds, content, ...fields } = guardedSave(comparable, body, normalizedBase);
+      const members = people
+        ? new Map(people.map((row) => [row.id, row.role]))
+        : personIds
+          ? new Map(personIds.map((personId) => [personId, undefined as string | null | undefined]))
+          : null;
+      const page = content !== undefined ? meetingNotesFields({ content }) : null;
+      const data = { ...fields, ...(page ? { notes: page.notes, content: page.content } : {}) };
       for (const personId of members?.keys() ?? []) await assertOwned(tx, request.userId, "person", personId);
       for (const repoId of repoIds ?? []) await assertOwned(tx, request.userId, "repo", repoId);
       await tx.project.update({
@@ -370,9 +398,10 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         await tx.projectRepo.deleteMany({ where: { projectId: id } });
         await tx.projectRepo.createMany({ data: repoIds.map((repoId) => ({ projectId: id, repoId, addedBy: "me" })) });
       }
+      savedProject = await tx.project.findUniqueOrThrow({ where: { id } });
     });
     sseHub.publish(request.userId, { event: "context", data: { kind: "project", id } });
-    return { ok: true };
+    return { ok: true, project: savedProject };
   });
 
   app.delete("/api/projects/:id", async (request, reply) => {
@@ -446,9 +475,14 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/api/repos/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = z.object({ tracked: z.boolean().optional(), description: z.string().nullish() }).parse(request.body);
-    const result = await prisma.repo.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: body });
-    if (!result.count) return reply.code(404).send({ error: "Repo not found." });
-    return { ok: true };
+    const repo = await prisma.$transaction(async (tx) => {
+      await lockSave(tx, "repos", request.userId, id);
+      const current = await tx.repo.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
+      if (!current) return null;
+      return tx.repo.update({ where: { id }, data: guardedSave(current, body, saveBase(request)) });
+    });
+    if (!repo) return reply.code(404).send({ error: "Repo not found." });
+    return { ok: true, repo };
   });
 
   // ── preferences (learned + declared; settings live under hub.* keys) ────
@@ -490,10 +524,15 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     // Settings save through PATCH /api/settings, which checks what they hold (Code folders, for one).
     if (key === "hub.settings") return reply.code(400).send({ error: "Settings are saved from the Settings page, not as a preference." });
     const body = z.object({ value: z.unknown() }).parse(request.body);
-    const preference = await prisma.preference.upsert({
+    const preference = await prisma.$transaction(async (tx) => {
+      await lockUserTransaction(tx, owner);
+      const current = await tx.preference.findUnique({ where: { userId_key: { userId: owner, key } } });
+      const changed = guardedSave({ value: current?.value ?? null }, body, saveBase(request));
+      return tx.preference.upsert({
       where: { userId_key: { userId: owner, key } },
-      create: { userId: owner, key, value: body.value as never, source: "me", confidence: 1 },
-      update: { value: body.value as never, source: "me", confidence: 1, deletedAt: null },
+      create: { userId: owner, key, value: changed.value as never, source: "me", confidence: 1 },
+      update: { ...(changed.value !== undefined ? { value: changed.value as never } : {}), source: "me", confidence: 1, deletedAt: null },
+      });
     });
     if (key.startsWith("ui.") && key !== ONBOARDING_TOUR_KEY) await mirrorSettings(prisma, owner);
     return { preference };
