@@ -6,7 +6,8 @@ import { accountIdOf } from "../lib/auth.js";
 export async function activePlaceRoutes(app: FastifyInstance) {
   app.get("/api/auth/places", async (request) => {
     placeSession(request);
-    return { places: await activePlaces(app.prisma, accountIdOf(request)) };
+    const { surface } = z.object({ surface: PlaceInput.shape.surface.default("hub") }).parse(request.query);
+    return { places: await activePlaces(app.prisma, accountIdOf(request), surface) };
   });
   app.post("/api/auth/places", async (request, reply) => {
     const result = await heartbeatPlace(app.prisma, request, PlaceInput.parse(request.body));

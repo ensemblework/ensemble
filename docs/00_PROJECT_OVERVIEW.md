@@ -49,7 +49,7 @@ The scheduler runs product jobs (reminders, retention, device leases) and the pe
 
 | Area | What works | Boundary |
 | --- | --- | --- |
-| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion; three active registered places per account with a fourth-window chooser | The hosted Hub shell registers windows; the separate Node website does not register them here. CLI/editor keys are uncapped. Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
+| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion; independent three-place limits for Ensemble and Ensemble Node, each with a fourth-window chooser | Ensemble's web and hosted desktop windows share one pool; Node windows have their own. CLI/editor keys are uncapped. Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
 | Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
@@ -127,7 +127,7 @@ A catalog entry is a connection option, not a promise of native search, an impor
 
 | Records | Role |
 | --- | --- |
-| `User`, `Session`, `ActivePlace`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, account-wide window leases (three active, 60-second expiry), login identities, recovery and verification |
+| `User`, `Session`, `ActivePlace`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, account window leases (three Ensemble and three Node places independently, 60-second expiry), login identities, recovery and verification |
 | Extra `User` rows with `ownerId` | Spaces. Request `userId` is the open space; `accountId` is the signed-in person |
 | `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, contacts, ownership transfer, public links |
 | `Task`, `TaskPage`, `PageBoard`, `PageRevision`, `PageTemplate` | Work and its documents, page-board/column membership, board-specific overview tiles, nesting, revisions, private templates |

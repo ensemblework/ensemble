@@ -123,7 +123,7 @@ export function ActivePlaceGate({ children, allowAnonymous = false }: { children
       <main className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-bg p-4">
         <section className="w-full max-w-lg rounded-xl border border-line bg-panel p-6 shadow-pop" aria-label="Open places">
           {choosing ? <>
-            <h1 className="flex items-center gap-2 text-lg font-semibold">Choose where to continue <InfoTip text="You can keep Ensemble open in three places. Closing a place or one minute without a heartbeat frees its slot. Continue here replaces the least recently heard place; a row's button replaces that place. Other tabs and the CLI stay signed in." /></h1>
+            <h1 className="flex items-center gap-2 text-lg font-semibold">Choose where to continue <InfoTip text="You can keep Ensemble open in three web or desktop places. Ensemble Node has its own separate three-place limit. Closing a place or one minute without a heartbeat frees its slot. Continue here replaces the least recently heard Ensemble place; a row's button replaces that place. Other tabs, Node and the CLI stay signed in." /></h1>
             <p className="mt-2 text-sm text-muted">{places.length ? "Continue here by signing out one open place." : "Continue here to reopen this place."}</p>
             <ul className="mt-4 divide-y divide-line">
               {places.map((place) => <li key={place.windowId} className="flex flex-wrap items-center justify-between gap-3 py-3">
