@@ -1,8 +1,58 @@
 # 29 · Sharing
 
-An Ensemble space, or one item in it, can be shared with people who have an Ensemble account. The space stays the owner's: its work is shared, while the owner's settings, model keys, connected apps, computers, Today and metrics stay private. A single item opens on its own, without the rest of the space. Pages, tasks, diagrams and meeting notes can also open for **anyone with the link** (§9).
+Share a whole space or one item with someone who has an Ensemble account. Choose whether they can view or edit the work. A shared item opens on its own, without the rest of the space.
 
-Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.test.ts`, `links.integration.test.ts`). Hub: `components/sharing/`, `app/(hub)/shared`, `app/(hub)/shared-by-me`, `app/shared/[id]`, `app/p/[token]`, `components/settings/tab-sharing.tsx`.
+Your settings, model keys, connected apps, computers, Today and metrics stay private. Pages, tasks, diagrams and meeting notes can also open for **anyone with the link** (§9).
+
+## 7. The Hub
+
+### Share a page
+
+1. Open the page and choose **Share** at the top right. On a task peek, Share is beside the close button in its header.
+2. Search for the person by name or email. Type at least two characters. Enter an exact email address when you need an exact match.
+3. Choose their role: **Can view** lets them read; **Can edit** lets them change the shared content.
+4. Check the people and roles listed in the dialog. Each person has a link to their shared item. The dialog also shows your contact/member counts and explains what stays private.
+
+Share is also available on tasks, diagrams, plot spaces, skills, meeting notes, the board, the workspace tab and Code. Meeting notes, workspace and Code shares are view only.
+
+### Share a space
+
+Open the space switcher and choose **Share ‹space›…**, or use **Settings → Sharing**. Choose a viewer or editor role for each person. A space shares its permitted work while keeping the owner’s private areas separate.
+
+The sharing dialog searches as you type, offers roles and shows usage meters such as “1 of 2 members” and “3 of 5 contacts”. Role menus have accessible labels such as “Access for ‹name›”, “Who can open it” and “What anyone with the link can do”.
+
+### Open work shared with you
+
+
+Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space content: viewers may read them; editors may create boards, manage columns/tiles and move pages. They have no individual-board share link. Sharing a page or task does not expose its board directory or allow membership changes.
+
+The `board` item-share kind grants task access, not access to custom boards or their standalone pages; organizing a task on a custom board does not revoke its existing task-access grants.
+- **`/shared`**: everything shared with you, with a "New" mark until opened, live page and task titles, first-line previews and share dates (`sharing/previews.ts`, batched). The sidebar link appears when there is something.
+- **`/shared-by-me`**: searchable items and spaces grouped by person with Remove / Remove access, then public links with Turn off; each asks for confirmation. Settings and the limit dialogs link here.
+- **`/shared/[id]`** (outside the Hub shell): the item alone in its usual editor with a `shared` role, a header of who is on it and "Shared by ‹full name› · can edit". Every request carries the share header (`setOpenShare` in `lib/api.ts`), with its own share-scoped event stream; after a reconnect it reloads everything. Page and task editors keep the share they opened under (`withShare`) so the last save on leaving goes to the right place. An address that opens nothing says "Nothing is shared at this link" (or "This was shared with someone else" for another account's share).
+- **Settings › Sharing**: contacts (5 slots unless you choose otherwise), **Limits** (contacts and people per space, up to the caps), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
+
+## 9. Anyone with the link
+
+### Create a public link
+
+1. Open Share on a page, task, diagram or meeting note you own.
+2. Turn the link on and choose **Can view** or **Can edit**. Meeting notes allow viewing only.
+3. Copy the link and give it to the people you want to open it. They do not need an Ensemble account.
+
+To end access, turn the link off. **New link** replaces its address and stops the old one immediately. You can review open counts in **Settings → Sharing → Public links**.
+
+### Public link permissions and limits
+
+- **Kinds:** pages, tasks, diagrams and meeting notes (`PUBLIC_KINDS` in `sharing/context.ts`); meeting notes are view only. Never a space, the board, plots, skills, the workspace, code or runs.
+- **Roles:** *Can view* or *Can edit*. Edit covers the content (a page's text and title, a task's page, a diagram), never task properties, comments, history restore or the assistant (`LINK_RULES` in `policy.ts`).
+- **Limit:** 3 links per account, one per item, made only by the space's owner; allocation locks the account row so parallel requests cannot pass it. At the limit the Share dialog lists current links with **Revoke and continue**.
+- **Address:** `/p/<token>` (random, 32 characters), served `noindex, nofollow` (`app/p/[token]/layout.tsx`). *New link* rotates it and turning it off ends it; the old address stops at once. Settings › Sharing › Public links shows how often each was opened.
+- **Visitors** without an account get a creature name and emoji from the browser's visitor id (`sharing/visitors.ts`), e.g. "Curious Otter 🦦", shown in avatars and diagram cursors. Signed-in people appear under their own name; the owner opening their own link is simply in their space.
+- **Visitors cannot** reach anything else in the space, see comments or who else has access, call a model, create diagrams, leave undo history, or show where else they are. On an edit link, `@ensemble`, `@ask Ensemble`, diagram requests and the mention menu's AI actions open `components/sharing/join-invitation.tsx` (sign up, sign in, or **Keep writing**, which keeps the text and starts no model request).
+- **Rate limits** per address: `ENSEMBLE_RATE_LINK_READ_LIMIT` (default 900 a minute) and `ENSEMBLE_RATE_LINK_WRITE_LIMIT` (default 120).
+- **Mechanics:** the page sends `x-ensemble-link` and `x-ensemble-visitor` (`setOpenLink` in `lib/api.ts`); `identify()` gives `access: { kind: "link" }` with a `visitor:…` id (never a users row) and the gate applies `linkDecision`.
+- **Routes:** `GET /api/links` (yours), `GET /api/links/item?kind=&resourceId=`, `POST /api/links` `{ kind, resourceId, role }` (on or change role; 409 `PUBLIC_LINK_LIMIT` past 3, 400 for other kinds), `DELETE /api/links/:id`, `POST /api/links/:id/rotate`, and `GET /api/links/open` for the link holder (404 once the item is deleted).
 
 ## 1. What can be shared
 
@@ -13,6 +63,8 @@ Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.
 | Roles | `viewer` (reads) or `editor` (reads and writes) | `view` or `edit`; `meeting`, `workspace` and `code` are always view-only (`VIEW_ONLY_KINDS` in `policy.ts`) |
 | Opens at | The space switcher, under **Shared with you** | `/shared/<shareId>`, only for its recipient |
 
+### Set your sharing limits
+
 Limits: contacts, people per space, people per Ensemble Node room and spaces are each account's own choice (`settings.sharing`, `accountLimits` in `lib/limits.ts`), set in Settings › Sharing › Limits or with `PUT /api/sharing/limits {contacts?, members?, roomPeople?, spaces?}`:
 
 | Setting | Default | Most an account may choose (`SHARING_CAPS`) |
@@ -22,68 +74,43 @@ Limits: contacts, people per space, people per Ensemble Node room and spaces are
 | `roomPeople` (people in an Ensemble Node room you make, you and open requests to join included) | 10 | 50 |
 | `spaces` (spaces you own, your account's own included; [28](28_ENSEMBLE_SPACES.md)) | 12 | 100 |
 
-A lower limit takes nobody and nothing away; it only stops new additions until fewer are in use. A space handed over counts against the receiver's own `spaces`. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+A lower limit takes nobody and nothing away; it only stops new additions until fewer are in use. A space handed over counts against the receiver's own `spaces`.
+
+The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+
+### What a share keeps private
 
 **Never shared**, even with a member: Today, metrics, settings, model keys, connected apps (connectors, MCP connections, imports), reminders, the terminal, editor tokens, paired computers, the kill switch, Trash, data deletion, page history and templates. Runs, Needs me, metrics and settings cannot be shared on their own.
 
-**Context is shared, the owner's inbox is not.** Members see the space's people, projects, repos, meeting notes, documents and work artifacts (files, pull requests, issues, commits, transcripts). Mail, chat and channel messages and calendar events synced by the owner's apps (`PRIVATE_ARTIFACT_KINDS` in `sharing/context.ts`), and connector sync state, are left out of every list, search, graph and assistant answer a member reaches. Tasks proposed from those messages stay visible. Members read Files → From your apps (`GET /api/artifacts`, `/api/artifacts/:id`); only the owner removes an item.
+**Context is shared, the owner's inbox is not.** Members see the space's people, projects, repos, meeting notes, documents and work artifacts (files, pull requests, issues, commits, transcripts).
+
+Mail, chat and channel messages and calendar events synced by the owner's apps (`PRIVATE_ARTIFACT_KINDS` in `sharing/context.ts`), and connector sync state, are left out of every list, search, graph and assistant answer a member reaches. Tasks proposed from those messages stay visible. Members read Files → From your apps (`GET /api/artifacts`, `/api/artifacts/:id`); only the owner removes an item.
 
 **Trash.** Items in Trash are unavailable to members, recipients and link visitors (`resourceTitle` in `sharing/store.ts` and `pages/store.ts` check `deletedAt`). Restore brings the item back with its shares and links.
 
-**Contacts.** Everyone you share with becomes a contact: 5 per account unless you choose otherwise, counted as unique people across all your spaces and items. One past the limit gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`). The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
+### Manage contacts
 
-**Ownership transfer** (`transferSpace`). The owner of a space they created (not their first space, which is their account) can hand it to one of its members, **once** per space (`space_transfers.space_id` is unique). The content moves. The old owner's connected apps, calendar links, model keys, devices, API tokens, settings, sync state and synced communications are removed, and the new owner's settings are copied in. Chats, comments and runs keep their author. Undo history and the space's item shares are deleted. The old owner stays as an editor; other members stay only if they are the new owner's contacts. Refused while an agent run is queued or active, when the new owner has the most spaces allowed, or has no contact slot for the old owner. Both accounts are locked while it runs.
+**Contacts.** Everyone you share with becomes a contact: 5 per account unless you choose otherwise, counted as unique people across all your spaces and items. One past the limit gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`).
 
-**Losing access is immediate** (`sharing/revoke.ts`): their event streams on the space close, an older ticket cannot open a new one, they leave the presence room, and runs they started there on their computer are cancelled. Their computer can no longer claim or report on those runs (`stillMember` in `devices/routes.ts`). A transfer closes every stream on the space so everyone reconnects with their new role.
+The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
 
-An open shared item notices at once: the closed stream (last frame `sharing.changed`), a refused ticket, or live steps answered 404 `SHARE_GONE` or 403 make `/shared/[id]` or `/p/[token]` re-check the share (`useShareLive`, `useRecheck` in `shared-viewer.tsx`). If it is gone, the item stays read-only under "‹owner› stopped sharing this with you…", the stream and heartbeat stop, and nothing more is saved. Unconfirmed typing stays in the editor with **Copy my text** (Markdown) and, when signed in, **Save as my own page** (`components/pages/kept-edits.tsx`).
+### Transfer a space
 
-## 2. How access works
+**Ownership transfer** (`transferSpace`). The owner of a space they created (not their first space, which is their account) can hand it to one of its members, **once** per space (`space_transfers.space_id` is unique). The content moves.
 
-A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scoped by its id. A member's or recipient's request runs **as the space** (`request.userId`), with `request.accountId` the person and `request.access` how they got in:
+The old owner's connected apps, calendar links, model keys, devices, API tokens, settings, sync state and synced communications are removed, and the new owner's settings are copied in. Chats, comments and runs keep their author. Undo history and the space's item shares are deleted. The old owner stays as an editor; other members stay only if they are the new owner's contacts.
 
-| `access.kind` | Set by | Meaning |
-|---|---|---|
-| `owner` | your own spaces (default) | No restriction |
-| `member` | the `ensemble_space` cookie naming a space in `space_members` for you | `role` viewer or editor |
-| `share` | `x-ensemble-share: <shareId>`, for a share whose recipient is you | One item, `role` view or edit |
-| `link` | `x-ensemble-link` and `x-ensemble-visitor` (§9) | One public item |
-| `gone` | a share header that is not yours or no longer exists; a node's request for a space its owner cannot open | 404 `SHARE_GONE` on every request |
+Refused while an agent run is queued or active, when the new owner has the most spaces allowed, or has no contact slot for the old owner. Both accounts are locked while it runs.
 
-`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers. A `bridge` or `full` key may name another space its own account owns (`x-ensemble-space`); a space shared with that account answers 403, because the bridge's routes are owner-only here and its reads and actions act as the space's owner ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
+### When access ends
 
-Hosted OAuth MCP uses the same owned-space boundary. A grant is linked to the authorizing account and default space; access and refresh check current ownership, so a transferred or deleted default space stops that connection. OAuth consent/connection routes (`/api/mcp-oauth/*`) are `personal`, not access to the viewed space, and require an actual browser session. Public discovery and OAuth protocol routes do not inherit a browser's sharing scope; they validate their own client/code proofs ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
+**Losing access is immediate** (`sharing/revoke.ts`): their event streams on the space close, an older ticket cannot open a new one, they leave the presence room, and runs they started there on their computer are cancelled.
 
-**An Ensemble Node acting for its owner** ([35 §5.4](35_ENSEMBLE_NODE.md#54-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id. It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space. It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it. Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
+Their computer can no longer claim or report on those runs (`stillMember` in `devices/routes.ts`). A transfer closes every stream on the space so everyone reconnects with their new role.
 
-`ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
+An open shared item notices at once: the closed stream (last frame `sharing.changed`), a refused ticket, or live steps answered 404 `SHARE_GONE` or 403 make `/shared/[id]` or `/p/[token]` re-check the share (`useShareLive`, `useRecheck` in `shared-viewer.tsx`).
 
-Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by `scopeHook` in `gate.ts`):
-
-- `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.
-- `actorFor(spaceId)`: the acting person when not the owner, stamped on undo entries, comments, assistant conversations, ledger entries (`payload.byAccountId`) and jobs (`runner_account_id`).
-- `nodeActingIn(spaceId)`: the node acting for the person, if any, stamped on ledger entries (`payload.byNodeId`) and undo entries (`source` `node:<id>`).
-- `madeBy(spaceId)`: "@node for person". Tasks keep `created_by_account_id` and `created_by_node_id`, pages `editor_node_id` next to `editor_account_id` (the last editor), and comments `author_node_id` next to `author_account_id`. The account is null when the space's owner acted themselves, as with `actorFor`. A run a node started is `node_runs` (node, its owner, the job).
-
-### The route policy
-
-`sharing/policy.ts` classes every route (first match wins); the `sharingGate` pre-handler (`gate.ts`) enforces it for non-owners. **Unlisted routes are owner-only.** `policy.test.ts` checks that every route in `apps/hub-api/scripts/route-inventory.json` has a class and every share rule names a real route.
-
-| Class | Member | Examples |
-|---|---|---|
-| `shared` | viewers GET only, editors anything | tasks, pages, custom boards and board membership, comments, projects, deliverables, diagrams, plots, skills, documents, meeting sessions, undo/redo, people; GET of repos, context, artifacts, runs, workspace and `/api/desk/live` (without reminders or inbox) |
-| `personal` | runs on their own account | settings, model keys, models, secrets, notifications, metrics, activity, device list, rename and pairing, Code tab and terminal on their own computer, Ensemble Node (`/api/node/*`: its own room membership and visibility decide what each person reads, [35](35_ENSEMBLE_NODE.md#3-rooms-messages-and-visibility)) |
-| `assistant` | own keys; viewers cannot apply writes, and can start, stop and delete their own chats | `/api/assistant/*`, `/api/ask`, `/api/ensemble/invoke`, inline @ensemble, meeting summaries |
-| `runner` | editors; the handler limits it to the runner | assign, stop, retry, answering a run's question, `POST /api/runs/:id/feedback` |
-| `prefs` | the handler decides per key | §3 |
-| `self`, `live`, `open` | always | auth, spaces, sharing, links, events, presence, catalogues, health |
-| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/today`, `/api/routines*`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
-
-Notes: `POST /api/pages/delete-many` (shared) checks every id, keeps descendants in the same space and records one Undo entry. `POST /api/skills/:id/test` (shared) runs with the acting person's credentials. Run feedback starts a follow-up only for the run's runner and repeats the assignment checks.
-
-**Single items** use `SHARE_RULES`: each kind lists its routes and which param, query or body field must be the item's id; `personal`, `self`, `live` and `open` routes stay allowed. `gate.ts` also lets a shared page or task (and a public link to one) read files its current content mentions or embeds, file cards and images alike (`/api/documents/:id`, `/original`, `/text`), and a shared plot space read the datasets its tiles use.
-
-A computer downloads a run's attachments (`GET /api/devices/self/jobs/:id/attachments/:fileId`) only with the job's live lease (`x-ensemble-job-lease`), on its assigned device, while the runner is still a member.
+If it is gone, the item stays read-only under "‹owner› stopped sharing this with you…", the stream and heartbeat stop, and nothing more is saved. Unconfirmed typing stays in the editor with **Copy my text** (Markdown) and, when signed in, **Save as my own page** (`components/pages/kept-edits.tsx`).
 
 ## 3. What stays private, and how
 
@@ -113,13 +140,27 @@ A member who assigns a task to the agent runs it **on their own computer**:
 
 ### Tasks with a person
 
-In a space with members, a task owned by `me` can be with one person, the owner or a member, chosen in the task page's Owner menu. The request sends `assignee` (an account id), stored in `tasks.assignee_account_id`, null for the owner (`resolveAssignee` in `services/tasks.ts`); anyone else gets 400. `owner: "me"` without an assignee means the acting person. Handing the task to the agent or unassigning it clears the person. Board cards show **Me**, **Agent** or the other person's initials, relative to the viewer.
+In a space with members, a task owned by `me` can be with one person, the owner or a member, chosen in the task page's Owner menu. The request sends `assignee` (an account id), stored in `tasks.assignee_account_id`, null for the owner (`resolveAssignee` in `services/tasks.ts`); anyone else gets 400. `owner: "me"` without an assignee means the acting person.
+
+Handing the task to the agent or unassigning it clears the person. Board cards show **Me**, **Agent** or the other person's initials, relative to the viewer.
 
 ## 5. Live presence
 
-`POST`/`GET /api/presence` keep an in-memory room per space (`sharing/presence.ts`, one API process). Each tab posts a heartbeat every 10 s (`components/sharing/presence-host.tsx`), on route changes, and while typing, moving on a diagram, moving the caret or scrolling a page someone else has open. Posts carry a rising `seq`, so a late request never undoes a newer one; posts closer than 40 ms are merged, never dropped. A sweep every 5 s drops a tab not heard from for 30 s (150 s for a background tab, whose timers the browser slows) and tells the room it left; closing or hiding a tab sends `leave` or `away` at once. Joins, moves and leaves reach everyone on the item, link visitors included, through the event stream within about a second, so nobody needs to reload to see who is here. Each person keeps a colour; when two people in a room would share one, the second takes a free spare. Presence runs only when the space has collaborators or is shared with you. Single-item and link visitors report only their item, never a route, and see only people on it; each entry carries the person's role there (owner, can edit, can view).
+`POST`/`GET /api/presence` keep an in-memory room per space (`sharing/presence.ts`, one API process). Each tab posts a heartbeat every 10 s (`components/sharing/presence-host.tsx`), on route changes, and while typing, moving on a diagram, moving the caret or scrolling a page someone else has open.
 
-**Who is here.** Page, task and link-page headers show an avatar stack (`components/sharing/page-people.tsx`): rings in each person's caret colour, a live dot while they type, "+N" past four, and a tooltip with name and what they are doing. Anonymous link visitors appear as a stable "Guest" name. Clicking the stack lists everyone here with their role and where they are, with **Go to** and **Follow**.
+Posts carry a rising `seq`, so a late request never undoes a newer one; posts closer than 40 ms are merged, never dropped. A sweep every 5 s drops a tab not heard from for 30 s (150 s for a background tab, whose timers the browser slows) and tells the room it left; closing or hiding a tab sends `leave` or `away` at once.
+
+Joins, moves and leaves reach everyone on the item, link visitors included, through the event stream within about a second, so nobody needs to reload to see who is here. Each person keeps a colour; when two people in a room would share one, the second takes a free spare. Presence runs only when the space has collaborators or is shared with you.
+
+Single-item and link visitors report only their item, never a route, and see only people on it; each entry carries the person's role there (owner, can edit, can view).
+
+### See who is on the page
+
+**Who is here.** Page, task and link-page headers show an avatar stack (`components/sharing/page-people.tsx`): rings in each person's caret colour, a live dot while they type, "+N" past four, and a tooltip with name and what they are doing. Anonymous link visitors appear as a stable "Guest" name.
+
+Clicking the stack lists everyone here with their role and where they are, with **Go to** and **Follow**.
+
+### Follow someone’s view
 
 **Following.** **Follow** keeps your view on that person's caret, selection and scroll (`followStore` in `lib/presence.ts`, `components/editor/remote-carets.tsx`). A banner in their colour says "Following ‹name›" with **Stop**; Esc, your own scroll or click stops it; when they leave, following ends with a toast. It works for link visitors too.
 
@@ -133,7 +174,7 @@ In a space with members, a task owned by `me` can be with one person, the owner 
 
 ### 5.1 Pages edited live
 
-Everyone on a page or task page edits one live document: ProseMirror's central-authority model, with `prosemirror-collab` in the editor (`components/editor/collab.ts`, `components/pages/use-collab.ts`) and one in-memory authority per open page in the API process (`apps/hub-api/src/pages/collab.ts`, `collab-core.ts`) that numbers every step (`version`).
+Open the same page or task page to write together. Everyone edits one live document. Each person’s text is preserved when edits arrive together, and Undo removes only your own typing. Wait for **All changes saved** before relying on the stored copy.
 
 - **Concurrent typing.** Steps sent after someone else's get 409 `COLLAB_BEHIND` with the missed steps; the editor rebases and resends, so two people typing at one spot both keep their text, never interleaved. Every step reaches every editor as a `page.steps` event. Undo takes back only your own typing; two tabs are two editors.
 - **Identity.** Join issues a client id starting with the account id, plus a token (an HMAC keyed at API start) only that join's answer carries. Steps with another account's id or a wrong token get 410 `COLLAB_REJOIN`; the editor rejoins and resends (also when a signed-in session expires on a public link and the person goes on as visitor).
@@ -159,9 +200,17 @@ Everyone on a page or task page edits one live document: ProseMirror's central-a
 | 400 `COLLAB_REJECTED` | U+0000 or a lone surrogate (half an emoji) in parsed text or attribute values; an unknown mention kind; blocks nested over 48 deep; a `data:` image over 2 MiB the page did not already hold ([32 §6](32_FILES.md#images-in-pages)) |
 | 413 `COLLAB_TOO_LARGE` | a step over 1 MB; over 1,000 steps; growing the page past 4,200,000 positions or 8,000,000 characters of JSON (at least what a 4 MiB page save holds) |
 
-Only growth past a limit is refused, so an oversized page can still be shortened. A refusal names the step (`step`): if no other steps arrived since, the editor drops it, moves later typing past it (`without`), sends the rest and says what was removed; otherwise it asks again. A body-limit 413 counts the same for one step; with several, the editor then sends one step per request. Pasted and dropped text loses U+0000 and lone surrogates first (`storableText`); whole-page saves store well-formed text (`storable` in `pages/content.ts`: U+0000 dropped, lone surrogates as U+FFFD).
+Only growth past a limit is refused, so an oversized page can still be shortened. A refusal names the step (`step`): if no other steps arrived since, the editor drops it, moves later typing past it (`without`), sends the rest and says what was removed; otherwise it asks again. A body-limit 413 counts the same for one step; with several, the editor then sends one step per request.
 
-**Writes from elsewhere** (assistant page tools, agent output, whole-page `PUT`, undo, attaching a file) publish `page`, `task` or `undo.changed`; the authority re-reads the stored copy (again after 0.3 s and 2 s when a `page` event changed nothing yet, since the assistant publishes before committing). An unwritten task page follows the task's notes. A changed copy enters as server steps, the diff from the copy last written (`page-diff.ts`, identical in hub-web and hub-api per `components/editor/page-diff.test.ts`), moved over newer typing; if that would not fit or would delete new typing, it is three-way merged (`mergeDocs` in `packages/shared-types/src/page-merge.ts`: by block, then word; both versions stay where both rewrote the same words). Write-backs re-read under their lock, so they never overwrite such writes. Undo of page content locks the row and bumps its revision.
+Pasted and dropped text loses U+0000 and lone surrogates first (`storableText`); whole-page saves store well-formed text (`storable` in `pages/content.ts`: U+0000 dropped, lone surrogates as U+FFFD).
+
+**Writes from elsewhere** (assistant page tools, agent output, whole-page `PUT`, undo, attaching a file) publish `page`, `task` or `undo.changed`; the authority re-reads the stored copy (again after 0.3 s and 2 s when a `page` event changed nothing yet, since the assistant publishes before committing).
+
+An unwritten task page follows the task's notes. A changed copy enters as server steps, the diff from the copy last written (`page-diff.ts`, identical in hub-web and hub-api per `components/editor/page-diff.test.ts`), moved over newer typing; if that would not fit or would delete new typing, it is three-way merged (`mergeDocs` in `packages/shared-types/src/page-merge.ts`: by block, then word; both versions stay where both rewrote the same words).
+
+Write-backs re-read under their lock, so they never overwrite such writes. Undo of page content locks the row and bumps its revision.
+
+#### Keep typing while offline
 
 **Offline and drafts.**
 
@@ -170,21 +219,116 @@ Only growth past a limit is refused, so an oversized page can still be shortened
 - Only the same account takes a draft over, and only from an editor that is gone; open or sending editors in any tab keep theirs (Web Locks by client id, `CollabTab`). A closing page keeps sending and flushes; reopening it in that tab waits up to 10 s. Applied drafts are noted in `localStorage` (`ensemble.draft-applied:<client id>`, 30 days) so a duplicated tab never applies one twice. A toast says when typing was put back.
 - Closing the tab or browser with unstored typing asks first (`beforeunload`); a reload keeps the draft. The desktop app's window close does not ask.
 
+#### Recover after a restart
+
 **Restarts.**
 
 - An API restart starts live pages over (410 `COLLAB_RESET`, new `epoch`). The editor fetches the stored copy and its writer (`GET …/collab?start=1`; columns `collab_epoch`, `collab_version`, `collab_revision`, migration `20261016120000_collab_marker`) and resends exactly its own steps after that version, over what others resent first. If something else wrote the copy since, the union merge (`mergeDocs` with `union: true`, used only here) adds your typing once where the server has the same words or blocks, else keeps it whole beside theirs (theirs first, a space between), never paired word by word; deletions stay deleted.
 - On the same server (behind its log, or asked to rejoin) nothing is merged by words: if the log has the steps since your version, they show which of yours it took (under any of your ids) and the rest are rebased; otherwise unconfirmed steps move over the diff to its current document (`carryOver`), and only a step that no longer fits uses the three-way merge. Same-server drafts are put back the same way. A page that closed while its last request met a restart releases its draft for the next open.
 - After a crash, typing confirmed but not written back is resent by open editors or from the tab's draft on next open; a tab closed meanwhile cannot.
 
+#### Delete or restore a page being edited
+
 **Trash, delete, convert.** Deleting, trashing or converting a page writes back live typing first. A page trashed another way (the assistant) still gets it, keeping the page's time so Undo of the delete works. Editors then get 404 `PAGE_IN_TRASH` and keep their draft until Restore; trashed pages are not joined. If joining fails for 10 s (a deploy), the page offers Reload.
+
+#### Who can edit live
 
 **Who may.** Joining needs view access and sending needs edit access, as for reading and saving the page; share, board and link rules list the collab routes. A view-only link follows along; an edit link types live, sending about once a second to stay under the link write limit (§9). A removed share refuses steps at once (404 `SHARE_GONE`; §1).
 
-**Tests.** `components/editor/collab.test.ts` runs three real block editors against the hub-api authority with random network delays (concurrent typing and Undo, offline, restarts, crashes, outside writes, expired sessions, drafts, duplicated tabs, refusals, limits, Trash, carets) and requires identical editors and stored page with every word once. Also `components/pages/use-collab.test.tsx`, `page-diff.test.ts`, `packages/shared-types/src/page-merge.test.ts`, and hub-api `src/pages/collab.test.ts` and `collab.integration.test.ts`.
+**Tests.** `components/editor/collab.test.ts` runs three real block editors against the hub-api authority with random network delays (concurrent typing and Undo, offline, restarts, crashes, outside writes, expired sessions, drafts, duplicated tabs, refusals, limits, Trash, carets) and requires identical editors and stored page with every word once.
 
-Meeting notes are not live: whole-document saves carry the copy edited as `_base`. Disjoint fields merge; overlapping saves keep both values and ask which to save (`components/meetings/notes-fields.tsx`, [02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Account place leases are independent of shared-space presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
+Also `components/pages/use-collab.test.tsx`, `page-diff.test.ts`, `packages/shared-types/src/page-merge.test.ts`, and hub-api `src/pages/collab.test.ts` and `collab.integration.test.ts`.
 
-## 6. Routes
+Meeting notes are not live: whole-document saves carry the copy edited as `_base`. Disjoint fields merge; overlapping saves keep both values and ask which to save (`components/meetings/notes-fields.tsx`, [02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+
+Account place leases are independent of shared-space presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
+
+## 10. Avatars
+
+Settings › Account › Avatar offers the same twelve circular dot characters to every profession and gender: five human gestures, three abstract humanoids, and an elephant, dog, cat and bird. Color selects one of six three-ink palettes; Scenery selects Hills, Grove, Garden, Valley or Plain.
+
+The characters use an 8×8 lattice of small circular pixels, with one accent dot and preserved silhouette gaps; the muted scenery uses 12×12 square cells and is clipped to the avatar circle. Character choices display only the artwork, without names or inspiration hints; assistive labels use neutral numbers such as “Avatar 1”. Character and palette groups support arrow keys, Home and End.
+
+Changes save automatically; a failed save restores the current selection and reports the error in the card. Initials remain an explicit option (§5).
+
+Selections are `dots.character.palette.scenery`, stored on `users.avatar` and saved with `PATCH /api/auth/me { avatar }` (`packages/shared-types/src/avatars.ts`, `components/settings/avatar-picker.tsx`). `components/avatars/persona.tsx` is the circular renderer used by the account menu and shared people/avatar components, including presence, sharing, contacts, comments and board cards.
+
+The account's owned spaces mirror its avatar. Signup and OAuth accounts receive an initial pixel selection without using profession or gender. The `20261112190000_pixel_avatars` migration assigns the collection to existing accounts and removes stored portrait selections while preserving valid dot selections.
+
+Legacy ids from a cached client are accepted and saved in the dot format; no portrait artwork is rendered.
+
+## 11. Not supported
+
+- The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not work in a space shared with you: tokens and service calls act as the owner of a space their account owns, and a key naming a shared space is refused.
+- Answering a run's question from a phone works only in your own spaces.
+- Live editing of meeting notes, and live pages across more than one API process.
+
+## In the code
+
+Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.test.ts`, `links.integration.test.ts`). Hub: `components/sharing/`, `app/(hub)/shared`, `app/(hub)/shared-by-me`, `app/shared/[id]`, `app/p/[token]`, `components/settings/tab-sharing.tsx`.
+
+Live pages use ProseMirror’s central-authority model with `prosemirror-collab` in `components/editor/collab.ts` and `components/pages/use-collab.ts`. `apps/hub-api/src/pages/collab.ts` and `collab-core.ts` keep one in-memory authority per open page in the API process and number its steps with `version`. `share-dialog.tsx` renders sharing and `RoleSelect` provides the role menus.
+
+### 2. How access works
+
+A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scoped by its id. A member's or recipient's request runs **as the space** (`request.userId`), with `request.accountId` the person and `request.access` how they got in:
+
+| `access.kind` | Set by | Meaning |
+|---|---|---|
+| `owner` | your own spaces (default) | No restriction |
+| `member` | the `ensemble_space` cookie naming a space in `space_members` for you | `role` viewer or editor |
+| `share` | `x-ensemble-share: <shareId>`, for a share whose recipient is you | One item, `role` view or edit |
+| `link` | `x-ensemble-link` and `x-ensemble-visitor` (§9) | One public item |
+| `gone` | a share header that is not yours or no longer exists; a node's request for a space its owner cannot open | 404 `SHARE_GONE` on every request |
+
+`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie.
+
+Tokens, CLI keys and service calls never read the cookie or these headers. A `bridge` or `full` key may name another space its own account owns (`x-ensemble-space`); a space shared with that account answers 403, because the bridge's routes are owner-only here and its reads and actions act as the space's owner ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
+
+Hosted OAuth MCP uses the same owned-space boundary. A grant is linked to the authorizing account and default space; access and refresh check current ownership, so a transferred or deleted default space stops that connection. OAuth consent/connection routes (`/api/mcp-oauth/*`) are `personal`, not access to the viewed space, and require an actual browser session.
+
+Public discovery and OAuth protocol routes do not inherit a browser's sharing scope; they validate their own client/code proofs ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
+
+**An Ensemble Node acting for its owner** ([35 §5.4](35_ENSEMBLE_NODE.md#54-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id.
+
+It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space.
+
+It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it.
+
+Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
+
+`ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
+
+Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by `scopeHook` in `gate.ts`):
+
+- `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.
+- `actorFor(spaceId)`: the acting person when not the owner, stamped on undo entries, comments, assistant conversations, ledger entries (`payload.byAccountId`) and jobs (`runner_account_id`).
+- `nodeActingIn(spaceId)`: the node acting for the person, if any, stamped on ledger entries (`payload.byNodeId`) and undo entries (`source` `node:<id>`).
+- `madeBy(spaceId)`: "@node for person". Tasks keep `created_by_account_id` and `created_by_node_id`, pages `editor_node_id` next to `editor_account_id` (the last editor), and comments `author_node_id` next to `author_account_id`. The account is null when the space's owner acted themselves, as with `actorFor`. A run a node started is `node_runs` (node, its owner, the job).
+
+#### The route policy
+
+`sharing/policy.ts` classes every route (first match wins); the `sharingGate` pre-handler (`gate.ts`) enforces it for non-owners. **Unlisted routes are owner-only.** `policy.test.ts` checks that every route in `apps/hub-api/scripts/route-inventory.json` has a class and every share rule names a real route.
+
+| Class | Member | Examples |
+|---|---|---|
+| `shared` | viewers GET only, editors anything | tasks, pages, custom boards and board membership, comments, projects, deliverables, diagrams, plots, skills, documents, meeting sessions, undo/redo, people; GET of repos, context, artifacts, runs, workspace and `/api/desk/live` (without reminders or inbox) |
+| `personal` | runs on their own account | settings, model keys, models, secrets, notifications, metrics, activity, device list, rename and pairing, Code tab and terminal on their own computer, Ensemble Node (`/api/node/*`: its own room membership and visibility decide what each person reads, [35](35_ENSEMBLE_NODE.md#3-rooms-messages-and-visibility)) |
+| `assistant` | own keys; viewers cannot apply writes, and can start, stop and delete their own chats | `/api/assistant/*`, `/api/ask`, `/api/ensemble/invoke`, inline @ensemble, meeting summaries |
+| `runner` | editors; the handler limits it to the runner | assign, stop, retry, answering a run's question, `POST /api/runs/:id/feedback` |
+| `prefs` | the handler decides per key | §3 |
+| `self`, `live`, `open` | always | auth, spaces, sharing, links, events, presence, catalogues, health |
+| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/today`, `/api/routines*`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
+
+Notes: `POST /api/pages/delete-many` (shared) checks every id, keeps descendants in the same space and records one Undo entry. `POST /api/skills/:id/test` (shared) runs with the acting person's credentials. Run feedback starts a follow-up only for the run's runner and repeats the assignment checks.
+
+**Single items** use `SHARE_RULES`: each kind lists its routes and which param, query or body field must be the item's id; `personal`, `self`, `live` and `open` routes stay allowed.
+
+`gate.ts` also lets a shared page or task (and a public link to one) read files its current content mentions or embeds, file cards and images alike (`/api/documents/:id`, `/original`, `/text`), and a shared plot space read the datasets its tiles use.
+
+A computer downloads a run's attachments (`GET /api/devices/self/jobs/:id/attachments/:fileId`) only with the job's live lease (`x-ensemble-job-lease`), on its assigned device, while the runner is still a member.
+
+### 6. Routes
 
 Sharing and link management need a browser session (`browserOnly` in `sharing/routes.ts`); tokens and internal calls get 403. `/api/presence` and `/api/links/open` do not.
 
@@ -216,44 +360,12 @@ Adding someone sends a notification and a live `sharing.changed` frame. Removing
 | `GET ?epoch=&version=` | `{ epoch, from, version, steps, clientIDs, saved }` since that version |
 | `POST { epoch, version, clientID, token, steps, flush? }` | Body up to 8 MiB. Returns the steps from `version` on, yours included, and `saved` (plus `revision` after `flush: true`, which writes the page back first). `clientID` must be `<your account id>/…` as join issued it, with its `token` |
 
-Errors: 409 `COLLAB_BEHIND` (with the missed steps), 410 `COLLAB_RESET` (reload), 410 `COLLAB_REJOIN` (join again), 400 `COLLAB_REJECTED` and 413 `COLLAB_TOO_LARGE` (with `step` when one step is to blame), 503 `COLLAB_UNSAVED`, 404 `PAGE_IN_TRASH`. The stream event `page.steps` is `{ kind, id, taskId?, epoch, from, version, steps, clientIDs, saved }`; page and task shares, the board share and public links receive it for their item (`shareSees` in `lib/sse.ts`).
+Errors: 409 `COLLAB_BEHIND` (with the missed steps), 410 `COLLAB_RESET` (reload), 410 `COLLAB_REJOIN` (join again), 400 `COLLAB_REJECTED` and 413 `COLLAB_TOO_LARGE` (with `step` when one step is to blame), 503 `COLLAB_UNSAVED`, 404 `PAGE_IN_TRASH`.
 
-## 7. The Hub
+The stream event `page.steps` is `{ kind, id, taskId?, epoch, from, version, steps, clientIDs, saved }`; page and task shares, the board share and public links receive it for their item (`shareSees` in `lib/sse.ts`).
 
-- **Share** buttons on pages, tasks, diagrams, plot spaces, skills, meeting notes, the board, the workspace tab and Code (in a task peek's header next to close; top right on full pages). A space is shared from the space switcher (**Share ‹space›…**) and Settings › Sharing. The dialog (`share-dialog.tsx`) searches people as you type, sets roles, lists who has access with each person's link, shows the "1 of 2 members" and "3 of 5 contacts" meters, and says what stays private. Role menus have accessible names ("Access for ‹name›", "Who can open it", "What anyone with the link can do"; `RoleSelect`).
-- **Space switcher**: a **Shared with you** section with owner avatars; the open shared space reads "‹name› (shared)", and the top bar says "Shared by Mira Chen · Can edit" in text (`SharedBadge`).
-- **In a space shared with you**: no Today, Metrics, Fetch now, personal-desk layout editing, kill switch, Connections or Data settings; the board is home. Viewers get read-only pages, tasks, diagrams and plots. Settings acts on your own account and says so.
+### 8. Data
 
-Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space content: viewers may read them; editors may create boards, manage columns/tiles and move pages. They have no individual-board share link. Sharing a page or task does not expose its board directory or allow membership changes. The `board` item-share kind grants task access, not access to custom boards or their standalone pages; organizing a task on a custom board does not revoke its existing task-access grants.
-- **`/shared`**: everything shared with you, with a "New" mark until opened, live page and task titles, first-line previews and share dates (`sharing/previews.ts`, batched). The sidebar link appears when there is something.
-- **`/shared-by-me`**: searchable items and spaces grouped by person with Remove / Remove access, then public links with Turn off; each asks for confirmation. Settings and the limit dialogs link here.
-- **`/shared/[id]`** (outside the Hub shell): the item alone in its usual editor with a `shared` role, a header of who is on it and "Shared by ‹full name› · can edit". Every request carries the share header (`setOpenShare` in `lib/api.ts`), with its own share-scoped event stream; after a reconnect it reloads everything. Page and task editors keep the share they opened under (`withShare`) so the last save on leaving goes to the right place. An address that opens nothing says "Nothing is shared at this link" (or "This was shared with someone else" for another account's share).
-- **Settings › Sharing**: contacts (5 slots unless you choose otherwise), **Limits** (contacts and people per space, up to the caps), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
+Migration `20261008160000_sharing`: tables `contacts`, `space_members`, `shares`, `space_transfers`; columns `workspace_jobs.runner_account_id`, `assistant_conversations.account_id`, `undo_entries.actor_account_id`, `page_discussions.author_account_id`. Migration `20261008190000_public_links_avatars`: `public_links`, `users.avatar`.
 
-## 8. Data
-
-Migration `20261008160000_sharing`: tables `contacts`, `space_members`, `shares`, `space_transfers`; columns `workspace_jobs.runner_account_id`, `assistant_conversations.account_id`, `undo_entries.actor_account_id`, `page_discussions.author_account_id`. Migration `20261008190000_public_links_avatars`: `public_links`, `users.avatar`. Foreign keys to `users` cascade, so deleting an account or space removes its memberships, shares and contacts. The data export includes contacts, memberships and shares.
-
-## 9. Anyone with the link
-
-- **Kinds:** pages, tasks, diagrams and meeting notes (`PUBLIC_KINDS` in `sharing/context.ts`); meeting notes are view only. Never a space, the board, plots, skills, the workspace, code or runs.
-- **Roles:** *Can view* or *Can edit*. Edit covers the content (a page's text and title, a task's page, a diagram), never task properties, comments, history restore or the assistant (`LINK_RULES` in `policy.ts`).
-- **Limit:** 3 links per account, one per item, made only by the space's owner; allocation locks the account row so parallel requests cannot pass it. At the limit the Share dialog lists current links with **Revoke and continue**.
-- **Address:** `/p/<token>` (random, 32 characters), served `noindex, nofollow` (`app/p/[token]/layout.tsx`). *New link* rotates it and turning it off ends it; the old address stops at once. Settings › Sharing › Public links shows how often each was opened.
-- **Visitors** without an account get a creature name and emoji from the browser's visitor id (`sharing/visitors.ts`), e.g. "Curious Otter 🦦", shown in avatars and diagram cursors. Signed-in people appear under their own name; the owner opening their own link is simply in their space.
-- **Visitors cannot** reach anything else in the space, see comments or who else has access, call a model, create diagrams, leave undo history, or show where else they are. On an edit link, `@ensemble`, `@ask Ensemble`, diagram requests and the mention menu's AI actions open `components/sharing/join-invitation.tsx` (sign up, sign in, or **Keep writing**, which keeps the text and starts no model request).
-- **Rate limits** per address: `ENSEMBLE_RATE_LINK_READ_LIMIT` (default 900 a minute) and `ENSEMBLE_RATE_LINK_WRITE_LIMIT` (default 120).
-- **Mechanics:** the page sends `x-ensemble-link` and `x-ensemble-visitor` (`setOpenLink` in `lib/api.ts`); `identify()` gives `access: { kind: "link" }` with a `visitor:…` id (never a users row) and the gate applies `linkDecision`.
-- **Routes:** `GET /api/links` (yours), `GET /api/links/item?kind=&resourceId=`, `POST /api/links` `{ kind, resourceId, role }` (on or change role; 409 `PUBLIC_LINK_LIMIT` past 3, 400 for other kinds), `DELETE /api/links/:id`, `POST /api/links/:id/rotate`, and `GET /api/links/open` for the link holder (404 once the item is deleted).
-
-## 10. Avatars
-
-Settings › Account › Avatar offers the same twelve circular dot characters to every profession and gender: five human gestures, three abstract humanoids, and an elephant, dog, cat and bird. Color selects one of six three-ink palettes; Scenery selects Hills, Grove, Garden, Valley or Plain. The characters use an 8×8 lattice of small circular pixels, with one accent dot and preserved silhouette gaps; the muted scenery uses 12×12 square cells and is clipped to the avatar circle. Character choices display only the artwork, without names or inspiration hints; assistive labels use neutral numbers such as “Avatar 1”. Character and palette groups support arrow keys, Home and End. Changes save automatically; a failed save restores the current selection and reports the error in the card. Initials remain an explicit option (§5).
-
-Selections are `dots.character.palette.scenery`, stored on `users.avatar` and saved with `PATCH /api/auth/me { avatar }` (`packages/shared-types/src/avatars.ts`, `components/settings/avatar-picker.tsx`). `components/avatars/persona.tsx` is the circular renderer used by the account menu and shared people/avatar components, including presence, sharing, contacts, comments and board cards. The account's owned spaces mirror its avatar. Signup and OAuth accounts receive an initial pixel selection without using profession or gender. The `20261112190000_pixel_avatars` migration assigns the collection to existing accounts and removes stored portrait selections while preserving valid dot selections. Legacy ids from a cached client are accepted and saved in the dot format; no portrait artwork is rendered.
-
-## 11. Not supported
-
-- The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not work in a space shared with you: tokens and service calls act as the owner of a space their account owns, and a key naming a shared space is refused.
-- Answering a run's question from a phone works only in your own spaces.
-- Live editing of meeting notes, and live pages across more than one API process.
+Foreign keys to `users` cascade, so deleting an account or space removes its memberships, shares and contacts. The data export includes contacts, memberships and shares.

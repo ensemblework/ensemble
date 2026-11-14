@@ -1,10 +1,10 @@
 # 27 · Imports from other apps
 
-Ensemble imports work from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub Issues and any spreadsheet: titles, due dates, labels and tags, status, priority, assignees, descriptions, page content and projects. Running an import again updates what came over instead of adding copies, and **Undo this import** removes what an import added.
+Bring existing tasks and pages into Ensemble from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub Issues or a spreadsheet. Imports carry titles, due dates, labels and tags, status, priority, assignees, descriptions, page content and projects.
+
+Review a sample before starting. Repeating an import updates the existing items instead of adding copies. **Undo this import** removes what that import added.
 
 Meetings come in elsewhere: Meeting notes → **Import** brings a transcript file or paste (Teams, Zoom, Google Meet, Otter, Fireflies, tl;dv, captions), one meeting from Teams, Google Meet or Zoom, or recent notes from Granola, Fireflies.ai, Fathom, tl;dv, Krisp, Jamie and Otter.ai, each as a meeting note with its event, people, transcript and action items ([03 §2.3–2.4](03_MODULE_CONTEXT_ENGINE.md#24-meeting-transcripts-files-pastes-teams-google-meet-and-zoom), [02](02_MODULE_INTERACTION_HUB_UI.md#manual-and-imported-meeting-notes)).
-
-Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/routes/imports.ts` (API), `apps/hub-web/components/imports/` (dialog, summary, recent list), `apps/hub-web/lib/api-imports.ts` (client). Labels on tasks: `packages/shared-types/src/domain.ts` (`TaskLabels`), `apps/hub-api/src/services/tasks.ts`, `apps/hub-web/components/task/labels.tsx`. No test calls a real vendor API.
 
 ## 1. How it works
 
@@ -17,20 +17,105 @@ Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/rout
 
 ## 2. What each app brings
 
-| App | Connect | File export | Becomes | Fields |
-|---|---|---|---|---|
-| Notion | Connected account or internal integration secret (share the pages with the integration) | Markdown & CSV zip, or a database CSV | Databases → ordinary tables in pages; rows → linked child pages; nested pages → nested Ensemble pages | Every table column and value, with property types from the API. Rich text marks, nested lists, checklists, code, quotes/callouts, collapsible blocks, tables, dividers and linked child pages become native page blocks. API images stay images; other media stay source links. No database, board or alternative-view feature is created |
-| Linear | Connected account or personal API key | CSV | Issues → tasks; project → project | Title, description (Markdown), status name and state type, priority, labels, cycle as a label, assignee, due date, link; sub-issues note their parent. Containers: "Issues assigned to me" and each team |
-| Jira Cloud | Connected account (OAuth or email + API token) or email + API token + site | CSV (all fields) | Issues → tasks; Jira project → project | Summary, description (Atlassian Document Format → Markdown), due date, labels, issue type (except Task/Sub-task) as a label, status and status category, priority, assignee, parent/epic noted in the description. Containers: "Issues assigned to me" and each project, with approximate counts |
-| Trello | Connected account or API key + token | Board JSON export | Boards → projects, cards → tasks | Name, description, due and start, "due complete" → done, labels (name, or colour when unnamed), members, list name → status (Done list → done), checklists → a to-do list on the task page. Archived cards and lists are skipped |
-| Asana | Connected account or personal access token | Project CSV | Projects → projects, tasks → tasks | Name, notes, due date or time, start date, completed, tags, assignee, section → status, subtask parent noted. Containers: each project and "My tasks" per workspace |
-| Todoist | Connected account or API token | Project template CSV | Projects → projects, tasks → tasks | Content, description, deadline (else the due date) as due, recurring rule noted, priority (API 4 / CSV 1 = urgent), labels, section as a label, assignee in shared projects, completed tasks from the last 90 days |
-| ClickUp | Connected account or personal token | CSV export | Lists → projects, tasks → tasks | Name, Markdown description, status and status type, priority, tags, assignees, due and start dates, closed date |
-| monday.com | Connected account or personal API token | None | Boards → projects, items → tasks | Name, status column, a status column named Priority, date or timeline column, tags, people, a checkbox named Done, first long-text column as description, group as a label |
-| GitHub Issues | Connected account or fine-grained token with Issues read | None | Repositories → projects, issues → tasks (pull requests skipped) | Title, body, open/closed (closed as not planned → dropped), labels, milestone as a label and its due date as due, assignees. Containers: "Issues assigned to me" and each repository |
-| CSV or TSV | None | Any spreadsheet | Rows → tasks (or pages) | Column mapping (§3) |
+### Notion
 
-Vendor APIs (`src/imports/api/`): Notion `2026-03-11` (databases read through their data sources, `POST /v1/data_sources/{id}/query`; an AI meeting-notes block's summary, notes and transcript are read from the blocks it points to, each under its own heading), Jira `POST /rest/api/3/search/jql` with `nextPageToken`, Todoist unified API v1 (`https://api.todoist.com/api/v1`), monday.com GraphQL `API-Version: 2026-07`, GitHub `X-GitHub-Api-Version: 2022-11-28`, Linear GraphQL, Asana 1.0, Trello 1, ClickUp v2.
+**Connect.** Connected account or internal integration secret (share the pages with the integration)
+
+**File export.** Markdown & CSV zip, or a database CSV
+
+**Becomes.** Databases → ordinary tables in pages; rows → linked child pages; nested pages → nested Ensemble pages
+
+**Fields.** Every table column and value, with property types from the API. Rich text marks, nested lists, checklists, code, quotes/callouts, collapsible blocks, tables, dividers and linked child pages become native page blocks. API images stay images; other media stay source links. No database, board or alternative-view feature is created
+
+### Linear
+
+**Connect.** Connected account or personal API key
+
+**File export.** CSV
+
+**Becomes.** Issues → tasks; project → project
+
+**Fields.** Title, description (Markdown), status name and state type, priority, labels, cycle as a label, assignee, due date, link; sub-issues note their parent. Containers: "Issues assigned to me" and each team
+
+### Jira Cloud
+
+**Connect.** Connected account (OAuth or email + API token) or email + API token + site
+
+**File export.** CSV (all fields)
+
+**Becomes.** Issues → tasks; Jira project → project
+
+**Fields.** Summary, description (Atlassian Document Format → Markdown), due date, labels, issue type (except Task/Sub-task) as a label, status and status category, priority, assignee, parent/epic noted in the description. Containers: "Issues assigned to me" and each project, with approximate counts
+
+### Trello
+
+**Connect.** Connected account or API key + token
+
+**File export.** Board JSON export
+
+**Becomes.** Boards → projects, cards → tasks
+
+**Fields.** Name, description, due and start, "due complete" → done, labels (name, or colour when unnamed), members, list name → status (Done list → done), checklists → a to-do list on the task page. Archived cards and lists are skipped
+
+### Asana
+
+**Connect.** Connected account or personal access token
+
+**File export.** Project CSV
+
+**Becomes.** Projects → projects, tasks → tasks
+
+**Fields.** Name, notes, due date or time, start date, completed, tags, assignee, section → status, subtask parent noted. Containers: each project and "My tasks" per workspace
+
+### Todoist
+
+**Connect.** Connected account or API token
+
+**File export.** Project template CSV
+
+**Becomes.** Projects → projects, tasks → tasks
+
+**Fields.** Content, description, deadline (else the due date) as due, recurring rule noted, priority (API 4 / CSV 1 = urgent), labels, section as a label, assignee in shared projects, completed tasks from the last 90 days
+
+### ClickUp
+
+**Connect.** Connected account or personal token
+
+**File export.** CSV export
+
+**Becomes.** Lists → projects, tasks → tasks
+
+**Fields.** Name, Markdown description, status and status type, priority, tags, assignees, due and start dates, closed date
+
+### monday.com
+
+**Connect.** Connected account or personal API token
+
+**File export.** None
+
+**Becomes.** Boards → projects, items → tasks
+
+**Fields.** Name, status column, a status column named Priority, date or timeline column, tags, people, a checkbox named Done, first long-text column as description, group as a label
+
+### GitHub Issues
+
+**Connect.** Connected account or fine-grained token with Issues read
+
+**File export.** None
+
+**Becomes.** Repositories → projects, issues → tasks (pull requests skipped)
+
+**Fields.** Title, body, open/closed (closed as not planned → dropped), labels, milestone as a label and its due date as due, assignees. Containers: "Issues assigned to me" and each repository
+
+### CSV or TSV
+
+**Connect.** None
+
+**File export.** Any spreadsheet
+
+**Becomes.** Rows → tasks (or pages)
+
+**Fields.** Column mapping (§3)
 
 ### How to export from each app
 
@@ -47,7 +132,7 @@ The dialog shows these next to the upload box (`EXPORT_HELP` in `src/imports/sou
 
 ## 3. Mapping rules
 
-`src/imports/mapping.ts` and `src/imports/apply.ts`.
+Use the review step to choose how source fields become Ensemble fields. The rules below apply to values you have not mapped explicitly.
 
 - **Status** uses the review-step choice. Unseen values are matched by name: done, complete, closed, resolved, shipped, merged → Done; cancelled, won't do, duplicate, not planned → Dropped; blocked, on hold, waiting → Blocked; in progress, doing, started, review, testing, QA → In progress; backlog, to do, open, unstarted, not started, new, triage → To do. When the name says nothing, the app's status group decides (Linear state type, Jira status category, ClickUp status type); anything else is To do. A done checkbox or completion date makes the task Done.
 - **Priority** (`mapPriority`): critical, blocker, showstopper, P0 → Critical; urgent, highest, high, P1 → High; medium, normal, no priority → Medium; low, lowest, minor, P3 or lower → Low.
@@ -62,7 +147,11 @@ The dialog shows these next to the upload box (`EXPORT_HELP` in `src/imports/sou
 
 ### Spreadsheet columns
 
-Columns are guessed from their headers; exports from Notion, Asana, Todoist, Jira, Linear and ClickUp are recognised by their header sets (`detectPreset` in `src/imports/files/csv.ts`). Fields: title, due date, start date, labels/tags (split on commas and semicolons; repeated columns such as Jira's several "Labels" are merged), status, priority, assignee, description, project, link, ID and a done checkbox. Todoist CSVs also turn `@label` words and sections into labels. Delimiters (comma, tab, semicolon, pipe) are detected. Files are read as UTF-8, UTF-16 when there is a BOM (Excel "Unicode text"), or Windows-1252 when UTF-8 fails (`src/imports/files/index.ts`).
+Columns are guessed from their headers; exports from Notion, Asana, Todoist, Jira, Linear and ClickUp are recognised by their header sets (`detectPreset` in `src/imports/files/csv.ts`).
+
+Fields: title, due date, start date, labels/tags (split on commas and semicolons; repeated columns such as Jira's several "Labels" are merged), status, priority, assignee, description, project, link, ID and a done checkbox. Todoist CSVs also turn `@label` words and sections into labels. Delimiters (comma, tab, semicolon, pipe) are detected.
+
+Files are read as UTF-8, UTF-16 when there is a BOM (Excel "Unicode text"), or Windows-1252 when UTF-8 fails (`src/imports/files/index.ts`).
 
 ## 4. Running it again, and undo
 
@@ -72,6 +161,14 @@ Columns are guessed from their headers; exports from Notion, Asana, Todoist, Jir
 - The other app's values win for title, status, priority, dates, labels, people and link. Two things are kept and counted as "kept with your edits": **trashed standalone pages stay deleted** (keeping their external identity), and **page bodies edited in Ensemble are kept** (an import replaces only a page it wrote that nobody has saved since).
 - **Undo this import** soft-deletes the tasks and projects that import created (tasks go to Trash) and deletes the standalone pages it created. Items it only updated are left as they are. Each job records up to 10,000 created ids per kind (`CREATED_CAP`); past that, undo also removes tasks from the same app created during the import's run time.
 - A task or project you deleted comes back if a later import brings it again; that import's undo removes it again.
+
+## 7. From the assistant
+
+Ask the assistant to preview an import from a connected account or an export already uploaded to Files. It follows the same review, Apply and progress flow as the dialog (`assistant/tools/board-imports.ts`).
+
+`hub_preview_board_import` lists a connected account's containers, or previews an export already uploaded in Files (`fileId`); a second call with the chosen containers returns sample rows and statuses. `hub_start_board_import` waits for Apply and starts the job; `hub_read_import` reports progress; `hub_manage_import` cancels or undoes (after Apply). Tokens are not accepted in tool arguments.
+
+Mapping, expiry, caps and re-import rules are the same. A started job is not reported as completed.
 
 ## 5. Limits and safety
 
@@ -86,7 +183,15 @@ Columns are guessed from their headers; exports from Notion, Asana, Todoist, Jir
 - Rate limits per person: 60 previews per 10 minutes, 30 starts and 30 undos per hour (429 with `Retry-After`). Hosted, every import route needs a verified email (`requireVerifiedUser`).
 - Not imported: comments, attachments other than links, and sub-task trees (parents are noted in the description). Notion relations and rollups come across as text in the page's property list. There is no scheduled re-sync; imports run when you start them.
 
-## 6. API
+## In the code
+
+Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/routes/imports.ts` (API), `apps/hub-web/components/imports/` (dialog, summary, recent list), `apps/hub-web/lib/api-imports.ts` (client). Labels on tasks: `packages/shared-types/src/domain.ts` (`TaskLabels`), `apps/hub-api/src/services/tasks.ts`, `apps/hub-web/components/task/labels.tsx`. No test calls a real vendor API.
+
+Mapping and writes use `src/imports/mapping.ts` and `src/imports/apply.ts`.
+
+Vendor APIs (`src/imports/api/`): Notion `2026-03-11` (databases read through their data sources, `POST /v1/data_sources/{id}/query`; an AI meeting-notes block's summary, notes and transcript are read from the blocks it points to, each under its own heading), Jira `POST /rest/api/3/search/jql` with `nextPageToken`, Todoist unified API v1 (`https://api.todoist.com/api/v1`), monday.com GraphQL `API-Version: 2026-07`, GitHub `X-GitHub-Api-Version: 2022-11-28`, Linear GraphQL, Asana 1.0, Trello 1, ClickUp v2.
+
+### 6. API
 
 | Method | Path | Body → Response |
 |---|---|---|
@@ -100,11 +205,7 @@ Columns are guessed from their headers; exports from Notion, Asana, Todoist, Jir
 
 Task routes accept and return `labels` (`POST /api/tasks`, `PATCH /api/tasks/:id`, `GET /api/tasks`). Board search matches labels, and `#label` searches labels only (`/board?q=%23label` opens it filtered).
 
-## 7. From the assistant
-
-The assistant runs the same flow (`assistant/tools/board-imports.ts`). `hub_preview_board_import` lists a connected account's containers, or previews an export already uploaded in Files (`fileId`); a second call with the chosen containers returns sample rows and statuses. `hub_start_board_import` waits for Apply and starts the job; `hub_read_import` reports progress; `hub_manage_import` cancels or undoes (after Apply). Tokens are not accepted in tool arguments. Mapping, expiry, caps and re-import rules are the same. A started job is not reported as completed.
-
-## 8. Tests
+### 8. Tests
 
 | Test | Covers |
 |---|---|

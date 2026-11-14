@@ -1,10 +1,86 @@
 # 33. Included AI and Ensemble credits
 
+Use included AI without adding an API key. A verified account receives **20,000 Ensemble credits each month** on a server that offers included models.
+
+Choose a model in **Settings → Assistant → Models**, or use the model menu below the assistant's message box. Open **Metrics** to check your remaining credits and reset date.
+
+## 1. The models
+
+The hosted environments offer **GPT-5 mini** and **GPT-4.1 mini**. The model menu shows the models available on the server you use. Your own API keys and AI plans remain separate choices.
+
+| Model | Thinking choices | Typical relative cost |
+| --- | --- | --- |
+| GPT-5 mini (2025-08-07) | Auto (Medium), Low, Medium, High | About 3× GPT-6 Luna |
+| GPT-4.1 mini (2025-04-14) | Auto only | About 4× GPT-6 Luna |
+
+The cost comparison uses a turn with 25,000 input tokens and 1,000 output tokens. Actual usage depends on your request.
+
+Choose **Auto** to use the model's default thinking level. Extra high and Max are unavailable for included models. Context size follows the deployment; there is no context-size control. Replies have a cap that includes reasoning, normally 16,000 output tokens.
+
+## 2. Credits
+
+Credits reset at **00:00 UTC on the first day of each month**. Unused credits do not carry over, and there is no paid top-up or larger plan.
+
+Your account shares one allowance across the Hub, desktop app, CLI and Ensemble Node. Switching spaces or computers does not create another allowance. Calls you make in a shared space use your own credits. Background work on an included model, such as summaries, skill learning and model tests, uses the same allowance.
+
+Before a call starts, Ensemble reserves an upper estimate of its cost. It settles the reservation using the provider's reported usage. Near the end of your allowance, a larger model can be refused while an everyday model still fits.
+
+A stopped, timed-out or disconnected call can still cost credits. If usage is unavailable, its reservation is charged. An unsettled reservation expires at its reserved amount after 30 minutes. Deleting usage history or recreating an account with the same email does not renew the allowance.
+
+The server also has a shared monthly ceiling. Once it is reached, included AI pauses for everyone until the next month, even when individual accounts have credits left. Your own keys and AI plans continue to work.
+
+## 4. Where included models run
+
+- **In the hosted app:** use included models for assistant chat, Ask, page and comment answers, and supported background work.
+- **On a connected computer:** pair the desktop app through Settings → Account → This computer. In the CLI, run `ensemble login` and approve **Run tasks**. Included calls run through your account's server and use its credits. Local tiers do not switch to included models automatically.
+- **On a local-only computer:** included models are unavailable. Choose **Move to your Ensemble account** or **Connect this computer**, or use your own models.
+- **For server workspace jobs:** execution remains operator-only. Pair your own computer for ordinary hosted execution ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
+
+The public documentation helper uses the configured GPT-5 mini deployment with medium reasoning, without an account. It has a separate bounded anonymous allowance and does not charge account credits or write account usage rows. See [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs) for its requests, retention and limits.
+
+## 5. When a call cannot run
+
+| What you see | What to do |
+| --- | --- |
+| Your credits are used, or the next call could exceed them | Wait until the displayed reset date, choose a cheaper available model, or use your own key or AI plan |
+| Included AI is paused for everyone | Wait until the next month or use your own key or AI plan |
+| Included AI is unavailable | Retry if the credit check failed temporarily; the server may also have disabled the model or service |
+| This computer needs an account connection | Connect it in Settings → Account → This computer, or use your own key or AI plan |
+
+The chat displays the server's explanation and refreshes the model and credit information. These errors are not saved as assistant messages and do not mark the model as out of quota.
+
+## 6. What people see
+
+1. Open **Settings → Assistant → Models**. The **Included** tab shows available models, remaining credits or the shared pause date.
+2. Pick a named model. It starts with Auto thinking; choose another supported level beside it if needed. Typed model names are not accepted.
+3. In the assistant's message-box menu, choose an included model for that chat, or choose a tier to return to its configured model.
+4. Open **Metrics → Ensemble credits** for usage by model, purpose and day, input and output credits, token counts, cached input and the reset date.
+
+Replies identify the included model and version in their footer. When no included model is offered, ordinary credit controls are hidden. A local-only computer shows its connection notice instead.
+
+Hosted tiers without a usable key, or with an unavailable included deployment, resolve to an available included model. Your working API key, AI plan and available model choices are preserved. With the hosted mini defaults, fallback tiers use GPT-5 mini.
+
+## 9. Data and retention
+
+Credit accounting records usage and cost, not prompts or replies. Deleting everything removes detailed model-usage information. Pending calls keep only what settlement needs, then that information is scrubbed too.
+
+The monthly balance survives workspace erasure and account deletion so deletion cannot renew credits. It contains no readable email, prompts, replies or workspace content. Ended months are removed after a two-day settlement grace. The server's monthly total also retains already-spent credits.
+
+## 10. Limits
+
+Included replies arrive as a complete response; the chat reveals that response in pieces. A large request can need a large reservation even if its eventual cost is smaller.
+
+The reply cap bounds estimated cost only when the provider respects it. A reply that exceeds the cap is charged at its reported usage and can exceed an account or service limit. Provider rates are maintained in the service configuration.
+
+Hosted Azure web grounding is off by default. Ordinary web search uses free search. An operator can enable paid grounding, but Azure can bill it outside subscription credits.
+
+## In the code
+
 A hosted operator can offer configured Azure AI Foundry deployments and pay for their calls. Every verified account then gets **20,000 Ensemble credits a month** to spend on them without a key of its own. People see credits only, never dollars. When the operator's monthly ceiling is reached, every included call stops for everyone until the 1st, even for accounts with credits left.
 
 Code: `apps/hub-api/src/included/`, `packages/shared-types/src/included.ts`, `apps/hub-api/src/runtime/included.ts` and `apps/agent-runtime/ensemble_agent/included.py`. Included AI exists only when the Azure variables are set (§8).
 
-## 1. The models
+### 1. The models: implementation reference
 
 Provider id `ensemble`, shown as **Included with Ensemble**. The model id is also the Azure deployment name. The catalog is `INCLUDED_MODELS` in `packages/shared-types/src/included.ts`; it does not check live Azure availability or quota.
 
@@ -19,7 +95,9 @@ The hosted personal dev/test setup uses a **Visual Studio monthly-credit Azure s
 | `gpt-6.1-sol` | GPT-6.1 Sol (2026-09-29) | Responses, `openai` host | Auto (Medium), Low, Medium, High | about 20× | step-up | Not currently hosted; explicit deployment only |
 | `grok-4.7` | Grok 4.7 | Responses, `services` host | Auto (High), Low, Medium, High | about 20× | step-up | Not currently hosted; explicit deployment only |
 
-Hosts: `openai` is `https://{resource}.openai.azure.com/openai/v1`, `services` is `https://{resource}.services.ai.azure.com/openai/v1` (then `/responses` or `/chat/completions`). "Typical cost" is a turn of 25,000 input and 1,000 output tokens relative to GPT-6 Luna. GPT models always use the Responses API with `store: false` (GPT-6.1 Sol takes function tools only there). Both runtimes send the key in the `api-key` header, no temperature or `top_p`, and no fallback model. Responses and Chat Completions calls stream (`stream: true`; Chat Completions with `stream_options.include_usage`) and are put together into the same turn as a whole reply (`turnFromStream`, `readSseStream`; `_read_responses`, `_read_chat` in Python), so a call that is stopped closes its stream and Azure stops generating.
+Hosts: `openai` is `https://{resource}.openai.azure.com/openai/v1`, `services` is `https://{resource}.services.ai.azure.com/openai/v1` (then `/responses` or `/chat/completions`). "Typical cost" is a turn of 25,000 input and 1,000 output tokens relative to GPT-6 Luna. GPT models always use the Responses API with `store: false` (GPT-6.1 Sol takes function tools only there). Both runtimes send the key in the `api-key` header, no temperature or `top_p`, and no fallback model.
+
+Responses and Chat Completions calls stream (`stream: true`; Chat Completions with `stream_options.include_usage`) and are put together into the same turn as a whole reply (`turnFromStream`, `readSseStream`; `_read_responses`, `_read_chat` in Python), so a call that is stopped closes its stream and Azure stops generating.
 
 **Thinking levels** are Auto, Low, Medium and High (`modelEfforts("ensemble", …)` in `model-efforts.ts`); Extra high and Max are refused. Auto sends no level, so the model uses its default; a level goes in `reasoning.effort`. Models without levels (DeepSeek V4 Flash, GPT-4.1 mini) offer Auto only.
 
@@ -27,7 +105,7 @@ Hosts: `openai` is `https://{resource}.openai.azure.com/openai/v1`, `services` i
 
 The transports also support Foundry's Anthropic Messages endpoint (`api: "anthropic"`) for a Claude deployment an operator adds; no catalog model uses it. For it, a tool round sends back Claude's exact content for that turn, thinking blocks included (kept in memory by tool-use id, up to 2,000 turns); if Azure still refuses over thinking blocks, the request is retried once without them and with thinking off.
 
-## 2. Credits
+### 2. Credits: implementation reference
 
 - 1,000 credits = $1 of model cost at the provider's list price (`CREDITS_PER_USD` in `included/config.ts`). The dollar ledger never leaves hub-api.
 - Credits belong to the **account**: a space spends its owner's credits; in a space shared with you, the call is yours, as with model keys ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
@@ -53,14 +131,16 @@ So calls in flight cannot overrun either limit, and the ceiling is checked again
 
 `included_credit_balances` holds only a purpose-separated HMAC of the account email, the UTC month and the amount used (reservations included). When a month's balance is first created (`accountBalance`), call rows without a balance key are added to it once, and, after an Everything erasure that removed call rows, so are the credits recorded on that month's included `model.call` metrics from before the erasure; nothing is estimated.
 
-## 4. Where included models run
+### 4. Where included models run: implementation reference
 
 - **The hosted assistant** (chat, Ask, page and comment answers) and server `complete()` callers. Hosted production uses the Python runtime (`ensemble_agent/included.py`); a TypeScript copy (`apps/hub-api/src/runtime/included.ts`) runs in-process in development and tests.
 - **The desktop app and the CLI on a computer connected to an account** (paired: Settings → Account → This computer in the app; `ensemble login` with *Run tasks* approved in the CLI; [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). They hold no Azure key and no ledger. Their local server (`included/device.ts`) reads the account's included models and credits from `GET /api/devices/self/included` (cached for a minute) and sends each included call to `POST /api/devices/self/included/turn` with its device token. Ensemble's server runs it with `includedTurn` on that account's credits, under the same monthly ceiling, for as long as the computer waits (`timeoutMs`, within the server's own `ENSEMBLE_MODEL_CALL_TIMEOUT_MS`), and returns the turn or the refusal (§5); the computer closing its request stops the call. Chats, the model menu, Settings → Models, Metrics and the CLI's `/model` list them. A computer's tiers are its own and never switch to included models by themselves.
 - **Not on a local-only computer.** A desktop app or CLI not connected to an account lists included models as unavailable (`code: "included_local_only"` on the `/api/models` row) and refuses every included call with `included_local_only`: a desktop app kept local only ([DESKTOP](DESKTOP.md) §1.2) shows *Your own models only* with **Move to your Ensemble account**; a runtime not yet paired shows *Included models need your Ensemble account* with **Connect this computer**; the CLI a notice pointing at `/login`.
 - Server workspace jobs stay operator-only ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
 
-## 5. When a call cannot run
+The public documentation helper uses the same configured GPT-5 mini deployment, with fixed medium reasoning, without an account. It has a separate bounded anonymous service allowance and does not charge account credits or write account usage rows. Its request, retention and limits are in [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).
+
+### 5. When a call cannot run: implementation reference
 
 | Code | Status | When | What people read |
 |---|---|---|---|
@@ -71,7 +151,7 @@ So calls in flight cannot overrun either limit, and the ceiling is checked again
 
 The date in the messages is the actual reset date. The body is `{code, error, message, resetsAt, status}` (`IncludedErrorBody`), as an HTTP response or the assistant stream's `error` frame. Like a provider quota, the sentence is shown in the chat but not stored as an assistant message.
 
-## 6. What people see
+### 6. What people see: implementation reference
 
 - **Settings → Assistant → Models** (`components/settings/models.tsx`, `components/agent/agent-picker.tsx`, `lib/included.ts`): each tier's agent picker (the same one Assign to agent uses) has an **Included** tab first, showing the credits left or "paused until Nov 1"; it opens on the tier's current source. Models show by name and version with a cost badge relative to GPT-6 Luna; typed names are not accepted. Picking one sets the tier to it on Auto thinking. The thinking button beside it reads "Auto (Medium)" (the model's default), Low, Medium, High; a model that decides for itself has no thinking button. A line under the API keys row shows credits left and the reset date, linking to Metrics; tiers say when credits are used up or included AI is paused.
 - **Metrics**: an **Ensemble credits** card (`GET /api/metrics/credits`, `components/metrics/included-credits.tsx`): credits left, reset date, whether the shared budget is paused, input and output credits with token counts (and cached input tokens), and credits by model, purpose and day. An information icon explains credits used before deleted usage history, which still count. Call lists, the daily tooltip and purposes show credits instead of a dollar estimate; the provider filter lists *Included with Ensemble*.
@@ -106,9 +186,11 @@ The date in the messages is the actual reset date. The body is `{code, error, me
 | `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` | 16000 | Reply cap per call, reasoning included (max 128000) |
 | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS` | 900000 | How long one model call may take, included or not (30 s to 30 min; [11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)) |
 
-hub-api and agent-runtime read the same operator values from the deployment's environment file. An Azure **subscription-wide** budget can track models, grounding, storage and other resources together, but it only alerts (billing data can be a day late); it does not stop spending. `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` only enforces this environment's model ledger: separate production and testing ledgers are not one subscription budget, and their UTC month need not match Azure's credit cycle. Azure's credit spending limit stops eligible services at the credit allowance; it cannot be lowered to a custom dollar amount. Separately billed products and pending charges require a billing review. Deployment runbooks and INR budget conversions are private, not in `docs/`.
+hub-api and agent-runtime read the same operator values from the deployment's environment file. An Azure **subscription-wide** budget can track models, grounding, storage and other resources together, but it only alerts (billing data can be a day late); it does not stop spending. `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` only enforces this environment's model ledger: separate production and testing ledgers are not one subscription budget, and their UTC month need not match Azure's credit cycle.
 
-## 9. Data and retention
+Azure's credit spending limit stops eligible services at the credit allowance; it cannot be lowered to a custom dollar amount. Separately billed products and pending charges require a billing review. Deployment runbooks and INR budget conversions are private, not in `docs/`.
+
+### 9. Data and retention: implementation reference
 
 `included_usage` keeps one row per included call: account, space, month, model, purpose, status, token counts and the dollar cost behind the credits; never prompt or reply text. Deleting everything scrubs model, purpose, token counts, answer source and input/output cost splits; a pending reservation keeps only what settlement needs, then is scrubbed too. Scrubbed rows appear in no detailed aggregate. Call rows are deleted with the account.
 
@@ -116,7 +198,7 @@ hub-api and agent-runtime read the same operator values from the deployment's en
 
 Opening Metrics after an Everything erasure (`repairErasedUsage` in `lib/workspace-data.ts`, once per erasure) first secures the months' charges in the balance, then removes metric events and baselines from before the erasure; later calls and workspace content stay, and repeated reads keep the same balance.
 
-## 10. Limits
+### 10. Limits: implementation reference
 
 - Tests (`apps/hub-api/src/included/*.test.ts`) use recorded request and usage shapes, not live Azure calls.
 - Prices are a table in code (`pricing.ts`). If a provider changes a rate, the table must change with it or the ceiling is counted at the old rate.

@@ -1,8 +1,60 @@
 # 34 · Assistant actions
 
-What the assistant can do, by request, and the tools that do it. Tools live in `apps/hub-api/src/assistant/tools/`, playbooks in `assistant/skills/`. How a turn picks tools, applies writes and runs workflows is in [11](11_HOW_THE_ASSISTANT_WORKS.md).
+Ask the assistant to work with your tasks, pages, files, calendars and connected apps. Use this guide to choose an action and understand when it needs your review.
 
 ## 1. Action map
+
+Describe the result you want in the assistant. Name the records, app or files involved, and review the proposed change when Apply appears.
+
+| To do this | Ask for |
+| --- | --- |
+| Organize work | Create or update tasks, move cards, edit a board, or delete a selected group of tasks |
+| Understand a record | Its linked people, project, meetings, files, dependencies and recent work |
+| Act on a meeting | Summarize the work it requested and propose tasks for review on Today |
+| Work in connected apps | Find an item, read it, attach it, or post an update to a linked issue |
+| Write or edit | Make a precise page edit, change supported file content, or export a page |
+| Run an agent | Choose a task, computer, available agent and execution settings |
+| Change your workspace | Adjust supported settings, skills, model choices or tile layouts |
+| Manage calendars | Check availability, create or update an event, or act on a single occurrence or series |
+
+You can paste a record or board link, or name it exactly. The assistant reads current records and layouts before changing them. For linked changes, it can propose 2–12 ordered actions under one Apply. The full action and tool contracts are [below](#action-tools).
+
+## 2. Writes that always wait for Apply
+
+Review Apply before any connected-app write, including calendar changes, a comment posted back to an issue, or a vendor MCP action.
+
+These Ensemble actions also always wait for Apply: settings and model changes, agent assignment, linked workflows, skill changes, file edits and exports, app relationships, imports, meeting imports, and board deletion.
+
+Other Hub writes follow your write policy. The default is **Just do it**, with Undo where supported. Viewers cannot write. Guests cannot use the owner's private connections, imports or layout changes.
+
+The exact tool list is [below](#apply-tool-contract).
+
+## 3. Tiles and layouts
+
+Ask the assistant to read your layout, then describe the tiles to add, remove, move or resize. It keeps tiles you did not ask to change and refuses an edit based on an outdated layout.
+
+| Surface | What you can change |
+| --- | --- |
+| Profile Today desk and Context panel | A 12-column grid. Tiles are at least 3 × 2, up to 12 columns and 8 rows; some tiles need more space |
+| Board overview | Add, remove or move up to four fixed-size tiles |
+| Today and Context widgets view | Per-tile filters. Board has no widgets view |
+
+## 4. Limits
+
+- **Calendar changes can notify people.** Guest changes, invitations, cancellations and RSVPs can send email. A create or update keeps the event visible in Ensemble; cancel or decline removes the saved copy. Today refreshes other calendar events every 30 minutes and shows each event once.
+- **Availability depends on access.** Google needs its free/busy permission; reconnect to grant it. A connection without that permission keeps its other event features. Outlook needs work or school scheduling access. An unknown attendee is never treated as free.
+- **Imports run in the background.** Review mapping before starting. A preview expires after 30 minutes. The normal limits, deduplication and Undo rules still apply.
+- **Office edits have format limits.** They preserve surrounding content, but do not redesign slides or edit images. Complex spreadsheets are refused.
+- **Page exports rebuild the document.** Word and PDF layout can differ. Use Word if a PDF cannot render the characters. Ensemble's text extraction does not read scanned PDFs.
+- **Some actions stay with you.** The assistant does not send email, Teams or Slack messages, create arbitrary scheduled routines, run OCR, understand audio or video, or write arbitrary database records. Credentials, elevated permissions, sandbox and folder trust, and destructive account controls remain settings you operate yourself.
+
+Compare access across the assistant, Node and assigned agents in [Ensemble tools](39_ENSEMBLE_TOOLS_AUDIT.md).
+
+## In the code
+
+Tools live in `apps/hub-api/src/assistant/tools/`, with playbooks in `assistant/skills/`. Turn selection, writes and workflows are described in [11](11_HOW_THE_ASSISTANT_WORKS.md).
+
+### Action tools
 
 | Request | Tools | Behavior |
 | --- | --- | --- |
@@ -35,9 +87,11 @@ What the assistant can do, by request, and the tools that do it. Tools live in `
 
 **Built-in app tools** (shown when granted and the product is on): Gmail `gmail_search`, `gmail_read`; Google Calendar `calendar_list_events`, `calendar_create_event`, `calendar_update_event`; Drive `drive_list_files`, `drive_read_file`; Docs `docs_create`, `docs_append`, `docs_replace_text`; Sheets `sheets_create`, `sheets_read`, `sheets_update_range`, `sheets_append_rows`; Slides `slides_create`, `slides_read`; Outlook `outlook_search_mail`, `outlook_read_message`, `outlook_calendar_list_events`, `outlook_calendar_create_event`; Teams `teams_list_chats`, `teams_read_chat`; OneDrive `onedrive_search`, `onedrive_read_file`; `word_create`, `word_update`, `excel_create`, `excel_read_range`, `excel_update_range`, `powerpoint_create`; Zoom `zoom_list_meetings`, `zoom_list_recordings`, `zoom_get_transcript`, `zoom_get_meeting_summary`; DocuSign `docusign_list_envelopes`, `docusign_get_envelope`; Jira `jira_search`, `jira_get_issue`. Remote MCP tools are named `mcp_<server>_<tool>`.
 
-**Playbooks** (`hub_how_to` takes the name): `tasks`, `boards` (custom boards; a pasted `/board?board=<id>` link routes here), `pages`, `context` (people, projects, repositories, profile lists), `calendar`, `meeting-notes`, `inbox` (mail and chats), `files`, `apps`, `layouts`, `agents` (assignments, runs, Code), `workflows`, `recap`, `settings`, `web-research` (facts, prices and comparisons: `hub_web_search`, then the source itself with `hub_read_web_page`, with links), `web-files` (a paper or PDF from the web into Files, when the build has `hub_save_file`), and with their module `diagrams`, `plots`, `personal-skills`. Their `tools:` lines cover the remaining tools, including reminders, watchers (`hub_create_watcher`, `hub_list_watchers`, `hub_cancel_watcher`), research and run inspection.
+**Playbooks** (`hub_how_to` takes the name): `tasks`, `boards` (custom boards; a pasted `/board?board=<id>` link routes here), `pages`, `context` (people, projects, repositories, profile lists), `calendar`, `meeting-notes`, `inbox` (mail and chats), `files`, `apps`, `layouts`, `agents` (assignments, runs, Code), `workflows`, `recap`, `settings`, `web-research` (facts, prices and comparisons: `hub_web_search`, then the source itself with `hub_read_web_page`, with links), `web-files` (a paper or PDF from the web into Files, when the build has `hub_save_file`), and with their module `diagrams`, `plots`, `personal-skills`.
 
-## 2. Writes that always wait for Apply
+Their `tools:` lines cover the remaining tools, including reminders, watchers (`hub_create_watcher`, `hub_list_watchers`, `hub_cancel_watcher`), research and run inspection.
+
+### Apply tool contract
 
 Whatever the write policy, these wait for Apply ([11 §6](11_HOW_THE_ASSISTANT_WORKS.md#6-apply-undo-and-dependent-actions)):
 
@@ -46,7 +100,7 @@ Whatever the write policy, these wait for Apply ([11 §6](11_HOW_THE_ASSISTANT_W
 
 Other Hub writes follow the person's policy (default "Just do it", undoable). Viewers get no write tools. The owner's private connections, imports and layout writes are not offered to guests.
 
-## 3. Tiles and layouts
+### Layout contract
 
 `tools/native-layouts.ts` implements the layouts; `packages/shared-types/src/desk-layout.ts` is shared with the UI.
 
@@ -59,7 +113,7 @@ Other Hub writes follow the person's policy (default "Just do it", undoable). Vi
 
 `apps/hub-web/e2e/assistant-tile-catalog.ts` generates `packages/shared-types/src/workspace-tiles.generated.ts` from the UI definitions; `pnpm --filter @ensemble/hub-web test` fails on drift. After changing tile definitions run `pnpm --filter @ensemble/hub-web exec tsx --tsconfig tsconfig.json e2e/assistant-tile-catalog.ts`.
 
-## 4. Limits
+### Action boundaries
 
 - **Calendars.** An explicit create or update keeps that event visible in Ensemble and returns `hubEventId` for meeting-note links (`tools/calendar-receipts.ts`); cancel or decline removes the saved copy. The Today calendar's 30-minute refresh keeps the rest ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)); `hub_list_events` reads that merged list, each event once with every calendar it came from. Live tools stay authoritative for changes. Google availability needs the `calendar.freebusy` scope, requested on consent or reconnection; a connection without it keeps event features. Outlook availability needs work/school scheduling access. Guest changes, invitations, cancellations and RSVPs can email attendees.
 - **Imports** use the existing bounded job, mapping, deduplication and Undo rules; starting is not finishing. A preview expires after 30 minutes.

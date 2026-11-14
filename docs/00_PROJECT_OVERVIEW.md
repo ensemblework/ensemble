@@ -1,60 +1,92 @@
 # 00 · Ensemble overview
 
-Ensemble is a shared workspace for a person and their agents: tasks, pages, projects, people, files, meetings and code in one place. The web app, desktop app, CLI and editor bridge share the same work context. It is source available under [FSL-1.1-MIT](../LICENSE.md).
+Bring your tasks, pages, projects, people, files, meetings and code into one workspace. Use the web app, desktop app, CLI or editor bridge to work with the same context, alongside your agents.
 
-This page maps what works today and its limits; each row links to the guide that owns the details.
+Choose how to work below, then follow the guide for the task you want to do. Each feature lists its current limits.
 
-## Principles
+The [public docs](40_PUBLIC_DOCUMENTATION.md) include local search and an anonymous docs-only helper with linked sources. It cannot read your Ensemble account.
 
-1. **Work keeps its context.** A task links a project, repositories, people, files, meeting notes and skills; its page and run history stay with it.
-2. **The person chooses what comes in.** Connecting an app imports nothing. Content arrives only through explicit search, attach, upload or import.
-3. **Several ways to work.** The Hub assistant operates the app, assigned agents do research or code work, and the CLI and editors read the same context.
-4. **Model choice is explicit.** Personal API keys, subscriptions on a paired computer, or included models with a monthly allowance.
-5. **Changes are reviewable.** Apply and Undo, run permissions, publishing approvals, revision checks and run evidence each have a job. A chat reply is not proof that an action succeeded.
+## 2. How work flows
+
+1. Add a task or page, or explicitly import content from another app.
+2. Link the files, people, projects and other context the work needs.
+3. Ask the Hub assistant to act in Ensemble, or assign research or code work to an agent.
+4. Review the result, choose Apply, or answer Needs me when required.
+5. Use the saved result, run evidence and history to check what happened.
+
+The scheduler runs product jobs (reminders, retention, device leases) and the person's assistant routines. Morning brief is one editable built-in routine ([05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work)).
 
 ## 1. Where Ensemble runs
 
-| Form | Storage and execution | Guide |
-| --- | --- | --- |
-| Local development | `pnpm dev`: Hub :3000, API :4000, Python model/plot runtime :5055; Postgres and Redis in Docker | [README](../README.md), [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup) |
-| Hosted web | Public signup, per-account data. The API runs on a home server behind a Cloudflare Tunnel (`infra/deploy/home`); file originals and plot tables are in private Azure Blob storage (`ENSEMBLE_FILE_STORAGE=azure-blob`). Code and the terminal run on the person's paired computer | [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live) |
-| Desktop | Tauri app for macOS, Windows and Linux: the account's web app in a native window with this computer as its runner, or local only (static Hub export on a local Node API with embedded PGlite, no Ensemble servers); a local-only app can move its data into an account once | [DESKTOP](DESKTOP.md) |
-| CLI | Terminal UI on the same local runtime: tasks, chat, a read-only Ensemble Node tab, pairing, profiles, runner service, updates, editor MCP setup, and `ensemble capture` for the runtime's browser and screenshot and video capture | [26](26_CLI.md), [25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer) |
-| Ensemble Node | A separate website (`ensemblework/ensemble-node`, `node.ensemblework.com`; testing `node-test.ensemblework.com`) for persistent AI teammates in direct chats, crews of the person's own nodes, and rooms with other people and their nodes. Its backend is hub-api's `node` module: same account, workspace tools, included models and credits. A node acts for its owner in every space they can open, their own and those shared with them, with their current role in each, and lists their work across them. Nodes run the owner's own coding agents on their paired computer as agent sessions they start, queue, steer and stop, each node only its own; that work stays off the board unless the owner asks for a task. In a crew one node answers its person (the one they mention, else the lead); the lead hands work to the others as one plan whose steps run in order without chat between nodes, and reports once. A plan names every requirement and an independent check for each; a failed check repairs the build and checks it again before anything that depends on it, and the lead reports once with the checked screenshots and videos. A node does quick work itself, takes Ensemble tasks its person gives it or its crew from a task's owner field (deciding itself how to do them, a crew's lead by its members' roles), brings in temporary helpers for side tasks, makes nodes and crews when asked, runs routines on a schedule or an event, and hands an agent session to another node. Secrets and sign-ins are typed into a secure box, sealed in the browser for the computer's own key, and used there without a model seeing them; the owner can sign in on the computer or take the browser over from the web, end to end encrypted. A command-line sign-in a node starts (`az login`, `gh auth login`) reaches the owner too: its code on a card only they see, or its page in that remote view. A node keeps terminals open on the computer, and its owner watches a node's terminal or browser tab live from the web, types in it and takes control. A node and its coding agents browse and capture screenshots and video on the owner's computer; a model checks a picture shows what was asked before it is sent, and a capture the computer cannot clear waits for the owner's preview. A node sends files of any kind and whole folders (zipped, up to 100 MB) into the chat, and puts files its owner attaches onto the computer. In a room each person's lead answers within that person's sharing rules and asks before sharing anything else; a room can link a shared space whose board, events, contracts and decisions log the leads follow. Needs me is in the Node chat, in the CLI and in the Hub, which shows of Node only what a node's sessions ask for; a reply in the chat answers a session's request everywhere | [35](35_ENSEMBLE_NODE.md) |
-| Context Bridge | MCP over stdio, local HTTP or hosted `/mcp` with an `ens_` key or OAuth consent, in every space the key's account owns: a task's brief with where it came from and who is involved, the context graph around any record, ranked search, reads of everything the assistant reads, and files themselves (inline up to 20 MB, or saved into the editor's folder through the CLI); a key made with changes allowed also runs Ensemble's changes from the assistant's own tools (tasks, pages, boards, diagrams, plots, new files, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists, imports), and one made with apps allowed uses the person's connected apps through Ensemble. Settings, model choice and layout changes, stopping or deleting runs, starting the assistant, agents, workflows or watchers, deleting routines or files and editing a file's original stay with the person; agent runs Ensemble starts get the everyday changes under their job's lease | [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md) |
-| Quick capture | Tauri tray app with a global shortcut; needs a running local API and capture authentication | [20_QUICK_CAPTURE](20_QUICK_CAPTURE.md) |
-| Public documentation | Static site built from tracked `docs/` for `docs.ensemblework.com`, readable without an account; the existing Context Bridge's `ensemble_docs` read tool searches its published pages with an `ens_` key | [40](40_PUBLIC_DOCUMENTATION.md) |
+### Local development
 
-Hosted MCP OAuth is authorization-code/PKCE with DCR/CIMD, one-hour access tokens, refresh rotation by default and account-owned-space consent. Its catalog offers the same allowed capabilities through named tools; legacy editor keys and stdio retain their existing names. **Connect your apps** shows OAuth connections separately from manually created keys and disconnects the entire token family. Client/plugin distribution assets are in `ensemblework/ensemble-integrations`; vendor approval is separate ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
+**Storage and execution.** `pnpm dev`: Hub :3000, API :4000, Python model/plot runtime :5055; Postgres and Redis in Docker
+
+**Guide.** [README](../README.md), [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)
+
+### Hosted web
+
+**Storage and execution.** Public signup, per-account data. The API runs on a home server behind a Cloudflare Tunnel (`infra/deploy/home`); file originals and plot tables are in private Azure Blob storage (`ENSEMBLE_FILE_STORAGE=azure-blob`). Code and the terminal run on the person's paired computer
+
+**Guide.** [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live)
+
+### Desktop
+
+**Storage and execution.** Tauri app for macOS, Windows and Linux: the account's web app in a native window with this computer as its runner, or local only (static Hub export on a local Node API with embedded PGlite, no Ensemble servers); a local-only app can move its data into an account once
+
+**Guide.** [DESKTOP](DESKTOP.md)
+
+### CLI
+
+**Storage and execution.** Terminal UI on the same local runtime: tasks, chat, a read-only Ensemble Node tab, pairing, profiles, runner service, updates, editor MCP setup, and `ensemble capture` for the runtime's browser and screenshot and video capture
+
+**Guide.** [26](26_CLI.md), [25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)
+
+### Ensemble Node
+
+**Storage and execution.** A separate website (`ensemblework/ensemble-node`, `node.ensemblework.com`; testing `node-test.ensemblework.com`) for persistent AI teammates in direct chats, crews of the person's own nodes, and rooms with other people and their nodes.
+
+Its backend is hub-api's `node` module: same account, workspace tools, included models and credits. A node acts for its owner in every space they can open, their own and those shared with them, with their current role in each, and lists their work across them.
+
+Nodes run the owner's own coding agents on their paired computer as agent sessions they start, queue, steer and stop, each node only its own; that work stays off the board unless the owner asks for a task.
+
+In a crew one node answers its person (the one they mention, else the lead); the lead hands work to the others as one plan whose steps run in order without chat between nodes, and reports once. A plan names every requirement and an independent check for each; a failed check repairs the build and checks it again before anything that depends on it, and the lead reports once with the checked screenshots and videos. A node does quick work itself, takes Ensemble tasks its person gives it or its crew from a task's owner field (deciding itself how to do them, a crew's lead by its members' roles), brings in temporary helpers for side tasks, makes nodes and crews when asked, runs routines on a schedule or an event, and hands an agent session to another node.
+
+Secrets and sign-ins are typed into a secure box, sealed in the browser for the computer's own key, and used there without a model seeing them; the owner can sign in on the computer or take the browser over from the web, end to end encrypted. A command-line sign-in a node starts (`az login`, `gh auth login`) reaches the owner too: its code on a card only they see, or its page in that remote view. A node keeps terminals open on the computer, and its owner watches a node's terminal or browser tab live from the web, types in it and takes control. A node and its coding agents browse and capture screenshots and video on the owner's computer; a model checks a picture shows what was asked before it is sent, and a capture the computer cannot clear waits for the owner's preview. A node sends files of any kind and whole folders (zipped, up to 100 MB) into the chat, and puts files its owner attaches onto the computer.
+
+In a room each person's lead answers within that person's sharing rules and asks before sharing anything else; a room can link a shared space whose board, events, contracts and decisions log the leads follow. Needs me is in the Node chat, in the CLI and in the Hub, which shows of Node only what a node's sessions ask for; a reply in the chat answers a session's request everywhere
+
+**Guide.** [35](35_ENSEMBLE_NODE.md)
+
+### Context Bridge
+
+**Storage and execution.** MCP over stdio, local HTTP or hosted `/mcp` with an `ens_` key or OAuth consent, in every space the key's account owns: a task's brief with where it came from and who is involved, the context graph around any record, ranked search, reads of everything the assistant reads, and files themselves (inline up to 20 MB, or saved into the editor's folder through the CLI); a key made with changes allowed also runs Ensemble's changes from the assistant's own tools (tasks, pages, boards, diagrams, plots, new files, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists, imports), and one made with apps allowed uses the person's connected apps through Ensemble.
+
+Settings, model choice and layout changes, stopping or deleting runs, starting the assistant, agents, workflows or watchers, deleting routines or files and editing a file's original stay with the person; agent runs Ensemble starts get the everyday changes under their job's lease
+
+**Guide.** [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)
+
+### Quick capture
+
+**Storage and execution.** Tauri tray app with a global shortcut; needs a running local API and capture authentication
+
+**Guide.** [20_QUICK_CAPTURE](20_QUICK_CAPTURE.md)
+
+### Public documentation
+
+**Storage and execution.** Static site built from tracked `docs/` for `docs.ensemblework.com`, readable without an account; the existing Context Bridge's `ensemble_docs` read tool searches its published pages with an `ens_` key
+
+**Guide.** [40](40_PUBLIC_DOCUMENTATION.md)
+
+Hosted MCP OAuth is authorization-code/PKCE with DCR/CIMD, one-hour access tokens, refresh rotation by default and account-owned-space consent. Its catalog offers the same allowed capabilities through named tools; legacy editor keys and stdio retain their existing names. **Connect your apps** shows OAuth connections separately from manually created keys and disconnects the entire token family.
+
+Client/plugin distribution assets are in `ensemblework/ensemble-integrations`; vendor approval is separate ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)).
 
 - The desktop app with an account shows the account itself, so it and the web are always in sync. Pairing a desktop or CLI does not replicate the hosted database into the computer: the paired computer claims jobs, answers Code and terminal requests and runs subscription calls; its included-model calls go through the hosted account ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). A local-only desktop app keeps its own database and never contacts Ensemble's servers ([DESKTOP](DESKTOP.md) §1).
 - Original source files are read from the computer and relayed without being kept as cloud originals. Code/Node editor buffers stay in browser memory; file lines a person explicitly quotes and sends are part of their chat history ([16](16_CODE_TAB.md), [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace)).
 - Node's session inventory includes exact recorded node/crew usage and original-file references across each session's run chain. Its compact list opens originals beside the session without a work-description feed ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
 - Owner-confirmed session deletion stops active work and removes the underlying coding agent's saved history on its computer before hiding it from session inventories. Project files stay; nodes request deletion through an owner-only chat confirmation ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
 - Root `release.json` sets the version of every surface. Desktop updates are signed; OS code signing is not configured.
-
-## 2. How work flows
-
-```text
-Person adds work / explicitly imports content
-    → tasks, pages, files and linked context
-    → Hub assistant action OR an assigned research/code job
-    → Apply / review / Needs me when required
-    → saved result, run evidence and history
-```
-
-The scheduler runs product jobs (reminders, retention, device leases) and the person's assistant routines. Morning brief is one editable built-in routine ([05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work)).
-
-## 3. Accounts, spaces and profiles
-
-| Area | What works | Boundary |
-| --- | --- | --- |
-| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion; independent three-place limits for Ensemble and Ensemble Node, each with a fourth-window chooser | Ensemble's web and hosted desktop windows share one pool; Node windows have their own. CLI/editor keys are uncapped. Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
-| Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
-| Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
-| Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
-| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Agent queue, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
-| Appearance | Brand assets, light/dark/system, fonts, text scale, reduced motion, circular pixel avatars shared by every profile, backgrounds; contextual AI motion, structural loading and static waiting-for-you states | [BRAND](BRAND.md) |
 
 ## 4. Work surfaces
 
@@ -80,9 +112,22 @@ The scheduler runs product jobs (reminders, retention, device leases) and the pe
 | Search and navigation | Compact search, Jump to, shortcuts, phone navigation | Bounded, access-scoped results | [02](02_MODULE_INTERACTION_HUB_UI.md) |
 | Connect and Settings | App grants, MCP connections, models, run profiles, automations (each with a switch and model tier), appearance, devices, data controls; Settings search that jumps to a row and highlights it, grouped tabs and an On this page list | Guarded saves merge disjoint fields; overlapping saves keep both values and ask which to save | [02](02_MODULE_INTERACTION_HUB_UI.md), [31](31_CONNECTORS_IN_USE.md) |
 
+## 3. Accounts, spaces and profiles
+
+| Area | What works | Boundary |
+| --- | --- | --- |
+| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion; independent three-place limits for Ensemble and Ensemble Node, each with a fourth-window chooser | Ensemble's web and hosted desktop windows share one pool; Node windows have their own. CLI/editor keys are uncapped. Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
+| Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
+| Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
+| Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
+| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Agent queue, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
+| Appearance | Brand assets, light/dark/system, fonts, text scale, reduced motion, circular pixel avatars shared by every profile, backgrounds; contextual AI motion, structural loading and static waiting-for-you states | [BRAND](BRAND.md) |
+
 ## 5. Assistant
 
-The Hub assistant operates the app through typed tools. Its instructions stay the same through a chat; each message brings only its own context (date, view, open item, mentions), and records, playbooks and app details come from tools when needed. Built-in playbooks (`apps/hub-api/src/assistant/skills/*.md`) route each request to a small toolset; saved personal skills add instructions. On the person's own AI subscription, one chat is one session of that agent. Settings → Prompts shows every prompt Ensemble sends. [11](11_HOW_THE_ASSISTANT_WORKS.md) explains the loop; [34](34_ASSISTANT_ACTIONS.md) maps every tool.
+Ask the Hub assistant to find information or make a change in Ensemble. It acts through typed tools. Its instructions stay the same through a chat; each message brings only its own context (date, view, open item, mentions), and records, playbooks and app details come from tools when needed.
+
+Built-in playbooks (`apps/hub-api/src/assistant/skills/*.md`) route each request to a small toolset; saved personal skills add instructions. On the person's own AI subscription, one chat is one session of that agent. Settings → Prompts shows every prompt Ensemble sends. [11](11_HOW_THE_ASSISTANT_WORKS.md) explains the loop; [34](34_ASSISTANT_ACTIONS.md) maps every tool.
 
 | Capability | What works |
 | --- | --- |
@@ -121,31 +166,6 @@ The Hub assistant operates the app through typed tools. Its instructions stay th
 
 A catalog entry is a connection option, not a promise of native search, an importer or sync.
 
-## 7. Core domain model (shared across modules)
-
-`apps/hub-api/prisma/schema.prisma` and `packages/shared-types/src/` are authoritative. Roles:
-
-| Records | Role |
-| --- | --- |
-| `User`, `Session`, `ActivePlace`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, account window leases (three Ensemble and three Node places independently, 60-second expiry), login identities, recovery and verification |
-| Extra `User` rows with `ownerId` | Spaces. Request `userId` is the open space; `accountId` is the signed-in person |
-| `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, contacts, ownership transfer, public links |
-| `Task`, `TaskPage`, `PageBoard`, `PageRevision`, `PageTemplate` | Work and its documents, page-board/column membership, board-specific overview tiles, nesting, revisions, private templates |
-| `Person`, `PersonIdentity`, `Project`, `Repo`, `Deliverable`, project links | Saved context; external identities are separate from display names |
-| `Artifact`, `ArtifactChunk`, `Extraction`, `ContextSuppression` | Saved source content, extracted metadata, deletion suppressions. Vector/tsvector columns are unused |
-| `Skill`, `SkillVersion`, `SkillFeedback` | Current personal instruction (authoritative), versions, feedback |
-| `WorkspaceJob`, `Run`, `RunStep`, `Approval`, `AgentDecision` | Assignment, attempts, evidence, exact continuations |
-| `AssistantConversation`, `AssistantMessage`, `AssistantWorkflow` | Chat, tool proposals and receipts, dependent-write checkpoints |
-| `AssistantRoutine` | Scheduled assistant work, instruction, cadence, latest status and conversation; nullable `builtInKey` is unique per owner |
-| `ModelCredential`, `ConnectorApp`, `McpConnection`, `ApiToken`, `Device`, `DevicePairing` | Encrypted keys and grants, API tokens, paired computers |
-| `McpOAuthClient`, `McpOAuthRequest`, `McpOAuthGrant`, `McpOAuthRefreshToken` | Hosted MCP client metadata, browser-bound consent/codes, account-owned-space grants and rotating credentials; OAuth access keys reference their grant in `ApiToken` |
-| `Document`, `MeetingNote`, `PlotDataset`, `Plot`, `BlockDiagram`, `WidgetLayout`, desk records | Feature content; storage and limits are in the owning guide |
-| `AuditLedger`, `MetricEvent`, `InteractionEvent`, `IncludedUsage`, `IncludedCreditBalance`, `IncludedPeriod` | Action history, observations, interaction log, included-model usage and allowance |
-
-Content is scoped by the open space's `userId`; sharing policy limits what a guest may read or write. Credentials, reminders and personal settings never become shared with an item ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
-
-Migration `20261006010000_account_data_lifetime` adds SQL foreign keys that stop writes after account deletion. They are `NOT VALID` (existing rows are not checked) and absent from Prisma's relation model. Never accept generated migrations that drop them; `src/workspace/constraints.integration.test.ts` checks the allowed difference. This is not row-level security.
-
 ## 8. Models and credits
 
 - Personal API keys are checked and stored encrypted per account. Provider discovery is cached with explicit refresh. Provider and model are always named together; effort levels are validated.
@@ -181,14 +201,49 @@ Details: [05](05_MODULE_TASK_ORCHESTRATOR.md), [06](06_MODULE_WORKSPACE_AND_SURF
 | Recurring workflows | Fixed product schedules only |
 | Semantic retrieval | Vector fields are unused; retrieval is ranked word search plus links between saved records ([03 §5](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs)) |
 | Skill Forge mining | `apps/skill-forge` is a stub; no bulk mining of past work |
-| Audio, video, scans | No OCR, transcription or visual understanding |
+| Audio, video, scans | Ensemble performs no OCR or transcription; the selected model or agent reads the attached original within its own format support ([38](38_AGENT_READABLE_FILES.md)) |
 | File redesign | Format-specific edits only |
 | Record and settings control | Registered operations and allowlisted settings only; no SQL, secret or permission changes |
-| MCP OAuth server | Ensemble is an OAuth client of vendor MCP servers; external MCP clients use `ens_` keys |
 | Audit hardening | Hash-linked ledger only: no INSERT-only role, full content-hash verifier, OpenTelemetry export or `eval/` corpus |
 
+## Principles
 
-## 12. Source map
+1. **Work keeps its context.** A task links a project, repositories, people, files, meeting notes and skills; its page and run history stay with it.
+2. **The person chooses what comes in.** Connecting an app imports nothing. Content arrives only through explicit search, attach, upload or import.
+3. **Several ways to work.** The Hub assistant operates the app, assigned agents do research or code work, and the CLI and editors read the same context.
+4. **Model choice is explicit.** Personal API keys, subscriptions on a paired computer, or included models with a monthly allowance.
+5. **Changes are reviewable.** Apply and Undo, run permissions, publishing approvals, revision checks and run evidence each have a job. A chat reply is not proof that an action succeeded.
+
+## In the code
+
+The repository’s current license is [FSL-1.1-MIT](../LICENSE.md).
+
+### 7. Core domain model (shared across modules)
+
+`apps/hub-api/prisma/schema.prisma` and `packages/shared-types/src/` are authoritative. Roles:
+
+| Records | Role |
+| --- | --- |
+| `User`, `Session`, `ActivePlace`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, account window leases (three Ensemble and three Node places independently, 60-second expiry), login identities, recovery and verification |
+| Extra `User` rows with `ownerId` | Spaces. Request `userId` is the open space; `accountId` is the signed-in person |
+| `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, contacts, ownership transfer, public links |
+| `Task`, `TaskPage`, `PageBoard`, `PageRevision`, `PageTemplate` | Work and its documents, page-board/column membership, board-specific overview tiles, nesting, revisions, private templates |
+| `Person`, `PersonIdentity`, `Project`, `Repo`, `Deliverable`, project links | Saved context; external identities are separate from display names |
+| `Artifact`, `ArtifactChunk`, `Extraction`, `ContextSuppression` | Saved source content, extracted metadata, deletion suppressions. Vector/tsvector columns are unused |
+| `Skill`, `SkillVersion`, `SkillFeedback` | Current personal instruction (authoritative), versions, feedback |
+| `WorkspaceJob`, `Run`, `RunStep`, `Approval`, `AgentDecision` | Assignment, attempts, evidence, exact continuations |
+| `AssistantConversation`, `AssistantMessage`, `AssistantWorkflow` | Chat, tool proposals and receipts, dependent-write checkpoints |
+| `AssistantRoutine` | Scheduled assistant work, instruction, cadence, latest status and conversation; nullable `builtInKey` is unique per owner |
+| `ModelCredential`, `ConnectorApp`, `McpConnection`, `ApiToken`, `Device`, `DevicePairing` | Encrypted keys and grants, API tokens, paired computers |
+| `McpOAuthClient`, `McpOAuthRequest`, `McpOAuthGrant`, `McpOAuthRefreshToken` | Hosted MCP client metadata, browser-bound consent/codes, account-owned-space grants and rotating credentials; OAuth access keys reference their grant in `ApiToken` |
+| `Document`, `MeetingNote`, `PlotDataset`, `Plot`, `BlockDiagram`, `WidgetLayout`, desk records | Feature content; storage and limits are in the owning guide |
+| `AuditLedger`, `MetricEvent`, `InteractionEvent`, `IncludedUsage`, `IncludedCreditBalance`, `IncludedPeriod` | Action history, observations, interaction log, included-model usage and allowance |
+
+Content is scoped by the open space's `userId`; sharing policy limits what a guest may read or write. Credentials, reminders and personal settings never become shared with an item ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
+
+Migration `20261006010000_account_data_lifetime` adds SQL foreign keys that stop writes after account deletion. They are `NOT VALID` (existing rows are not checked) and absent from Prisma's relation model. Never accept generated migrations that drop them; `src/workspace/constraints.integration.test.ts` checks the allowed difference. This is not row-level security.
+
+### 12. Source map
 
 | Area | Main implementation | Guide |
 | --- | --- | --- |

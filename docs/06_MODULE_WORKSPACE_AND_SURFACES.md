@@ -1,6 +1,6 @@
 # 06 · Workspace and assigned agents
 
-Runs is where work assigned from a task, deliverable, Today, the assistant or the CLI is tracked and reviewed. Up next, Working now and Needs you sit above recent run history; `/workspace` opens `/runs`. The runner is `workspace/agent.ts` behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). [24](24_DESKTOP_SANDBOXING.md) owns sandboxing and permissions; [30](30_ENGINES.md) owns external engines and handoff.
+Open **Runs** to track and review work assigned from a task, deliverable, Today, the assistant or the CLI. **Up next**, **Working now** and **Needs you** appear above recent run history. `/workspace` opens `/runs`. Read [sandboxing and permissions](24_DESKTOP_SANDBOXING.md) when choosing access, or [external engines](30_ENGINES.md) when using your own agent.
 
 Hosted accounts see their own job board. Running in host folders or checkouts is operator-only; other verified users target their own paired computer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). `GET /api/workspace` can return a null host root or unavailable host sandbox without hiding device jobs. A failed query shows Retry and device guidance.
 
@@ -8,35 +8,53 @@ Hosted accounts see their own job board. Running in host folders or checkouts is
 
 ## 1. Assigning
 
-The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.ts` persist a `WorkspaceJob`. Setting the owner to Agent does not start anything by itself.
+Choose **Assign task** in Runs, or open Assign from the task you want to run. Choose a run profile, agent and computer, then review the folder and permissions below. Setting a task’s owner to Agent alone does not start a run.
 
-| Choice | Behaviour |
-| --- | --- |
-| Run profile | Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named. **+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox and internet, sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it |
-| Agent | One picker (`components/agent/agent-picker.tsx`): **Auto** (Settings → Models for the task's complexity), Ensemble's included models, the person's own AI plans signed in on the run's computer (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code; [30](30_ENGINES.md)) with their usage, or a model on an API key. Only what can run is listed (signed in, key working), plus the current choice with how to fix it; a source tab shows only when there are two or more. Each model lists its cost and context sizes; the closed picker shows the agent, model and cost, and the button beside it sets the thinking level, context window (standard or long; `contextTier`) and fast mode that model takes |
-| Runs on | Permitted server execution or a paired computer (an offline computer keeps the job queued); a coding agent goes to a computer that has it signed in. Without either, Ensemble's agent researches and writes on the server |
-| Kind | Not chosen: work by a coding agent, on a computer or on a server that runs code happens in a folder (`code`, which can also research); otherwise Ensemble's agent researches and writes the task page (`research`; `autoKind` in `workspace/assign.ts`) |
-| Where it works | Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's |
-| Mode | Ask, Review only or Run unattended; none needs a trusted folder ([24 §4](24_DESKTOP_SANDBOXING.md#4-trust-and-run-modes)) |
-| More options | Instructions for this attempt; Git: No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, from a repository named there for its own checkout, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); Ask before each commit (off by default); Branch: the agent decides, or an existing or new one by exact name ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); sandbox (the OS capability actually present), internet, outside the workspace (read / read-write / none) and *Use my git sign-in*; opening in the tool's own app or a terminal; budgets (minutes, tool calls, model turns; time waiting on a person is excluded); Move the task to Done |
+### Run profile
 
-Outside access is per run, not stored in a profile. The dialog and API validate the combination rather than invent a missing folder, engine or model; an agent or computer with no OS sandbox runs with it off, and the dialog says so. Settings → Assistant → Models uses the same picker for each complexity tier (Low, Medium, High, Max), so a tier can name a coding agent on the person's plan; Auto then runs that agent (`withTierAgent` in `workspace/assign.ts`).
+Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named.
 
-## 2. Context and preparation
+**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox and internet, sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it
 
-`brief()` in `workspace/agent.ts` assembles the task as the person wrote it: the title as a heading, the description, linked project/repo and source link, the task page, **Context from Ensemble** (the task's context packet from `context/graph/packet.ts`, at most 5,000 characters: the meeting it came from and the words asked, people and roles, dependencies, related open work, how similar work went; a copy of a task claimed from the web carries it in its description instead), connected-app items and files, this attempt's instructions, the earlier task it continues, the skills linked to the task (never one with `scope.purpose`) and today's date. A coding agent (Claude Code, Codex, Copilot, Cursor, the ACP agents) gets it followed by how the run works (`workingNotes`): the folder and what it may change beyond it, only the limits that apply (no internet, read-only, git short of No limits, a pull request Ensemble opens), how to ask (or, unattended, to decide and list decisions), secrets, and the summary to end with. Ensemble's own agent gets its tool rules as its system prompt (`ownAgentPrompt`) and the brief as the message. `pages/agent-context.ts` adds owned embedded diagram source under its own bound. Source IDs distinguish a saved task from a live connected-app item.
+### Agent
 
-Connected-app items attached to the task or project are included as reference text, up to 12,000 characters (a device claim has its own bound). File attachments are listed by name and follow the brief as the files themselves (a provider that refuses one gets the request again without it); `view_attachment` opens one again, and `save_attachment` copies an original into the folder under the folder rules. Plots and datasets mentioned on the page come with their settings and a data preview. External engines get authorized temporary copies ([38](38_AGENT_READABLE_FILES.md)). Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
+One picker (`components/agent/agent-picker.tsx`): **Auto** (Settings → Models for the task's complexity), Ensemble's included models, the person's own AI plans signed in on the run's computer (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code; [30](30_ENGINES.md)) with their usage, or a model on an API key.
 
-Fresh code work in its own checkout gets `<workspace>/runs/<slug>` (`prepareFolder` in `workspace/agent.ts`, `workspace/checkout-folder.ts`). Before creating it, the run's selected model names it from the task title and this attempt's instructions; a coding agent uses its own sign-in on the run's computer for a one-off naming request, without keeping another session. Slugs have 3 to 40 lowercase letters, digits and hyphens, at least one letter and no leading or trailing hyphen; spaces, dots, path separators and `runs`, `files`, `projects`, `worktrees`, `.ensemble` and filesystem-reserved Windows device names are refused. An unavailable model or unsafe reply uses the title, else `task-<short suffix>`, and does not block the run. Names already in the workspace root, `runs/`, `projects/`, `worktrees/` or unfinished jobs get `-2`, `-3` and so on; atomic directory creation keeps simultaneous runs apart. `WorkspaceJob.id` remains the internal UUID and `repoPath` stores the actual folder. The run's checkout row shows its path.
+Only what can run is listed (signed in, key working), plus the current choice with how to fix it; a source tab shows only when there are two or more. Each model lists its cost and context sizes; the closed picker shows the agent, model and cost, and the button beside it sets the thinking level, context window (standard or long; `contextTier`) and fast mode that model takes
 
-A requested repository is cloned by the trusted helper with the person's configured Git credential, never handed to the agent. An existing user folder is never initialized or reset to run a task. Continuations reuse the earlier folder, branch and context without asking for a new name; UUID-named folders are left in place. They do not recover uncommitted work from a fresh clone. Paths and permissions are rechecked, and a missing, moved or refused folder blocks the job. Project folders and Node worktrees keep their own naming rules ([30](30_ENGINES.md), [35](35_ENSEMBLE_NODE.md)).
+### Runs on
+
+Permitted server execution or a paired computer (an offline computer keeps the job queued); a coding agent goes to a computer that has it signed in. Without either, Ensemble's agent researches and writes on the server
+
+### Kind
+
+Not chosen: work by a coding agent, on a computer or on a server that runs code happens in a folder (`code`, which can also research); otherwise Ensemble's agent researches and writes the task page (`research`; `autoKind` in `workspace/assign.ts`)
+
+### Where it works
+
+Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's
+
+### Mode
+
+Ask, Review only or Run unattended; none needs a trusted folder ([24 §4](24_DESKTOP_SANDBOXING.md#4-trust-and-run-modes))
+
+### More options
+
+Instructions for this attempt; Git: No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, from a repository named there for its own checkout, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); Ask before each commit (off by default); Branch: the agent decides, or an existing or new one by exact name ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); sandbox (the OS capability actually present), internet, outside the workspace (read / read-write / none) and *Use my git sign-in*; opening in the tool's own app or a terminal; budgets (minutes, tool calls, model turns; time waiting on a person is excluded); Move the task to Done
+
+Outside access is per run, not stored in a profile. The dialog and API validate the combination rather than invent a missing folder, engine or model; an agent or computer with no OS sandbox runs with it off, and the dialog says so.
+
+Settings → Assistant → Models uses the same picker for each complexity tier (Low, Medium, High, Max), so a tier can name a coding agent on the person's plan; Auto then runs that agent (`withTierAgent` in `workspace/assign.ts`).
 
 ## 3. Execution
 
-`executeJob` creates a Run and calls the selected engine or Ensemble's model/tool loop with the tools in `workspace/tools.ts`: file operations, commands, context and attachments, questions, page output and finish. `guard.ts`, `trust.ts`, `git-gate.ts` and the OS backend enforce folder, command and Git rules ([24](24_DESKTOP_SANDBOXING.md)). An external folder can be worked in place and need not be a Git repository.
+`executeJob` creates a Run and calls the selected engine or Ensemble's model/tool loop with the tools in `workspace/tools.ts`: file operations, commands, context and attachments, questions, page output and finish. `guard.ts`, `trust.ts`, `git-gate.ts` and the OS backend enforce folder, command and Git rules ([24](24_DESKTOP_SANDBOXING.md)).
 
-Mode and trust decide which operations wait. A denied call returns a readable result, not a hint to try another path. Budgets stop work and keep partial progress. Unattended picks recommended answers and reports them; it gains no filesystem or Git authority. Engines launched by Ensemble keep its tool-call enforcement; a tool opened in its own app or terminal uses its own settings. Another editor writing the same folder can change it, so do not edit a folder an active task holds.
+An external folder can be worked in place and need not be a Git repository.
+
+Mode and trust decide which operations wait. A denied call returns a readable result, not a hint to try another path. Budgets stop work and keep partial progress. Unattended picks recommended answers and reports them; it gains no filesystem or Git authority. Engines launched by Ensemble keep its tool-call enforcement; a tool opened in its own app or terminal uses its own settings.
+
+Another editor writing the same folder can change it, so do not edit a folder an active task holds.
 
 Queue slots, checkpoints, Stop and interruption are in [05 §4–§6](05_MODULE_TASK_ORCHESTRATOR.md#4-queue-slots-and-limits).
 
@@ -44,7 +62,7 @@ Success and output are saved before the UI reports them. Research saves the deli
 
 ## 4. Evidence and review
 
-Job cards and the task's Agent output link to the Run. `RunStep` stores the engine's tool, thinking and message events; secrets-file read previews are omitted. Evidence keeps the reported model, tokens, reported or estimated cost, bounded changed-file status and line counts, result and run ID; unknown prices stay unknown.
+Open the job card or the task's **Agent output** to review its Run. Check Results, Files and Traces. The evidence shows the reported model, tokens, reported or estimated cost, bounded changed-file status and line counts, result and run ID. Unknown prices remain unknown. Tool, thinking and message events are recorded, but previews omit secrets-file reads.
 
 `changed-files.ts` compares start and end snapshots without rename detection and never runs unsafe Git configuration to inspect a cloned repository. `planted.ts` flags changed files that may run later; a flag does not certify the rest as safe.
 
@@ -59,3 +77,29 @@ Runs queues stack vertically below 1024 CSS pixels; recent history stays below t
 The Hub assistant has its own typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). The Context Bridge reads for every key and makes changes for a key that allows them ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)). Engine MCP/chat tools use a run-scoped credential ([30](30_ENGINES.md)). Assigning a task does not send mail, Teams or Slack messages, run arbitrary routines or replay crashed commands.
 
 Queue, assignment, tool, decision, engine and device tests sit beside their modules; OS escape tests use the platform backend. Real models, browsers and installed engines need their own environment.
+
+## In the code
+
+`components/agent/assign-dialog.tsx` and `workspace/assign.ts` persist the assignment as a `WorkspaceJob`. The runner is `workspace/agent.ts`, behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). `RunStep` stores the engine’s tool, thinking and message events.
+
+### 2. Context and preparation
+
+`brief()` in `workspace/agent.ts` assembles the task as the person wrote it: the title as a heading, the description, linked project/repo and source link, the task page, **Context from Ensemble** (the task's context packet from `context/graph/packet.ts`, at most 5,000 characters: the meeting it came from and the words asked, people and roles, dependencies, related open work, how similar work went; a copy of a task claimed from the web carries it in its description instead), connected-app items and files, this attempt's instructions, the earlier task it continues, the skills linked to the task (never one with `scope.purpose`) and today's date. A coding agent (Claude Code, Codex, Copilot, Cursor, the ACP agents) gets it followed by how the run works (`workingNotes`): the folder and what it may change beyond it, only the limits that apply (no internet, read-only, git short of No limits, a pull request Ensemble opens), how to ask (or, unattended, to decide and list decisions), secrets, and the summary to end with.
+
+Ensemble's own agent gets its tool rules as its system prompt (`ownAgentPrompt`) and the brief as the message. `pages/agent-context.ts` adds owned embedded diagram source under its own bound. Source IDs distinguish a saved task from a live connected-app item.
+
+Connected-app items attached to the task or project are included as reference text, up to 12,000 characters (a device claim has its own bound).
+
+File attachments are listed by name and follow the brief as the files themselves (a provider that refuses one gets the request again without it); `view_attachment` opens one again, and `save_attachment` copies an original into the folder under the folder rules. Plots and datasets mentioned on the page come with their settings and a data preview.
+
+External engines get authorized temporary copies ([38](38_AGENT_READABLE_FILES.md)). Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
+
+Fresh code work in its own checkout gets `<workspace>/runs/<slug>` (`prepareFolder` in `workspace/agent.ts`, `workspace/checkout-folder.ts`). Before creating it, the run's selected model names it from the task title and this attempt's instructions; a coding agent uses its own sign-in on the run's computer for a one-off naming request, without keeping another session.
+
+Slugs have 3 to 40 lowercase letters, digits and hyphens, at least one letter and no leading or trailing hyphen; spaces, dots, path separators and `runs`, `files`, `projects`, `worktrees`, `.ensemble` and filesystem-reserved Windows device names are refused. An unavailable model or unsafe reply uses the title, else `task-<short suffix>`, and does not block the run.
+
+Names already in the workspace root, `runs/`, `projects/`, `worktrees/` or unfinished jobs get `-2`, `-3` and so on; atomic directory creation keeps simultaneous runs apart. `WorkspaceJob.id` remains the internal UUID and `repoPath` stores the actual folder. The run's checkout row shows its path.
+
+A requested repository is cloned by the trusted helper with the person's configured Git credential, never handed to the agent. An existing user folder is never initialized or reset to run a task. Continuations reuse the earlier folder, branch and context without asking for a new name; UUID-named folders are left in place. They do not recover uncommitted work from a fresh clone.
+
+Paths and permissions are rechecked, and a missing, moved or refused folder blocks the job. Project folders and Node worktrees keep their own naming rules ([30](30_ENGINES.md), [35](35_ENSEMBLE_NODE.md)).

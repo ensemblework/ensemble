@@ -1,8 +1,42 @@
 # Caching and UI performance
 
-Domain records are authoritative in the database; every cache below is bounded and short-lived. Authenticated content is never treated as public CDN data.
+Use this guide to understand refresh behavior and measure a slow screen. Saved records remain authoritative in the database. Caches are bounded and short-lived, and authenticated content is never public CDN data.
 
-## 1. Cache map
+## 3. UI performance
+
+- The Hub shell persists across client navigation. Data comes from scoped React Query reads; page co-editing uses its own version protocol.
+- Heavy views load through `next/dynamic`: the diagram editor, plot studio and workspace, task and note pages, comments, context graph and tabs, settings tabs, widget lenses and the guided tour. Check the import graph before adding a dependency to shell or card code.
+- `GET /api/tasks` returns task rows only; page documents and file originals load from their own routes. Detail readers and model tools are bounded or chunked.
+- File extraction, Office and plot work have explicit resource limits and run in workers or the browser. Hosted plotting downloads its browser runtime on first use.
+- The desktop app loads route bundles from its static export and calls the loopback API; there is no Next server in the webview.
+
+Initial missing content uses a 250 ms delayed structural placeholder; cached reads render immediately. Pages and Today keep usable data on a failed background refresh and show a local recovery action. Loader visibility never holds a completed response.
+
+The top-bar activity query also invalidates on private activity lifecycle events and SSE reconnect, retaining polling as reconciliation ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
+
+## 4. Measuring
+
+Measure performance with a production build (`next build`); development mode (`next dev`) includes compilation work.
+
+1. Record the commit, OS, browser, viewport, network and CPU throttling, account size, provider mode, and whether the app is warm or cold.
+2. Measure shell paint, data readiness, editor interaction and remote or model waiting separately.
+3. Record route JavaScript, critical requests, payload sizes, input-to-paint delay, long tasks, and API p50/p95 with sample counts.
+4. For files and plots, record the format and size. Separate runtime startup from a warm export.
+5. For assistant changes, record input, output and cached tokens, and whether the action succeeded.
+
+Starting points: `scripts/measure-diagrams.mjs`, `measure-nav.mjs`, `measure-open.mjs`, `measure-ui.mjs`, `ui-walk.mjs`, `verify-followup.mjs` and `apps/hub-web/e2e/*.mjs` (Playwright, run by hand; read each script's environment and fixture assumptions first). Put results, screenshots and recordings in the PR. Never use real accounts, tokens or production data as fixtures.
+
+`pnpm --filter @ensemble/hub-web test` checks UI contracts, not rendering speed. A loopback measurement does not predict hosted latency.
+
+## 2. Assistant prompts and cached tokens
+
+`assistant/skills/index.ts` routes each request to a small set of playbooks and tools, and `assistant/state.ts` puts stable instructions before live data. Personal skill bodies are read on demand. This helps provider prefix caching, but hits depend on the provider, prompt and timing. Usage records the provider's reported cached tokens; no discount is assumed.
+
+Tool results are never shared across accounts. Tool visibility, input schema and authorization are checked on every call. Included-model reservations stay conservative even when the provider may hit its prompt cache ([33](33_INCLUDED_AI.md)).
+
+## In the code
+
+### 1. Cache map
 
 | Area | Where and how long | Invalidation or boundary |
 | --- | --- | --- |
@@ -23,27 +57,3 @@ Domain records are authoritative in the database; every cache below is bounded a
 | Plot tables | `plots/cache.ts`: LRU of parsed tables keyed by dataset id and content hash; 8 entries, 64 MB, 10 min | [20 §6](20_PLOTS_DESIGN.md#6-caching) |
 
 Pause flags do not expire into Resume. Device leases, login sessions and terminal unlocks have their own expiry; none is a data cache.
-
-## 2. Assistant prompts and cached tokens
-
-`assistant/skills/index.ts` routes each request to a small set of playbooks and tools, and `assistant/state.ts` puts stable instructions before live data. Personal skill bodies are read on demand. This helps provider prefix caching, but hits depend on the provider, prompt and timing. Usage records the provider's reported cached tokens; no discount is assumed.
-
-Tool results are never shared across accounts. Tool visibility, input schema and authorization are checked on every call. Included-model reservations stay conservative even when the provider may hit its prompt cache ([33](33_INCLUDED_AI.md)).
-
-## 3. UI performance
-
-- The Hub shell persists across client navigation. Data comes from scoped React Query reads; page co-editing uses its own version protocol.
-- Heavy views load through `next/dynamic`: the diagram editor, plot studio and workspace, task and note pages, comments, context graph and tabs, settings tabs, widget lenses and the guided tour. Check the import graph before adding a dependency to shell or card code.
-- `GET /api/tasks` returns task rows only; page documents and file originals load from their own routes. Detail readers and model tools are bounded or chunked.
-- File extraction, Office and plot work have explicit resource limits and run in workers or the browser. Hosted plotting downloads its browser runtime on first use.
-- The desktop app loads route bundles from its static export and calls the loopback API; there is no Next server in the webview.
-
-Initial missing content uses a 250 ms delayed structural placeholder; cached reads render immediately. Pages and Today keep usable data on a failed background refresh and show a local recovery action. Loader visibility never holds a completed response. The top-bar activity query also invalidates on private activity lifecycle events and SSE reconnect, retaining polling as reconciliation ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
-
-## 4. Measuring
-
-Use a production build (`next build`), never `next dev`. Record the commit, OS and browser, viewport, network and CPU throttling, account size, warm or cold state and provider mode. Measure separately: shell paint, data ready, editor interactive, remote or model wait. Record route JavaScript, critical requests, payload sizes, input-to-paint and long tasks, and API p50/p95 with sample counts. For files and plots, give format and size, runtime start-up and warm export separately. For assistant changes, give input, output and cached tokens and whether the action succeeded.
-
-Starting points: `scripts/measure-diagrams.mjs`, `measure-nav.mjs`, `measure-open.mjs`, `measure-ui.mjs`, `ui-walk.mjs`, `verify-followup.mjs` and `apps/hub-web/e2e/*.mjs` (Playwright, run by hand; read each script's environment and fixture assumptions first). Put results, screenshots and recordings in the PR. Never use real accounts, tokens or production data as fixtures.
-
-`pnpm --filter @ensemble/hub-web test` checks UI contracts, not rendering speed. A loopback measurement does not predict hosted latency.

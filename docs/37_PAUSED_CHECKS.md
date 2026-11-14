@@ -1,6 +1,8 @@
 # 37 · Fast pipeline and paused checks
 
-While development moves fast, every push and pull request into `testing` **and** `main` runs the same short set of checks, and production deploys right after them, the way testing always has. The slower suites are paused, not deleted: they live unchanged in `.github/workflows/full-checks.yml` and run by hand. This page lists what runs, what is paused and how to bring each back.
+Run the local checks for the area you changed. Pushes and pull requests into `testing` and `main` run the same fast checks automatically. Before a risky change, open **Actions → full-checks → Run workflow** and choose the branch to verify.
+
+The tables below show what runs automatically and what requires that manual workflow. Production deploys after the fast checks pass. Longer tests and platform builds do not run on every change.
 
 ## What runs now
 
@@ -19,7 +21,7 @@ The **fast checks** are one composite action, `.github/actions/fast-checks`, use
 | --- | --- |
 | Versions and types | `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api`, `hub-web` and the CLI |
 | CLI channel boundaries | The testing CLI's isolation (channel, paths, sign-in, editor MCP setup, launcher and updates) and the API's client channel |
-| Published docs and read-only lookup | Builds `apps/docs` and tests its links, extracts and explicit misses, and `ensemble_docs` through the bridge and hosted MCP ([40](40_PUBLIC_DOCUMENTATION.md)) |
+| Published docs and read-only lookup | Builds `apps/docs` and tests its theme assets, reader coverage, links, extracts, explicit misses and anonymous helper (grounding, medium effort, limits and credential isolation), and `ensemble_docs` through the bridge and hosted MCP ([40](40_PUBLIC_DOCUMENTATION.md)) |
 | Focused web and API regressions | Run previews, board drag and insights, Pages, comments, the connector store, the morning brief and its prompt, sign-in and session cookies, page boards, cookie namespaces, production guards, Node's file workspace and file changes, run checkout folder names, confirmed session deletion, filing sessions in the agents' apps, a deleted project's Codex projects, sessions used outside Ensemble, ask sessions, deleting chats and projects, summaries, and Node's plans, routing, schedules and dispatch |
 | Active places and conditional saves | Three-place admission, release and replacement, key exemption, field-level save merges and conflicts, the Hub's chooser and conflict dialog |
 | MCP OAuth, named tools and consent | The bridge's typecheck and catalog, OAuth discovery, consent, PKCE, client and resource binding, refresh and revocation, named and legacy tools, the consent and sign-in forms and their routes ([Context Bridge](CONTEXT_BRIDGE.md)) |
@@ -32,7 +34,7 @@ The **fast checks** are one composite action, `.github/actions/fast-checks`, use
 
 Actions → **full-checks** → *Run workflow* runs all of these on any branch.
 
-| Paused check | Covered | Took |
+| Manual check | Covers | Typical time |
 | --- | --- | --- |
 | *Full typecheck and all unit tests* | `pnpm typecheck` across every package (landing, desktop, context bridge, quick capture included), brand, logo and icon checks, the `brand`, `shared-types`, `block-diagrams` and `ide-theme` tests, every `hub-web` test (plot tests with matplotlib) | ~4 min |
 | *hub-api tests (Postgres + Redis)* | The whole `hub-api` suite against real Postgres and Redis (remote, desktop and engine end-to-end runs, sandboxed with Landlock), `pnpm bridge:verify` | ~8 min |
@@ -43,7 +45,13 @@ Actions → **full-checks** → *Run workflow* runs all of these on any branch.
 | *macOS sandbox escapes* (`desktop-seatbelt`) | Escape, trust, planted-file and git-gate tests on macOS, and the Mac disk-image packager test | ~1.5 min |
 | Desktop builds on pull requests | All four installers built for every PR into `main` | 12–26 min |
 
-What this risks: a regression in those areas reaches production unnoticed; a Hub build error shows during `deploy.yml`, after the API has moved; a sandbox or platform break shows only on a release tag or in use. Run *full-checks* by hand before a risky change, and the locally runnable suites from `AGENTS.md`.
+A regression outside the fast checks can reach production. A Hub build error appears during deployment, after the API has moved. A sandbox or platform problem can first appear in a release build or during use.
+
+Run **full-checks** before a risky change, plus the relevant local suites in `AGENTS.md`.
+
+## In the code
+
+The manual suites live in `.github/workflows/full-checks.yml`. Keep workflow job names and branch protections in sync when changing which checks are automatic.
 
 ## Bringing them back
 
