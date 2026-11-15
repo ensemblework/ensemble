@@ -11,7 +11,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
-import { acquireRuntimeLock, ALREADY_RUNNING_EXIT } from "./runtime-lock.js";
+import { acquireRuntimeLock, ALREADY_RUNNING_EXIT, confirmRuntimeLock, LOCK_CHECK_MS, type LockOwner } from "./runtime-lock.js";
 
 // Loopback http cookies must stay non-Secure, and the production boot checks
 // refuse a non-https web origin. The desktop process is not that deployment.
@@ -42,6 +42,7 @@ process.env.ENSEMBLE_WORKSPACE_ROOT ||= join(homedir(), "ensemble-workspace");
 // One runtime per data folder. A second launcher attaches to the first (the
 // discovery file has its port and token) instead of opening the database again.
 const owner = process.env.ENSEMBLE_RUNTIME_OWNER?.trim() || "desktop";
+const holderName = (holder: LockOwner) => (holder.pid <= 0 ? "another Ensemble" : holder.owner === "cli" ? "the Ensemble CLI runner" : "the Ensemble app");
 const lock = acquireRuntimeLock(dirname(dataDir), owner);
 if (!lock.ok) {
   let port = "";
@@ -51,7 +52,7 @@ if (!lock.ok) {
     // no discovery file yet: the other runtime is still starting
   }
   console.error(
-    `ensemble-sidecar: the ${lock.holder.owner === "cli" ? "Ensemble CLI runner" : "Ensemble app"} is already running this computer's Ensemble (pid ${lock.holder.pid}${port ? `, port ${port}` : ""}). Attach to it instead of starting a second one.`,
+    `ensemble-sidecar: ${holderName(lock.holder)} is already running this computer's Ensemble (${lock.holder.pid > 0 ? `pid ${lock.holder.pid}` : "starting"}${port ? `, port ${port}` : ""}). Attach to it instead of starting a second one.`,
   );
   process.exit(ALREADY_RUNNING_EXIT);
 }
@@ -79,3 +80,24 @@ process.env.PATH = await toolPath;
 const { startHub } = await import("../index.js");
 const started = await startHub();
 console.log(`ensemble-sidecar listening on 127.0.0.1:${started.port} migrations=${opened.applied.length} backup=${opened.backup ?? "none"}`);
+
+// The lock is held for life. Another process named in it means two runtimes have this data folder:
+// this one stops its remote work, closes the database and exits as a runtime that found another.
+const lockWatch = setInterval(() => {
+  let check: ReturnType<typeof confirmRuntimeLock>;
+  try {
+    check = confirmRuntimeLock(dirname(dataDir), owner);
+  } catch (error) {
+    started.log.warn({ err: error }, "could not read this computer's runtime lock");
+    return;
+  }
+  if (check.held) {
+    if (check.retaken) started.log.warn("this computer's runtime lock was missing; this runtime took it again");
+    return;
+  }
+  clearInterval(lockWatch);
+  started.log.error({ holder: check.holder }, `${holderName(check.holder)}${check.holder.pid > 0 ? ` (pid ${check.holder.pid})` : ""} took this computer's Ensemble data; this runtime stops`);
+  setTimeout(() => process.exit(ALREADY_RUNNING_EXIT), 60_000);
+  void started.close().finally(() => process.exit(ALREADY_RUNNING_EXIT));
+}, LOCK_CHECK_MS);
+lockWatch.unref();

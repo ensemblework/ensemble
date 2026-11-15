@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { access, mkdir, writeFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathApi } from "./platform.js";
-import { TESTING } from "./channel.js";
+import { COMMAND, TESTING } from "./channel.js";
 
 const LAUNCH_AGENT_LABEL = TESTING ? "com.ensemblework.cli.testing.runner" : "com.ensemblework.cli.runner";
 const SYSTEMD_UNIT = TESTING ? "ensemble-test-runner.service" : "ensemble-runner.service";
@@ -125,6 +125,46 @@ export async function installRunnerService(input: {
     await tryQuietly(exec, "schtasks.exe", ["/End", "/TN", WINDOWS_TASK]);
     await exec("schtasks.exe", ["/Run", "/TN", WINDOWS_TASK]);
     return `Installed Windows scheduled task "${WINDOWS_TASK}"`;
+  }
+  throw new Error(`Unsupported platform: ${platform}`);
+}
+
+/**
+ * The login service `ensemble runner install` set up on this computer, by the name its service manager
+ * knows it by, or null when there is none.
+ */
+export async function installedRunnerService(input: { platform?: NodeJS.Platform; home: string; execFile?: ExecFile }): Promise<string | null> {
+  const platform = input.platform ?? process.platform;
+  const path = pathApi(platform);
+  const exists = (file: string) => access(file).then(() => true, () => false);
+  if (platform === "darwin") return (await exists(path.join(input.home, "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`))) ? LAUNCH_AGENT_LABEL : null;
+  if (platform === "linux") return (await exists(path.join(input.home, ".config", "systemd", "user", SYSTEMD_UNIT))) ? SYSTEMD_UNIT : null;
+  if (platform === "win32") return (await tryQuietly(input.execFile ?? execFilePromise, "schtasks.exe", ["/Query", "/TN", WINDOWS_TASK])) ? WINDOWS_TASK : null;
+  return null;
+}
+
+/**
+ * Starts the installed login service when it is not running; one that runs is left as it is. The runtime
+ * it starts is the computer's only one, so a launcher never starts a second one beside it.
+ */
+export async function startRunnerService(input: { platform?: NodeJS.Platform; home: string; execFile?: ExecFile }): Promise<void> {
+  const platform = input.platform ?? process.platform;
+  const exec = input.execFile ?? execFilePromise;
+  const failed = (error: unknown) => new Error(`The Ensemble login service is installed but did not start (${error instanceof Error ? error.message : String(error)}). Run \`${COMMAND} runner install\` to set it up again, or \`${COMMAND} runner uninstall\` to stop using it.`);
+  if (platform === "darwin") {
+    if (await tryQuietly(exec, "launchctl", ["kickstart", `${launchdDomain()}/${LAUNCH_AGENT_LABEL}`])) return;
+    // Not loaded (booted out by hand, or since this login): loading it starts it (RunAtLoad).
+    const plist = pathApi(platform).join(input.home, "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+    await exec("launchctl", ["bootstrap", launchdDomain(), plist], { quiet: true }).catch((error: unknown) => Promise.reject(failed(error)));
+    return;
+  }
+  if (platform === "linux") {
+    await exec("systemctl", ["--user", "start", SYSTEMD_UNIT], { quiet: true }).catch((error: unknown) => Promise.reject(failed(error)));
+    return;
+  }
+  if (platform === "win32") {
+    await exec("schtasks.exe", ["/Run", "/TN", WINDOWS_TASK], { quiet: true }).catch((error: unknown) => Promise.reject(failed(error)));
+    return;
   }
   throw new Error(`Unsupported platform: ${platform}`);
 }

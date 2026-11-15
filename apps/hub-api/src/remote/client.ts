@@ -2,7 +2,8 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type ActivityPost, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type SessionChoicePost, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { randomUUID } from "node:crypto";
+import { EVIDENCE_HEADERS, INSTANCE_HEADER, ROUTES, type ActivityPost, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type SessionChoicePost, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
@@ -26,6 +27,9 @@ export class RemoteError extends Error {
     this.statusCode = status || 502;
   }
 }
+
+/** This runtime process, on its event stream and its calls (`INSTANCE_HEADER`). */
+export const RUNTIME_INSTANCE = randomUUID();
 
 export function remoteApiBase(): string | null {
   const fromEnv = process.env.ENSEMBLE_REMOTE_API?.trim();
@@ -105,10 +109,15 @@ export interface HostedClient {
   answerFiles(requestId: string, answer: FileAnswer): Promise<void>;
   /** The answer to a `code.request` or `terminal.request` (protocol 4). */
   answerCode(requestId: string, answer: CodeAnswer): Promise<void>;
+  /**
+   * Takes a relayed request that changes something here before acting on it. "taken": another runtime of
+   * this computer took it and answers it; "gone": nobody waits for it. A server without the route: "claimed".
+   */
+  claimRequest?(requestId: string): Promise<"claimed" | "taken" | "gone">;
   /** One chunk of a web terminal command's output, in order. False: the web stopped listening. */
   terminalOutput(runId: string, chunk: TerminalChunk): Promise<boolean>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
-  /** An assistant turn the web handed this computer; null when it has already ended. */
+  /** An assistant turn the web handed this computer; null when it has already ended. A 409 (`RemoteError`): another runtime of this computer took it. */
   assistantTurn(turnId: string): Promise<unknown | null>;
   /** A file attached to the turn's message, at most `maxBytes`; null when the turn ended or the file is gone. */
   assistantFile(turnId: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }): Promise<Uint8Array | null>;
@@ -126,7 +135,7 @@ async function send(base: string, token: string, method: string, path: string, j
   try {
     response = await fetch(`${base}${path}`, {
       method,
-      headers: { authorization: `Bearer ${token}`, ...(json === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { authorization: `Bearer ${token}`, [INSTANCE_HEADER]: RUNTIME_INSTANCE, ...(json === undefined ? {} : { "content-type": "application/json" }) },
       // A saved run secret's value never leaves the computer, whatever a run printed (lib/run-secrets.ts).
       body: json === undefined ? undefined : JSON.stringify(hideSecretsDeep(json)),
       signal,
@@ -155,6 +164,21 @@ function safeJson(text: string): unknown {
 function messageOf(body: unknown, fallback: string): string {
   if (typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string") return (body as { error: string }).error;
   return fallback;
+}
+
+/**
+ * Whether this runtime may act on a relayed request that changes something here: it took the request,
+ * or the server has no single claims. False when another runtime of this computer took it, nobody waits
+ * for it any more, or the claim could not be made (the web then times out and says so).
+ */
+export async function claimedHere(client: Pick<HostedClient, "claimRequest">, requestId: string): Promise<boolean> {
+  if (!client.claimRequest) return true;
+  try {
+    return (await client.claimRequest(requestId)) === "claimed";
+  } catch (error) {
+    if (authRejected(error)) throw error;
+    return false;
+  }
 }
 
 /** A device route refused the token. 401 is removal; 403 is the wrong caller. */
@@ -352,7 +376,15 @@ export function hostedClient(base: string, token: string): HostedClient {
     },
     async answerCode(requestId, answer) {
       const res = await call("POST", ROUTES.codeAnswer(requestId), answer);
-      if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+      // 409: another runtime of this computer took the request and answers it.
+      if (res.status >= 400 && res.status !== 404 && res.status !== 409 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+    },
+    async claimRequest(requestId) {
+      const res = await call("POST", ROUTES.claimRequest(requestId), {});
+      if (res.status < 300 || res.status === 404) return "claimed";
+      if (res.status === 409) return "taken";
+      if (res.status === 410) return "gone";
+      throw new RemoteError(res.status, messageOf(res.body, "The request could not be taken."));
     },
     async terminalOutput(runId, chunk) {
       const res = await call("POST", ROUTES.terminalOutput(runId), chunk);
@@ -478,7 +510,7 @@ export function hostedClient(base: string, token: string): HostedClient {
       let response: Response;
       try {
         response = await fetch(`${base}${ROUTES.assistantFile(turnId, fileId)}`, {
-          headers: { authorization: `Bearer ${token}` },
+          headers: { authorization: `Bearer ${token}`, [INSTANCE_HEADER]: RUNTIME_INSTANCE },
           signal: AbortSignal.any([options.signal, AbortSignal.timeout(120_000)]),
           redirect: "error",
         });
@@ -520,13 +552,14 @@ export function hostedClient(base: string, token: string): HostedClient {
     },
     async assistantStream(turnId, body) {
       const res = await call("POST", ROUTES.assistantStream(turnId), body);
-      if (res.status === 404 || res.status === 410) return { stop: true };
+      // 409: another runtime of this computer took the turn.
+      if (res.status === 404 || res.status === 409 || res.status === 410) return { stop: true };
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The reply was refused."));
       return { stop: (res.body as { stop?: unknown } | null)?.stop === true };
     },
     async assistantDone(turnId, body) {
       const res = await call("POST", ROUTES.assistantDone(turnId), body);
-      if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+      if (res.status >= 400 && res.status !== 404 && res.status !== 409 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
     },
     async activity(body) {
       const res = await call("POST", ROUTES.activity, body, AbortSignal.timeout(20_000));
@@ -564,7 +597,7 @@ async function readEvents(base: string, token: string, onFrame: (event: string, 
   channelBase(base);
   let response: Response;
   try {
-    response = await fetch(`${base}${ROUTES.events}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" }, signal, ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" as const } : {}) });
+    response = await fetch(`${base}${ROUTES.events}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream", [INSTANCE_HEADER]: RUNTIME_INSTANCE }, signal, ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" as const } : {}) });
   } catch (error) {
     if (signal.aborted) return;
     throw new RemoteError(0, "Ensemble on the web is not reachable.");

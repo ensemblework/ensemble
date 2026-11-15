@@ -16,7 +16,11 @@ The device token is an encrypted `model_credentials` row in the local database (
 
 Each pairing also makes the computer's sealing key pair, which the web encrypts secrets for: the private key in `seal-key.json` (0600, encrypted with the runtime's local key), the public key reported as `capabilities.sealKey` and pinned on the device row (§4.9, [35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). Unpairing deletes it.
 
-`remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases.
+`remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases ([26 §4](26_CLI.md#use-the-cli-alongside-the-desktop-app)).
+
+**One runtime per pairing on the web's side.** Each runtime process names itself with a random id on its event stream and its calls (the `x-ensemble-instance` header, `INSTANCE_HEADER` in `remote/contract.ts`), so the web tells two runtimes of one computer apart. It keeps only the newer one's stream: when a runtime opens its stream, the streams other runtimes of that device opened before end with the frame `device.replaced` (`publishRuntimeStream` in `devices/revoke-notify.ts`, on the Redis bus that carries revocations, so every API process closes its own), and the owner's AI activity log gets a `server.log` warning. A runtime replaced this way stops its remote loop and connects again after 30 seconds (`timing().replacedMs` in `remote/contract.ts`, `remote/loop.ts`); by then one that does not hold the computer's runtime lock has stopped by itself. A stream that sends no id (an older runtime) is never closed this way.
+
+An assistant turn goes to the first runtime that reads it (§4.9). A request that changes something on the computer (`session.delete`, `assistant.session.delete`, `project.delete`, a Code write through `code.request`) goes to the first runtime that claims it: `POST /api/devices/self/code-requests/:id/claim` (`claimRequest` in `devices/file-relay.ts`) answers that runtime 200 (and again later), any other 409 "This request was picked up by another Ensemble on this computer." (it then leaves the request: `claimedHere` in `remote/client.ts`), and 410 when nobody waits; an answer posted by another runtime than the one that claimed it is refused with 409. A server without the route answers 404, and the runtime then acts on the request without a claim.
 
 Pairing does not copy local data to the account; a local-only app's one-time move does ([DESKTOP](DESKTOP.md) §1.3).
 
@@ -156,6 +160,8 @@ Without the list, the computer's mode decides (`credentials/mode.ts`): every env
 #### Use an AI subscription in chat
 
 The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there (`capabilities.assistantTurns` 1 or more, `ASSISTANT_TURNS_MIN`). Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
+
+One runtime runs a turn. The first `GET /api/devices/self/assistant-turns/:id` takes it for the runtime that asked (`pickTurn` in `subscriptions/relay.ts`, by its `x-ensemble-instance`, §2), which may read it again; any other runtime of that computer gets 409 "This turn was picked up by another Ensemble on this computer." and leaves the turn (`answerAssistantTurn` in `remote/assistant.ts`), and its file reads, tool calls, reply text and `done` are refused with 409 too. A turn taken by a runtime that sends no id (an older one) takes posts from any runtime of that computer; a second read is still refused.
 
 #### Send chat attachments to the agent
 
@@ -803,7 +809,8 @@ With `kind: "browser"` and `operation` the tab must be the node's; `view: "watch
 | POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/evidence`, `/complete` | Report, ask a saved question, send changed-file text (§4.6) and the files the worker attached (§4.11), settle with the worker's report. Progress may carry `observed` (what the agent says it runs with: `model`, `effort`, `context`, `contextTokens`, `fast`) when it changes, and complete `totals.observed` ([30 §3.4](30_ENGINES.md#34-what-the-agent-says-it-runs-with)) |
 | POST | `/api/devices/self/jobs/:id/reattach`, `/resume` | After an outage: take back a run that kept going, or carry on one lost to a restart (§3) |
 | GET / POST | `/api/devices/self/decisions/:id`, `/api/devices/self/decisions/:id/close` | Read an answer / close a decision answered locally, or withdraw it (`expired`) when the agent stopped waiting |
-| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output`, `/tool-runs/:runId/output` | The computer's answers to relayed requests, and the longer output of a node's command (§4.10) |
+| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output`, `/tool-runs/:runId/output` | The computer's answers to relayed requests, and the longer output of a node's command (§4.10); 409 for an answer from another runtime than the one that claimed the request (§2) |
+| POST | `/api/devices/self/code-requests/:id/claim` | A runtime takes a relayed request that changes something on the computer before it acts on it; 409 when another runtime of that computer took it, 410 when nobody waits (§2) |
 | POST | `/api/devices/self/evidence-uploads/:uploadId` | A file the web asked for by an upload id: a node's capture, or a held file released or previewed (§4.11) |
 | GET | `/api/devices/self/node-files/:downloadId` | A file of the owner's Ensemble Files a node puts on this computer (files `save`, §4.10), once, by the download id the web gave that call (410 for another computer or a second fetch) |
 | POST | `/api/devices/self/node-file-changes` | Original-file references collected by a node's tools and commands; authenticated device and owned turn, one private card updated per turn/computer ([35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace)) |
@@ -816,9 +823,9 @@ With `kind: "browser"` and `operation` the tab must be the node's; `view: "watch
 | POST | `/api/devices/self/logins/:loginId/state` | A sign-in changed on this computer by itself (`LoginStatePost {status, message?, via?}`: seen done, its tab or work gone, its time run out, or a problem the card should show): the server updates its card (`logins: 2`, §10.1; a 404 is ignored) |
 | GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
 | GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
-| GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9) |
+| GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9); 409 for a runtime other than the one that read the turn first |
 | POST | `/api/devices/self/activity` | This computer's part of its owner's AI activity log (`ActivityPost`, at most 200 entries: its agents' tool calls, agent tasks' prompts and answers, errors and warning or error log lines), stored on the account it is paired with; a run named by its web id is kept only when it is that account's ([07 §1.4](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#14-the-ai-activity-log)) |
-| GET | `/api/devices/self/events` | Wake-up stream |
+| GET | `/api/devices/self/events` | Wake-up stream; a newer runtime's stream ends an older one's with `device.replaced` (§2) |
 
 `scope=device` is not an account token; device routes have their own allowlist and authentication. Pairing does not allow minting other tokens.
 
@@ -856,7 +863,7 @@ There is no text recognition in images, so a desktop app's captures are always h
 
 ### 9. Tests and limits
 
-API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation. Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
+API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation; `src/devices/runtime-instances.integration.test.ts` and `src/remote/runtime-claims.test.ts` cover two runtimes with one pairing (turns, claims, streams). Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
 
 Captures: `src/evidence/captures.test.ts` (tool results as evidence: kept, held, variants, a file with a saved secret deleted, one outside the work's folder refused), `src/evidence/capture-run.integration.test.ts` (a run's browser and capture tools through its MCP server) and `src/node/capture.integration.test.ts` (a node's, through `node.tool.request` against a simulated computer running the real tool layer; upload ids; held captures previewed, released and discarded through `evidence.request`; the live view).
 

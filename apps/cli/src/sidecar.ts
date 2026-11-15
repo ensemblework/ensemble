@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createReadStream, openSync, readFileSync } from "node:fs";
-import { uptime } from "node:os";
+import { homedir, uptime } from "node:os";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import { fetchJson, HttpError } from "./http.js";
 import { migrateLegacyData } from "./migrate.js";
 import { fileExists, resolveCliPaths, type CliPaths } from "./paths.js";
 import { resolveLauncherCommand } from "./launcher.js";
+import { installedRunnerService, startRunnerService } from "./services.js";
 import { VERSION } from "./version.js";
 import { COMMAND, DOWNLOAD_URL, TESTING, TESTING_API } from "./channel.js";
 
@@ -36,8 +37,25 @@ export type RunnerPid = {
 export type SidecarSession = {
   discovery: Discovery;
   child?: ChildProcess;
+  /** The login service that started this runtime, when it did (`startRunner`). */
+  service?: string;
   stop: () => Promise<void>;
 };
+
+/** The login service `ensemble runner install` sets up, as `startRunner` starts it. */
+export type RunnerService = {
+  /** Its name with the service manager, or null when it is not installed. */
+  installed: () => Promise<string | null>;
+  start: () => Promise<void>;
+};
+
+const loginService: RunnerService = {
+  installed: () => installedRunnerService({ home: homedir() }),
+  start: () => startRunnerService({ home: homedir() }),
+};
+
+/** How long a launcher waits for the runtime the login service starts; the service may first wait for one that is stopping. */
+const SERVICE_START_MS = 90_000;
 
 const LOG_LIMIT = 10 * 1024 * 1024;
 
@@ -136,11 +154,24 @@ export async function runtimeLockHolder(paths: CliPaths = resolveCliPaths(), isA
  * well before it exits (it stops its queue, browser and remote loop, then flushes the database), and a
  * new runtime cannot open the data folder until it has.
  */
-export async function waitForLockRelease(paths: CliPaths, deadline: number, isAlive: (pid: number) => boolean = processAlive): Promise<boolean> {
+export async function waitForLockRelease(paths: CliPaths, deadline: number, isAlive: (pid: number) => boolean = processAlive, pollMs = 250): Promise<boolean> {
   for (;;) {
     if (!(await runtimeLockHolder(paths, isAlive))) return true;
     if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+/**
+ * Waits while another runtime has this computer's data folder: a live process holds the runtime lock, or
+ * a runtime answers. Answering alone is not enough: one that stopped answering may still be closing its
+ * database, and one that is starting holds the lock before it answers.
+ */
+export async function waitForOtherRuntime(paths: CliPaths, pollMs = 5_000): Promise<void> {
+  for (;;) {
+    await waitForLockRelease(paths, Number.POSITIVE_INFINITY, processAlive, pollMs);
+    if (!(await runningRunner(paths))) return;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 }
 
@@ -363,13 +394,46 @@ async function waitForSidecar(file: string, expectedToken: string, timeoutMs: nu
   throw new Error(`Ensemble did not start within ${Math.round(timeoutMs / 1000)} seconds. See ${logPath}.`);
 }
 
-export async function startRunner(input: { sidecarDir: string; paths?: CliPaths; foreground?: boolean }): Promise<SidecarSession | null> {
+/**
+ * Starts this computer's runtime when none answers; null when one does. With the login service installed,
+ * its runtime is the computer's one: the service is started and its runtime used, and no runtime of this
+ * launcher's own is started beside it. `foreground` is how the service runs the runtime itself.
+ */
+export async function startRunner(input: { sidecarDir: string; paths?: CliPaths; foreground?: boolean; service?: RunnerService; serviceWaitMs?: number }): Promise<SidecarSession | null> {
   const paths = input.paths ?? resolveCliPaths();
   const running = await runningRunner(paths);
   if (running) return null;
+  if (!input.foreground) {
+    const service = input.service ?? loginService;
+    const name = await service.installed();
+    if (name) return { discovery: await startService(paths, service, name, input.serviceWaitMs ?? SERVICE_START_MS), service: name, stop: async () => undefined };
+  }
   const session = await spawnSidecar({ sidecarDir: input.sidecarDir, paths, foreground: input.foreground });
   if (session.child?.pid) await writeRunnerPid({ pid: session.child.pid, startedAt: new Date().toISOString() }, paths);
   return session;
+}
+
+/**
+ * Starts the login service and waits for its runtime to answer. It is started again every 10 seconds
+ * meanwhile: a start that came while the service's previous run was still exiting does nothing.
+ */
+async function startService(paths: CliPaths, service: RunnerService, name: string, timeoutMs: number): Promise<Discovery> {
+  const deadline = Date.now() + timeoutMs;
+  await service.start();
+  let startAgainAt = Date.now() + 10_000;
+  for (;;) {
+    if (Date.now() >= startAgainAt) {
+      await service.start().catch(() => undefined);
+      startAgainAt = Date.now() + 10_000;
+    }
+    const found = await runningRunner(paths);
+    if (found) return found;
+    if (Date.now() >= deadline) {
+      const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+      throw new Error(`The Ensemble login service (${name}) did not start Ensemble within ${seconds} second${seconds === 1 ? "" : "s"}. See ${paths.runnerLog}.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
 }
 
 /**

@@ -42,6 +42,7 @@ import { finishDeviceJob, type DeviceResult } from "./finish.js";
 import { folderLabels, rejectPathLabels } from "./labels.js";
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
+import { publishRuntimeStream } from "./revoke-notify.js";
 import { revokePairedDevice } from "./revoke.js";
 import { contextTierOf, fastOf, outsideAccessOf, steerOf } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
@@ -52,7 +53,7 @@ import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
 import { storeDeviceActivity } from "../lib/ai-activity.js";
-import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, runtimeInstanceOf, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -963,8 +964,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const { id } = request.params as { id: string };
     const answer = FileAnswer.parse(request.body);
-    const stored = await storeAnswer(app.redis, device.id, id, answer);
+    const stored = await storeAnswer(app.redis, device.id, id, answer, runtimeInstanceOf(request.headers));
     if (stored === "unknown") return reply.code(410).send({ error: "Nobody is waiting for this answer." });
+    if (stored === "taken") return reply.code(409).send({ error: "This request was picked up by another Ensemble on this computer." });
     return { ok: true };
   });
 
@@ -978,6 +980,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       void drainProjectDeletes(app, device).catch(() => undefined);
     }, 2_000);
     drain.unref?.();
-    await sseHandler(request, reply, `device:${device.id}`);
+    const instance = runtimeInstanceOf(request.headers);
+    const runtime = instance ? { instance, openedAt: Date.now() } : null;
+    await sseHandler(request, reply, `device:${device.id}`, runtime ? { runtime } : {});
+    // Two runtimes of one computer with one pairing: the newer stream stays and the older is closed, so one runtime does the work.
+    if (runtime) publishRuntimeStream({ deviceId: device.id, userId: device.userId, name: device.name, ...runtime });
   });
 }

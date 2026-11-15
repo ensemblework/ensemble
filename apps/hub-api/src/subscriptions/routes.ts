@@ -15,10 +15,11 @@ import { ASSISTANT_TURNS_MIN, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent } f
 import { deviceOnline } from "../devices/constants.js";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { ownDevice } from "../devices/routes.js";
+import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { detectAgents } from "./detect.js";
-import { finishTurn, heard, liveTurn, streamInto } from "./relay.js";
+import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
 import { startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
 
@@ -40,6 +41,9 @@ export type SubscriptionComputer = {
 
 const Target = z.object({ deviceId: z.string().min(1).max(80) });
 const SignIn = Target.extend({ agent: z.enum(SUBSCRIPTION_PROVIDERS) });
+
+/** Another runtime of the same computer read the turn first and runs it. */
+const TAKEN = "This turn was picked up by another Ensemble on this computer.";
 
 /** A plain media type for a turn file's download; anything else goes as bytes. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
@@ -129,7 +133,10 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
-    turn.picked = true;
+    if (!pickTurn(turn, runtimeInstanceOf(request.headers))) {
+      request.log.warn({ userId: device.userId, device: device.id }, `A second Ensemble on ${device.name} asked for an assistant turn another one took`);
+      return reply.code(409).send({ error: TAKEN });
+    }
     heard(turn);
     return { spec: turn.spec };
   });
@@ -140,6 +147,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const params = request.params as { id: string; fileId: string };
     const turn = liveTurn(params.id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     const file = turn.spec.files?.find((row) => row.id === params.fileId);
     if (!file || !turn.read) return reply.code(404).send({ error: "That file is not part of this turn." });
     heard(turn);
@@ -163,6 +171,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ text: "This turn has ended.", isError: true });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ text: TAKEN, isError: true });
     const body = ToolCall.parse(request.body);
     heard(turn);
     try {
@@ -180,6 +189,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ stop: true });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ stop: true });
     const body = Stream.parse(request.body);
     streamInto(turn, body.seq, body.text);
     return { stop: false };
@@ -190,6 +200,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     finishTurn(turn, Done.parse(request.body));
     return { ok: true };
   });

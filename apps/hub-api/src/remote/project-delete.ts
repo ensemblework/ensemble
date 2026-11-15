@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { listCodexProjects, removeCodexAppProjects, type CodexProjectRow, type SidebarOptions } from "../workspace/engines/app-sessions.js";
 import { noCodexProjects, withCodexServer } from "../workspace/engines/delete-session.js";
-import type { HostedClient } from "./client.js";
+import { claimedHere, type HostedClient } from "./client.js";
 import type { CodeAnswer } from "./contract.js";
 
 const Request = z.object({ id: z.string().min(1).max(100), projectId: z.string().uuid() }).strict();
@@ -36,10 +36,12 @@ export async function removeProjectHere(projectId: string, options: RemoveOption
   return { found: ids.length, owed: (await removeCodexAppProjects(ids, options, projectId)) === "owed" };
 }
 
-export async function answerProjectDelete(client: Pick<HostedClient, "answerCode">, input: unknown, remove: (projectId: string) => Promise<{ found: number; owed: boolean }> = removeProjectHere): Promise<void> {
+/** Answers the web's request; the one runtime of this computer that takes it removes them (`claimedHere`). */
+export async function answerProjectDelete(client: Pick<HostedClient, "answerCode" | "claimRequest">, input: unknown, remove: (projectId: string) => Promise<{ found: number; owed: boolean }> = removeProjectHere): Promise<void> {
   const parsed = Request.safeParse(input);
   const id = parsed.success ? parsed.data.id : typeof input === "object" && input && "id" in input && typeof input.id === "string" ? input.id : null;
   if (!id) return;
+  if (parsed.success && !(await claimedHere(client, id))) return;
   let answer: CodeAnswer;
   try {
     if (!parsed.success) throw new Error("Invalid project deletion request.");
