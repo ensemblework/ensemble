@@ -9,13 +9,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
 // Ensemble's data and workspace for this test, in the home folder (the sandbox does not grant the temporary folder's parents).
-const base = mkdtempSync(join(homedir(), ".ensemble-node-terminal-"));
+const base = homeScratch(".ensemble-node-terminal-");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(base, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(base, "ensemble-workspace");
@@ -31,9 +30,12 @@ const { shutdownCapture } = await import("../capture/index.js");
 const { shutdownBrowser } = await import("../browser/index.js");
 
 after(async () => {
-  await shutdownCapture().catch(() => undefined);
-  await shutdownBrowser().catch(() => undefined);
-  rmSync(base, { recursive: true, force: true });
+  try {
+    await shutdownCapture().catch(() => undefined);
+    await shutdownBrowser().catch(() => undefined);
+  } finally {
+    removeScratch(base);
+  }
 });
 
 test("keys: text, named keys in braces, Ctrl and Alt, and arrows as the program asked for them", () => {

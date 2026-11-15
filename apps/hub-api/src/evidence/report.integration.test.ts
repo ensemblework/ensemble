@@ -7,11 +7,12 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { createHttpHarness } from "../test/http.js";
 
 const scratch = mkdtempSync(join(tmpdir(), "ensemble-report-"));
@@ -22,11 +23,14 @@ const { registerEngineRun, unregisterEngineRun } = await import("../workspace/en
 const { collectRunResult } = await import("./run-tools.js");
 const { evidenceDir } = await import("./files.js");
 // The work folder lives outside Ensemble's own checkout, as a person's project does.
-const work = mkdtempSync(join(homedir(), ".ensemble-report-work-"));
+const work = homeScratch(".ensemble-report-work-");
 after(async () => {
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
-  rmSync(work, { recursive: true, force: true });
+  try {
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+    removeScratch(work);
+  }
 });
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6364f8ffff3f0005fe02fea7d6a4a40000000049454e44ae426082", "hex");

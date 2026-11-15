@@ -11,17 +11,16 @@
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import type { HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
 // The computer's own folder: its key and remote.json (never the real data folder).
-const deviceData = mkdtempSync(join(homedir(), ".ensemble-sudo-"));
+const deviceData = homeScratch(".ensemble-sudo-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = deviceData;
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = "60000";
@@ -58,8 +57,11 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
-  await h.close();
-  rmSync(deviceData, { recursive: true, force: true });
+  try {
+    await h.close();
+  } finally {
+    removeScratch(deviceData);
+  }
 });
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string };

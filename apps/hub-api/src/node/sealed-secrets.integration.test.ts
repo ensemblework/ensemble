@@ -8,18 +8,17 @@
  * too old for a key keeps the TLS path, and a computer whose key changed is asked to pair again.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { Writable } from "node:stream";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import type { HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
 // The computer's own folder: its key, its replay set and remote.json (never the real data folder).
-const deviceData = mkdtempSync(join(homedir(), ".ensemble-sealed-secrets-"));
+const deviceData = homeScratch(".ensemble-sealed-secrets-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = deviceData;
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
@@ -64,8 +63,11 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
-  await h.close();
-  rmSync(deviceData, { recursive: true, force: true });
+  try {
+    await h.close();
+  } finally {
+    removeScratch(deviceData);
+  }
 });
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string };
