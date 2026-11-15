@@ -60,7 +60,10 @@ export function mountSearch() {
         publication = await loading;
       }
       if (current !== generation || !dialog.open) return;
-      if (query) hits = searchDocs(publication, query, 12).results;
+      if (query) {
+        const meaningful = query.replace(/\b(?:how|do|does|i|we|you|the|a|an|can|could|where|what|is|are|to|in|of|my|please)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        hits = searchDocs(publication, meaningful || query, 12).results;
+      }
       else hits = ['/00_project_overview/', '/28_ensemble_spaces/', '/29_sharing/', '/31_connectors_in_use/', '/32_files/', '/40_public_documentation/'].flatMap(path => {
         const page = publication.pages.find(page => page.path === path);
         const section = page?.sections[0];

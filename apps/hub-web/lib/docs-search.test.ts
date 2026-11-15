@@ -36,7 +36,7 @@ function setup() {
 test('top-bar search updates as you type, highlights matches, and supports arrow selection', async () => {
   const p = setup();
   try {
-    p.open(); p.respond(); p.type('share'); await settle();
+    p.open(); p.respond(); p.type('How do I share'); await settle();
     assert.equal(p.results().querySelectorAll('[role=option]').length, 2);
     assert.ok(p.results().querySelector('mark'));
     p.input.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
