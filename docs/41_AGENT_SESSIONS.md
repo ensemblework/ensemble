@@ -83,7 +83,7 @@ Page asks use **Settings → Assistant → Ask Ensemble model**, normally Medium
 
 Delete a coding session from Node's **Sessions** page. A node's deletion request appears as an owner-only confirmation card. Every computer that ran the session must be online and support deletion; otherwise Ensemble tells you which computer to connect or update and leaves the session visible.
 
-Deleting a session cancels its queued runs and removes the agent's saved conversation. Ensemble's run records, project folders and files remain. Continuing one of its old tasks starts a separate session.
+Deleting a session cancels its queued runs and removes the agent's saved conversation, found by its exact id: your other conversations in that agent are left alone. Ensemble's run records, project folders and files remain. Continuing one of its old tasks starts a separate session.
 
 Automatic cleanup checks every 15 minutes. A coding session becomes eligible when all its tasks are deleted for at least ten minutes, or are done or dropped beyond the completed-retention window and not pinned. Active or queued work is left alone. Offline computers and failed deletions are retried later.
 
@@ -212,6 +212,11 @@ An ask on a surface (`POST /api/ensemble/invoke`: Today, a board, Needs me, Code
 **Deleting a session** (`deleteAgentSession` in `workspace/delete-session.ts`). The person deletes a session from Ensemble Node's Sessions page, and a node asks for it with an owner-only confirmation card ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Every computer that ran the session must be online and report `sessionDelete: 1` ([26](26_CLI.md)); otherwise nothing is hidden and the person is told which computer to connect or update. Under the session's lock its queued runs are cancelled, then each computer deletes the agent's own saved history and Ensemble marks the session deleted.
 
 Ensemble's run records, project folders and files stay. A run that continues a deleted session's runs starts a session of its own (§1).
+
+**What goes from the agent** (`deleteNativeSession` in `workspace/engines/delete-session.ts`, used by every session deletion on this page; each agent's way in [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Only the session with that exact id is removed, and one the agent no longer has counts as deleted.
+
+- Cursor's agent keeps a session Ensemble runs over ACP in `acp-sessions/<id>` (`store.db`, `meta.json`) and a terminal chat in `chats/<workspace>/<id>`, both in its config folder: `CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`. Both go.
+- Gemini CLI: Ensemble never runs `gemini --delete-session <id>`. When the id is not in Gemini's list for the folder it runs in, Gemini reads the id as a list number and deletes that session instead (`3d7b4ba0-…` is the third), and each start of Gemini clears its expired sessions in the background, so checking the list first does not rule that out. Ensemble removes the file under `tmp/<project>/chats/` whose recorded `sessionId` is the session's, in any project folder of `~/.gemini` or, for a run in Gemini's macOS sandbox, `~/.cache/.gemini` (`GEMINI_CLI_HOME` stands for `~` when set), with what Gemini keeps under that id: `logs/session-<id>.jsonl`, `tool-outputs/session-<id>`, the `<id>` folder and the subagents in `chats/<id>`. A session whose file name shares the id's first 8 characters stays.
 
 **Cleaning up sessions** (`workspace/session-cleanup.ts`). The scheduler sweeps each account every 15 minutes (`orchestration.cleanSessions`, on by default): a session goes from its agent (`deleteAgentSession`, ledgered as `workspace.session.delete` by `system` with `reason: "retired"`) once every task in it is retired: deleted at least 10 minutes ago (so Undo still finds it), or done or dropped longer than the completed window and not pinned.
 
