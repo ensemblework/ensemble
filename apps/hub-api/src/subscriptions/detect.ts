@@ -1,9 +1,11 @@
 /**
  * Which of the person's AI subscriptions this computer can run, found the way the vendor ships
  * them (docs/30 §8): Claude Code as the `claude` command or the copy the Claude app keeps for its
- * Code tab; Codex as the `codex` command or the copy inside the ChatGPT app; Cursor's agent;
- * Copilot CLI. For each: where it is, its version, whether it is signed in (as the tool itself
- * reports it, never by reading its credentials), and the models it offers.
+ * Code tab; Codex as the `codex` command or the copy inside the ChatGPT app; Cursor's agent and
+ * Copilot CLI, also where their installers put them; OpenCode, or the copy the OpenCode app runs
+ * (`agent-apps.ts`, which also finds the apps that come without their agent). For each: where it
+ * is, its version, whether it is signed in (as the tool itself reports it, never by reading its
+ * credentials), and the models it offers.
  *
  * The checks start the tools themselves, so the answer is cached: the heartbeat reports the last
  * one, and "Check again" on the web or a finished sign-in asks for a new one.
@@ -19,10 +21,14 @@ import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable, hostLaunch } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { acpProbe } from "./acp-probe.js";
+import { copilotProgram, cursorAgentProgram, opencodeProgram } from "./agent-apps.js";
 import { ANTIGRAVITY_MODELS, antigravityInstalled, antigravitySignedIn } from "./antigravity.js";
 import { claudeControl } from "./claude-control.js";
 import { copilotSavedSignIn, copilotStatus } from "./copilot.js";
 import { withoutHostSession } from "./host-session.js";
+
+/** The agents' apps here that come without the agent's program: the Cursor app, VS Code with Copilot. */
+export { appPresence } from "./agent-apps.js";
 
 /**
  * Variables that would make an agent bill an API key or another account instead of the person's
@@ -207,11 +213,8 @@ export async function codexAgentBinary(): Promise<AgentBinary | null> {
 }
 
 /** The command each agent runs as; Antigravity's is the server Ensemble installs. */
-const COMMANDS: Record<Exclude<SubscriptionProvider, "claude-code" | "codex" | "antigravity">, string> = {
-  "cursor-agent": "cursor-agent",
-  "copilot-cli": "copilot",
+const COMMANDS: Record<Exclude<SubscriptionProvider, "claude-code" | "codex" | "antigravity" | "cursor-agent" | "copilot-cli" | "opencode">, string> = {
   "grok-cli": "grok",
-  opencode: "opencode",
   "gemini-cli": "gemini",
   // Mistral Vibe's ACP server, installed with it; it also runs `--setup` and `--version`.
   "mistral-vibe": "vibe-acp",
@@ -225,6 +228,15 @@ export async function agentBinary(id: SubscriptionProvider): Promise<AgentBinary
   if (id === "antigravity") {
     const installed = antigravityInstalled();
     return installed ? { path: installed.executable, via: "app" } : null;
+  }
+  // Also where their installers put them, and OpenCode as the OpenCode app's own copy (`agent-apps.ts`).
+  if (id === "cursor-agent" || id === "copilot-cli") {
+    const path = id === "cursor-agent" ? await cursorAgentProgram() : await copilotProgram();
+    return path ? { path, via: "cli" } : null;
+  }
+  if (id === "opencode") {
+    const found = await opencodeProgram();
+    return found ? { path: found.program, via: found.via, ...(found.args.length ? { args: found.args } : {}) } : null;
   }
   const name = COMMANDS[id];
   if (isAcpEngine(id)) {
@@ -638,7 +650,7 @@ async function probeOpenCode(): Promise<SubscriptionAgent | null> {
   const models = parseModelLines(listed.stdout).filter((model) => model.id.includes("/"));
   return {
     id: "opencode",
-    via: "cli",
+    via: found.via,
     version: firstVersion(version.stdout),
     // OpenCode can also run on keys in the person's own environment: a model list counts as signed in.
     signedIn: credentials === null ? (models.length ? true : null) : credentials > 0 || models.length > 0,

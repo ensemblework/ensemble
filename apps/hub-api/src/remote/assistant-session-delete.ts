@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { chatSettled } from "../subscriptions/agents.js";
 import { dropSession, SESSION_KEY } from "../subscriptions/turn-sessions.js";
-import type { HostedClient } from "./client.js";
+import { claimedHere, type HostedClient } from "./client.js";
 import type { CodeAnswer } from "./contract.js";
 
 const Request = z.object({ id: z.string().min(1).max(100), key: z.string().regex(SESSION_KEY) }).strict();
@@ -18,10 +18,12 @@ export async function dropAssistantSession(key: string): Promise<boolean> {
   return dropSession(key);
 }
 
-export async function answerAssistantSessionDelete(client: Pick<HostedClient, "answerCode">, input: unknown): Promise<void> {
+/** Answers the web's request; the one runtime of this computer that takes it drops the session (`claimedHere`). */
+export async function answerAssistantSessionDelete(client: Pick<HostedClient, "answerCode" | "claimRequest">, input: unknown): Promise<void> {
   const parsed = Request.safeParse(input);
   const id = parsed.success ? parsed.data.id : typeof input === "object" && input && "id" in input && typeof input.id === "string" ? input.id : null;
   if (!id) return;
+  if (parsed.success && !(await claimedHere(client, id))) return;
   let answer: CodeAnswer;
   try {
     if (!parsed.success) throw new Error("Invalid chat session deletion request.");

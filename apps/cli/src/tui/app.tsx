@@ -631,7 +631,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     setOverlay({
       kind: "picker",
       title: "Who you work with",
-      hint: "Chat and /run go to this agent. Claude Code, Codex, Cursor and GitHub Copilot work in this folder on your own sign-in, under your run profile and Ensemble's sandbox; what they ask you shows up as buttons.",
+      hint: "Chat and /run go to this agent. Claude Code, Codex, Cursor and GitHub Copilot work in this folder on your own sign-in, under your run profile; what they ask you shows up as buttons.",
       items: [
         { id: "", label: `Follow the run profile (${ENGINE_LABEL[profile.engine]})`, active: prefs.engine === null },
         ...engines.map((item) => ({ id: item.id, label: ENGINE_LABEL[item.id], detail: item.note, active: prefs.engine === item.id })),
@@ -937,7 +937,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       case "keys":
         return addKey(args || undefined);
       case "sandbox":
-        return say(sandbox && sandbox !== "none" ? `This computer's sandbox: ${sandbox}. Commands an agent runs stay inside it.` : "No sandbox here yet. On Windows run `ensemble sandbox setup` once (it asks for permission).", sandbox && sandbox !== "none" ? "info" : "error");
+        return say(sandbox && sandbox !== "none" ? `This computer's sandbox: ${sandbox}. It is in beta: a run uses it when its run profile turns the sandbox on.` : "No sandbox here yet. It is in beta and off by default; to try it on Windows, run `ensemble sandbox setup` once (it asks for permission).", "info");
       case "hooks":
         return hooks();
       case "login":

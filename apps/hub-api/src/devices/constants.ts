@@ -25,6 +25,15 @@ export function serverRunnerEnabled(env: NodeJS.ProcessEnv = process.env): boole
   return env.ENSEMBLE_SERVER_RUNNER !== "off";
 }
 
+/**
+ * A server whose own runner runs agents' code: `ENSEMBLE_SERVER_RUNNER` on, and not the runtime of the
+ * desktop app or the CLI on the person's own computer. Its runs keep the OS sandbox by default, which is
+ * in beta and off by default everywhere else (docs/24 §1).
+ */
+export function serverRunsOwnCode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return serverRunnerEnabled(env) && env.ENSEMBLE_DESKTOP !== "1";
+}
+
 export function deviceOnline(lastSeenAt: Date | null | undefined, now = Date.now()): boolean {
   if (!lastSeenAt) return false;
   return now - lastSeenAt.getTime() <= ONLINE_MS;

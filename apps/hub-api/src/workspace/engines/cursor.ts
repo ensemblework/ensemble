@@ -7,14 +7,17 @@
  * Cursor keeps its own sandbox (`--sandbox enabled` with the run's sandbox on). Every tool call
  * Cursor asks permission for is judged by the run's rules (`judge.ts`) and answered allow-once or
  * reject-once, never "always" (that would change the person's own Cursor allowlist). Cursor's
- * questions (`cursor/ask_question`) and Ensemble's `ask_person` MCP tool reach Needs me.
+ * questions (`cursor/ask_question`) and Ensemble's `ask_person` MCP tool reach Needs me. Cursor
+ * takes no name for a session and names it from its first message, so a new task's session leads
+ * with the task's title alone on its first line (app-sessions.ts).
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { cursorAgentProgram } from "../../subscriptions/agent-apps.js";
 import { withoutHostSession } from "../../subscriptions/host-session.js";
 import { appendLive, touchLive } from "../live-log.js";
-import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
+import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
@@ -25,8 +28,9 @@ import { RpcConnection } from "./rpc.js";
 /** Keys in Ensemble's own environment that must not stand in for the person's Cursor sign-in. */
 const KEY_VARIABLES = ["CURSOR_API_KEY"];
 
+/** Cursor's agent as the subscriptions find it: on the PATH, or where Cursor's installer put it (`agent-apps.ts`). */
 export async function cursorAgentBinary(): Promise<string | null> {
-  return (await hostExecutable("cursor-agent").catch(() => null)) ?? null;
+  return cursorAgentProgram();
 }
 
 type ToolCall = { toolCallId?: string; title?: string; kind?: string; content?: Array<{ type?: string; path?: string; content?: { text?: string } }>; locations?: Array<{ path?: string }>; rawInput?: Record<string, unknown> | null };
@@ -262,7 +266,8 @@ export async function runCursor(
     const current = (session.models as { currentModelId?: unknown } | undefined)?.currentModelId;
     await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId, observed: typeof current === "string" && current ? { model: current } : {} });
     await ctx.progress("Cursor started");
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: options.prompt }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+    const text = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     result.turns = 1;
     result.tokensIn += done.usage?.inputTokens ?? 0;
     result.tokensOut += done.usage?.outputTokens ?? 0;

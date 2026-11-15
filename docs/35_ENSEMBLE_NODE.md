@@ -1137,10 +1137,10 @@ The computer advertises `capabilities.sessionDelete: 1` and handles `session.del
 | GitHub Copilot | Its headless server's `session.delete`, checking `success` |
 | Codex / ChatGPT's Codex | App-server `thread/delete`, not archive |
 | Claude Code | Exact session transcript and subagent directory under its configured `projects` history |
-| Cursor | Exact UUID chat directory under `.cursor/chats/<workspace>` |
+| Cursor | Exact UUID ACP session directory (`acp-sessions/<id>`) and chat directory (`chats/<workspace>/<id>`) in Cursor's config folder ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up-implementation-reference)) |
 | Grok Build | `grok sessions delete <id>` |
 | OpenCode | `opencode session delete <id>` |
-| Gemini CLI | `gemini --delete-session <id>` in its recorded workspace |
+| Gemini CLI | The session file that records the exact UUID, with that id's logs, tool outputs and subagents; never `gemini --delete-session`, which can delete another session ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up-implementation-reference)) |
 | Antigravity | The pinned ACP server's exact conversation `.db`/sidecar/WAL files and per-session brain directory under its isolated home; never credentials or shared configuration |
 
 A session the agent says it no longer has (deleted in its own app, or expired: "not found" naming that session, or Codex's "no rollout found") counts as deleted, for every agent above.
@@ -1224,7 +1224,7 @@ A node does what it can on its owner's computer itself, without a coding agent: 
 
 - **Where.** Only in a turn that only the owner reads and that the owner started (a DM, a crew, their private thread). Never in a turn someone else started, never where other people read, and for a helper only with its parent's `computer` grant, in the folders it named (§6.1). The output stays in that turn.
 - **Which computer.** The one named (`computer`), else the owner's computer seen online most recently. It must report `capabilities.nodeTools` 1 (2 for the node's own folder, terminal screenshots, `sudo` and sharing files; 3 to stop a background command; `capabilities.nodeFiles` 1 for sharing a folder and saving an attachment there); otherwise the node is told "Update Ensemble on <computer>".
-- **How.** Each call goes to the computer as `node.tool.request` and is judged and run there ([25 §4.10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#410-a-nodes-own-tools-on-the-computer)): the guard and the OS sandbox as for an agent's commands, with keys, Ensemble's data, the run secrets and the browser profile denied. The browser and capture tools go the same way (§8.16); they need `capabilities.browser` 1 there and a browser for Ensemble ("run `ensemble capture setup`" otherwise).
+- **How.** Each call goes to the computer as `node.tool.request` and is judged and run there ([25 §4.10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#410-a-nodes-own-tools-on-the-computer)): the guard as for an agent's commands, and always the OS sandbox (whatever a run profile's sandbox beta says, [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)), with keys, Ensemble's data, the run secrets and the browser profile denied. The browser and capture tools go the same way (§8.16); they need `capabilities.browser` 1 there and a browser for Ensemble ("run `ensemble capture setup`" otherwise).
 - **The node's own folder.** A call that names no folder works in `<workspace>/nodes/<handle>` on that computer, made on first use (mode 0700, "@handle's folder"): downloads, notes, reports and scratch work go there without asking. Ensemble's run folders (`<workspace>/runs/<name>`) and every node's folder count as its own too: no card asks about them (the floor still applies).
 
 **Who decides** is the computer, in this order:

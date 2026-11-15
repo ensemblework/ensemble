@@ -5,17 +5,23 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   addClaudeDesktopSession,
+  claudeAppOpen,
   claudeCodeTabFolder,
   claudeDesktopProfiles,
   codexAppOpen,
   codexProject,
   codexProjectThreads,
+  copilotSessionName,
   fileCodexAppProject,
+  nameCopilotSession,
   removeClaudeDesktopSessions,
   removeCodexAppProjects,
   sessionTitle,
+  stopClaudeAppRetryForTests,
   stopCodexAppRetryForTests,
+  syncClaudeAppDeletions,
   syncCodexAppProjects,
+  titledPrompt,
 } from "./app-sessions.js";
 
 const CLI = "e005f1b8-90f8-48f1-b6e8-b4b05ccc6304";
@@ -50,6 +56,41 @@ test("a session's title is one line of at most 80 characters", () => {
   assert.equal(sessionTitle("  Plan the\nlaunch  "), "Plan the launch");
   assert.equal(sessionTitle("x".repeat(100))?.length, 80);
   assert.equal(sessionTitle(""), null);
+  assert.equal(sessionTitle("Ring\u0007 the\u0000bell"), "Ring the bell", "no control characters");
+  assert.equal(sessionTitle(`${"x".repeat(78)}😀😀😀`), `${"x".repeat(78)}😀…`, "cut between characters, never inside one");
+});
+
+test("GitHub Copilot gets a name it takes: it refuses one with a double quote, and fails the whole run for it", () => {
+  assert.equal(copilotSessionName('Fix the "login" bug'), "Fix the 'login' bug");
+  assert.equal(copilotSessionName("  \n "), null);
+  assert.ok(copilotSessionName("y".repeat(300))!.length <= 100, "Copilot takes at most 100 characters");
+});
+
+test("an agent that takes no name gets the title alone on the first line of a new session's first message", () => {
+  // A task's brief opens with its title as a heading: that line becomes the title alone.
+  assert.equal(titledPrompt("Copilot note", "# Copilot note\n\nWrite KIWI in notes.txt.\n\n---\nHow this run works"), "Copilot note\n\nWrite KIWI in notes.txt.\n\n---\nHow this run works");
+  assert.equal(titledPrompt(" Plan the\nlaunch ", "# Plan the launch\nThe brief"), "Plan the launch\nThe brief");
+  // A chat's first message is Ensemble's instructions: the chat's title goes before them.
+  assert.equal(titledPrompt("Session test 244 chat", "You are the Ensemble assistant.\n\n---\n\nhi"), "Session test 244 chat\n\nYou are the Ensemble assistant.\n\n---\n\nhi");
+  assert.equal(titledPrompt("Other title", "# Brief\nrest"), "Other title\n\n# Brief\nrest");
+  assert.equal(titledPrompt(null, "# Brief"), "# Brief");
+  assert.equal(titledPrompt(" ", "Brief"), "Brief");
+  // At the start of a message these would run as a command or read a file: left as they were.
+  for (const title of ["/help me plan", "!ls notes", "@notes.md review", "?"]) assert.equal(titledPrompt(title, `# ${title}\nThe brief`), `# ${title}\nThe brief`, title);
+});
+
+test("a new Copilot session is named with Copilot's own /rename, only when the session's commands list it", async () => {
+  const sent: Array<{ method: string; params: unknown }> = [];
+  const rpc = { request: async (method: string, params?: unknown) => (sent.push({ method, params }), { stopReason: "end_turn" }) };
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["compact", "model"], confirmed: () => true }), false);
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: null, confirmed: () => true }), false);
+  assert.deepEqual(sent, [], "a Copilot without the command would take the line as a prompt");
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["model", "rename"], confirmed: () => true }), true);
+  assert.deepEqual(sent, [{ method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text: "/rename Copilot note" }] } }]);
+  // Copilot answers a name it refuses with a message, not an error: only its session_info_update confirms one.
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["rename"], confirmed: () => false }), false);
+  const stopped = { request: async () => Promise.reject(new Error("GitHub Copilot stopped.")) };
+  assert.equal(await nameCopilotSession(stopped, { sessionId: "s1", name: "Copilot note", commands: ["rename"], confirmed: () => false }), false, "never fails the run");
 });
 
 test("the Code tab's list is the one in the profile the Claude app runs on now, with the record of a session the app imported, and goes with the session", async () => {
@@ -98,8 +139,10 @@ test("the Code tab's list is the one in the profile the Claude app runs on now, 
     assert.equal(await addClaudeDesktopSession({ ...where, cliSessionId: "not-a-session", cwd: "/w", title: "Bad id" }), null);
     assert.equal(await addClaudeDesktopSession({ ...where, cliSessionId: "11111111-2222-4333-8444-555555555555", cwd: "/w", title: null }), null, "no title, no record");
 
-    assert.equal(await removeClaudeDesktopSessions(CLI, where), 2, "its record here and the older release's in the other profile");
-    assert.deepEqual(readdirSync(list), ["archived-sessions.idx"]);
+    const state = join(home, "runtime", "claude-app-deletions.json");
+    assert.equal(await removeClaudeDesktopSessions(CLI, { ...where, state, appOpen: async () => false, now: 5000 }), "settled", "the app is closed: removed for good");
+    assert.deepEqual(json(state), { [CLI]: { at: 5000, settledAt: 5000 } });
+    assert.deepEqual(readdirSync(list), ["archived-sessions.idx"], "its record here and the older release's in the other profile");
     assert.deepEqual(readdirSync(join(signedIn, "claude-code-sessions", ACCOUNT, ORG)), ["local_june.json"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -123,7 +166,12 @@ test("a gateway profile whose Code tab was never opened files under the app's in
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
-    assert.equal(await addClaudeDesktopSession({ home: scratch("no-claude"), platform: "darwin", env: {}, cliSessionId: CLI, cwd: "/w", title: "Plan" }), null, "no Claude app");
+    const none = scratch("no-claude");
+    try {
+      assert.equal(await addClaudeDesktopSession({ home: none, platform: "darwin", env: {}, cliSessionId: CLI, cwd: "/w", title: "Plan" }), null, "no Claude app");
+    } finally {
+      rmSync(none, { recursive: true, force: true });
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -173,6 +221,120 @@ test("the Claude app's profiles on Windows (roaming, local third-party, Microsof
     const linux = profile(join(config, "Claude"), NOVEMBER);
     appRecord(join(linux, "claude-code-sessions", ACCOUNT, ORG), "theirs", NOVEMBER);
     assert.equal(await claudeCodeTabFolder({ home, platform: "linux", env: { XDG_CONFIG_HOME: config } }), join(linux, "claude-code-sessions", ACCOUNT, ORG));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a deleted session's record the running Claude app writes back is removed again, until it has been removed with the app closed", async () => {
+  const home = scratch("claude-deleted");
+  try {
+    const gateway = profile(join(home, "Library", "Application Support", "Claude-3p"), NOVEMBER);
+    const list = join(gateway, "claude-code-sessions", INSTALL, LOCAL_ORG);
+    const state = join(home, "runtime", "claude-app-deletions.json");
+    let open = true;
+    const options = { home, platform: "darwin" as const, env: {}, state, appOpen: async () => open, retryMs: null };
+    const theirs = appRecord(list, "theirs", NOVEMBER);
+    const ours = await addClaudeDesktopSession({ ...options, cliSessionId: CLI, cwd: "/w/chat", title: "Ask about the launch" });
+    assert.ok(ours && existsSync(ours));
+
+    assert.equal(await removeClaudeDesktopSessions(CLI, { ...options, now: 1000 }), "owed", "the app is open: it may write the record back");
+    assert.equal(existsSync(ours!), false, "removed at once all the same");
+    assert.deepEqual(json(state), { [CLI]: { at: 1000 } });
+
+    // The app saves the session it still holds: its record is born again, without Ensemble's mark.
+    const reborn = () => appRecord(list, CLI, NOVEMBER, { cliSessionId: CLI, title: "Ask about the launch" });
+    reborn();
+    assert.equal(await syncClaudeAppDeletions({ ...options, now: 2000 }), "owed");
+    assert.equal(existsSync(join(list, `local_${CLI}.json`)), false, "removed again while the app is open");
+
+    reborn();
+    open = false;
+    assert.equal(await syncClaudeAppDeletions({ ...options, now: 3000 }), "settled", "removed with the app closed: it cannot come back");
+    assert.equal(existsSync(join(list, `local_${CLI}.json`)), false);
+    assert.deepEqual(json(state), { [CLI]: { at: 1000, settledAt: 3000 } });
+    assert.ok(existsSync(theirs), "the person's own session stays");
+
+    reborn();
+    assert.equal(await syncClaudeAppDeletions({ ...options, now: 4000 }), "nothing", "nothing owed");
+    assert.equal(existsSync(join(list, `local_${CLI}.json`)), false, "a record written back while the app went unseen goes all the same");
+
+    // Kept 30 days, then forgotten: a record of it is left alone after that.
+    reborn();
+    assert.equal(await syncClaudeAppDeletions({ ...options, now: 1000 + 31 * 86_400_000 }), "nothing");
+    assert.deepEqual(json(state), {});
+    assert.ok(existsSync(join(list, `local_${CLI}.json`)));
+    assert.ok(existsSync(theirs));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a deletion is settled only when the Claude app was closed before and after its records were removed; while open it is tried again", async () => {
+  const home = scratch("claude-retry");
+  try {
+    const gateway = profile(join(home, "Library", "Application Support", "Claude-3p"), NOVEMBER);
+    const list = join(gateway, "claude-code-sessions", INSTALL, LOCAL_ORG);
+    const state = join(home, "runtime", "claude-app-deletions.json");
+    // The app starts while Ensemble removes the records: closed, then open.
+    const answers = [false, true];
+    const where = { home, platform: "darwin" as const, env: {}, state, retryMs: null };
+    appRecord(list, CLI, NOVEMBER, { cliSessionId: CLI });
+    assert.equal(await removeClaudeDesktopSessions(CLI, { ...where, appOpen: async () => answers.shift() ?? true }), "owed");
+
+    // While it is open, every few moments; settled once it is closed.
+    appRecord(list, CLI, NOVEMBER, { cliSessionId: CLI });
+    let open = true;
+    let asked = 0;
+    assert.equal(await syncClaudeAppDeletions({ ...where, retryMs: 20, appOpen: async () => ((asked += 1), open) }), "owed");
+    open = false;
+    const settled = Date.now() + 5_000;
+    while (json(state)[CLI] && !(json(state)[CLI] as { settledAt?: number }).settledAt && Date.now() < settled) await new Promise((done) => setTimeout(done, 10));
+    assert.ok((json(state)[CLI] as { settledAt?: number }).settledAt, "settled by the retry");
+    assert.equal(existsSync(join(list, `local_${CLI}.json`)), false);
+    assert.ok(asked >= 3);
+
+    const none = scratch("no-claude");
+    try {
+      const nowhere = join(none, "runtime", "claude-app-deletions.json");
+      assert.equal(await removeClaudeDesktopSessions(CLI, { home: none, platform: "darwin", env: {}, state: nowhere, appOpen: async () => false }), "nothing", "no Claude app");
+      assert.equal(existsSync(nowhere), false, "and nothing remembered");
+    } finally {
+      rmSync(none, { recursive: true, force: true });
+    }
+    // A session the Code tab never listed (a one-off turn's, one filed on another computer): nothing to come back.
+    const unlisted = join(home, "runtime", "unlisted.json");
+    assert.equal(await removeClaudeDesktopSessions("11111111-2222-4333-8444-555555555555", { ...where, state: unlisted, appOpen: async () => true }), "nothing");
+    assert.equal(existsSync(unlisted), false, "and nothing remembered");
+  } finally {
+    stopClaudeAppRetryForTests();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("whether the Claude app is open: Chromium's lock in one of its profiles on macOS and Linux, its lockfile on Windows", async () => {
+  const home = scratch("claude-open");
+  try {
+    const gateway = profile(join(home, "Library", "Application Support", "Claude-3p"), NOVEMBER);
+    profile(join(home, "Library", "Application Support", "Claude"), JUNE);
+    const mac = { home, platform: "darwin" as const, env: {}, processes: false };
+    assert.equal(await claudeAppOpen(mac), false, "no lock: closed");
+    symlinkSync(`Akashs-MacBook-Air.local-${process.pid}`, join(gateway, "SingletonLock"));
+    assert.equal(await claudeAppOpen(mac), true, "the lock's process is running");
+    rmSync(join(gateway, "SingletonLock"));
+    symlinkSync("Akashs-MacBook-Air.local-2147483646", join(gateway, "SingletonLock"));
+    assert.equal(await claudeAppOpen(mac), false, "a lock left by a process that is gone");
+
+    const config = join(home, ".config");
+    symlinkSync(`laptop-${process.pid}`, join(profile(join(config, "Claude"), NOVEMBER), "SingletonLock"));
+    assert.equal(await claudeAppOpen({ home, platform: "linux", env: { XDG_CONFIG_HOME: config }, processes: false }), true, "a build of the app on Linux");
+
+    const roaming = join(home, "AppData", "Roaming");
+    const win = { home, platform: "win32" as const, env: { APPDATA: roaming, LOCALAPPDATA: join(home, "AppData", "Local") }, processes: false };
+    const windows = profile(join(roaming, "Claude"), NOVEMBER);
+    assert.equal(await claudeAppOpen(win), false);
+    writeFileSync(join(windows, "lockfile"), "");
+    assert.equal(await claudeAppOpen(win), true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

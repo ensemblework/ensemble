@@ -59,7 +59,10 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [{ id: "cursor_login", name: "Cursor Login" }] } });
   else if (message.method === "authenticate") { authenticated = message.params.methodId === "cursor_login"; send({ id: message.id, result: {} }); }
   else if (message.method === "session/new") { session = message.params; send({ id: message.id, result: { sessionId: "s1" } }); }
-  else if (message.method === "session/prompt") work(message.id).catch((error) => { console.error(error); process.exit(1); });
+  else if (message.method === "session/prompt") {
+    seen.push("first:[" + message.params.prompt.map((part) => part.text || "").join("").split("\\n")[0] + "]");
+    work(message.id).catch((error) => { console.error(error); process.exit(1); });
+  }
 });
 `;
 
@@ -96,6 +99,7 @@ test("Cursor's agent as the engine: permissions and questions are answered by th
     assert.match(summary, /mcp:The person answered: Large/, "ask_person through the session's MCP servers");
     assert.match(summary, /auth:true/, "the login the agent already has");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Cursor");
+    assert.match(summary, /first:\[Cursor run\]/, "Cursor names a session from its first message: the task's title alone leads it");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
   } finally {
     await side.stop();

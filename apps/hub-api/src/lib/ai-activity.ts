@@ -17,7 +17,7 @@ import { prisma } from "./prisma.js";
 import { redactText } from "./redact.js";
 
 export const AI_ACTIVITY_RETENTION_DAYS = 30;
-export const AI_ACTIVITY_KINDS = ["model.call", "tool.call", "agent.tool", "error", "server.log", "runner.log"] as const;
+export const AI_ACTIVITY_KINDS = ["model.call", "tool.call", "agent.tool", "agent.outside", "error", "server.log", "runner.log"] as const;
 export type AiActivityKind = (typeof AI_ACTIVITY_KINDS)[number];
 
 /** What an entry belongs to, by id: the chat, the agent turn and session, the run, the page… */

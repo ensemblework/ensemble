@@ -6,6 +6,7 @@ import { checkConnectorLimit, withHostedUserLock } from "./hosted-limits.js";
 import { keysFor } from "../sharing/context.js";
 import { withIncludedDefaults } from "../included/defaults.js";
 import { guardedSave } from "./save-conflict.js";
+import { markSandboxBeta } from "./sandbox-beta.js";
 import { lockUserTransaction } from "./user-lock.js";
 
 const KEY = "hub.settings";
@@ -50,6 +51,8 @@ export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClie
       create: { userId, key: KEY, value: next, source: "me" },
       update: { value: next, source: "me", deletedAt: null },
     });
+    // Saved with the sandbox beta's defaults (or a choice made since): never switched off at startup.
+    await markSandboxBeta(db, userId);
     return next;
   };
   if (isHosted()) return withHostedUserLock(prisma, userId, write, isPlain(patch) && "connections" in patch);

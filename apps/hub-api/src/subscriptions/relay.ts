@@ -27,7 +27,11 @@ type Live = {
   /** The bytes of one of `spec.files`, read as the person who asked. */
   read: ((fileId: string) => Promise<Uint8Array | null>) | null;
   onDelta: (text: string) => void;
+  /** A line for the chat while the computer waits on something (the ChatGPT app holding a thread). */
+  onStatus?: (text: string) => void;
   picked: boolean;
+  /** The runtime that read the turn first (its instance id, `INSTANCE_HEADER`); null for an older one that sends none. */
+  pickedBy: string | null;
   seq: number;
   heard: number;
   /** Tool calls running now: a long one (a browser task, a sign-in) is work, not silence. */
@@ -45,6 +49,25 @@ export function liveTurn(id: string, deviceId: string): Live | null {
 
 export function heard(turn: Live): void {
   turn.heard = Date.now();
+}
+
+/**
+ * A runtime of the computer reads the turn. The first to read it takes it; another runtime of the same
+ * computer (two with one pairing) is refused, so one turn never runs twice. The one that took it may read
+ * it again.
+ */
+export function pickTurn(turn: Pick<Live, "picked" | "pickedBy">, instance: string | null): boolean {
+  if (!turn.picked) {
+    turn.picked = true;
+    turn.pickedBy = instance;
+    return true;
+  }
+  return instance !== null && turn.pickedBy === instance;
+}
+
+/** Whether this runtime may work on the turn: the one that took it, any runtime before one has, and anyone when an older runtime took it. */
+export function turnFor(turn: Pick<Live, "picked" | "pickedBy">, instance: string | null): boolean {
+  return !turn.picked || turn.pickedBy === null || turn.pickedBy === instance;
 }
 
 /** The computer stopped talking about the turn: nothing heard for a while, and no tool call of it running here. */
@@ -65,11 +88,12 @@ export function errorFromComputer(problem: string | undefined, message: string |
   return new RuntimeError(text, 502);
 }
 
-/** Streamed text in order; a repeated batch (a retried post) is dropped. */
-export function streamInto(turn: Live, seq: number, text: string): void {
+/** Streamed text in order, with the computer's status line when it sent one; a repeated batch (a retried post) is dropped. */
+export function streamInto(turn: Live, seq: number, text: string, status?: string): void {
   heard(turn);
   if (seq <= turn.seq) return;
   turn.seq = seq;
+  if (status) turn.onStatus?.(status);
   if (text) turn.onDelta(text);
 }
 
@@ -80,6 +104,7 @@ export function runOnComputer(input: {
   onDelta: (text: string) => void;
   signal: AbortSignal;
   read?: (fileId: string) => Promise<Uint8Array | null>;
+  onStatus?: (text: string) => void;
 }): Promise<AgentTurnResult> {
   const id = randomUUID();
   // Tool calls and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
@@ -104,7 +129,9 @@ export function runOnComputer(input: {
       },
       read,
       onDelta: input.onDelta,
+      ...(input.onStatus ? { onStatus: input.onStatus } : {}),
       picked: false,
+      pickedBy: null,
       seq: 0,
       heard: Date.now(),
       busy: 0,

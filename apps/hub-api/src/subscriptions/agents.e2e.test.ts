@@ -147,12 +147,15 @@ const { readFileSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
 if (args.includes('--help')) { console.log('Copilot'); process.exit(0); }
 if (args.includes('--version')) { console.log('1.0.89'); process.exit(0); }
+// Copilot names a new session with --name (refusing one with a double quote); STANDIN_NO_NAME stands for an older one without it.
+if (args[0] === 'help') { console.log(process.env.STANDIN_NO_NAME ? 'Usage: copilot [options]' : '  -n, --name <name>  Set a name for the new session'); process.exit(0); }
+if (args.includes('--name') && args[args.indexOf('--name') + 1].includes('"')) { console.error('Session name must not contain double quotes.'); process.exit(1); }
 if (args[args.indexOf('--output-format') + 1] !== 'json') process.exit(7);
 // Copilot 1.0.78 and later read a prompt piped on stdin when there is no -p.
 const prompt = args.includes('-p') ? args[args.indexOf('-p') + 1] : readFileSync(0, 'utf8');
 if (process.env.STANDIN_SESSIONS) {
   const at = args.indexOf('--session-id');
-  require('node:fs').appendFileSync(process.env.STANDIN_SESSIONS, JSON.stringify({ cwd: process.cwd(), session: at >= 0 ? args[at + 1] : null, prompt }) + "\\n");
+  require('node:fs').appendFileSync(process.env.STANDIN_SESSIONS, JSON.stringify({ cwd: process.cwd(), session: at >= 0 ? args[at + 1] : null, name: args.includes('--name') ? args[args.indexOf('--name') + 1] : null, prompt }) + "\\n");
 }
 // Copilot keeps each session it saves as a folder in its home's session-state.
 if (process.env.COPILOT_HOME && args.includes('--session-id')) require('node:fs').mkdirSync(require('node:path').join(process.env.COPILOT_HOME, 'session-state', args[args.indexOf('--session-id') + 1]), { recursive: true });
@@ -355,7 +358,7 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
     const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { cwd: string; session: string | null; prompt: string });
     assert.equal(calls[0]!.prompt, "Instructions.\n\n---\n\nThis chat so far, oldest first:\n\nPerson: hi\n\n---\n\nWhat's due?");
     assert.match(calls[0]!.session ?? "", /^[0-9a-f-]{36}$/);
-    assert.equal(calls[0]!.cwd, join(root, "state", "assistant", chat), "the chat's own folder");
+    assert.equal(calls[0]!.cwd, join(root, "state", "assistant", "chat-4b0f8c1e"), "the chat's own folder, named after the chat (this one has no title)");
     assert.deepEqual([calls[1]!.session, calls[1]!.prompt, calls[1]!.cwd], [calls[0]!.session, "And tomorrow?", calls[0]!.cwd], "the same session, just the message");
     assert.notEqual(calls[2]!.session, calls[0]!.session);
     assert.match(calls[2]!.prompt, /^New instructions\.\n\n---\n\nThis chat so far/);
@@ -380,6 +383,94 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
   } finally {
     setNativeDropForTests(null);
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Copilot chat is named after the chat in a form Copilot takes; a Copilot without --name gets the title first", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-names-"));
+  const log = join(root, "calls.jsonl");
+  const { forgetHelpForTests } = await import("../workspace/engines/app-sessions.js");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, STANDIN_NO_NAME: process.env.STANDIN_NO_NAME, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_SESSIONS = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (key: string, title: string) => runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt: "What's due?", tools: [], maxTurns: 4, session: { key, history: "", position: 0, title } }, io);
+  try {
+    forgetHelpForTests();
+    assert.equal((await turn("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", 'Fix the "login" bug')).text, "Plan ready.", "a title with double quotes does not fail the turn");
+    forgetHelpForTests();
+    process.env.STANDIN_NO_NAME = "1";
+    await turn("6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e", "Weekly review");
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { cwd: string; name: string | null; prompt: string });
+    assert.equal(calls[0]!.name, "Fix the 'login' bug");
+    assert.equal(calls[0]!.prompt, "Instructions.\n\n---\n\nWhat's due?", "named in Copilot's list, so the message is as it was");
+    assert.equal(calls[0]!.cwd, join(root, "state", "assistant", "fix-the-login-bug-5a6b7c8d"), "the chat's folder is named after it");
+    assert.equal(calls[1]!.name, null);
+    assert.equal(calls[1]!.prompt, "Weekly review\n\nInstructions.\n\n---\n\nWhat's due?", "Copilot names the session after its first message: the title leads it");
+  } finally {
+    forgetHelpForTests();
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A stand-in Grok Build: its sign-in, and an ACP session it can reopen, each request logged.
+const FAKE_GROK = String.raw`#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("grok 1.0.20"); process.exit(0); }
+if (args[0] === "models") { console.log("You are logged in as mira@example.com\nAvailable models:\n  - grok-code-fast (default)"); process.exit(0); }
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+const log = (value) => appendFileSync(process.env.STANDIN_ACP, JSON.stringify(value) + "\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [{ id: "cached_token", name: "Cached" }] } });
+  if (message.method === "session/new") { log({ method: "session/new", cwd: message.params.cwd }); return send({ id: message.id, result: { sessionId: "grok-session-1" } }); }
+  if (message.method === "session/load") { log({ method: "session/load", cwd: message.params.cwd, session: message.params.sessionId }); return send({ id: message.id, result: {} }); }
+  if (message.method === "session/prompt") {
+    log({ method: "session/prompt", text: message.params.prompt.map((part) => part.text || "").join("") });
+    send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
+    return send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+  send({ id: message.id, result: {} });
+});
+`;
+
+test("an ACP agent's chat session leads with the chat's title, works in the chat's named folder, and is resumed with just the message", async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-acp-chat-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "grok"), FAKE_GROK);
+  chmodSync(join(bin, "grok"), 0o755);
+  const log = join(root, "acp.jsonl");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_ACP: process.env.STANDIN_ACP, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_ACP = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (prompt: string, position: number) =>
+    runAgentTurn({ agent: "grok-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key: "8c9d0e1f-2a3b-4c4d-8e5f-6a7b8c9d0e1f", history: "", position, title: "Session test 244 chat on Grok" } }, io);
+  try {
+    assert.deepEqual([(await turn("What's due?", 0)).resumed, (await turn("And tomorrow?", 2)).resumed], [false, true]);
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; cwd?: string; session?: string; text?: string });
+    const folder = join(root, "state", "assistant", "session-test-244-chat-on-grok-8c9d0e1f");
+    assert.deepEqual(calls.map((call) => call.method), ["session/new", "session/prompt", "session/load", "session/prompt"]);
+    assert.equal(calls[0]!.cwd, folder, "Grok finds a session by the folder it began in: the chat's own, named after it");
+    assert.equal(calls[1]!.text, "Session test 244 chat on Grok\n\nInstructions.\n\n---\n\nWhat's due?", "Grok lists the session by its first message: the title alone leads it");
+    assert.deepEqual([calls[2]!.cwd, calls[2]!.session], [folder, "grok-session-1"]);
+    assert.equal(calls[3]!.text, "And tomorrow?");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    forgetExecutablesForTests();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -430,6 +521,97 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     for (const index of [1, 3]) assert.deepEqual(calls[index]!.params.environments, [], "no shell or file tools, on a resumed thread too");
   } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Codex chat waits while the ChatGPT app holds its thread, then goes on in it; held too long, it goes on in a new thread and keeps the old one for deletion", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-codex-busy-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const log = join(root, "codex.jsonl");
+  // Each app-server refuses \`thread/resume\` as the ChatGPT app does while it has the thread open, STANDIN_BUSY times.
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const busy = process.env.STANDIN_BUSY === 'always' ? Infinity : Number(process.env.STANDIN_BUSY || 0);
+let refused = 0;
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.169.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'thread/start' || message.method === 'thread/resume') appendFileSync(process.env.STANDIN_CODEX, JSON.stringify({ method: message.method, threadId: message.params.threadId }) + "\\n");
+  if (message.method === 'thread/start') return send({ id: message.id, result: { thread: { id: process.env.STANDIN_THREAD }, model: 'gpt-test' } });
+  if (message.method === 'thread/resume') {
+    if (refused < busy) {
+      refused += 1;
+      return send({ id: message.id, error: { code: -32600, message: 'thread ' + message.params.threadId + ' already has an active writer' } });
+    }
+    return send({ id: message.id, result: { thread: { id: message.params.threadId }, model: 'gpt-test' } });
+  }
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Done.', phase: 'final_answer' } } });
+    return send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  chmodSync(join(bin, "codex"), 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_CODEX: process.env.STANDIN_CODEX, STANDIN_BUSY: process.env.STANDIN_BUSY, STANDIN_THREAD: process.env.STANDIN_THREAD, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_CODEX = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  const { BUSY_WAIT } = await import("../workspace/engines/session-restart.js");
+  const { dropSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const timing = { ...BUSY_WAIT.chat };
+  BUSY_WAIT.chat = { everyMs: 20, limitMs: 150 };
+  const dropped: string[] = [];
+  setNativeDropForTests(async (_agent, id) => void dropped.push(id));
+  const statuses: string[] = [];
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, onStatus: (text: string) => void statuses.push(text), signal: new AbortController().signal };
+  const key = "8d7c6b5a-4938-4726-9b1c-2d3e4f5a6b7c";
+  const turn = (prompt: string, position: number, busy: string, thread: string) => {
+    process.env.STANDIN_BUSY = busy;
+    process.env.STANDIN_THREAD = thread;
+    return runAgentTurn({ agent: "codex", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: "", position } }, io);
+  };
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId?: string });
+  try {
+    const first = await turn("Remember KIWI.", 0, "0", "thread-1");
+    assert.equal(first.resumed, false);
+    assert.equal(first.restart, undefined, "a new chat restarts nothing");
+
+    // The person has the thread open in the ChatGPT app for a moment.
+    const second = await turn("What did I ask you to remember?", 2, "1", "unused");
+    assert.equal(second.resumed, true, "the same thread, once the app let go");
+    assert.equal(second.restart, undefined);
+    assert.deepEqual(statuses, ["Waiting for the ChatGPT app…"]);
+    assert.deepEqual(calls().slice(1).map((call) => `${call.method} ${call.threadId ?? ""}`), ["thread/resume thread-1", "thread/resume thread-1"]);
+
+    // The app keeps it open past the wait: a new thread, and the reason recorded.
+    const third = await turn("And now?", 4, "always", "thread-2");
+    assert.equal(third.resumed, false);
+    assert.equal(third.restart?.reason, "busy");
+    assert.match(third.restart?.error ?? "", /already has an active writer/);
+    assert.equal(calls().at(-1)?.method, "thread/start");
+    const store = JSON.parse(readFileSync(join(root, "state", "assistant-sessions.json"), "utf8")) as Record<string, { id: string; retired?: string[] }>;
+    assert.equal(store[key]?.id, "thread-2");
+    assert.deepEqual(store[key]?.retired, ["thread-1"], "the held thread is kept for deletion, not forgotten");
+    await new Promise((done) => setTimeout(done, 20));
+    assert.deepEqual(dropped, [], "and not deleted while the chat lives");
+
+    assert.equal(await dropSession(key), true);
+    await new Promise((done) => setTimeout(done, 20));
+    assert.deepEqual(dropped.sort(), ["thread-1", "thread-2"], "deleting the chat deletes both");
+  } finally {
+    BUSY_WAIT.chat = timing;
+    setNativeDropForTests(null);
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 import { agentFields, canAddProfile, defaultProfile, newProfileId, profileAgent, profileSummary, quickProfile, removeProfile } from "@/lib/run-profiles";
 import { useModuleOn } from "@/lib/use-module";
 import { AgentPicker, TuningPicker, agentOptions, modelOf } from "../agent/agent-picker";
-import { SectionCard, Toggle, cx } from "../ui";
+import { BetaTag, SectionCard, Toggle, cx } from "../ui";
 import { activeComputer } from "./subscriptions";
 
 type Props = { settings: Settings; patch: (value: Record<string, unknown>) => void };
@@ -81,7 +81,7 @@ function ProfileEditor({ profile, onChange }: { profile: RunProfile; onChange: (
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-2">
         <label className="flex items-center gap-2">
-          <Toggle checked={profile.sandbox} onChange={(sandbox) => set({ sandbox })} label={`${profile.name}: sandbox`} /> Sandbox
+          <Toggle checked={profile.sandbox} onChange={(sandbox) => set({ sandbox })} label={`${profile.name}: sandbox`} /> Sandbox <BetaTag />
         </label>
         <label className="flex items-center gap-2">
           <Toggle checked={profile.network} onChange={(network) => set({ network })} label={`${profile.name}: internet`} /> Internet

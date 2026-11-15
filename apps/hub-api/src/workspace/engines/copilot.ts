@@ -9,7 +9,8 @@
  * approvals). Copilot ends its turn when a call is refused, so the refusal and its reason go back
  * as the next message and the work continues. Questions go through Ensemble's `ask_person` MCP
  * tool to Needs me (Copilot's own ask_user is off). With the run's sandbox on, Copilot's own
- * command sandbox (`--sandbox`) confines its shell commands.
+ * command sandbox (`--sandbox`) confines its shell commands. A new task's session is named after
+ * the task with Copilot's own `/rename` (app-sessions.ts).
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -22,6 +23,7 @@ import { copilotBinary, copilotEnv, copilotSandboxMissing, copilotSavedSignIn } 
 import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import type { JobContext } from "../tools.js";
+import { copilotSessionName, nameCopilotSession, titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { ENSEMBLE_OWN_TOOLS, judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
@@ -260,6 +262,9 @@ export async function runCopilot(
   let replaying = false;
   // The context window as Copilot last reported it (tokens in use, window size).
   const usage: { window: { used: number; size: number } | null } = { window: null };
+  // The session's slash commands as Copilot last listed them, and the name `/rename` is giving it.
+  let listed: () => void = () => undefined;
+  const palette: { commands: string[] | null; ready: Promise<void>; naming: { name: string; done: boolean } | null } = { commands: null, ready: new Promise((resolve) => (listed = resolve)), naming: null };
   const announced = new Map<string, string>();
   const refusals: Refusal[] = [];
   rpc.onRequest = async (method, params) => {
@@ -268,7 +273,7 @@ export async function runCopilot(
     throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
   };
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update" || replaying) return;
+    if (method !== "session/update") return;
     const update = (params.update ?? {}) as {
       sessionUpdate?: string;
       content?: { type?: string; text?: string } | Array<{ type?: string; content?: { type?: string; text?: string } }>;
@@ -280,7 +285,19 @@ export async function runCopilot(
       rawOutput?: unknown;
       used?: number;
       size?: number;
+      availableCommands?: Array<{ name?: unknown }>;
     };
+    if (update.sessionUpdate === "available_commands_update") {
+      palette.commands = (update.availableCommands ?? []).flatMap((command) => (typeof command?.name === "string" ? [command.name] : []));
+      listed();
+      return;
+    }
+    // What `/rename` answers ("Session renamed to: …") is not the task's reply.
+    if (palette.naming) {
+      if (update.sessionUpdate === "session_info_update" && update.title === palette.naming.name) palette.naming.done = true;
+      return;
+    }
+    if (replaying) return;
     const single = Array.isArray(update.content) ? undefined : update.content;
     if (update.sessionUpdate === "tool_call" && update.toolCallId && update.title) announced.set(update.toolCallId, update.title);
     if (update.sessionUpdate === "usage_update" && typeof update.used === "number" && typeof update.size === "number") usage.window = { used: update.used, size: update.size };
@@ -386,7 +403,20 @@ export async function runCopilot(
     const observed = { ...(reported("model") ? { model: reported("model") } : {}), ...(reported("reasoning_effort") ? { effort: reported("reasoning_effort") } : {}) };
     await ctx.event("engine", { engine: "copilot", model: result.model, effort, context: options.context === "long_context" ? "long_context" : "default", session: sessionId, observed });
     await ctx.progress("GitHub Copilot started");
-    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.prompt }, ...(await attachmentBlocks(options.attachments ?? [], options.vision !== false))];
+    // A new task session is named after the task in Copilot's lists (VS Code's sessions too), not after its brief.
+    const name = options.resume || options.chat ? null : copilotSessionName(ctx.taskTitle);
+    let named = false;
+    if (name) {
+      // Copilot lists the session's commands as it opens it; an older one lists none.
+      if (!palette.commands) await Promise.race([palette.ready, new Promise((done) => setTimeout(done, 1500).unref())]);
+      palette.naming = { name, done: false };
+      try {
+        named = await nameCopilotSession(rpc, { sessionId, name, commands: palette.commands, confirmed: () => palette.naming?.done === true });
+      } finally {
+        palette.naming = null;
+      }
+    }
+    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: name && !named ? titledPrompt(ctx.taskTitle, options.prompt) : options.prompt }, ...(await attachmentBlocks(options.attachments ?? [], options.vision !== false))];
     for (let round = 0; ; round += 1) {
       refusals.length = 0;
       const done = (await rpc.request("session/prompt", { sessionId, prompt })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };

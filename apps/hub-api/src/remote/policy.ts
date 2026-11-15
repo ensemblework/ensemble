@@ -80,8 +80,9 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     askBeforePublish: web ? spec.askBeforePublish !== false : true,
     // Clone and fetch private repositories with this computer's sign-in, when the web's settings apply here.
     useCredentials: web && spec.useCredentials === true,
-    // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
-    sandbox: web ? spec.sandbox !== false : true,
+    // The web's sandbox choice applies when this computer accepts web settings; otherwise the web can only turn
+    // it on. Left out, this computer's own Sandbox by default decides (`sandboxFor` in workspace/assign.ts).
+    ...((web && spec.sandbox !== undefined) || spec.sandbox === true ? { sandbox: spec.sandbox } : {}),
     // The web's outside-folder choice applies when this computer accepts web settings; otherwise this computer's own setting.
     ...(web && spec.outsideAccess ? { outsideAccess: spec.outsideAccess } : {}),
     markDone: true,

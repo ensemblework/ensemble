@@ -1,10 +1,12 @@
 /**
- * How Ensemble's agent sessions show in each agent's own app (docs/30, In the agents' own apps). The
- * agents name a session after its first message, which for Ensemble is its instructions, and group
- * nothing by Ensemble's projects on their own:
+ * How Ensemble's agent sessions show in each agent's own app (docs/41 §3). The agents name a session
+ * after its first message, which for Ensemble is its instructions, and group nothing by Ensemble's
+ * projects on their own:
  *
  * - Titles: Claude Code and GitHub Copilot CLI take `--name` for a new session; Codex names a thread with
- *   `thread/name/set`. A chat is named after the chat, a task's session after the task.
+ *   `thread/name/set`; Copilot over ACP (a task's session) takes its own `/rename` (`nameCopilotSession`).
+ *   The other ACP agents and Cursor's agent take no name: a new session's first message has its title
+ *   alone on the first line (`titledPrompt`). A chat is named after the chat, a task's session after the task.
  * - Codex projects: an Ensemble project is a project of Codex's app-server (`project/create`), found again
  *   by Ensemble's id in its metadata, and a task's thread starts in it (`thread/start` `projectId`). The
  *   ChatGPT app's sidebar shows only the projects in its own file, `.codex-global-state.json` in Codex's
@@ -15,7 +17,9 @@
  * - Claude's desktop app lists in its Code tab only sessions it has a record for, in the profile it runs
  *   on: `Claude` (signed in with a Claude account) or `Claude-3p` (on a gateway or a cloud provider), each
  *   with `claude-code-sessions/<account>/<org>/local_<id>.json`. A new session of Ensemble's gets the
- *   record the app keeps for a Claude Code session it imported, and loses it when Ensemble deletes it.
+ *   record the app keeps for a Claude Code session it imported, and loses it when Ensemble deletes it. The
+ *   running app writes back records of sessions it loaded, so Ensemble removes them again until it has done so
+ *   with the app closed (`<state>/claude-app-deletions.json`).
  *
  * Every step is best effort: an app that cannot take it leaves the session as it was, never the turn failed.
  */
@@ -24,11 +28,49 @@ import { lstat, mkdir, readdir, readFile, readlink, rename, stat, unlink, writeF
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
-/** A session's title in an agent's list: one line, at most 80 characters. */
+/** Text as one line: control characters and runs of white space become one space. */
+export function oneLine(text: string | null | undefined): string {
+  return (text ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** A session's title in an agent's list: one line, at most 80 characters (never half of an emoji). */
 export function sessionTitle(text: string | null | undefined): string | null {
-  const line = (text ?? "").replace(/\s+/g, " ").trim();
+  const line = oneLine(text);
   if (!line) return null;
-  return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
+  const characters = Array.from(line);
+  return characters.length > 80 ? `${characters.slice(0, 79).join("").trimEnd()}…` : line;
+}
+
+/** A title GitHub Copilot takes as a session's name: it refuses one with a double quote, and fails the whole run for it. */
+export function copilotSessionName(text: string | null | undefined): string | null {
+  return sessionTitle(text)?.replace(/"/g, "'") ?? null;
+}
+
+/**
+ * A new session's first message for an agent that names the session after it and takes no name of its
+ * own: the title alone on the first line. A task's brief opens with its title as a heading, which
+ * becomes that line. A title that starts the way an agent reads a command or a file reference (`/help`,
+ * `!ls`, `@notes.md`) is left out: as the message's start it would run as one.
+ */
+export function titledPrompt(title: string | null | undefined, prompt: string): string {
+  const line = oneLine(title);
+  if (!line || /^[/!@?\\]/.test(line)) return prompt;
+  const first = prompt.split("\n", 1)[0] ?? "";
+  if (oneLine(first.replace(/^#{1,6}[ \t]+/, "")) === line) return line + prompt.slice(first.length);
+  return `${line}\n\n${prompt}`;
+}
+
+/**
+ * Names a new GitHub Copilot session over ACP with Copilot's own `/rename <name>`, sent as a prompt:
+ * Copilot runs it without a model turn or a message in the session, and keeps the name as one the
+ * person gave (`user_named`), so its first message does not rename it. Only when the session's
+ * command palette (`available_commands_update`) lists `rename`, since a Copilot without it would take
+ * the line as a prompt. True when Copilot confirmed the name (`session_info_update`, read by the caller).
+ */
+export async function nameCopilotSession(rpc: Rpc, input: { sessionId: string; name: string | null; commands: readonly string[] | null; confirmed: () => boolean }): Promise<boolean> {
+  if (!input.name || !input.commands?.includes("rename")) return false;
+  await rpc.request("session/prompt", { sessionId: input.sessionId, prompt: [{ type: "text", text: `/rename ${input.name}` }] }).catch(() => undefined);
+  return input.confirmed();
 }
 
 const helpCache = new Map<string, Promise<boolean>>();
@@ -144,6 +186,16 @@ const isDir = (path: string) => stat(path).then((info) => info.isDirectory(), ()
 const exists = (path: string) => lstat(path).then(() => true, () => false);
 const modified = (path: string) => stat(path).then((info) => info.mtimeMs, () => 0);
 const newestOf = <T>(items: Array<{ item: T; at: number }>): T | null => (items.length ? items.reduce((best, next) => (next.at > best.at ? next : best)).item : null);
+
+/** Runs work one piece at a time, in the order it was handed in; a failed piece does not stop the next. */
+function queued(): <T>(work: () => Promise<T>) => Promise<T> {
+  let queue: Promise<unknown> = Promise.resolve();
+  return (work) => {
+    const next = queue.then(work, work);
+    queue = next.catch(() => undefined);
+    return next;
+  };
+}
 
 /** Replaces a file whole (a temporary file renamed over it), so whoever reads it gets the old one or the new one. */
 async function replaceFile(path: string, text: string, mode?: number): Promise<void> {
@@ -318,18 +370,138 @@ export async function addClaudeDesktopSession(input: { cliSessionId: string; cwd
   }
 }
 
-/** Removes the Code tab's records of a Claude Code session Ensemble deleted, from every profile and list. */
-export async function removeClaudeDesktopSessions(cliSessionId: string, where: Place = {}): Promise<number> {
-  let removed = 0;
+/**
+ * The Claude Code sessions Ensemble deleted, by id: when, and when their records were removed with the Claude
+ * app closed (`settledAt`). The app keeps its Code tab list in memory, loaded from the records when it
+ * starts, and writes a session's record again from that copy whenever it saves the session, without reading
+ * the file first. So a record removed while the app runs can come back until the app closes; removed while it
+ * is closed, it cannot.
+ */
+type Deleted = { at: number; settledAt?: number };
+export type DeletionOptions = Place & {
+  /** Ensemble's record of the sessions it deleted; default `<state>/claude-app-deletions.json`. */
+  state?: string;
+  /** Whether the Claude app is open; default `claudeAppOpen`. */
+  appOpen?: () => Promise<boolean>;
+  now?: number;
+  /** How long to wait before trying again while the app is open; null: not again. */
+  retryMs?: number | null;
+};
+/** `settled`: removed with the app closed; `owed`: the app is open, so again in 2 minutes; `nothing`: nothing deleted. */
+export type DeletionResult = "settled" | "owed" | "nothing";
+const DELETED_KEEP_MS = 30 * 86_400_000;
+let claudeRetry: NodeJS.Timeout | null = null;
+const serialClaude = queued();
+
+async function deletionsPath(options: DeletionOptions): Promise<string> {
+  if (options.state) return options.state;
+  const { stateDir } = await import("../../remote/store.js");
+  return join(stateDir(), "claude-app-deletions.json");
+}
+
+async function readDeletions(path: string): Promise<Record<string, Deleted>> {
+  const data = (await readObject(path)) ?? {};
+  const out: Record<string, Deleted> = {};
+  for (const [id, entry] of Object.entries(data)) {
+    const value = entry as Partial<Deleted> | null;
+    if (!value || typeof value !== "object" || typeof value.at !== "number") continue;
+    out[id] = typeof value.settledAt === "number" ? { at: value.at, settledAt: value.settledAt } : { at: value.at };
+  }
+  return out;
+}
+
+async function writeDeletions(path: string, store: Record<string, Deleted>): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await replaceFile(path, JSON.stringify(store), 0o600);
+}
+
+/** Whether any profile's Code tab has a record of this session. */
+async function hasRecord(cliSessionId: string, where: Place): Promise<boolean> {
+  for (const profile of await claudeDesktopProfiles(where)) {
+    for (const folder of await orgFolders(profile)) {
+      for (const record of await recordFiles(folder.dir)) if ((await readObject(record.path))?.cliSessionId === cliSessionId) return true;
+    }
+  }
+  return false;
+}
+
+/** Removes every Code tab record of these sessions, in every profile and list. */
+async function removeRecords(ids: Set<string>, where: Place): Promise<void> {
   for (const profile of await claudeDesktopProfiles(where)) {
     for (const folder of await orgFolders(profile)) {
       for (const record of await recordFiles(folder.dir)) {
-        if ((await readObject(record.path))?.cliSessionId !== cliSessionId) continue;
-        await unlink(record.path).then(() => (removed += 1), () => undefined);
+        const id = (await readObject(record.path))?.cliSessionId;
+        if (typeof id === "string" && ids.has(id)) await unlink(record.path).catch(() => undefined);
       }
     }
   }
-  return removed;
+}
+
+function armClaudeRetry(options: DeletionOptions): void {
+  const wait = options.retryMs === undefined ? RETRY_MS : options.retryMs;
+  if (wait === null || claudeRetry) return;
+  claudeRetry = setTimeout(() => {
+    claudeRetry = null;
+    void syncClaudeAppDeletions(options).catch(() => undefined);
+  }, wait);
+  claudeRetry.unref();
+}
+
+/**
+ * Removes the Code tab records of the Claude Code sessions Ensemble deleted in the last 30 days, wherever the
+ * app wrote them back. A deletion is settled once its records were removed with the app closed before and
+ * after; until then this runs again every 2 minutes. Runs when the runtime starts and after each deletion.
+ */
+export function syncClaudeAppDeletions(options: DeletionOptions = {}): Promise<DeletionResult> {
+  return serialClaude(async () => {
+    const path = await deletionsPath(options);
+    const now = options.now ?? Date.now();
+    const store = await readDeletions(path);
+    let changed = false;
+    for (const [id, entry] of Object.entries(store)) {
+      if (now - entry.at <= DELETED_KEEP_MS) continue;
+      delete store[id];
+      changed = true;
+    }
+    const ids = Object.keys(store);
+    const owed = ids.filter((id) => store[id]!.settledAt === undefined);
+    const appOpen = options.appOpen ?? (() => claudeAppOpen(options));
+    const before = owed.length ? await appOpen() : false;
+    // Settled ones too, in case the app was open unseen and wrote one back.
+    if (ids.length) await removeRecords(new Set(ids), options);
+    let result: DeletionResult = "nothing";
+    if (owed.length) {
+      // The app may have started while the records were being removed, and loaded one of them.
+      if (!before && !(await appOpen())) {
+        for (const id of owed) store[id]!.settledAt = now;
+        changed = true;
+        result = "settled";
+      } else {
+        armClaudeRetry(options);
+        result = "owed";
+      }
+    }
+    if (changed) await writeDeletions(path, store);
+    return result;
+  });
+}
+
+/**
+ * Removes the Code tab records of a Claude Code session Ensemble deleted, from every profile and list, and
+ * remembers the deletion so a record the running app writes back goes too (`syncClaudeAppDeletions`).
+ * Nothing is remembered for a session the Code tab has no record of (a one-off turn's, one filed on another
+ * computer, a computer without the Claude app): the app loads its list from these records, so it cannot
+ * hold one without a record, and there is nothing to come back.
+ */
+export async function removeClaudeDesktopSessions(cliSessionId: string, options: DeletionOptions = {}): Promise<DeletionResult> {
+  if (!(await hasRecord(cliSessionId, options))) return "nothing";
+  const path = await deletionsPath(options);
+  await serialClaude(async () => {
+    const store = await readDeletions(path);
+    store[cliSessionId] = { at: options.now ?? Date.now() };
+    await writeDeletions(path, store);
+  });
+  return syncClaudeAppDeletions(options);
 }
 
 /** Codex's home, with its sign-in, threads and the ChatGPT app's sidebar: `CODEX_HOME`, else `.codex` in the home folder. */
@@ -358,14 +530,9 @@ async function codexAppFolders(at: Required<Place>): Promise<string[]> {
   return explicit ? [resolve(explicit), ...named] : named;
 }
 
-/** The ChatGPT app among this computer's processes, on macOS and Windows; null when the list cannot be read. */
-function codexAppProcess(platform: NodeJS.Platform): Promise<boolean | null> {
-  const [program, args, pattern] =
-    platform === "darwin"
-      ? (["ps", ["-axo", "comm="], /\/(?:ChatGPT|Codex)\.app\/Contents\/MacOS\/(?:ChatGPT|Codex)$/m] as const)
-      : platform === "win32"
-        ? (["tasklist", ["/FO", "CSV", "/NH"], /^"(?:ChatGPT|Codex)\.exe"/im] as const)
-        : ([null, [], null] as const);
+/** An app among this computer's processes, on macOS and Windows; null when the list cannot be read, and elsewhere. */
+function appProcess(platform: NodeJS.Platform, mac: RegExp, windows: RegExp): Promise<boolean | null> {
+  const [program, args, pattern] = platform === "darwin" ? (["ps", ["-axo", "comm="], mac] as const) : platform === "win32" ? (["tasklist", ["/FO", "CSV", "/NH"], windows] as const) : ([null, [], null] as const);
   if (!program) return Promise.resolve(null);
   return new Promise((done) => {
     const child = spawn(program, [...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
@@ -390,24 +557,39 @@ const alive = (pid: number) => {
 };
 
 /**
- * Whether the ChatGPT app is open on this computer: Chromium's single-instance lock in its data folder
- * (`SingletonLock`, a link to `<host>-<pid>`, on macOS and Linux; `lockfile`, which Windows deletes when
- * the app closes), else the app among the computer's processes (macOS, Windows). A lock that cannot be
- * read counts as open. `processes: false` leaves the process list out (tests).
+ * Chromium's single-instance lock in an app's data folder: `SingletonLock`, a link to `<host>-<pid>`, on
+ * macOS and Linux; `lockfile`, which Windows deletes when the app closes. Held while it names a running
+ * process, or when it cannot be read.
+ */
+async function heldLock(folder: string, platform: NodeJS.Platform): Promise<boolean> {
+  if (platform === "win32") return exists(join(folder, "lockfile"));
+  const lock = join(folder, "SingletonLock");
+  if (!(await exists(lock))) return false;
+  const pid = Number(/-(\d+)$/.exec(await readlink(lock).catch(() => ""))?.[1] ?? Number.NaN);
+  return !Number.isSafeInteger(pid) || pid <= 0 || alive(pid);
+}
+
+/**
+ * Whether the ChatGPT app is open on this computer: Chromium's single-instance lock in its data folder,
+ * else the app among the computer's processes (macOS, Windows). `processes: false` leaves the process
+ * list out (tests).
  */
 export async function codexAppOpen(where: Place & { processes?: boolean } = {}): Promise<boolean> {
   const at = placeOf(where);
-  for (const folder of await codexAppFolders(at)) {
-    if (at.platform === "win32") {
-      if (await exists(join(folder, "lockfile"))) return true;
-      continue;
-    }
-    const lock = join(folder, "SingletonLock");
-    if (!(await exists(lock))) continue;
-    const pid = Number(/-(\d+)$/.exec(await readlink(lock).catch(() => ""))?.[1] ?? Number.NaN);
-    if (!Number.isSafeInteger(pid) || pid <= 0 || alive(pid)) return true;
-  }
-  return where.processes === false ? false : (await codexAppProcess(at.platform)) === true;
+  for (const folder of await codexAppFolders(at)) if (await heldLock(folder, at.platform)) return true;
+  return where.processes === false ? false : (await appProcess(at.platform, /\/(?:ChatGPT|Codex)\.app\/Contents\/MacOS\/(?:ChatGPT|Codex)$/m, /^"(?:ChatGPT|Codex)\.exe"/im)) === true;
+}
+
+/**
+ * Whether the Claude app is open on this computer: the app among the computer's processes on macOS and
+ * Windows (it keeps no Chromium lock in its profiles there), else a held single-instance lock in one of its
+ * profiles. On Windows Claude Code is `claude.exe` too, so a running Claude Code counts as the app, and
+ * whatever waits for the app to close waits for it as well.
+ */
+export async function claudeAppOpen(where: Place & { processes?: boolean } = {}): Promise<boolean> {
+  const at = placeOf(where);
+  for (const profile of await claudeDesktopProfiles(where)) if (await heldLock(profile, at.platform)) return true;
+  return where.processes === false ? false : (await appProcess(at.platform, /\/Claude\.app\/Contents\/MacOS\/Claude$/m, /^"claude\.exe"/im)) === true;
 }
 
 /**
@@ -435,12 +617,7 @@ export type SidebarResult = "filed" | "removed" | "owed" | "nothing";
 const RETRY_MS = 2 * 60_000;
 const MAX_OWED_THREADS = 200;
 let retry: NodeJS.Timeout | null = null;
-let queue: Promise<unknown> = Promise.resolve();
-const serial = <T>(work: () => Promise<T>): Promise<T> => {
-  const next = queue.then(work, work);
-  queue = next.catch(() => undefined);
-  return next;
-};
+const serial = queued();
 
 async function owedPath(options: SidebarOptions): Promise<string> {
   if (options.state) return options.state;
@@ -672,4 +849,10 @@ export async function removeCodexAppProjects(ids: string[], options: SidebarOpti
 export function stopCodexAppRetryForTests(): void {
   if (retry) clearTimeout(retry);
   retry = null;
+}
+
+/** Tests: no Claude app retry left waiting. */
+export function stopClaudeAppRetryForTests(): void {
+  if (claudeRetry) clearTimeout(claudeRetry);
+  claudeRetry = null;
 }

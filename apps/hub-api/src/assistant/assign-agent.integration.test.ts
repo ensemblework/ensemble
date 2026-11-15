@@ -172,3 +172,63 @@ test("agent sessions: one agent's chain of continued runs is one session; the as
   assert.equal(gemini?.id, never.id);
   assert.equal((await resolveSession(h.prisma, scope, never.id))?.lastJobId, retried.id);
 });
+
+test("the sandbox is in beta and off by default: Antigravity from the assistant gets a job its computer runs without one", async () => {
+  const { planLocalJob, isRefusal } = await import("../remote/policy.js");
+  const { sandboxFor } = await import("../workspace/assign.js");
+  const user = await h.asUser();
+  const key = await h.asToken(user, "device");
+  const agent = { id: "antigravity", via: "cli", version: "1", signedIn: true, models: [], checkedAt: new Date().toISOString() };
+  const box = await h.prisma.device.create({ data: { userId: user.id, tokenId: key.id, name: "Home server", platform: "linux", lastSeenAt: new Date(), capabilities: { folders: [], engines: ["antigravity"], agents: [agent] } } });
+  const task = await h.prisma.task.create({ data: { userId: user.id, title: "Antigravity note", boardOrder: 0, createdBy: "me" } });
+  // Nothing saved: the new defaults, and the built-in Quick profile with them.
+  const settings = await loadSettings(h.prisma, user.id);
+  assert.equal(settings.orchestration.defaultExecution, "native");
+  const ctx: ToolContext = { app, prisma: h.prisma, userId: user.id, actor: "agent", settings };
+  const tool = getTool("hub_assign_to_agent")!;
+  const input = await tool.prepare!(ctx, tool.input.parse({ taskId: task.id, agent: "antigravity", computer: "Home server", instructions: "Write the note." }));
+  assert.match(await tool.preview!(ctx, input), /on Home server · profile Quick: Review only, may commit and push, sandbox off/);
+  const batch = await applyHeldCalls(app, ctx, [{ tool, input }]);
+  assert.ok(batch.outcomes[0]!.ok, JSON.stringify(batch.outcomes[0]));
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { taskId: task.id } });
+  assert.deepEqual([job.provider, job.deviceId, job.executionMode], ["antigravity", box.id, "native"]);
+
+  // The computer takes it with the sandbox off, so it makes a run without one (the ACP runner stops a sandboxed one at once).
+  const claim = await key.inject({ method: "POST", url: "/api/devices/self/claim", payload: {} });
+  assert.equal(claim.statusCode, 200, claim.body);
+  const spec = claim.json() as import("../remote/contract.js").JobSpec;
+  assert.deepEqual([spec.id, spec.provider, spec.sandbox], [job.id, "antigravity", false]);
+  const web: import("../remote/store.js").RemoteSettings = { version: 1, enabled: true, acceptWebApprovals: true, browseFiles: true, webEdit: true, webTerminal: true, evidenceUpload: true, captureSites: { never: [], preview: [] }, askBeforeBrowsing: false, apiBase: null, deviceId: box.id, deviceName: "Home server", pairedAt: null, folders: [], disconnected: null, unreachable: null, installId: "", secretsMode: "all" };
+  const local = planLocalJob(spec, web, () => null);
+  assert.ok(!isRefusal(local), JSON.stringify(local));
+  if (!isRefusal(local)) {
+    assert.deepEqual([local.assign.engine, local.assign.sandbox], ["antigravity", false]);
+    assert.equal(sandboxFor(local.assign, Settings.parse({}).orchestration, false), false, "the run on the computer is made without the sandbox");
+  }
+});
+
+test("a request that leaves the sandbox out follows Sandbox by default; a server whose own runner runs code keeps it on", async () => {
+  const { sandboxFor } = await import("../workspace/assign.js");
+  const user = await h.asUser();
+  const key = await h.asToken(user, "device");
+  const laptop = await h.prisma.device.create({ data: { userId: user.id, tokenId: key.id, name: "Laptop", platform: "macos", lastSeenAt: new Date(), capabilities: { folders: [] } } });
+  const assign = async (title: string, extra: Record<string, unknown> = {}) => {
+    const task = await h.prisma.task.create({ data: { userId: user.id, title, boardOrder: 0, createdBy: "me" } });
+    const response = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: task.id, engine: "claude-code", deviceId: laptop.id, instructions: "Tidy the README.", ...extra } });
+    assert.equal(response.statusCode, 201, response.body);
+    return (await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: (response.json() as { jobId: string }).jobId } })).executionMode;
+  };
+  assert.equal(await assign("Nothing said"), "native", "every caller that leaves it out: off");
+  assert.equal(await assign("Asked for it", { sandbox: true }), "sandbox");
+  // The person turns the beta on in Settings: requests that leave it out follow.
+  await saveSettings(h.prisma, user.id, { orchestration: { defaultExecution: "sandbox" } });
+  assert.equal(await assign("Beta on"), "sandbox");
+  assert.equal(await assign("Turned off for this run", { sandbox: false }), "native");
+
+  const off = { defaultExecution: "native" };
+  assert.equal(sandboxFor({}, off, true), true, "a run on a server's own runner keeps its isolation");
+  assert.equal(sandboxFor({ sandbox: false }, off, true), false, "unless the request turns it off");
+  assert.equal(sandboxFor({ deviceId: laptop.id }, off, true), false, "a run for a paired computer follows Sandbox by default");
+  assert.equal(sandboxFor({}, off, false), false, "the person's own runtime: off");
+  assert.equal(sandboxFor({}, { defaultExecution: "sandbox" }, false), true);
+});

@@ -51,16 +51,29 @@ runs:
         pnpm --filter @ensemble/hub-api exec tsx --test src/routes/page-boards.integration.test.ts src/routes/cookie-namespace.integration.test.ts src/lib/production.test.ts src/node/file-workspace.integration.test.ts src/device-tools/file-changes.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/workspace/checkout-folder.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-name-pattern="file questions go directly|session deletion stops|local session deletion" src/node/session-control.integration.test.ts
-        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/workspace/engines/delete-session.test.ts src/workspace/engines/app-sessions.test.ts src/remote/project-delete.test.ts src/subscriptions/session-touch.test.ts src/context/summarize.test.ts
-        pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/ask-sessions.integration.test.ts src/assistant/delete-chat.integration.test.ts src/workspace/project-delete.integration.test.ts
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/workspace/engines/delete-session.test.ts src/workspace/engines/app-sessions.test.ts src/remote/project-delete.test.ts src/subscriptions/session-touch.test.ts src/subscriptions/chat-folders.test.ts src/context/summarize.test.ts src/desktop/runtime-lock.test.ts src/remote/runtime-claims.test.ts src/workspace/engines/session-restart.test.ts src/subscriptions/outside.test.ts src/subscriptions/outside.e2e.test.ts src/assistant/outside.test.ts src/workspace/outside-runs.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/ask-sessions.integration.test.ts src/assistant/delete-chat.integration.test.ts src/workspace/project-delete.integration.test.ts src/devices/runtime-instances.integration.test.ts
+        pnpm --filter ensemblework exec node --import tsx --test src/runner-service.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
+        # Agents' apps without their command line: detection, Set up and its route, the tiles and `ensemble doctor` (docs/30 §8).
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.integration.test.ts
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/subscriptions.test.tsx
+        pnpm --filter ensemblework exec node --import tsx --test src/agent-apps.test.ts
     - name: Active places and conditional saves
       shell: bash
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/save-merge.test.ts
         pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/active-place-gate.test.tsx components/save-conflict-host.test.tsx
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/routes/active-places.integration.test.ts src/routes/save-conflicts.integration.test.ts
+    - name: Sandbox beta, off by default
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/shared-types exec tsx --test src/sandbox-beta.test.ts
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/lib/sandbox-beta-pglite.test.ts src/remote/policy.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/assign-agent.integration.test.ts
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/sandbox-section.test.tsx lib/run-profiles.test.ts
     - name: MCP OAuth, named tools and consent
       shell: bash
       run: |

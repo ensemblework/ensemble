@@ -12,15 +12,17 @@ import { declareModule } from "../lib/module-gate.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
 import { grantedFolderOf } from "../workspace/agent.js";
+import { copilotProgram, cursorAgentProgram } from "../subscriptions/agent-apps.js";
 import { codexBinary } from "../workspace/engines/codex.js";
 import { agentPresence, bundledCodex, HANDOFF_APPS, handoffOpen, handoffPrompt, handoffTargets, isCliHandoff, newMarker, openLink, type HandoffApp } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
 import { projectBrief, projectFolder, syncProjectFiles } from "../workspace/agent-projects.js";
 import { loadSettings } from "../lib/settings.js";
 
-/** The tool's own command line on this computer (Codex: the CLI, else the ChatGPT app's copy). */
+/** The tool's own command line on this computer (Codex: the CLI, else the ChatGPT app's copy; Cursor's agent and Copilot CLI also where their installers put them). */
 async function cliProgram(app: Extract<HandoffApp, `${string}-cli`>): Promise<string> {
-  const found = app === "codex-cli" ? await codexBinary() : await hostExecutable({ "claude-cli": "claude", "cursor-cli": "cursor-agent", "copilot-cli": "copilot" }[app]).catch(() => null);
+  const found =
+    app === "codex-cli" ? await codexBinary() : app === "cursor-cli" ? await cursorAgentProgram() : app === "copilot-cli" ? await copilotProgram() : await hostExecutable("claude").catch(() => null);
   if (!found) throw new GuardError(`${HANDOFF_APPS[app].name} is not on this computer.`);
   return found;
 }

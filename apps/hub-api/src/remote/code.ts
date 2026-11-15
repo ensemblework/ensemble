@@ -12,7 +12,7 @@ import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { redactKeys } from "../lib/redact.js";
 import { refusedPath } from "../workspace/folder-read.js";
-import type { HostedClient } from "./client.js";
+import { claimedHere, type HostedClient } from "./client.js";
 import { CODE_ANSWER_BYTES, CODE_EDIT_BYTES, CodeRequest, codeCall, type CodeAnswer } from "./contract.js";
 import { loadSettings } from "./store.js";
 import { nodeFileAnswer } from "./node-files.js";
@@ -166,14 +166,18 @@ export async function codeAnswerFor(app: Injector, request: CodeRequest): Promis
   return { status: answer.status, body: answer.status < 400 ? outgoing(request, answer.body) : answer.body };
 }
 
-/** A `code.request` frame from the event stream: answer it. A frame without an id cannot be answered and is ignored. */
-export async function answerCodeRequest(app: Injector, client: HostedClient, data: unknown): Promise<void> {
+/**
+ * A `code.request` frame from the event stream: answer it. A frame without an id cannot be answered and is
+ * ignored. A write is made by the one runtime of this computer that takes it (`claimedHere`).
+ */
+export async function answerCodeRequest(app: Injector, client: Pick<HostedClient, "answerCode" | "claimRequest">, data: unknown): Promise<void> {
   const parsed = CodeRequest.safeParse(data);
   if (!parsed.success) {
     const id = (data as { id?: unknown } | null)?.id;
     if (typeof id === "string" && id) await client.answerCode(id, refuse(400, "That request could not be read."));
     return;
   }
+  if (codeCall(parsed.data.method, parsed.data.path)?.write && !(await claimedHere(client, parsed.data.id))) return;
   let answer: CodeAnswer;
   try {
     answer = await codeAnswerFor(app, parsed.data);

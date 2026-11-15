@@ -2,7 +2,7 @@ import type { SecretAnswer, SecretTarget } from "./node-secret";
 import type { McpOAuthConnections, McpOAuthConsent, McpOAuthDecision } from "@ensemble/shared-types";
 import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type AgentApp, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -849,7 +849,7 @@ export type AgentJob = {
    * A run continuing an earlier one that could not continue its agent session: `gone` (the agent no longer
    * had it: deleted in its own app), `deleted` (deleted in Ensemble). It started a new one with the earlier summary.
    */
-  sessionRestart?: "gone" | "deleted" | null;
+  sessionRestart?: "gone" | "deleted" | "busy" | null;
   deviceId?: string | null;
   deviceName?: string | null;
   /** In a shared space: whose computer runs it (null: the space's owner). */
@@ -1257,6 +1257,11 @@ export type AssistantMessageRecord = {
   model: string | null;
   createdAt: string;
   credentialSource?: string | null;
+  /**
+   * Said in the agent's own app in the chat's session and brought into the chat before Ensemble's next message
+   * (docs/41 §5): where ("the Claude app"), when, and on the first one how many earlier exchanges were left out.
+   */
+  outside?: { app: string; at?: string; earlier?: number } | null;
 };
 
 /** A computer the person's AI subscriptions run on, and the agents it found. */
@@ -1271,6 +1276,8 @@ export type SubscriptionComputer = {
   /** New enough to run assistant turns. */
   ready: boolean;
   agents: SubscriptionAgent[];
+  /** Agents' apps there that come without the agent (the Cursor app, VS Code with Copilot). */
+  apps?: AgentApp[];
 };
 
 export type SubscriptionsView = { computers: SubscriptionComputer[]; preferred: string | null };
@@ -1740,6 +1747,8 @@ export const api = bindClient({
   subscriptions: () => get<SubscriptionsView>("/api/subscriptions"),
   checkSubscriptions: (deviceId: string) => post<{ sent?: boolean; agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { deviceId }),
   signInSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/sign-in", { deviceId, agent }),
+  /** Installs the agent with the vendor's installer on a computer that has only its app, then signs in. */
+  setUpSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/set-up", { deviceId, agent }),
   pairDevice: () => post<{ code: string; expiresAt: string }>("/api/devices/pair", {}),
   renameDevice: (id: string, name: string) => patch(`/api/devices/${id}`, { name }),
   revokeDevice: (id: string) => del<void>(`/api/devices/${id}`),

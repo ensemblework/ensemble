@@ -16,6 +16,7 @@ import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type 
 import { PageDocument } from "@ensemble/shared-types";
 import { recordChoiceOutcome } from "./session-choice/outcome.js";
 import { engineSessionOf, sessionToResume } from "./session-continuity.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, runOutside } from "./outside-runs.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -55,7 +56,8 @@ import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPul
 import { cachedAgents } from "../subscriptions/detect.js";
 import { runAgentTurn } from "../subscriptions/agents.js";
 import { checkoutSlug, reserveCheckoutFolder, titleCheckoutSlug } from "./checkout-folder.js";
-import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
+import { EngineTransientError, SessionBusyError, SessionGoneError } from "./engines/registry.js";
+import { restartOf, type Restart } from "./engines/session-restart.js";
 import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
 import { MISSING_SECRET_RULE, secretRules } from "../lib/run-secrets.js";
 import { runCredentials } from "../credentials/run-env.js";
@@ -355,6 +357,23 @@ export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | 
  * session), if the same agent: that run's, else the nearest earlier run's in the same chain, for a
  * run that stopped before its agent started (workspace/sessions.ts).
  */
+/**
+ * The brief's list of sessions the person started on their own in this task's Ensemble project folder since
+ * the project's last Ensemble run here (outside-runs.ts); empty outside a project or before its first run.
+ */
+async function ownProjectSessions(prisma: PrismaClient, job: { id: string; userId: string; context: unknown }, root: string, person: string | null): Promise<string> {
+  const project = agentProjectOf(job.context);
+  if (!project || !root) return "";
+  const last = await prisma.workspaceJob.findFirst({
+    where: { userId: job.userId, id: { not: job.id }, startedAt: { not: null }, context: { path: ["agentProject", "id"], equals: project.id } },
+    orderBy: { startedAt: "desc" },
+    select: { startedAt: true, finishedAt: true },
+  });
+  const since = last?.finishedAt ?? last?.startedAt;
+  if (!since) return "";
+  return projectSessionsNote(await projectSessions(prisma, { id: project.id, folder: project.folder ?? root }, since), person);
+}
+
 async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null; context: unknown }): Promise<{ session: string | null; summary: string | null }> {
   if (!job.continueFromJobId) return { session: null, summary: null };
   const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
@@ -735,6 +754,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let waited = 0;
   /** Questions open on Needs me right now: an engine waiting on one is not stuck. */
   let waitingNow = 0;
+  /** Why the run started a new agent session in place of the one it continues: on its next `engine` event. */
+  let restarted: Restart | null = null;
   const budget = job.maxMinutes * 60_000;
   const remainingMs = () => budget - (Date.now() - started - waited);
 
@@ -818,7 +839,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       }
     },
     async event(kind, data) {
-      await prisma.workspaceEvent.create({ data: { jobId: job.id, kind, data: data as never } });
+      // A computer relays a run's `engine` events to the web, so the reason it restarted its session goes there too.
+      const withRestart = kind === "engine" && restarted && data && typeof data === "object" ? { ...(data as Record<string, unknown>), restart: restarted } : data;
+      await prisma.workspaceEvent.create({ data: { jobId: job.id, kind, data: withRestart as never } });
     },
     waitForPerson: async (work) => {
       const from = Date.now();
@@ -985,6 +1008,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           return null;
         });
         fullPrompt = enginePrompt(ctx, await brief(app, ctx, settings, files, copies));
+        // The sessions the person started on their own in this project's folder since its last Ensemble run (outside-runs.ts).
+        const own = await ownProjectSessions(prisma, job, ctx.root, user?.name ?? null).catch(() => "");
+        if (own) fullPrompt = `${fullPrompt}\n\n${own}`;
         enginePromptText = fullPrompt;
         // Carrying on an interrupted run: the same engine session when it still exists, told why it stopped.
         if (carryOn) {
@@ -1003,6 +1029,22 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
       engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : isAcpEngine(job.provider) ? ACP_AGENTS[job.provider].trace : job.provider!);
       const trace = engineTrace;
+      // What the person said in this session in the agent's own app since Ensemble's last run in it (outside-runs.ts):
+      // a step on the run, a short note leading its brief, and the session goes on.
+      const outside = resume && isCodeEngine(job.provider) ? await runOutside(prisma, job.provider, resume, ctx.root).catch(() => null) : null;
+      if (outside?.turns.length) {
+        await trace.outside(`From ${outside.app}`, outsideStep(outside, user?.name ?? null));
+        enginePromptText = `${outsideNote(outside, user?.name ?? null)}\n\n${enginePromptText}`;
+        logAi({
+          kind: "agent.outside",
+          userId,
+          app: job.provider,
+          purpose: `Brought in from ${outside.app}`,
+          output: outside.turns,
+          refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
+          meta: { app: outside.app, session: resume, prompts: outside.turns.length, earlier: outside.earlier },
+        });
+      }
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
       // Claude Code, Copilot and the ACP agents check it themselves, against each model's own levels.
@@ -1058,10 +1100,14 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           const why = watch.reason();
           if (control.signal.aborted) throw failure;
           if (why === "time") throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
-          // The earlier session is gone (deleted, or made on another computer): start a new one, once.
+          // The earlier session is gone (deleted, or made on another computer), or its app held it for the whole
+          // wait (Codex in the ChatGPT app): start a new one, once, and say why.
           if (failure instanceof SessionGoneError && session && !sessionRestarted) {
             sessionRestarted = true;
-            await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300) });
+            restarted = restartOf(failure instanceof SessionBusyError ? "busy" : "gone", failure);
+            app.log.warn({ jobId: job.id, engine: job.provider, session, restart: restarted }, "could not continue the agent session; starting a new one");
+            await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300), restart: restarted });
+            if (failure instanceof SessionBusyError) await ctx.progress("The ChatGPT app kept the earlier conversation open, so Codex starts a new one with the earlier task's summary.");
             session = null;
             prompt = chat ? chatPrompt(ctx, job.instructions, { resumed: false, earlier: earlierSummary }) : fullPrompt;
             continue;
@@ -1090,6 +1136,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
       }
       if (!ran) throw new Error(`${engineName} did not run.`);
+      // How many prompts the session holds now, so the next run in it brings in only what the person adds after (outside-runs.ts).
+      const ranSession = await engineSessionOf(prisma, job.id).catch(() => null);
+      if (ranSession && isCodeEngine(job.provider)) await noteSessionPrompts(ctx, job.provider, ranSession, ctx.root);
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
@@ -1099,7 +1148,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         kind: "model.call",
         taskId: job.taskId,
         runId: run.id,
-        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
+        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title, ...(restarted ? { restart: restarted } : {}) },
       });
       const undone = await undoUnapprovedCommits(ctx, watch);
       if (undone) await ctx.event("commit_undone", { note: undone });
@@ -1116,7 +1165,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         input: { prompt: enginePromptText },
         output: finalText,
         refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
-        meta: { tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, turns: ran.turns, tools: ran.toolCalls, costUsd: ran.costUsd },
+        meta: { tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, turns: ran.turns, tools: ran.toolCalls, costUsd: ran.costUsd, ...(restarted ? { restart: restarted } : {}) },
       });
       if (ran.trace) await ran.trace.finish(finalText, { model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut });
       else {

@@ -1,5 +1,6 @@
 import { answerFor, answerPending, askBeforeBrowsing, browseFiles, connectedHooks, evidenceUpload, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import { formatSessions, listSessions } from "./sessions.js";
+import { agentAppNotes, localComputer } from "./agent-apps.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -16,17 +17,20 @@ import { resolveCliPaths, readJsonFile } from "./paths.js";
 import { openBrowser } from "./browser.js";
 import type { CliPaths } from "./paths.js";
 import {
+  ALREADY_RUNNING_EXIT,
   clearRunnerPidIf,
   DesktopOwnsRuntimeError,
   defaultSidecarDir,
   readRunnerPid,
   resolveSidecarDir,
   runningRunner,
+  runtimeLockHolder,
   sidecarAvailable,
   sidecarErrorMessage,
   startRunner,
   stopRunner,
   tailLog,
+  waitForOtherRuntime,
   withLocalApi,
   localJson,
 } from "./sidecar.js";
@@ -119,7 +123,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   web:
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
-    "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
+    "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). It is in beta: a run uses it when its run profile turns the sandbox on. No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   browser:
     "Usage: ensemble browser logins [list] | save-login <site> [--totp] | forget-login <site>\nLogins saved on this computer for Ensemble's browser. When a page your agents or nodes open asks you to sign in, its card offers \"Use saved login\": the browser fills the saved user name and password (and a one-time code from a saved seed) itself. No model, agent or run sees them, and nothing is sent to Ensemble on the web. They are kept in Ensemble's data folder, encrypted with this computer's local key.\n  save-login    asks for the user name, then the password without showing it (or reads them from stdin, one per line). --totp also asks for the one-time-code seed. Sites are https, or this computer's own http://localhost.\n  forget-login  deletes the site's saved login.",
   capture:
@@ -292,6 +296,10 @@ async function commandRunner(args: string[]): Promise<void> {
     if (result.values.foreground) return runForeground(sidecarDir, paths);
     const session = await startRunner({ sidecarDir, paths });
     const running = session ? session.discovery : await runningRunner(paths);
+    if (session?.service) {
+      console.log(`Started the login service (${session.service}); the runner runs on http://127.0.0.1:${session.discovery.port}. Logs: ${paths.runnerLog}`);
+      return;
+    }
     if (!session?.child) {
       console.log(running?.owner === "desktop" ? "The Ensemble app is running this computer's Ensemble. Tasks run there; nothing else to start." : "Runner is already running.");
       return;
@@ -351,9 +359,11 @@ async function commandRunner(args: string[]): Promise<void> {
 /**
  * The form login services run. It stays attached to the sidecar, passes stop
  * signals on, and exits 0 when stopped on purpose so launchd (SuccessfulExit
- * false) and systemd (Restart=on-failure) only restart it after a crash. When
- * another runner already holds the data folder it waits for that one to stop
- * instead of exiting, which would make the service restart in a loop.
+ * false) and systemd (Restart=on-failure) only restart it after a crash. While
+ * another runtime holds the data folder (it holds the runtime lock, or answers)
+ * it waits for that one to stop instead of exiting, which would make the
+ * service restart in a loop; so it does when its own runtime finds another one
+ * took the data folder (exit 75).
  */
 async function runForeground(sidecarDir: string, paths: CliPaths): Promise<void> {
   let child: ChildProcess | undefined;
@@ -368,33 +378,43 @@ async function runForeground(sidecarDir: string, paths: CliPaths): Promise<void>
   try {
     let announced = false;
     for (;;) {
+      if ((await runtimeLockHolder(paths)) || (await runningRunner(paths))) {
+        if (!announced) {
+          const other = await runningRunner(paths);
+          console.log(
+            other?.owner === "desktop"
+              ? "The Ensemble app is running this computer's Ensemble. This runner starts when the app quits."
+              : "Another runner is already running. This one starts when it stops.",
+          );
+          announced = true;
+        }
+        await waitForOtherRuntime(paths);
+        continue;
+      }
       const session = await startRunner({ sidecarDir, paths, foreground: true });
-      if (session?.child) {
-        child = session.child;
-        console.log(`Runner started on http://127.0.0.1:${session.discovery.port}. Logs: ${paths.runnerLog}`);
-        break;
+      if (!session?.child) {
+        // Another launcher started one at the same moment: wait for it above.
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
       }
-      if (!announced) {
-        const other = await runningRunner(paths);
-        console.log(
-          other?.owner === "desktop"
-            ? "The Ensemble app is running this computer's Ensemble. This runner starts when the app quits."
-            : "Another runner is already running. This one starts when it stops.",
-        );
-        announced = true;
+      const running = session.child;
+      child = running;
+      announced = false;
+      console.log(`Runner started on http://127.0.0.1:${session.discovery.port}. Logs: ${paths.runnerLog}`);
+      const outcome = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        if (running.exitCode !== null || running.signalCode !== null) return resolve({ code: running.exitCode, signal: running.signalCode });
+        running.once("error", reject);
+        running.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      child = undefined;
+      if (running.pid) await clearRunnerPidIf(running.pid, paths);
+      const onPurpose = stopping || outcome.code === 0 || outcome.signal === "SIGTERM" || outcome.signal === "SIGINT";
+      if (onPurpose) {
+        console.log("Runner stopped.");
+        return;
       }
-      while (await runningRunner(paths)) await new Promise((resolve) => setTimeout(resolve, 15_000));
+      if (outcome.code !== ALREADY_RUNNING_EXIT) throw new Error(`Runner exited ${outcome.code ?? outcome.signal ?? "without a code"}. Logs: ${paths.runnerLog}`);
     }
-    const running = child;
-    const outcome = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      if (running.exitCode !== null || running.signalCode !== null) return resolve({ code: running.exitCode, signal: running.signalCode });
-      running.once("error", reject);
-      running.once("exit", (code, signal) => resolve({ code, signal }));
-    });
-    if (running.pid) await clearRunnerPidIf(running.pid, paths);
-    const onPurpose = stopping || outcome.code === 0 || outcome.signal === "SIGTERM" || outcome.signal === "SIGINT";
-    if (!onPurpose) throw new Error(`Runner exited ${outcome.code ?? outcome.signal ?? "without a code"}. Logs: ${paths.runnerLog}`);
-    console.log("Runner stopped.");
   } finally {
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
@@ -924,14 +944,17 @@ async function commandDoctor(args: string[]): Promise<void> {
     ["Git on PATH", Boolean(status.git), "install git; code tasks need it"],
     ["Node 20 or newer", nodeMajor >= 20, "upgrade Node"],
   ];
-  const runner = await runningRunner(resolveCliPaths());
-  const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
-  if (sandbox) checks.push(["OS sandbox", sandbox.osSandbox, sandbox.setup?.needed ? "run `ensemble sandbox setup`" : sandbox.reason]);
   let failed = 0;
   for (const [label, ok, fix] of checks) {
     if (!ok) failed += 1;
     console.log(`${ok ? "ok  " : "fail"}  ${label}${ok ? "" : ` — ${fix}`}`);
   }
+  // The OS sandbox is in beta and off by default: reported, never a failure.
+  const runner = await runningRunner(resolveCliPaths());
+  const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
+  if (sandbox) console.log(sandbox.osSandbox ? "ok    OS sandbox (beta)" : `info  OS sandbox (beta): ${sandbox.setup?.needed ? "not set up. Run `ensemble sandbox setup` to try it." : sandbox.reason}`);
+  // An agent's app here without its agent (the Cursor app, VS Code with Copilot): a note, not a failure.
+  for (const note of runner ? agentAppNotes(await localComputer(runner)) : []) console.log(`note  ${note.label}: ${note.fix}`);
   console.log("");
   for (const line of statusLines(status).slice(5)) console.log(line);
   if (failed) process.exitCode = 1;

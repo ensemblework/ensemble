@@ -71,7 +71,10 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   else if (message.method === "authenticate") { seen.push("auth:" + message.params.methodId); send({ id: message.id, result: {} }); }
   else if (message.method === "session/new") { session = message.params; send({ id: message.id, result: { sessionId: "s1", configOptions: CONFIG } }); }
   else if (message.method === "session/set_config_option") { const option = CONFIG.find((row) => row.id === message.params.configId); option.currentValue = message.params.value; send({ id: message.id, result: { configOptions: CONFIG } }); }
-  else if (message.method === "session/prompt") work(message.id).catch((error) => { console.error(error); process.exit(1); });
+  else if (message.method === "session/prompt") {
+    if (prompts === 0) seen.push("first:[" + message.params.prompt.map((part) => part.text || "").join("").split("\\n")[0] + "]");
+    work(message.id).catch((error) => { console.error(error); process.exit(1); });
+  }
 });
 `;
 
@@ -110,6 +113,7 @@ test("an ACP agent as the engine: its own prompts on, model and thinking set, ev
     assert.match(summary, /effort:high/, "the run's thinking level, set from the session's options");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Grok");
     assert.match(summary, /followed-up/, "refusals go back as the next message");
+    assert.match(summary, /first:\[Grok run\]/, "Grok lists a session by its first message: the task's title alone leads it");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
 
     const sandboxed = await run({ sandbox: true });

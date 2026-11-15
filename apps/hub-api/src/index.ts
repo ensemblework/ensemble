@@ -1,6 +1,7 @@
 import { startMetricsServer } from "./analytics/prometheus.js";
 import { flushAiActivity } from "./lib/ai-activity.js";
 import { env } from "./config.js";
+import type { FastifyBaseLogger } from "fastify";
 import { buildApp } from "./app.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
 import { startScheduler } from "./jobs/scheduler.js";
@@ -19,14 +20,17 @@ import { setLocalPort } from "./workspace/engines/registry.js";
 import { trustChanged } from "./workspace/trust-share.js";
 import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
+import { switchSandboxBetaOff } from "./lib/sandbox-beta.js";
+import { serverRunsOwnCode } from "./devices/constants.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
 import { startPageSearchBackfill } from "./pages/search-backfill.js";
 import { startNode } from "./node/runs.js";
-import { syncCodexAppProjects } from "./workspace/engines/app-sessions.js";
+import { syncClaudeAppDeletions, syncCodexAppProjects } from "./workspace/engines/app-sessions.js";
 
 export type HubServer = {
   port: number;
   close: () => Promise<void>;
+  log: FastifyBaseLogger;
 };
 
 export async function startHub(): Promise<HubServer> {
@@ -34,6 +38,17 @@ export async function startHub(): Promise<HubServer> {
   const app = await buildApp();
   const desktop = hubCorsPolicy().desktop;
   if (desktop) await ensureDesktopUser();
+  // The OS sandbox is in beta: settings saved with the old default (on) are switched off once, before any
+  // job is made. A server whose own runner runs code keeps its isolation. Idempotent; a failure is logged
+  // and the Hub still starts.
+  if (!serverRunsOwnCode()) {
+    try {
+      const switched = await switchSandboxBetaOff(prisma);
+      if (switched.checked > 0) app.log.info(switched, "turned the sandbox beta off in saved settings");
+    } catch (error) {
+      app.log.error({ err: error }, "could not turn the sandbox beta off in saved settings");
+    }
+  }
   // Which OS sandbox works on this computer, found once before any job or plot starts.
   const sandbox = await prepareSandbox().catch((error: unknown) => {
     app.log.error({ err: error }, "could not check the OS sandbox");
@@ -50,8 +65,10 @@ export async function startHub(): Promise<HubServer> {
   // The browser broker and the capture service live on the computer only (docs/25 §10), never on the hosted server.
   const stopCapture = desktop ? (await import("./capture/runtime.js")).startCaptureRuntime(app) : async () => {};
   const stopRemote = desktop && process.env.ENSEMBLE_REMOTE_LOOP !== "off" ? startRemote(app) : async () => {};
-  // Projects owed to the ChatGPT app's sidebar are filed once the app is found closed (workspace/engines/app-sessions.ts).
+  // Projects owed to the ChatGPT app's sidebar are filed once the app is found closed, and the Claude app's
+  // records of sessions Ensemble deleted are removed again where the app wrote them back (workspace/engines/app-sessions.ts).
   if (desktop) void syncCodexAppProjects().catch(() => undefined);
+  if (desktop) void syncClaudeAppDeletions().catch(() => undefined);
   const deviceRevokeBus = await startDeviceRevokeBus();
   if (!deviceRevokeBus) {
     app.log.warn("Redis pub/sub is down, so a revoked computer is disconnected only on this API process");
@@ -131,7 +148,7 @@ export async function startHub(): Promise<HubServer> {
     app.log.info({ port, discovery: file }, "desktop discovery file written");
   }
   app.log.info({ port }, `hub-api listening on ${host}:${port}`);
-  return { port, close: () => close(false) };
+  return { port, close: () => close(false), log: app.log };
 }
 
 if (process.env.ENSEMBLE_DESKTOP_EMBED !== "1") {
