@@ -204,6 +204,23 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
   if (dropped.length) void dropNative(dropped);
 }
 
+/**
+ * Notes how many prompts the chat's session holds after a turn that failed or was stopped there (`saveSession`
+ * notes them after one that answered): a message the agent took before then is in the session all the same, and
+ * the next turn reads only what comes after it (outside.ts). Null: the count is not known, so the next turn
+ * brings nothing in. Only while the chat still has that session; the chat's position stays where it was.
+ */
+export function notePrompts(key: string, id: string, prompts: number | null): Promise<void> {
+  return serial(async () => {
+    const store = await read();
+    const entry = store[key];
+    if (!entry?.id || entry.id !== id || entry.prompts === (prompts ?? undefined)) return;
+    const { prompts: _before, ...rest } = entry;
+    store[key] = typeof prompts === "number" ? { ...rest, prompts } : rest;
+    await write(store);
+  });
+}
+
 type Drop = (agent: SubscriptionProvider, id: string, folder: string) => Promise<unknown>;
 let dropForTests: Drop | null = null;
 /** Tests see which sessions would be deleted from the agent, without the agent. */
