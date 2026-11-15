@@ -17,6 +17,10 @@ const logout = document.querySelector('#helper-logout');
 const earlier = document.querySelector('#helper-earlier');
 const accountLabel = document.querySelector('#helper-account');
 const clearConfirm = document.querySelector('#helper-clear-confirm');
+const historyPanel = document.querySelector('#helper-history-panel');
+const chatList = document.querySelector('#helper-chat-list');
+const moreChats = document.querySelector('#helper-more-chats');
+let chatId = null, chatsBefore = null, chatsFlight = null;
 const authRecovery = document.querySelector('#helper-auth-recovery');
 const apiBase = new URL(panel.dataset.endpoint).origin;
 const mark = mount(launcher.querySelector('.u-morph'), { size: 32, kind: 'beacon' });
@@ -89,6 +93,7 @@ function updateControls() {
   question.style.visibility = checked ? "" : "hidden";
   submit.disabled = !pending && (!checked || mutating || Boolean(historyFlight) || !question.value.trim());
   earlier.disabled = !checked || Boolean(historyFlight) || Boolean(pending);
+  document.querySelector('#helper-new').disabled = !checked || mutating;
   document.querySelector('#helper-history').disabled = !checked || Boolean(historyFlight) || Boolean(pending);
   document.querySelector('#helper-clear').disabled = !checked || mutating;
   logout.disabled = !checked || mutating;
@@ -109,10 +114,10 @@ function finishWaiting(operation) {
   waitMark.idle(); mark.idle();
 }
 function invalidate(invalidateSession = true) {
-  epoch++; if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
+  epoch++; chatsFlight = null; closeHistory(); chatList.replaceChildren(); if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
   if (pending) { const operation = pending; pending = null; operation.controller.abort(); finishWaiting(operation); }
 }
-function emptyConversation() { turns = []; before = null; question.value = ''; question.style.height = ''; }
+function emptyConversation() { chatId = null; chatsBefore = null; chatList.replaceChildren(); closeHistory(); turns = []; before = null; question.value = ''; question.style.height = ''; }
 async function loadHistory(older = false) {
   if (!account) return;
   if (historyFlight) return historyFlight.promise;
@@ -121,8 +126,12 @@ async function loadHistory(older = false) {
   updateControls();
   flight.promise = (async () => {
     try {
-      const data = await request(`history${older && before ? `?before=${encodeURIComponent(before)}` : ''}`);
+      const params = new URLSearchParams();
+      if (chatId) params.set('chatId', chatId);
+      if (older && before) params.set('before', before);
+      const data = await request(`history${params.size ? `?${params}` : ''}`);
       if (!active || historyFlight !== flight || epoch !== flight.epoch || account?.id !== flight.owner) return;
+      chatId = data.chatId ?? chatId;
       const oldHeight = conversation.scrollHeight;
       const merged = older ? [...data.turns, ...turns] : data.turns;
       const seen = new Set();
@@ -141,7 +150,7 @@ async function refreshSession() {
   if (guestMode) return;
   if (mutating) { deferredSession = true; return; }
   const version = ++sessionRequest;
-  checked = false; authError = false; updateAccount(); render();
+  checked = false; authError = false; if (!historyPanel.hidden) { chatList.replaceChildren(); closeHistory(); chatsFlight = null; } updateAccount(); render();
   try {
     const data = await request('session');
     if (!active || version !== sessionRequest) return;
@@ -172,11 +181,51 @@ document.querySelector('#helper-guest').addEventListener('click', () => {
 });
 topLogin.addEventListener('click', (event) => { if (account && checked) { event.preventDefault(); open(); } });
 earlier.addEventListener('click', () => { if (checked && !pending) loadHistory(true).catch(error => showNotice(error.message)); });
-document.querySelector('#helper-history').addEventListener('click', () => {
-  if (!checked || pending) return;
-  if (!account) { showNotice('Sign in to keep your docs-chat history.'); return; }
-  if (before) loadHistory(true).catch(error => showNotice(error.message));
-  else loadHistory().then(applied => { if (applied) conversation.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); }).catch(error => showNotice(error.message));
+function closeHistory() {
+  chatsFlight = null;
+  historyPanel.hidden = true; conversation.hidden = false;
+  document.querySelector('.assistant-composer-area').hidden = false;
+  document.querySelector('#helper-history').setAttribute('aria-expanded', 'false');
+}
+async function showChats(older = false) {
+  if (!checked || pending || chatsFlight) return;
+  historyPanel.hidden = false; conversation.hidden = true;
+  document.querySelector('.assistant-composer-area').hidden = true;
+  document.querySelector('#helper-history').setAttribute('aria-expanded', 'true');
+  if (!account) { chatList.textContent = 'Guest chats are not saved. Sign in to reopen earlier conversations.'; moreChats.hidden = true; return; }
+  const flight = { epoch, owner: account.id }; chatsFlight = flight;
+  moreChats.disabled = true;
+  if (!older) chatList.textContent = 'Loading your chats…';
+  try {
+    const data = await request(`chats${older && chatsBefore ? `?before=${encodeURIComponent(chatsBefore)}` : ''}`);
+    if (epoch !== flight.epoch || account?.id !== flight.owner || chatsFlight !== flight || historyPanel.hidden) return;
+    if (!older) chatList.replaceChildren();
+    if (!data.chats.length && !older) chatList.textContent = 'Your saved chats will appear here after your first question.';
+    for (const chat of data.chats) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'helper-chat-item';
+      const title = document.createElement('strong'); title.textContent = chat.title;
+      const date = document.createElement('span'); date.textContent = new Date(chat.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      button.append(title, date);
+      if (chat.id === chatId) button.setAttribute('aria-current', 'true');
+      button.addEventListener('click', async () => {
+        if (!checked || pending) return;
+        invalidate(); emptyConversation(); chatId = chat.id;
+        const selected = epoch; showNotice('Loading chat…'); render();
+        try { await loadHistory(); if (selected === epoch) { showNotice(); question.focus(); } }
+        catch (error) { if (selected === epoch) showNotice(error.message); }
+      });
+      chatList.append(button);
+    }
+    chatsBefore = data.before; moreChats.hidden = !chatsBefore;
+  } catch (error) { if (epoch === flight.epoch && account?.id === flight.owner && chatsFlight === flight && !historyPanel.hidden) chatList.textContent = `${error.message} Close History and try again.`; }
+  finally { if (chatsFlight === flight) { chatsFlight = null; moreChats.disabled = false; } }
+}
+document.querySelector('#helper-history').addEventListener('click', () => { if (historyPanel.hidden) showChats(); else closeHistory(); });
+document.querySelector('#helper-history-close').addEventListener('click', () => { chatsFlight = null; closeHistory(); question.focus(); });
+moreChats.addEventListener('click', () => showChats(true));
+document.querySelector('#helper-new').addEventListener('click', () => {
+  if (!checked || mutating) return;
+  invalidate(); emptyConversation(); chatId = crypto.randomUUID(); showNotice(); render(); question.focus();
 });
 async function changeHistory(action) {
   if (!checked || mutating) return;
@@ -226,7 +275,7 @@ form.addEventListener('submit', async (event) => {
   operation.timer = setInterval(() => { const seconds = Math.floor((Date.now() - since) / 1000); document.querySelector('#helper-elapsed').textContent = seconds >= 10 ? `${seconds}s elapsed` : ''; }, 1000);
   render(); conversation.scrollTop = conversation.scrollHeight;
   try {
-    const result = await request('ask', { method: 'POST', credentials: operation.owner ? 'include' : 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, ...(operation.owner ? { remember: true } : {}) }), signal: AbortSignal.any([operation.controller.signal, AbortSignal.timeout(65_000)]) });
+    const result = await request('ask', { method: 'POST', credentials: operation.owner ? 'include' : 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text, ...(operation.owner ? { remember: true, ...(chatId ? { chatId } : {}) } : {}) }), signal: AbortSignal.any([operation.controller.signal, AbortSignal.timeout(65_000)]) });
     if (!current() || operation.controller.signal.aborted) return;
     if (operation.owner && !result.saved) {
       emptyConversation(); recheck = true;

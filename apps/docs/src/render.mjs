@@ -105,6 +105,8 @@ export function renderDocs(documents, sourceRef = "testing") {
 }
 
 const iconPaths = {
+  new: '<path d="M12 5v14M5 12h14"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   close: '<path d="m6 6 12 12M6 18 18 6"/>',
   history: '<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5m4-1v5l3 2"/>',
   expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
@@ -151,12 +153,10 @@ ${icons.icon.map((icon) => `<link rel="icon" href="${e(icon.url)}" type="${e(ico
 </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><a class="brand" href="/">${staticSVG(32, { id: "docs-header", tone: "auto" })}Ensemble <span>Docs</span></a><nav aria-label="Ensemble"><a href="https://app.ensemblework.com">Open Ensemble</a><a id="docs-login" href="https://app.ensemblework.com/login?next=https%3A%2F%2Fdocs.ensemblework.com%2F%23docs-chat">Sign in</a><button id="theme-toggle" class="icon-btn" type="button" aria-label="Switch to light theme" title="Switch to light theme" hidden><span data-theme-icon="sun">${uiIcon("sun")}</span><span data-theme-icon="moon" hidden>${uiIcon("moon")}</span></button></nav></header>
+<header class="site-header"><a class="brand" href="/">${staticSVG(32, { id: "docs-header", tone: "auto" })}Ensemble <span>Docs</span></a><button id="search-trigger" type="button" aria-label="Search docs" aria-haspopup="dialog">${uiIcon("search")}<span>Search docs</span><kbd>⌘ K</kbd></button><nav aria-label="Ensemble"><a href="https://app.ensemblework.com">Open Ensemble</a><a id="docs-login" href="https://app.ensemblework.com/login?next=https%3A%2F%2Fdocs.ensemblework.com%2F%23docs-chat">Sign in</a><button id="theme-toggle" class="icon-btn" type="button" aria-label="Switch to light theme" title="Switch to light theme" hidden><span data-theme-icon="sun">${uiIcon("sun")}</span><span data-theme-icon="moon" hidden>${uiIcon("moon")}</span></button></nav></header>
 <div class="layout">
 <aside class="sidebar"><details open><summary>All guides</summary><nav aria-label="Documentation">${navigation}</nav></details></aside>
 <main id="content" tabindex="-1">
-<form id="search-form" role="search"><label for="query">Search docs</label><div class="search-field"><input id="query" name="q" type="search" maxlength="200" placeholder="Search tasks, pages, connected apps…" autocomplete="off"><button type="submit">Search</button></div></form>
-<section id="search-results" aria-live="polite" aria-label="Search results" hidden></section>
 ${parent ? `<a class="guide-back" href="${e(parent.path)}">${e(parent.title)} topics</a>` : ""}
 <article>${page.html}</article>
 ${(page.aliases ?? []).map((alias) => `<div id="${e(alias.id)}" class="legacy-topic"><a href="${e(pagePath(alias.file))}">Continue to ${e(alias.title)}</a></div>`).join("\n")}
@@ -164,19 +164,22 @@ ${(page.aliases ?? []).map((alias) => `<div id="${e(alias.id)}" class="legacy-to
 </main>
 <aside class="on-page"><nav aria-label="On this page"><strong>${siblings.length ? "In this guide" : "On this page"}</strong>${siblings.length ? topicNavigation : toc}</nav></aside>
 </div>
+<dialog id="docs-search" aria-label="Search documentation"><form id="search-form" role="search"><label for="query">Search docs</label><div class="search-field">${uiIcon("search")}<input id="query" name="q" type="search" maxlength="200" placeholder="Search the documentation…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="search-results" aria-autocomplete="list"><button id="search-close" type="button" aria-label="Close search">${uiIcon("close")}</button></div></form><p id="search-status" role="status"></p><div id="search-results" role="listbox" aria-label="Search results"></div><footer><span>↑ ↓ Navigate</span><span>Enter Open</span><span>Esc Close</span></footer></dialog>
 <button id="docs-launcher" class="ask-launcher" type="button" aria-label="Ask the docs" aria-expanded="false" aria-controls="docs-helper" hidden><span class="u-morph">${staticSVG(32, { id: "docs-launcher-mark", tone: "auto" })}</span></button>
 <section id="docs-helper" class="assistant-window pop-in" role="dialog" aria-labelledby="helper-title" data-endpoint="${e(endpoint)}" hidden>
 ${["left", "top", "corner"].map((edge) => `<div class="assistant-resize" data-edge="${edge}" ${edge === "corner" ? 'aria-hidden="true"' : `role="separator" tabindex="0" aria-label="Resize the assistant's ${edge === "left" ? "width" : "height"}" aria-orientation="${edge === "left" ? "vertical" : "horizontal"}"`} title="Drag to resize. Double-click to reset."></div>`).join("")}
 <header class="assistant-window-header helper-header">
 ${staticSVG(24, { id: "docs-panel-mark", tone: "auto" })}
 <div class="helper-heading"><h2 id="helper-title">Ensemble docs</h2><span class="assistant-header-hint">Your guide to Ensemble</span></div>
-<button id="helper-history" class="icon-btn" type="button" aria-label="Earlier messages" title="Earlier messages">${uiIcon("history")}</button>
-<button id="helper-clear" class="icon-btn" type="button" aria-label="Clear docs history" title="Clear docs history">${uiIcon("clear")}</button>
+<button id="helper-new" class="icon-btn" type="button" aria-label="New chat" title="New chat">${uiIcon("new")}</button>
+<button id="helper-history" class="icon-btn" type="button" aria-label="Chat history" title="Chat history" aria-expanded="false" aria-controls="helper-history-panel">${uiIcon("history")}</button>
+<button id="helper-clear" class="icon-btn" type="button" aria-label="Clear all docs history" title="Clear all docs history">${uiIcon("clear")}</button>
 <button id="helper-expand" class="icon-btn assistant-expand" type="button" aria-label="Expand" title="Expand">${uiIcon("expand")}</button>
 <button id="helper-close" class="icon-btn" type="button" aria-label="Close docs helper" title="Close docs helper">${uiIcon("close")}</button>
 </header>
 <div class="helper-account-row"><span id="helper-account">Guest chat. History is not saved.</span><a id="helper-login" href="https://app.ensemblework.com/login?next=https%3A%2F%2Fdocs.ensemblework.com%2F%23docs-chat">Sign in to save history</a><button id="helper-logout" class="icon-btn" type="button" aria-label="Sign out of Ensemble" title="Sign out of Ensemble" hidden>${uiIcon("logout")}</button></div>
-<div id="helper-clear-confirm" hidden><span>Clear this docs-chat history?</span><button id="helper-keep" type="button">Cancel</button><button id="helper-delete" type="button">Clear history</button></div>
+<div id="helper-clear-confirm" hidden><span>Clear all saved docs chats?</span><button id="helper-keep" type="button">Cancel</button><button id="helper-delete" type="button">Clear history</button></div>
+<section id="helper-history-panel" aria-label="Chat history" hidden><header><h3>Chat history</h3><button id="helper-history-close" class="icon-btn" aria-label="Back to chat" type="button">${uiIcon("close")}</button></header><div id="helper-chat-list"></div><button id="helper-more-chats" type="button" hidden>Load more chats</button></section>
 <div id="helper-conversation" class="assistant-conversation">
 <button id="helper-earlier" type="button" hidden>Load earlier messages</button>
 <div id="helper-welcome" class="assistant-welcome"><div class="assistant-welcome-head"><div class="assistant-welcome-mark">${staticSVG(38, { id: "docs-welcome-mark", tone: "auto" })}</div><div><h3 class="assistant-welcome-title display">How can I help?</h3><p class="assistant-welcome-sub">Ask about using Ensemble. Answers link to the docs.</p></div></div><div class="assistant-starters"><button class="assistant-starter" type="button" data-docs-question="How do I connect an app?">Connect an app</button><button class="assistant-starter" type="button" data-docs-question="How do I share a page?">Share a page</button><button class="assistant-starter" type="button" data-docs-question="How do I run a task on my computer?">Run a task</button></div></div>

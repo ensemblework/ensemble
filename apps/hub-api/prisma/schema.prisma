@@ -3423,6 +3423,7 @@ model DocsChat {
 }
 
 model DocsChatTurn {
+  chatId    String   @default("legacy") @map("chat_id")
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   question  String
@@ -3433,5 +3434,6 @@ model DocsChatTurn {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt, id])
+  @@index([userId, chatId, createdAt, id])
   @@map("docs_chat_turns")
 }

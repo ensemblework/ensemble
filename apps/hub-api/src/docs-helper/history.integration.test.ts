@@ -143,3 +143,22 @@ test("signing out revokes the shared session while keeping its saved docs histor
   assert.equal((await user.inject({ method: "GET", url: "/api/docs/history", headers: headers(user) })).statusCode, 401);
   assert.equal(await prisma.docsChatTurn.count({ where: { userId: user.id } }), 1);
 });
+
+test('separate docs chats keep earlier history and stay scoped to their account', async () => {
+  const user = await harness.asUser(), other = await harness.asUser();
+  const first = crypto.randomUUID(), second = crypto.randomUUID();
+  for (const chatId of [first, second]) {
+    const result = await user.inject({ method: 'POST', url: '/api/docs/ask', headers: headers(user), payload: { question: 'connect app', remember: true, chatId } });
+    assert.equal(result.json().saved, true);
+  }
+  const chats = (await user.inject({ method: 'GET', url: '/api/docs/chats', headers: headers(user) })).json();
+  assert.equal(chats.chats.length, 2);
+  for (const chatId of [first, second]) {
+    const history = (await user.inject({ method: 'GET', url: `/api/docs/history?chatId=${chatId}`, headers: headers(user) })).json();
+    assert.equal(history.turns.length, 1);
+    assert.equal(history.chatId, chatId);
+    const foreign = (await other.inject({ method: 'GET', url: `/api/docs/history?chatId=${chatId}`, headers: headers(other) })).json();
+    assert.deepEqual(foreign.turns, []);
+  }
+  assert.deepEqual((await other.inject({ method: 'GET', url: '/api/docs/chats', headers: headers(other) })).json().chats, []);
+});

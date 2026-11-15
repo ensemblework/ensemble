@@ -12,7 +12,7 @@ The public site contains product guidance. It does not publish Ensemble's source
 
 ## Search the docs
 
-Enter the words you want to find in **Search docs**, then choose **Search**. Results show a short passage and a link to its topic.
+Open **Search docs** in the top bar, or press Command-K on Mac or Ctrl-K elsewhere. Results update as you type and highlight matching words. Use the arrow keys to select a topic and Enter to open it. Escape closes search and returns focus to the top bar.
 
 If nothing matches, try fewer words or browse the guide's topics. Search needs JavaScript and works locally in your browser once the index loads.
 
@@ -45,7 +45,7 @@ The woven mark animates while the helper waits for an answer. Minimize the chat 
 
 Choose **Sign in** on the page or **Sign in to save history** in the chat. Use your Ensemble account, then return to the docs. Signing in saves your subsequent docs questions, answers and source links. Guest messages are not imported into saved history.
 
-History appears only in this docs chat, separate from the Hub assistant. Use **Earlier messages** to read older answers. **Clear docs history** removes it after confirmation. Account data export includes it, and deleting the account or choosing Everything in data erasure removes it too.
+History stays in the docs assistant, separate from Hub conversations. **New chat** starts a fresh conversation without deleting earlier saved chats. **Chat history** opens a list titled from each chat’s first question, with dates; select one to reopen it. Load more chats or earlier messages when needed. **Clear all docs history** removes all saved docs chats after confirmation. Guest chats cannot be reopened after starting a new one or leaving the page. Account data export includes it, and deleting the account or choosing Everything in data erasure removes it too.
 
 Guest conversations stay only in the current page's memory. They are not written to browser storage or the database. Signing out clears the visible conversation and ends the shared Ensemble sign-in. A different account gets its own history. If sign-in cannot be checked, retry the check or explicitly continue as a guest.
 
@@ -107,7 +107,7 @@ The response has `found`, `results` (`title`, `heading`, `url`, `excerpt`), `mes
 
 Open the round button, enter a question and choose **Ask**. The answer includes source links. Close or Escape returns to the button. The panel says **AI can make mistakes, please verify**. It has no model picker or provider label. Account controls manage only docs-chat history and the shared sign-in.
 
-Guests send `{question}` to `POST /api/docs/ask` with credentials omitted. Signed-in readers send `{question, remember: true}` with the session cookie and `x-ensemble-docs-account`. Questions accept 1 to 500 characters; the body limit is 2 KB. The route bypasses workspace identity resolution. Guest requests never inspect a cookie or write a transcript. Signed-in requests validate only the browser session and its account; API keys and share headers never unlock history. The account assertion must match the session, so switching accounts cannot mix histories or clear another account. It reads no tasks, files or private source code. It runs on hosted APIs, not desktop runtimes. Credentialed CORS applies only to the four docs routes and only to the docs origin. Saved-history writes also require the exact docs Origin. Other API routes keep their existing CORS policy.
+Guests send `{question}` to `POST /api/docs/ask` with credentials omitted. Signed-in readers send `{question, remember: true}` with the session cookie and `x-ensemble-docs-account`. Questions accept 1 to 500 characters; the body limit is 2 KB. The route bypasses workspace identity resolution. Guest requests never inspect a cookie or write a transcript. Signed-in requests validate only the browser session and its account; API keys and share headers never unlock history. The account assertion must match the session, so switching accounts cannot mix histories or clear another account. It reads no tasks, files or private source code. It runs on hosted APIs, not desktop runtimes. Credentialed CORS applies only to the docs routes and only to the docs origin. Saved-history writes also require the exact docs Origin. Other API routes keep their existing CORS policy.
 
 The API fetches and validates the public-only search index (`audience: "public"`), with a 60-second cache, at most 2,000 pages and an 8 MB limit. It rejects older indexes that include implementation references. It normalizes question words and ranks overlapping published chunks using term frequency, document frequency, length and exact heading matches. It retrieves at most four distinct sections, each passage at most 2,200 characters. Only the question, those passages and their published URLs enter the model input. There are no tools, repository clones, GitHub reads or code-link fetches. A retrieval miss makes no model call. When related passages do not support an answer, the model must report that it is not in the docs. Misses return an ordinary answer with the closest matching guide, or the docs home if nothing matches.
 
@@ -129,10 +129,12 @@ Limits return 429 with `Retry-After`; service failures return a short 503 messag
 
 ### Docs history and sign-in
 
-`GET /api/docs/session` returns only the session account's id/name and a login URL. `GET /api/docs/history?before=<turn id>` returns up to 30 owned turns and the next cursor. `DELETE /api/docs/history` clears that account's docs chat. `POST /api/docs/logout` ends the shared session. History requests assert `x-ensemble-docs-account`; mismatches return 409 and missing sessions return 401. No workspace sharing class or API key grants access to these records.
+`GET /api/docs/session` returns only the session account's id/name and a login URL. `GET /api/docs/chats?before=<chat id>` lists up to 30 account-owned conversations. `GET /api/docs/history?chatId=<chat id>&before=<turn id>` returns up to 30 owned turns within that chat and the next cursor; without a chat id it opens the most recently active chat. `DELETE /api/docs/history` clears that account's docs chat. `POST /api/docs/logout` ends the shared session. History requests assert `x-ensemble-docs-account`; mismatches return 409 and missing sessions return 401. No workspace sharing class or API key grants access to these records.
 
 `docs_chats` keeps a generation per account. Each generation is an opaque UUID. Clearing rotates it under the same row lock that saving takes; a reply from an earlier generation or a revoked session is not saved. `docs_chat_turns` holds question, answer, found, source links and time, with account foreign keys. Account export and erasure include these user-owned tables through their existing schema-based paths. A disconnected request cancels the provider call and does not save an unfinished reply.
 
 `docs-helper/policy.ts` rejects obvious identity, coding and instruction-override attempts before retrieval or a model call. The prompt enforces the same scope for other wording, and output validation rejects source paths, model identity and program code. The selected model and medium effort remain fixed.
 
 The Hub login accepts only the exact docs return `https://docs.ensemblework.com/#docs-chat` as an external destination. Provider sign-in uses the existing named-return cookie with `return=docs`; callback URLs and provider credentials stay the same. Email login and signup use the existing Hub form. Existing shared-domain session cookies make the account available to the docs API.
+
+Existing saved turns belong to the account’s `legacy` conversation. New chat identifiers group future turns within that account. Empty chats are not saved. Chat selection never changes the fixed model, grounding or account boundaries. Search uses the local published index, a 180ms input debounce, query-generation guards and keyboard selection; it calls no model and saves no search queries.
