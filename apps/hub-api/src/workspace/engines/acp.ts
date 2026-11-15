@@ -11,6 +11,8 @@
  * message, as for Copilot. The model and thinking level are the agent's own session options
  * (`session/set_config_option`). Questions go through Ensemble's `ask_person` MCP tool, and an
  * agent's own form questions (`elicitation/create`) reach the person the same way (elicitation.ts).
+ * None of these agents takes a name for a session, so a new task's session leads with the task's
+ * title alone on its first line (app-sessions.ts).
  *
  * Launch details follow T3 Code's drivers (`packages/provider-grok`, `provider-opencode`,
  * `apps/server/src/provider/acp` in pingdotgg/t3code, MIT License, Copyright (c) 2026 T3 Tools Inc.).
@@ -25,6 +27,7 @@ import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { hostLaunch, type HostLaunch } from "../policy.js";
 import type { JobContext } from "../tools.js";
+import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
@@ -528,7 +531,7 @@ export async function runAcp(
     const observed = { ...(observedModel ? { model: observedModel } : {}), ...(now.thought?.currentValue ? { effort: now.thought.currentValue } : {}) };
     await ctx.event("engine", { engine: agent.trace, model: result.model, effort, session: sessionId, observed });
     await ctx.progress(`${label} started`);
-    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.prompt }];
+    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt) }];
     for (let round = 0; ; round += 1) {
       refusals.length = 0;
       const done = (await rpc.request("session/prompt", { sessionId, prompt })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
