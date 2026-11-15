@@ -4,9 +4,11 @@
  *
  * - A run that continues a session brings in what the person said in it since Ensemble's last run there: a
  *   step on the run ("From the Claude app") and a short note leading its brief, then the session goes on.
- *   Each run notes how many prompts its session holds when it ends (`session_prompts`, a local event).
- *   Claude Code's, Copilot's and Codex's history is read before the run starts; Cursor's agent and the ACP
- *   agents replay theirs as the run reopens the session (`session/load`), so their engines hand it back then.
+ *   Each run notes how many prompts its session holds when it ends, however it ends (`session_prompts`, a
+ *   local event): a prompt sent before the run failed, was stopped or was interrupted is in the session all
+ *   the same. Claude Code's, Copilot's and Codex's history is read before the run starts; Cursor's agent and
+ *   the ACP agents replay theirs as the run reopens the session (`session/load`), so their engines hand it
+ *   back then, and count the session's prompts themselves.
  * - A new task in an Ensemble project lists the sessions the person started themselves in the project's
  *   folder since the project's last Ensemble run (a Claude Code or Copilot session there, a thread in its
  *   Codex project): title, last message and files changed. Ensemble only reads them, and never resumes,
@@ -41,28 +43,56 @@ export async function sessionPromptCount(engine: CodeEngine, session: string, fo
 
 /**
  * Notes how many prompts a run's session holds as it ends, for the next run in it: `counted` when the engine
- * counted them itself, else read from the agent's history. Never fails the run.
+ * counted them itself, else read from the agent's history, else unknown (null), which the next run takes as no
+ * count at all. Never fails the run.
  */
 export async function noteSessionPrompts(ctx: { event: (kind: string, data: Record<string, unknown>) => Promise<void> }, engine: CodeEngine, session: string, folder: string, counted?: number | null): Promise<void> {
   const prompts = typeof counted === "number" ? counted : await sessionPromptCount(engine, session, folder).catch(() => null);
-  if (prompts !== null) await ctx.event("session_prompts", { session, prompts }).catch(() => undefined);
+  await ctx.event("session_prompts", { session, prompts }).catch(() => undefined);
 }
 
-/** How many prompts the session held when Ensemble's last run in it ended; null when no run noted it yet. */
-async function promptsNoted(prisma: Events, session: string): Promise<number | null> {
-  const mark = await prisma.workspaceEvent.findFirst({ where: { kind: "session_prompts", data: { path: ["session"], equals: session } }, orderBy: { sequence: "desc" }, select: { data: true } });
-  const since = (mark?.data as { prompts?: unknown } | null)?.prompts;
+/** How many prompts an engine counted in its session (`session`) as it failed or was stopped. */
+export type CountedPrompts = { session: string; prompts: number | null };
+const carried = new WeakMap<object, CountedPrompts>();
+
+/**
+ * `error`, carrying how many prompts the engine counted in its session (Cursor's agent and the ACP agents): a
+ * prompt it sent is in the session though the run failed, so the run notes the count all the same.
+ */
+export function withPrompts<T>(error: T, session: string | null, prompts: number | null): T {
+  if (session && typeof error === "object" && error !== null) carried.set(error, { session, prompts });
+  return error;
+}
+
+/** What an engine's error carried (`withPrompts`). */
+export function promptsOf(error: unknown): CountedPrompts | null {
+  return typeof error === "object" && error !== null ? (carried.get(error) ?? null) : null;
+}
+
+/**
+ * How many prompts the session held when Ensemble's last run in it ended. Null when no run noted it yet, the
+ * last one could not count them, or a run used the session after that and noted nothing (Ensemble quit or the
+ * computer lost power while it ran): what came after may be that run's own prompts, not the person's. `run`
+ * is the run asking: an engine that hands back the replay has already reported the session.
+ */
+async function promptsNoted(prisma: Events, session: string, run: string): Promise<number | null> {
+  const newest = await prisma.workspaceEvent.findFirst({
+    where: { data: { path: ["session"], equals: session }, OR: [{ kind: "session_prompts" }, { kind: "engine", jobId: { not: run } }] },
+    orderBy: { sequence: "desc" },
+    select: { kind: true, data: true },
+  });
+  const since = newest?.kind === "session_prompts" ? (newest.data as { prompts?: unknown } | null)?.prompts : null;
   return typeof since === "number" ? since : null;
 }
 
 /**
  * What the person said in this agent session since Ensemble's last run in it, or null: nothing was, the
- * agent's history cannot be read before the run (Cursor's agent and the ACP agents: `replayOutside`), or no
- * run noted the session's prompts yet.
+ * agent's history cannot be read before the run (Cursor's agent and the ACP agents: `replayOutside`), or the
+ * session's prompts are not known (`promptsNoted`). `run`: the run that continues the session.
  */
-export async function runOutside(prisma: Events, engine: CodeEngine, session: string, folder: string): Promise<Outside | null> {
+export async function runOutside(prisma: Events, engine: CodeEngine, session: string, folder: string, run: string): Promise<Outside | null> {
   if (engine !== "codex" && engine !== "claude-code" && engine !== "copilot-cli") return null;
-  const since = await promptsNoted(prisma, session);
+  const since = await promptsNoted(prisma, session, run);
   if (since === null) return null;
   if (engine === "codex") {
     const turns = await codexThread(session);
@@ -75,8 +105,8 @@ export async function runOutside(prisma: Events, engine: CodeEngine, session: st
  * The same for Cursor's agent and the ACP agents, from the history the agent replayed as the run reopened the
  * session (`session/load`, as exchanges: `acpTurns`): what came after the prompts Ensemble's last run noted.
  */
-export async function replayOutside(prisma: Events, engine: CodeEngine, session: string, history: OutsideTurn[]): Promise<Outside | null> {
-  const since = await promptsNoted(prisma, session);
+export async function replayOutside(prisma: Events, engine: CodeEngine, session: string, history: OutsideTurn[], run: string): Promise<Outside | null> {
+  const since = await promptsNoted(prisma, session, run);
   return since === null ? null : outsideOf(OUTSIDE_APPS[engine] ?? ENGINE_LABELS[engine], history, since);
 }
 

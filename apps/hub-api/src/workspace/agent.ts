@@ -16,7 +16,7 @@ import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type 
 import { PageDocument } from "@ensemble/shared-types";
 import { recordChoiceOutcome } from "./session-choice/outcome.js";
 import { engineSessionOf, sessionToResume } from "./session-continuity.js";
-import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, replayOutside, runOutside, type ReplayHook } from "./outside-runs.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, promptsOf, replayOutside, runOutside, type CountedPrompts, type ReplayHook } from "./outside-runs.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -885,6 +885,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let changedFiles: ChangedFile[] = [];
   /** An engine run's trace (Claude Code, Codex, Cursor). */
   let engineTrace: EngineTrace | null = null;
+  /** While the engine works: notes its session's prompts should the engine not return (outside-runs.ts). */
+  let notePrompts: (() => Promise<void>) | null = null;
+  /** That note, under way while the run wraps up. */
+  let promptsNote: Promise<void> | null = null;
   /** Ensemble's own agent: the model that answered last, and the run's cost estimate from its token counts. */
   let answeredBy: string | null = null;
   let estimatedUsd: number | null = null;
@@ -1047,7 +1051,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         return outsideNote(outside, user?.name ?? null);
       };
       // Claude Code's, Copilot's and Codex's history is read before the engine starts.
-      const note = resume && isCodeEngine(job.provider) ? await bringIn(await runOutside(prisma, job.provider, resume, ctx.root).catch(() => null), resume) : null;
+      const note = resume && isCodeEngine(job.provider) ? await bringIn(await runOutside(prisma, job.provider, resume, ctx.root, job.id).catch(() => null), resume) : null;
       if (note) enginePromptText = `${note}\n\n${enginePromptText}`;
       // Cursor's agent and the ACP agents replay theirs as the engine reopens the session, before the prompt goes.
       // Read once a run: by a retry, the session also holds this run's own prompts.
@@ -1055,7 +1059,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       const onReplay: ReplayHook = async (session, history) => {
         if (replayRead || !isCodeEngine(job.provider)) return null;
         replayRead = true;
-        return bringIn(await replayOutside(prisma, job.provider, session, history).catch(() => null), session);
+        return bringIn(await replayOutside(prisma, job.provider, session, history, job.id).catch(() => null), session);
       };
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
@@ -1102,6 +1106,15 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       let prompt = enginePromptText;
       let session = resume;
       let sessionRestarted = false;
+      /** What Cursor's or an ACP engine counted in its session as an attempt failed or was stopped. */
+      let counted: CountedPrompts | null = null;
+      // A prompt the engine sent is in the session though the run then fails, is stopped or is interrupted: the run
+      // notes how many prompts the session holds all the same, or the next run in it would take that prompt for
+      // something the person said in the agent's app. The engine's own count, else the agent's history.
+      notePrompts = async () => {
+        const ranSession = await engineSessionOf(prisma, job.id);
+        if (ranSession && isCodeEngine(job.provider)) await noteSessionPrompts(ctx, job.provider, ranSession, ctx.root, counted?.session === ranSession ? counted.prompts : undefined);
+      };
       // The engine runs under a watch (engine-watch.ts): stuck, a failure that passes, or out of minutes.
       for (let retry = 0; !ran; ) {
         const watch = watchEngine({ jobId: job.id, parent: control.signal, openCalls: () => trace.openCalls, waiting: () => waitingNow > 0, remainingMs });
@@ -1109,6 +1122,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         try {
           ran = await runEngine(prompt, session);
         } catch (failure) {
+          counted = promptsOf(failure) ?? counted;
           const why = watch.reason();
           if (control.signal.aborted) throw failure;
           if (why === "time") throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
@@ -1148,6 +1162,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
       }
       if (!ran) throw new Error(`${engineName} did not run.`);
+      notePrompts = null;
       // How many prompts the session holds now, so the next run in it brings in only what the person adds after (outside-runs.ts):
       // as Cursor's and the ACP engines counted them from the replay, else read from the agent's history.
       const ranSession = await engineSessionOf(prisma, job.id).catch(() => null);
@@ -1363,6 +1378,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     }
     outcome = "success";
   } catch (failure) {
+    // An engine that did not return: its session's prompts are noted alongside the wrap-up, never holding it up.
+    promptsNote = notePrompts?.().catch(() => undefined) ?? null;
     const interrupted = interruptionMessage(control.signal);
     if (interrupted) {
       outcome = "interrupted";
@@ -1564,6 +1581,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       result: truncateText(summary, 20_000) || null,
     },
   });
+  // The note on the session's prompts lands before the run ends: the next run in the session starts only then.
+  await promptsNote;
   await prisma.workspaceJob.update({
     where: { id: job.id },
     data: {

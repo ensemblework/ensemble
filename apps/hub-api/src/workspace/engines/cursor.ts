@@ -17,9 +17,9 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import { createInterface } from "node:readline";
 import { cursorAgentProgram } from "../../subscriptions/agent-apps.js";
 import { withoutHostSession } from "../../subscriptions/host-session.js";
-import { acpTurns, MAX_REPLAYED } from "../../subscriptions/outside.js";
+import { acpPrompts, acpTurns, MAX_REPLAYED, type OutsideTurn } from "../../subscriptions/outside.js";
 import { appendLive, touchLive } from "../live-log.js";
-import type { ReplayHook } from "../outside-runs.js";
+import { withPrompts, type ReplayHook } from "../outside-runs.js";
 import { askPerson, type JobContext } from "../tools.js";
 import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
@@ -167,6 +167,12 @@ export async function runCursor(
   let replaying = false;
   const replayed: Array<Record<string, unknown>> = [];
   let overflow = false;
+  /** The replay as exchanges, once read: null for a new session, or when the history was not read. */
+  let history: OutsideTurn[] | null = null;
+  /** The prompts this run sent into the session, one Cursor has not answered yet included. */
+  let sent = 0;
+  // How many prompts the session holds: the replayed ones and this run's. Not counted when the history was not read.
+  const held = () => (history || !options.resume ? acpPrompts(history ?? [], sent) : null);
   rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
   rpc.onNotification = (method, params) => {
     if (method !== "session/update") return;
@@ -280,10 +286,11 @@ export async function runCursor(
     await ctx.progress("Cursor started");
     // The reopened session's history as exchanges: the run brings in what the person said in the agent's own
     // app since its last run there, and its note leads the prompt.
-    const history = options.resume && !overflow ? acpTurns(replayed) : null;
+    history = options.resume && !overflow ? acpTurns(replayed) : null;
     const note = history && options.onReplay ? await options.onReplay(sessionId, history).catch(() => null) : null;
     const brief = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
     const text = note ? `${note}\n\n${brief}` : brief;
+    sent += 1;
     const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     result.turns = 1;
     result.tokensIn += done.usage?.inputTokens ?? 0;
@@ -294,12 +301,13 @@ export async function runCursor(
     if (done.stopReason === "refusal") throw new Error("Cursor's agent refused the task.");
     await flushThought();
     result.text = reply.trim();
-    // The session's prompts now, for the next run's replay: the replayed ones and this run's. Not counted when the history was not read.
-    result.prompts = history || !options.resume ? (history?.length ?? 0) + result.turns : null;
+    // The session's prompts now, for the next run's replay.
+    result.prompts = held();
     return result;
   } catch (error) {
-    if (ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");
-    throw error;
+    // A prompt sent before the run failed or was stopped is in the session all the same: the count goes with what
+    // is thrown, for the run to note (outside-runs.ts).
+    throw withPrompts(ctx.signal.aborted ? new DOMException("Stopped", "AbortError") : error, sessionId, held());
   } finally {
     ctx.signal.removeEventListener("abort", stop);
     unregisterEngineRun(ctx.job.id);
