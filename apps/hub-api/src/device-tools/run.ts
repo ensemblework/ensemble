@@ -237,7 +237,7 @@ export async function deliverCommand(
 
 /**
  * Runs the command under this computer's sandbox and answers (`deliverCommand`). The ledger keeps
- * its program, folder and exit code.
+ * its program, folder and exit code. Settles once the command has ended, also when its answer failed.
  */
 export async function runNodeCommand(app: App, client: HostedClient, request: RunRequest, folder: ToolFolder, answer: (reply: CodeAnswer) => Promise<void>): Promise<void> {
   const sandboxed = sandboxAvailable();
@@ -260,8 +260,10 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
     return { ...(codes.length ? { deviceCodes: codes.map((item) => ({ url: item.url, code: item.code })) } : {}), ...(pages.length ? { signInPages: pages } : {}) };
   };
   const login = LOGIN_COMMAND.test(request.command);
-  const result = await deliverCommand(client, { runId: request.runId, nodeId: request.nodeId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group), extra, settleMs: login ? LOGIN_SETTLE_MS : 0, ready: () => signIns.codes().length > 0 || signIns.pages().length > 0 }, ({ onChunk, signal }) =>
-    runCommand({
+  // The command's own end (its exit code; 127 if it never started, as in `deliverCommand`).
+  let ended: Promise<number> = Promise.resolve(127);
+  const result = await deliverCommand(client, { runId: request.runId, nodeId: request.nodeId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group), extra, settleMs: login ? LOGIN_SETTLE_MS : 0, ready: () => signIns.codes().length > 0 || signIns.pages().length > 0 }, ({ onChunk, signal }) => {
+    const run = runCommand({
       userId: userId(),
       argv: prepared.argv,
       cwd: prepared.cwd,
@@ -280,8 +282,13 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
         signIns.output(text);
         onChunk(text);
       },
-    }), answer);
-  await signIns.end(result.exitCode);
+    });
+    ended = run.then((done) => done.exitCode, () => 127);
+    return run;
+  }, answer).finally(async () => {
+    // After the answer, once the command has ended. When a background command's answer fails, `deliverCommand` gives up at once but the command runs on, and needs its helpers until it ends.
+    await signIns.end(await ended);
+  });
   await appendLedger({
     userId: userId(),
     actor: "agent",
