@@ -94,7 +94,7 @@ No tool sends mail, Slack or Teams messages, and a catalog entry does not prove 
 
 It runs on the computer named (`"any"` for "my computer"), else the profile's computer, else this server when the engine is Ensemble's agent and the server runs agents, else the most recently seen online paired computer (else the most recently seen one).
 
-It sends the same request as `POST /api/agent/assign` (`createJob`), always waits for Apply, and is refused while the agent is paused; the computer rechecks the job against its own folders and rules ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+It sends the same request as `POST /api/agent/assign` (`createJob`), with the profile's sandbox choice (a beta, off unless turned on; [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)), always waits for Apply, and is refused while the agent is paused; the computer rechecks the job against its own folders and rules ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
 What the person names in the request wins over the profile: the agent, `model`, `effort`, `context` (GitHub Copilot's long window), `branch`, and `pullRequest` (`{base, merge}`, any base, empty for the default branch: "make branch A, open a pull request against testing and merge it" is `branch: "A"`, `pullRequest: {base: "testing", merge: "auto"}`; *ask* confirms on Needs me first; [24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
 

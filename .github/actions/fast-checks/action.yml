@@ -62,6 +62,13 @@ runs:
         pnpm --filter @ensemble/shared-types exec tsx --test src/save-merge.test.ts
         pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/active-place-gate.test.tsx components/save-conflict-host.test.tsx
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/routes/active-places.integration.test.ts src/routes/save-conflicts.integration.test.ts
+    - name: Sandbox beta, off by default
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/shared-types exec tsx --test src/sandbox-beta.test.ts
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/lib/sandbox-beta-pglite.test.ts src/remote/policy.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/assign-agent.integration.test.ts
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/sandbox-section.test.tsx lib/run-profiles.test.ts
     - name: MCP OAuth, named tools and consent
       shell: bash
       run: |

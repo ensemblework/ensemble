@@ -106,7 +106,7 @@ Esc stops the turn; `/new` starts a new chat. With Ensemble's agent chosen and n
 
 **Ensemble Code.** With Ensemble's agent chosen, messages go to `POST /api/assistant/turn` with a `code` session: the folder (`/folder`), the agent (`/agent`), the run profile (`/profile`: up to three profiles saved in the Assign dialog, or Quick; [02](02_MODULE_INTERACTION_HUB_UI.md)) and the chat model (`/model`, sent with its provider, so a Copilot model is called on Copilot only; the first row, *Chat default*, is the account's default tier model).
 
-It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, in the sandbox, under the profile.
+It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, under the profile (in the OS sandbox only when the profile turns that beta on).
 
 Replies name records by title, as on the web ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). Changes wait for Apply per the assistant's write policy (Settings → Assistant): 1 applies, 2 discards. Esc and `/new` work as above. It runs only against a runtime on this computer (`ENSEMBLE_DESKTOP=1`); the hosted API refuses it with 409.
 
@@ -144,7 +144,7 @@ Use these commands to connect an account, leave it or diagnose a setup problem.
 |---|---|
 | `ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]` | Device login (§4). Saves the MCP key with the grants approved on the `/link` page (changes, connected apps); when "Run tasks" is also approved, pairs this computer as a device |
 | `ensemble logout` | Revokes the key on the server, unpairs the device, clears local credentials. If the server is unreachable it still clears this computer and names the key to revoke under Connect your apps |
-| `ensemble status [--json]`, `ensemble doctor` | Account, API, sign-in, pairing, runner, folders (repositories marked), model keys, the secret key's fingerprint and the secrets mode, sandbox, configured editors. `doctor` exits 1 when a check fails and says how to fix it |
+| `ensemble status [--json]`, `ensemble doctor` | Account, API, sign-in, pairing, runner, folders (repositories marked), model keys, the secret key's fingerprint and the secrets mode, sandbox, configured editors. `doctor` exits 1 when a check fails and says how to fix it; the OS sandbox, a beta that is off by default ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)), is reported but never fails it |
 
 #### Choose folders and remote access
 
@@ -153,7 +153,7 @@ Set the folders and operations this computer allows. The computer checks these s
 | Command | What it does |
 |---|---|
 | `ensemble folders [list] \| add <path> [--label L] [--read-only] [--repo] \| remove <label>` | Folders the agent may work in. Only labels are sent to the server; the Assign dialog lists them. `--repo` shares a git repository as a repository: every run from the web works in its own clone of it, whose `origin` is the folder's own remote ([24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); without it the folder is worked in place. `--repo` with `--read-only`, or on a folder without `.git`, is refused. Listed as `label → path (repository)` |
-| `ensemble sandbox [status] \| setup` | This computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox account on Windows; what it cannot enforce here; whether internet off is enforced. On Windows `setup` asks for admin permission once (also offered at `ensemble login`). Shared with the desktop app (`apps/cli/src/sandbox.ts`) |
+| `ensemble sandbox [status] \| setup` | This computer's OS sandbox, a beta that a run uses when its run profile turns it on ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)): Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox account on Windows; what it cannot enforce here; whether internet off is enforced. On Windows `setup` asks for admin permission once (also offered at `ensemble login`). Shared with the desktop app (`apps/cli/src/sandbox.ts`) |
 | `ensemble trust [list] \| add [path] \| remove <path> \| share [on\|off]` | Trusted folders on this computer (default: the current folder). `share` shows or sets whether they are also trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI (on by default; [24](24_DESKTOP_SANDBOXING.md)). Ensemble's own workspace is always trusted. System folders, the home folder and Ensemble's source are refused |
 | `ensemble approvals [status] \| on \| off` | Whether the web and phone may approve for this computer, and whether the mode, internet and limits chosen there apply here (on by default; [25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals)) |
 | `ensemble approvals websites [ask\|allow]` | Whether nodes open and capture public web sites here without asking (`allow`, the default) or ask once per site first (`ask`; `askBeforeBrowsing` in `remote.json`). This computer's own addresses and its network's always ask ([25 §4.10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#410-a-nodes-own-tools-on-the-computer)) |
@@ -362,7 +362,7 @@ A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `
 ## 8. Limits
 
 - Builds are not code-signed or notarized. Homebrew, Scoop, the scripts and the Linux packages do not mark files as downloaded from the internet; a zip opened from a browser download can ask once.
-- Windows needs one admin prompt to turn its sandbox on (`ensemble sandbox setup`); until then a sandboxed task there is refused with that instruction ([24](24_DESKTOP_SANDBOXING.md)). `ensemble doctor` checks the sandbox.
+- The OS sandbox is a beta and off by default ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)). To use it on Windows, one admin prompt sets it up (`ensemble sandbox setup`); until then a sandboxed task there is refused with that instruction. `ensemble doctor` reports it.
 - The runner needs the full archive. The npm package carries only login, status and MCP.
 - The archive carries no browser: `ensemble capture setup` downloads Playwright's Chromium, its headless shell and ffmpeg (about 700 MB unpacked) into the data folder. Until then capture uses a Playwright download already on the computer or an installed Chrome.
 - One runtime per computer, shared with the desktop app (§4).

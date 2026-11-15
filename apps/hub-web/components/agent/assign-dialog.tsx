@@ -17,7 +17,7 @@ import { useQuickAssign } from "./use-quick-assign";
 import { agentFields, canAddProfile, defaultProfile, differs, newProfileId, profileAgent, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
 import { MERGE_CHOICES, pullRequestNotices, pullRequestProblem, sharedFolderKinds, type PullRequestMerge } from "@/lib/pull-request";
 import { useToast } from "../toast";
-import { Dialog, InfoTip, Spinner, Toggle, cx } from "../ui";
+import { BetaTag, Dialog, InfoTip, Spinner, Toggle, cx } from "../ui";
 import { activeComputer } from "../settings/subscriptions";
 import { AgentPicker, TuningPicker, agentOptions, choiceLabel, modelOf, type AgentChoice } from "./agent-picker";
 
@@ -377,7 +377,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const [credentials, setCredentials] = useState(false);
   // The saved secrets the chosen profile names: a run on a computer gets only those (docs/35 §8.7).
   const [profileSecrets, setProfileSecrets] = useState<string[]>([]);
-  const [sandbox, setSandbox] = useState(true);
+  // The OS sandbox is in beta: off until the run profile (or Settings › Sandbox by default) turns it on.
+  const [sandbox, setSandbox] = useState(false);
   const [network, setNetwork] = useState(true);
   // null follows Settings; a choice here is for this run only.
   const [outside, setOutside] = useState<"none" | "read" | "read-write" | null>(null);
@@ -1170,6 +1171,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                       <div className="flex min-w-0 items-center gap-2">
                         <ShieldCheck size={14} className={runSandboxed ? "text-ok" : "text-warn"} />
                         <span className="font-medium">Sandbox</span>
+                        <BetaTag />
                         <span className="truncate text-[12px] text-muted">
                           {selectedDevice
                             ? deviceSandbox?.osSandbox === false
@@ -1183,12 +1185,12 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                               ? ""
                               : "None on this computer yet: runs directly"}
                         </span>
-                        {!selectedDevice && osSandbox ? <InfoTip text={`${guard.data?.sandbox.reason ?? "An OS sandbox around every command."} No Docker or VM is involved.${guard.data?.sandbox.limits?.length ? ` Not enforced on this computer: ${guard.data.sandbox.limits.join("; ")}.` : ""}`} /> : null}
+                        <InfoTip text={`The sandbox is being rebuilt and may stop some agents from running.${!selectedDevice && osSandbox ? ` ${guard.data?.sandbox.reason ?? "An OS sandbox around every command."} No Docker or VM is involved.${guard.data?.sandbox.limits?.length ? ` Not enforced on this computer: ${guard.data.sandbox.limits.join("; ")}.` : ""}` : ""}`} />
                       </div>
                       {(selectedDevice ? deviceSandbox?.osSandbox !== false && deviceAcceptsWeb : osSandbox) ? (
                         <Toggle checked={sandbox} onChange={setSandbox} label="Sandbox" />
                       ) : selectedDevice && !deviceAcceptsWeb ? (
-                        <span className="text-[12px] text-muted">On ({selectedDevice.name} decides)</span>
+                        <span className="text-[12px] text-muted">{selectedDevice.name} decides</span>
                       ) : !selectedDevice && guard.data?.sandbox.setup?.needed ? (
                         <button type="button" className="btn h-7" disabled={setupSandbox.isPending} onClick={() => setupSandbox.mutate()}>
                           {setupSandbox.isPending ? "Waiting for Windows…" : "Set up the sandbox"}

@@ -74,6 +74,15 @@ export function Tag({ tone = "gray", children, className }: { tone?: Tone; child
   );
 }
 
+/** A feature that works but is still being built: the OS sandbox (docs/24 §1). */
+export function BetaTag() {
+  return (
+    <Tag tone="orange" className="shrink-0">
+      Beta
+    </Tag>
+  );
+}
+
 /** Priority in its own muted colour (globals.css --prio-*), with a dot. */
 export function PriorityTag({ priority }: { priority: Priority }) {
   const spec = PRIORITY[priority] ?? PRIORITY.p1;
@@ -729,11 +738,14 @@ export function Range({
 
 export function SettingRow({
   title,
+  tag,
   description,
   info,
   children,
 }: {
   title: React.ReactNode;
+  /** Beside the title, before the ⓘ (a `BetaTag`). The title stays text, so search can jump to the row. */
+  tag?: React.ReactNode;
   description?: React.ReactNode;
   info?: React.ReactNode;
   children: React.ReactNode;
@@ -743,7 +755,7 @@ export function SettingRow({
     // A row with no description centres its title on the control; with one, the title lines up with the control's top.
     <div data-setting-label={typeof title === "string" ? title : undefined} className={cx("flex flex-wrap justify-between gap-x-6 gap-y-2 py-3", description ? "items-start" : "items-center")}>
       <div className="min-w-0 max-w-[560px] flex-[1_1_15rem]">
-        <div className="flex items-center gap-1.5 text-[13.5px] font-medium">{title}{info ? <InfoTip text={info} /> : null}</div>
+        <div className="flex items-center gap-1.5 text-[13.5px] font-medium">{title}{tag}{info ? <InfoTip text={info} /> : null}</div>
         {description ? <div className="mt-0.5 text-[12.5px] leading-[18px] text-muted">{description}</div> : null}
       </div>
       <div className="max-w-full shrink-0">{children}</div>

@@ -189,7 +189,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "orchestration.minutes", label: "Minutes per task", keywords: "timeout minutes duration time limit", about: "A task that takes longer is stopped; its work is kept.", href: at("agents", "jump-orchestration-minutes-per-task") },
   ]),
   ...group("agents", "Sandbox and access", [
-    { id: "orchestration.sandbox", label: "Sandbox by default", keywords: "sandbox native isolation execution", about: "New code tasks start inside this computer's sandbox.", href: at("agents", "jump-orchestration-sandbox-by-default") },
+    { id: "orchestration.sandbox", label: "Sandbox by default", keywords: "sandbox native isolation execution beta", about: "Beta, off unless you turn it on: new code tasks start inside this computer's sandbox.", href: at("agents", "jump-orchestration-sandbox-by-default") },
     { id: "orchestration.network", label: "Internet for agent commands", keywords: "network internet sandbox commands", about: "Whether agent commands can reach the internet.", href: at("agents", "jump-orchestration-internet-for-agent-commands") },
     { id: "orchestration.outside", label: "Outside the Ensemble workspace", keywords: "outside access other folders read write work folder", about: "Whether tasks may read or change your folders beyond the Ensemble workspace without asking.", href: at("agents", "jump-orchestration-outside-the-ensemble-workspace") },
   ]),

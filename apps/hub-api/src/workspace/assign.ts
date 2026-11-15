@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
 import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, PullRequestPlan, pullRequestHeadRefusal, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
-import { serverRunnerEnabled } from "../devices/constants.js";
+import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
 import { appendLedger } from "../lib/ledger.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -47,7 +47,11 @@ export const Assign = z.object({
   delivery: z.enum(["local", "commit", "push"]).default("push"),
   askBeforePublish: z.boolean().default(false),
   useCredentials: z.boolean().default(false),
-  sandbox: z.boolean().default(true),
+  /**
+   * The OS sandbox, in beta. Left out: Settings → Agents → Sandbox by default, off unless the person
+   * turned it on; on a server whose own runner runs code, on (`sandboxFor`, docs/24 §1).
+   */
+  sandbox: z.boolean().optional(),
   network: z.boolean().optional(),
   markDone: z.boolean().default(true),
   unattended: z.boolean().default(false),
@@ -218,8 +222,8 @@ export async function inSession(prisma: PrismaClient, userId: string, body: Assi
   };
 }
 
-/** A request with its kind decided. */
-export type ResolvedAssign = AssignInput & { kind: "research" | "code" };
+/** A request with its kind and its sandbox decided. */
+export type ResolvedAssign = AssignInput & { kind: "research" | "code"; sandbox: boolean };
 
 /**
  * The kind of run when the request does not say. Work by a coding agent, on a paired computer, in a
@@ -254,6 +258,16 @@ export function requestedMode(body: Pick<AssignInput, "kind" | "mode" | "unatten
   const mode: RunMode = body.mode ?? (body.unattended ? "unattended" : "ask");
   const stored = storedMode(mode);
   return body.accessMode === "review" ? { accessMode: "review", unattended: stored.unattended } : stored;
+}
+
+/**
+ * Whether a run is sandboxed: as the request says, else Sandbox by default (Settings → Agents; the OS
+ * sandbox is in beta and off unless the person turned it on). A run on a server whose own runner runs
+ * code keeps the sandbox unless the request turns it off (docs/24 §1).
+ */
+export function sandboxFor(body: Pick<AssignInput, "sandbox" | "deviceId">, orchestration: { defaultExecution: string }, ownCode = serverRunsOwnCode()): boolean {
+  if (body.sandbox !== undefined) return body.sandbox;
+  return (!body.deviceId && ownCode) || orchestration.defaultExecution === "sandbox";
 }
 
 const BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
@@ -515,7 +529,8 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
     await appendLedger({ userId, actor: options.actor ?? "me", action: "task.session_linked", taskId: task.id, payload: { sessionId: choice.session!.id, band: choice.band, why: choice.why } });
   }
   const tiered = withTierAgent(input.session ? await inSession(prisma, userId, input) : requested, tier);
-  const body: ResolvedAssign = { ...withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) }) };
+  const kinded = withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) });
+  const body: ResolvedAssign = { ...kinded, sandbox: sandboxFor(kinded, settings.orchestration) };
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);

@@ -2,6 +2,14 @@
 
 Choose a run mode, working folder and access limits when assigning work. The same controls apply in the desktop app, CLI and permitted server execution. Use [Workspace and assigned agents](06_MODULE_WORKSPACE_AND_SURFACES.md) to start a run and review its result.
 
+## 1. The OS sandbox is in beta
+
+The OS sandbox (§2) is in beta while it is rebuilt: it is off by default, and it may stop some agents from running. Settings → Agents → **Sandbox by default** turns it on for new tasks; a run profile or the Assign dialog turns it on for its own runs. Each is marked **Beta**. With it off, everything else still applies to every run: the floor (§3, §6), the run mode (§4), folder trust and the judge ([30](30_ENGINES.md)). `ensemble sandbox setup` and the sandbox status keep working for people who turn it on.
+
+The Assign dialog, the assistant (in Ensemble and through the MCP), Ensemble Node and the CLI send the run profile's choice; a request to `POST /api/agent/assign` that leaves `sandbox` out follows Sandbox by default (`sandboxFor` in `workspace/assign.ts`). A server whose own runner runs code (`ENSEMBLE_SERVER_RUNNER` on, and not the desktop app's or the CLI's runtime) keeps its runs in the sandbox unless the request turns it off, and keeps the settings saved on it as they are.
+
+Settings saved before the sandbox became a beta hold it on by default. At startup, `switchSandboxBetaOff` (`lib/sandbox-beta.ts`) turns Sandbox by default and every saved run profile's sandbox off once, in the hosted server's database and in the desktop app's and the CLI's local database, and records it in the owner's `ui.sandbox-beta` preference. Every settings save records it too, so a choice made afterwards, the beta turned on included, is kept.
+
 ## 4. Trust and run modes
 
 Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me.
@@ -25,7 +33,7 @@ In every mode, a command that only reads files inside the folder (`ls`, `cat`, `
 
 Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)).
 
-Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code, and Gemini CLI and Qwen Code outside macOS, have no OS sandbox Ensemble can turn on: the Assign dialog runs them with the sandbox off and says so, and the judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-antigravity-mistral-vibe-qwen-code-and-kimi-code)).
+Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code, and Gemini CLI and Qwen Code outside macOS, have no OS sandbox Ensemble can turn on. With the sandbox off (the default) they run as any agent does; with the beta on, the Assign dialog runs them with it off and says so, and a request that asks for it stops at once. The judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-antigravity-mistral-vibe-qwen-code-and-kimi-code)).
 
 ## 3. Work folder and outside access
 
@@ -209,7 +217,7 @@ Editor tasks, shell startup files, hooks, lifecycle scripts, `.envrc` and build 
 
 `queue-policy.ts` locks conflicting folders, projects, repositories and continuations ([05 §4](05_MODULE_TASK_ORCHESTRATOR.md#4-queue-slots-and-limits)). Permission checkpoints keep exact arguments and tree identity; a stale tree or decision is refused.
 
-A paired computer enforces its own capability, trust and Git settings; a web reply cannot create local trust. The hosted worker never runs device jobs, and an expired lease marks the job interrupted instead of moving it to another computer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+A paired computer enforces its own capability, trust and Git settings; a web reply cannot create local trust. The web's sandbox choice applies there only while the computer accepts web settings; otherwise the web can only turn it on, and the computer's own Sandbox by default decides ([25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals)). The hosted worker never runs device jobs, and an expired lease marks the job interrupted instead of moving it to another computer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
 ## In the code
 
@@ -231,7 +239,7 @@ A prompt or argv allowlist alone is not a sandbox. The API and runtime are trust
 
 ### 9. Tests and limits
 
-`workspace/sandbox/os-escape.test.ts` runs live escape tests; `workspace/data-denies.test.ts` checks the testing CLI's data folder and one set by `ENSEMBLE_DATA_HOME` against the guard and the live sandbox (the key file and browser cookies unreadable inside a folder the run was given); backend, argv, path, trust and Git tests sit beside their code.
+`lib/sandbox-beta-pglite.test.ts` checks the one-time switch-off (§1) on PGlite, and `assistant/assign-agent.integration.test.ts` that a task assigned with the defaults, Antigravity from the assistant included, reaches its computer without the sandbox. `workspace/sandbox/os-escape.test.ts` runs live escape tests; `workspace/data-denies.test.ts` checks the testing CLI's data folder and one set by `ENSEMBLE_DATA_HOME` against the guard and the live sandbox (the key file and browser cookies unreadable inside a folder the run was given); backend, argv, path, trust and Git tests sit beside their code.
 
 `full-checks.yml` runs them by hand on macOS (Seatbelt), Linux with bubblewrap, Linux with Landlock, and Windows ([37](37_PAUSED_CHECKS.md)); `ENSEMBLE_REQUIRE_OS_SANDBOX=1` makes a missing sandbox fail instead of skip ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)).
 

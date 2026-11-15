@@ -196,6 +196,15 @@ test("one picker: the person's own AI plans on a paired computer, each model wit
     await picker.open();
     await picker.chip("Grok Build");
     await picker.pick("Grok Build default");
+    assert.equal(document.querySelector('[data-testid="engine-no-sandbox"]'), null, "the sandbox is a beta and off by default: nothing to say");
+    // With the beta turned on for this run, Grok Build (no OS sandbox there) runs directly, and the dialog says so.
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.includes("More options"))!.click());
+    await settle();
+    const sandboxSwitch = document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Sandbox"]')!;
+    assert.equal(sandboxSwitch.getAttribute("aria-checked"), "false", "the switch starts off");
+    assert.equal(sandboxSwitch.parentElement?.querySelector(".tag")?.textContent, "Beta");
+    await act(async () => sandboxSwitch.click());
+    await settle();
     assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there, so it runs directly/);
 
     await picker.open();
