@@ -55,6 +55,7 @@ const { setLocalPort } = await import("../workspace/engines/registry.js");
 const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
 const { runCommand } = await import("../workspace/runner.js");
 const { rememberSecretValues } = await import("../lib/redact.js");
+const { RemoteError } = await import("../remote/client.js");
 
 after(() => removeScratch(base));
 
@@ -757,4 +758,36 @@ test("a command's sign-in: its code goes to the owner's card at once and the ans
   }
   const plain = await run(`node -e "console.log(Boolean(process.env.BROWSER))"`);
   assert.equal(plain.answers[0]!.body.output, process.platform === "win32" ? "false\n" : "true\n");
+});
+
+test("a background command whose answer fails keeps its sign-in helpers while it runs on; they go once it has ended", async (t) => {
+  if (process.platform === "win32") return t.skip("Windows commands keep their own browser: there are no helpers");
+  const folder = { path: work, label: "app" };
+  const fake = fakeClient();
+  const runId = randomUUID();
+  const helpers = join(home, "ensemble-workspace", ".cache", "tmp", `ensemble-signin-${runId}`);
+  const pages: string[] = [];
+  const answered: number[] = [];
+  let helpersWhenAnswered = false;
+  setCliPageOpenerForTests(async (url) => void pages.push(url));
+  try {
+    // It opens its page after the answer failed, then stays a little longer than the runtime takes to look.
+    const command = `node -e "setTimeout(() => { require('node:child_process').execFileSync(process.env.BROWSER, ['https://idp.example.test/authorize']); setTimeout(() => {}, 700) }, 600)"`;
+    const request = { id: randomUUID(), tool: "run", folder: "app", command, timeoutSec: 60, background: true, secrets: [], runId, delivery: "local", network: false, nodeId: "n1", mission: "m", attended: false, grants: [] };
+    await assert.rejects(
+      runNodeCommand({ prisma: memoryDb() } as never, fake.client as never, request as never, folder, async (answer) => {
+        answered.push(answer.status);
+        helpersWhenAnswered = existsSync(join(helpers, "bin", "ensemble-browser"));
+        // What `client.answerCode` throws when the hub refuses the answer.
+        throw new RemoteError(400, "The answer was refused.");
+      }),
+      /The answer was refused/,
+    );
+    assert.deepEqual(answered, [202], "answered at once, as a background command does");
+    assert.equal(helpersWhenAnswered, true, "its helpers were there when it answered");
+    assert.deepEqual(pages, ["https://idp.example.test/authorize"], "the page it opened after the failed answer still reached Ensemble");
+    assert.equal(existsSync(helpers), false, "its helpers went once it ended");
+  } finally {
+    setCliPageOpenerForTests(null);
+  }
 });
