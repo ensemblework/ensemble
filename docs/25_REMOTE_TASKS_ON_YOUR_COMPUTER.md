@@ -163,6 +163,8 @@ The assistant can run turns on AI subscriptions signed in on a paired computer t
 
 One runtime runs a turn. The first `GET /api/devices/self/assistant-turns/:id` takes it for the runtime that asked (`pickTurn` in `subscriptions/relay.ts`, by its `x-ensemble-instance`, §2), which may read it again; any other runtime of that computer gets 409 "This turn was picked up by another Ensemble on this computer." and leaves the turn (`answerAssistantTurn` in `remote/assistant.ts`), and its file reads, tool calls, reply text and `done` are refused with 409 too. A turn taken by a runtime that sends no id (an older one) takes posts from any runtime of that computer; a second read is still refused.
 
+The computer also reports the agents' apps it has that come without the agent (`capabilities.agentApps`: `cursor-app`, `vscode-copilot`). `agents.setup {agent}` asks it to install that agent with the vendor's installer in a terminal window and sign in; the web sends it only to a computer that reports the app, and asks an older one to update ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
+
 #### Send chat attachments to the agent
 
 A computer that reports `assistantTurns: 2` (`ASSISTANT_TURN_FILES`) takes the files attached to the message: the turn's spec lists them (`files`), and the computer downloads each with `GET /api/devices/self/assistant-turns/:id/files/:fileId` (`assistantFile` in `remote/client.ts`, at most the listed size plus 64 KB, stopped with the turn).
@@ -177,7 +179,7 @@ A computer that reports `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) keeps on
 
 Its `done` says whether the turn went on in the earlier session (`result.resumed`), which the web records with the turn's `model.call` metric (`session: { key, resumed }`). An older computer gets the history in front of the message instead.
 
-From 0.8.0, a turn that started a new session in place of the chat's earlier one also says why (`result.restart: { reason, error }`, [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)), and the web records it in the same metric. A batch on `/stream` may carry a `status` line for the chat while the computer waits ("Waiting for the ChatGPT app…"). An older server ignores both, and a reason it does not know is dropped without failing the turn.
+From 0.8.0, a turn that started a new session in place of the chat's earlier one also says why (`result.restart: { reason, error }`, [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)), and the web records it in the same metric. A turn whose session the person used in the agent's own app since Ensemble's last turn carries those exchanges (`result.outside: { app, turns, earlier }`), which the web saves into the chat before the turn's message. A batch on `/stream` may carry a `status` line for the chat while the computer waits ("Waiting for the ChatGPT app…"). An older server ignores both, and a reason it does not know is dropped without failing the turn.
 
 #### Use the agent’s own tools
 

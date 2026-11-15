@@ -34,6 +34,8 @@ Name the connected app, ask to search connected apps or paste an item link when 
 
 A model turn receives the last **12 messages**, as written, without their old context blocks. On your own AI subscription, one chat is one session of that agent ([41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan)).
 
+What you and the agent said in that session in the agent's own app comes into the chat before your next message there. It's marked "In the Claude app" (or wherever it was said) with its time, and the agent's answers show without Ensemble's name. In the history a model receives, those messages read "(Said in the Claude app, outside Ensemble) …" (`assistant/outside.ts`).
+
 Open recent chats in the dock to return to a conversation. Use its delete button, Delete or Backspace and confirm once to remove it. Deleting the open chat starts a fresh chat. **Settings → Assistant → Prompts** shows every prompt Ensemble sends.
 
 ## 6. Apply, Undo and dependent actions

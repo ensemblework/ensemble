@@ -38,6 +38,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { recordMetric } from "../lib/metrics.js";
 import { bindAiContext, logAi, withAiContext } from "../lib/ai-activity.js";
+import { outsideHistoryText, outsideMarkOf, saveOutside } from "./outside.js";
 import { callCost } from "../lib/pricing.js";
 import {
   beginActivity,
@@ -477,6 +478,12 @@ async function drive(
         },
       });
       credentialSource = `${SUBSCRIPTION_INFO[agent].label} subscription · ${done.computer}`;
+      // What the person said in the agent's own app since Ensemble's last turn comes into the chat before this message.
+      if (done.outside?.turns.length) {
+        await saveOutside(app.prisma, { userId, conversationId: args.conversationId, ...(args.messageId ? { before: args.messageId } : {}), agent, session: args.subscription?.sessionKey ?? args.conversationId, outside: done.outside }).catch((error: unknown) =>
+          app.log.warn({ err: error }, "could not save what was brought in from the agent's app"),
+        );
+      }
       text = done.text.trim();
       answered = done.model || args.model;
       credits = null;
@@ -496,6 +503,8 @@ async function drive(
           session: { key: args.subscription?.sessionKey ?? args.conversationId, resumed: typeof done.resumed === "boolean" ? done.resumed : null },
           // Why it started a new session in place of the chat's earlier one (workspace/engines/session-restart.ts).
           ...(done.restart ? { restart: done.restart } : {}),
+          // Exchanges brought in from the agent's own app before this turn (assistant/outside.ts).
+          ...(done.outside?.turns.length ? { outside: { app: done.outside.app, turns: done.outside.turns.length, earlier: done.outside.earlier } } : {}),
           title: truncateText(args.message, 80),
         },
       }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
@@ -1172,7 +1181,7 @@ async function priorTurns(
     where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
     orderBy: { createdAt: "desc" },
     take: 12,
-    select: { role: true, content: true, toolCalls: true, mentions: true },
+    select: { role: true, content: true, toolCalls: true, mentions: true, outside: true },
   });
   // A turn that reaches several spaces (Ensemble Node): an answer that used a space this turn cannot
   // reach any more (access lost, or a conversation other people read) leaves history with its records.
@@ -1180,6 +1189,9 @@ async function priorTurns(
   // An earlier message's files are named, not resent: the model reads them again if it needs them.
   const ordered = rows.reverse().map((row) => {
     if (reachable && usedOtherSpace(row.toolCalls, reachable)) return { role: row.role, content: LEFT_OUT, toolCalls: [], mentions: null };
+    // Said in the agent's own app (assistant/outside.ts): marked as such.
+    const mark = outsideMarkOf(row.outside);
+    if (mark) return { role: row.role, content: outsideHistoryText(row.role, row.content, mark), toolCalls: [], mentions: null };
     const note = row.role === "user" ? attachedNote(row.mentions) : "";
     return note ? { ...row, content: `${row.content}\n\n${note}` } : row;
   });
@@ -1193,14 +1205,17 @@ const LEFT_OUT = "(An earlier answer is left out here: it used a space that cann
  * before this one that the session took part in. A message that got no answer (the turn failed before
  * replying, or its computer was offline) and a failed exchange (the message and its error) never
  * reached the session, so they do not move the chat past it: a routine whose run failed while its
- * computer was asleep goes on in the same session at its next run.
+ * computer was asleep goes on in the same session at its next run. Messages brought in from the agent's
+ * own app (`outside`) are in the session already, so they do not count either.
  */
 export async function sessionPosition(prisma: Pick<PrismaClient, "assistantMessage">, conversationId: string, excluded?: string): Promise<number> {
-  const rows = await prisma.assistantMessage.findMany({
-    where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
-    orderBy: { createdAt: "asc" },
-    select: { role: true },
-  });
+  const rows = (
+    await prisma.assistantMessage.findMany({
+      where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
+      orderBy: { createdAt: "asc" },
+      select: { role: true, outside: true },
+    })
+  ).filter((row) => row.outside === null || row.outside === undefined);
   let position = 0;
   for (let index = 0; index < rows.length; index += 1) {
     const role = rows[index]!.role;

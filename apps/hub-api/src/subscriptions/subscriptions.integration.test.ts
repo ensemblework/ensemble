@@ -332,3 +332,40 @@ test("the web lists the person's computers and their subscriptions, and asks a c
     frames.stop();
   }
 });
+
+test("an agent's app there without the agent is listed with the computer, and Set up goes to that computer only", async () => {
+  const person = await harness.asUser();
+  const stranger = await harness.asUser();
+  // The Linux homeserver: the Cursor app without Cursor's agent; an app this server does not know is left out.
+  const mine = await pairedComputer(person, "Homeserver", { assistantTurns: 3, agents: [CLAUDE], agentApps: ["cursor-app", "zed-app"] });
+  const older = await pairedComputer(person, "Old Mac", { assistantTurns: 3, agents: [] });
+  const theirs = await pairedComputer(stranger, "Their Mac", { assistantTurns: 3, agents: [], agentApps: ["cursor-app"] });
+  const listed = await person.inject({ method: "GET", url: "/api/subscriptions" });
+  assert.equal(listed.statusCode, 200, listed.body);
+  const view = listed.json() as { computers: Array<{ name: string; apps: string[] }> };
+  assert.deepEqual(view.computers.map((row) => [row.name, row.apps]).sort(), [["Homeserver", ["cursor-app"]], ["Old Mac", []]]);
+  const frames = computer(mine.device.id, async () => undefined);
+  try {
+    const setUp = await person.inject({ method: "POST", url: "/api/subscriptions/set-up", payload: { deviceId: mine.device.id, agent: "cursor-agent" } });
+    assert.equal(setUp.statusCode, 202, setUp.body);
+    assert.match(setUp.body, /A terminal window is opening on Homeserver: it installs Cursor's agent with Cursor's installer, then opens Cursor's sign-in/);
+    claim("POST /api/subscriptions/set-up", "happy-path");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(frames.heard, ["agents.setup"]);
+    const noApp = await person.inject({ method: "POST", url: "/api/subscriptions/set-up", payload: { deviceId: mine.device.id, agent: "copilot-cli" } });
+    assert.equal(noApp.statusCode, 409);
+    assert.match(noApp.body, /Homeserver has no app Ensemble can set GitHub Copilot up from/);
+    const tooOld = await person.inject({ method: "POST", url: "/api/subscriptions/set-up", payload: { deviceId: older.device.id, agent: "cursor-agent" } });
+    assert.equal(tooOld.statusCode, 409);
+    assert.match(tooOld.body, /Update Ensemble on Old Mac/);
+    const foreign = await person.inject({ method: "POST", url: "/api/subscriptions/set-up", payload: { deviceId: theirs.device.id, agent: "cursor-agent" } });
+    assert.equal(foreign.statusCode, 404);
+    claim("POST /api/subscriptions/set-up", "isolation");
+    const wrong = await person.inject({ method: "POST", url: "/api/subscriptions/set-up", payload: { deviceId: mine.device.id, agent: "cursor" } });
+    assert.equal(wrong.statusCode, 400);
+    claim("POST /api/subscriptions/set-up", "invalid-input");
+    assert.deepEqual(frames.heard, ["agents.setup"], "nothing else reached the computer");
+  } finally {
+    frames.stop();
+  }
+});

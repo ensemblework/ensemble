@@ -319,7 +319,7 @@ export const ActivityPost = z.object({
     .array(
       z.object({
         ts: z.string().datetime(),
-        kind: z.enum(["model.call", "tool.call", "agent.tool", "error", "runner.log"]),
+        kind: z.enum(["model.call", "tool.call", "agent.tool", "agent.outside", "error", "runner.log"]),
         purpose: text(200).optional(),
         app: text(200).optional(),
         model: text(200).optional(),

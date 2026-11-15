@@ -11,9 +11,9 @@
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { cursorAgentProgram } from "../../subscriptions/agent-apps.js";
 import { withoutHostSession } from "../../subscriptions/host-session.js";
 import { appendLive, touchLive } from "../live-log.js";
-import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
@@ -25,8 +25,9 @@ import { RpcConnection } from "./rpc.js";
 /** Keys in Ensemble's own environment that must not stand in for the person's Cursor sign-in. */
 const KEY_VARIABLES = ["CURSOR_API_KEY"];
 
+/** Cursor's agent as the subscriptions find it: on the PATH, or where Cursor's installer put it (`agent-apps.ts`). */
 export async function cursorAgentBinary(): Promise<string | null> {
-  return (await hostExecutable("cursor-agent").catch(() => null)) ?? null;
+  return cursorAgentProgram();
 }
 
 type ToolCall = { toolCallId?: string; title?: string; kind?: string; content?: Array<{ type?: string; path?: string; content?: { text?: string } }>; locations?: Array<{ path?: string }>; rawInput?: Record<string, unknown> | null };

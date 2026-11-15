@@ -3,9 +3,9 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ExternalLink, Laptop, LogIn, RefreshCw } from "lucide-react";
+import { Check, Download, ExternalLink, Laptop, LogIn, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { claudeUpdateNote, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider, type UsageWindow } from "@ensemble/shared-types";
+import { AGENT_APP_INFO, appWithoutAgent, claudeUpdateNote, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type AgentApp, type Settings, type SubscriptionAgent, type SubscriptionProvider, type UsageWindow } from "@ensemble/shared-types";
 import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/api";
 import { relative, untilLabel } from "@/lib/format";
 import { modelFacts } from "@/lib/engine-models";
@@ -50,13 +50,22 @@ const PROGRAM: Record<SubscriptionProvider, string> = {
   "qwen-code": "Qwen Code",
   "kimi-code": "Kimi Code CLI",
 };
+/** The program Ensemble runs when it is the copy inside the vendor's own app. */
+const APP_COPY: Partial<Record<SubscriptionProvider, string>> = { "claude-code": "the Claude app", codex: "the ChatGPT app", opencode: "the OpenCode app" };
 const viaText = (agent: SubscriptionAgent): string => {
-  const program = agent.id === "claude-code" && agent.via === "app" ? "the Claude app" : agent.id === "codex" && agent.via === "app" ? "the ChatGPT app" : PROGRAM[agent.id];
+  const program = (agent.via === "app" ? APP_COPY[agent.id] : undefined) ?? PROGRAM[agent.id];
   return `via ${program}${agent.version ? ` ${agent.version}` : ""}`;
 };
 
-export function statusOf(agent: SubscriptionAgent | null): { tone: "green" | "orange" | "gray" | "blue"; text: string } {
-  if (!agent) return { tone: "gray", text: "Not on this computer" };
+/** The agent's app is on the computer and the agent is not: what Set up does there, for the ⓘ. */
+const SET_UP_INFO: Record<AgentApp, (computer: string) => string> = {
+  "cursor-app": (computer) => `Set up runs Cursor's own installer on ${computer}, as the app's cursor agent command does, then Cursor's sign-in in a terminal window there. The agent in the app's Agents window works only inside the app.`,
+  "vscode-copilot": (computer) => `Copilot in VS Code runs inside VS Code. Set up installs GitHub's Copilot CLI on ${computer} (with WinGet on Windows), then Copilot's sign-in in a terminal window there.`,
+};
+
+/** `app`: the agent's app found on the computer without the agent ("Cursor app found. Set up its agent"). */
+export function statusOf(agent: SubscriptionAgent | null, app: AgentApp | null = null): { tone: "green" | "orange" | "gray" | "blue"; text: string } {
+  if (!agent) return app ? { tone: "orange", text: "Needs setup" } : { tone: "gray", text: "Not on this computer" };
   if (agent.problem) return { tone: "orange", text: "Needs a look" };
   if (agent.signedIn === false) return { tone: "orange", text: "Not signed in" };
   if (agent.signedIn === true) return { tone: "green", text: `${agent.account ? `Signed in as ${agent.account}` : "Signed in"}${agent.plan ? ` · ${agent.plan}` : ""}` };
@@ -104,6 +113,9 @@ export function SubscriptionTile({
   patch,
   onSignIn,
   signingIn,
+  app = null,
+  onSetUp,
+  settingUp = false,
   full = false,
 }: {
   id: SubscriptionProvider;
@@ -113,11 +125,15 @@ export function SubscriptionTile({
   patch: Patch;
   onSignIn: () => void;
   signingIn: boolean;
+  /** The agent's app found there without the agent: Set up installs it. */
+  app?: AgentApp | null;
+  onSetUp?: () => void;
+  settingUp?: boolean;
   /** In the Manage dialog: every model, and what the plan is. */
   full?: boolean;
 }) {
   const info = SUBSCRIPTION_INFO[id];
-  const status = statusOf(agent);
+  const status = statusOf(agent, app);
   const using = tiersUsing(settings, id);
   const [model, setModel] = useState<string>(() => (agent ? defaultModel(agent) : "default"));
   useEffect(() => {
@@ -128,7 +144,7 @@ export function SubscriptionTile({
   // Cost and context sizes, where the agent reports them (GitHub Copilot).
   const facts = chosen && (chosen.cost || chosen.contexts?.length) ? modelFacts(chosen) : "";
   return (
-    <div className="tile flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-3.5" data-subscription={id} data-state={agent ? (agent.signedIn === false ? "signed-out" : "found") : "missing"}>
+    <div className="tile flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-3.5" data-subscription={id} data-state={agent ? (agent.signedIn === false ? "signed-out" : "found") : app ? "setup" : "missing"}>
       <div className="flex items-start gap-3">
         <SubscriptionMark id={id} />
         <div className="min-w-0 flex-1">
@@ -162,6 +178,11 @@ export function SubscriptionTile({
           {!full && agent.models.length > 6 ? <span className="px-1 py-0.5 text-[11.5px] text-faint">+{agent.models.length - 6} more in the tier pickers</span> : null}
           {facts ? <p className="w-full px-0.5 text-[11.5px] text-faint" data-testid="subscription-model-facts">{chosen!.label}: {facts}</p> : null}
         </div>
+      ) : app ? (
+        <p className="flex items-center gap-1 text-[12px] text-muted" data-testid="subscription-app-found">
+          {AGENT_APP_INFO[app].name} found. Set up {AGENT_APP_INFO[app].setsUp}.
+          <InfoTip text={SET_UP_INFO[app](computer?.name ?? "your computer")} />
+        </p>
       ) : (
         <p className="text-[12px] text-muted">Needs {info.program}.</p>
       )}
@@ -173,6 +194,10 @@ export function SubscriptionTile({
             // Antigravity has nothing to install by hand: Sign in installs Google's agent, then opens Google's sign-in.
             <button type="button" className="btn py-0.5 text-[12px]" onClick={onSignIn} disabled={signingIn || !computer?.online || !computer.ready} data-testid="antigravity-install">
               <LogIn size={11} aria-hidden /> {signingIn ? "Setting up…" : "Install and sign in"}
+            </button>
+          ) : !agent && app ? (
+            <button type="button" className="btn-primary py-0.5 text-[12px]" onClick={onSetUp} disabled={settingUp || !onSetUp || !computer?.online || !computer.ready} data-testid="subscription-set-up">
+              <Download size={11} aria-hidden /> {settingUp ? "Setting up…" : "Set up"}
             </button>
           ) : !agent ? (
             <a className="btn py-0.5 text-[12px]" href={info.install.url} target="_blank" rel="noreferrer">
@@ -232,9 +257,20 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const setUp = useMutation({
+    mutationFn: (agent: SubscriptionProvider) => api.setUpSubscription(computer!.id, agent),
+    onSuccess: (result) => {
+      toast(result.message, { tone: "ok" });
+      // The vendor's download and install come before the sign-in.
+      setBusyUntil(Date.now() + 20 * 60_000);
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const computers = view.data?.computers ?? [];
   const location = useSettingsLocation();
-  const found = computer ? SUBSCRIPTION_PROVIDERS.filter((id) => computer.agents.some((row) => row.id === id)) : [];
+  const appOf = (id: SubscriptionProvider) => (computer ? appWithoutAgent(id, computer.agents, computer.apps) : null);
+  // Agents found there, and those whose app is there without them.
+  const found = computer ? SUBSCRIPTION_PROVIDERS.filter((id) => computer.agents.some((row) => row.id === id) || appOf(id)) : [];
   const tile = (id: SubscriptionProvider, full = false) => (
     <SubscriptionTile
       key={id}
@@ -245,6 +281,9 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
       patch={patch}
       signingIn={signIn.isPending && signIn.variables === id}
       onSignIn={() => signIn.mutate(id)}
+      app={appOf(id)}
+      settingUp={setUp.isPending && setUp.variables === id}
+      onSetUp={() => setUp.mutate(id)}
       full={full}
     />
   );

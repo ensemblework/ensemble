@@ -1,5 +1,6 @@
 import { answerFor, answerPending, askBeforeBrowsing, browseFiles, connectedHooks, evidenceUpload, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import { formatSessions, listSessions } from "./sessions.js";
+import { agentAppNotes, localComputer } from "./agent-apps.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -952,6 +953,8 @@ async function commandDoctor(args: string[]): Promise<void> {
   const runner = await runningRunner(resolveCliPaths());
   const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
   if (sandbox) console.log(sandbox.osSandbox ? "ok    OS sandbox (beta)" : `info  OS sandbox (beta): ${sandbox.setup?.needed ? "not set up. Run `ensemble sandbox setup` to try it." : sandbox.reason}`);
+  // An agent's app here without its agent (the Cursor app, VS Code with Copilot): a note, not a failure.
+  for (const note of runner ? agentAppNotes(await localComputer(runner)) : []) console.log(`note  ${note.label}: ${note.fix}`);
   console.log("");
   for (const line of statusLines(status).slice(5)) console.log(line);
   if (failed) process.exitCode = 1;

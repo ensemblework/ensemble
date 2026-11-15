@@ -17,6 +17,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContextTier, ModelContext, SubscriptionModel } from "@ensemble/shared-types";
 import { hostExecutable } from "../workspace/policy.js";
+import { copilotProgram } from "./agent-apps.js";
 import { agentEnv } from "./detect.js";
 
 /**
@@ -62,8 +63,9 @@ export async function copilotSavedSignIn(home = homedir()): Promise<boolean> {
   }
 }
 
+/** Copilot CLI on the PATH, or where its installers put it (`agent-apps.ts`). */
 export async function copilotBinary(): Promise<string | null> {
-  return (await hostExecutable("copilot").catch(() => null)) ?? null;
+  return copilotProgram();
 }
 
 /** One `models.list` row, as Copilot CLI 1.0 returns it (fields Ensemble reads). */
