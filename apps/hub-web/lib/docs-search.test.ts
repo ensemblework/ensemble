@@ -30,7 +30,7 @@ function setup() {
   const input = w.document.querySelector<HTMLInputElement>('#query')!;
   const type = (text: string) => { input.value = text; input.dispatchEvent(new w.Event('input', { bubbles: true })); };
   const open = () => w.document.querySelector<HTMLButtonElement>('#search-trigger')!.click();
-  return { dom, w, dialog, input, type, open, respond: () => respond(Response.json(corpus)), results: () => w.document.querySelector('#search-results')!, close: () => w.close() };
+  return { dom, w, dialog, input, type, open, respond: (data = corpus) => respond(Response.json(data)), results: () => w.document.querySelector('#search-results')!, close: () => w.close() };
 }
 
 test('top-bar search updates as you type, highlights matches, and supports arrow selection', async () => {
@@ -64,5 +64,17 @@ test('the shortcut opens search and closing returns focus to its top-bar entry',
     assert.equal(p.dialog.open, true);
     p.respond(); await settle(); p.dialog.close();
     assert.equal(p.w.document.activeElement?.id, 'search-trigger');
+  } finally { p.close(); }
+});
+
+
+test('opening a result dismisses search even when the topic is on the current page', async () => {
+  const p = setup();
+  try {
+    const samePage = structuredClone(corpus);
+    samePage.pages[0]!.sections[0]!.url = 'https://docs.ensemblework.com/#query';
+    p.open(); p.respond(samePage); p.type('share page'); await settle();
+    p.w.document.querySelector<HTMLFormElement>('#search-form')!.requestSubmit();
+    assert.equal(p.dialog.open, false);
   } finally { p.close(); }
 });
