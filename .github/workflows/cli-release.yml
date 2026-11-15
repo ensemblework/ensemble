@@ -117,6 +117,10 @@ jobs:
             target: linux-arm64
           - os: windows-2022
             target: windows-x64
+          # Native, like linux-arm64: the package carries the runner's own Node, and its sidecar Prisma's
+          # Rust-free client (scripts/assemble-desktop-sidecar.mjs; Prisma has no arm64 Windows engine).
+          - os: windows-11-arm
+            target: windows-arm64
     steps:
       - uses: actions/checkout@v5
 
@@ -131,7 +135,7 @@ jobs:
 
       # Windows: the ensemble.exe launcher. Linux: landrun, the Landlock sandbox helper in the sidecar.
       - uses: actions/setup-go@v6.4.0
-        if: matrix.target == 'windows-x64' || startsWith(matrix.target, 'linux-')
+        if: startsWith(matrix.target, 'windows-') || startsWith(matrix.target, 'linux-')
         with:
           go-version: "1.24.x"
 
@@ -147,7 +151,7 @@ jobs:
         run: node scripts/package-cli.mjs --target ${{ matrix.target }} --out dist/cli
 
       - name: Smoke packaged CLI
-        if: matrix.target != 'windows-x64'
+        if: ${{ !startsWith(matrix.target, 'windows-') }}
         shell: bash
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
@@ -160,9 +164,10 @@ jobs:
           tar -xzf "dist/cli/ensemble-cli-$VERSION-$TARGET.tar.gz" -C "$smoke_dir"
           node scripts/smoke-cli-package.mjs "$smoke_dir/ensemble"
 
-      # Git Bash's GNU tar cannot read zip files, so Windows unpacks with PowerShell.
+      # Git Bash's GNU tar cannot read zip files, so Windows unpacks with PowerShell. Then install.ps1 installs
+      # the archive, and must choose it for this runner's processor.
       - name: Smoke packaged CLI (Windows)
-        if: matrix.target == 'windows-x64'
+        if: startsWith(matrix.target, 'windows-')
         shell: pwsh
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
@@ -173,6 +178,8 @@ jobs:
           if (Test-Path $smoke) { Remove-Item -Recurse -Force $smoke }
           Expand-Archive -Path "dist/cli/ensemble-cli-$env:VERSION-$env:TARGET.zip" -DestinationPath $smoke
           node scripts/smoke-cli-package.mjs (Join-Path $smoke "ensemble")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/smoke-install-ps1.mjs "dist/cli/ensemble-cli-$env:VERSION-$env:TARGET.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v6
@@ -379,16 +386,22 @@ jobs:
     if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.winget == 'true'
     runs-on: windows-2022
     steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: cli-packaging
+          path: dist/packaging
+
+      # The rendered manifests list both Windows builds (x64, arm64). `wingetcreate update` only refreshes
+      # the installers a published manifest already has, so it could never add arm64.
       - name: Submit with wingetcreate
         shell: pwsh
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://github.com/ensemblework/ensemble/releases/download/cli-v$env:VERSION/ensemble-cli-$env:VERSION-windows-x64.zip"
           Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/microsoft/winget-create/releases/latest/download/wingetcreate.exe" -OutFile "wingetcreate.exe"
-          .\wingetcreate.exe update EnsembleWork.EnsembleCLI --version $env:VERSION --urls $url --submit --token $env:WINGET_TOKEN
+          .\wingetcreate.exe submit --token $env:WINGET_TOKEN dist/packaging/winget
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   npm:
     name: Publish npm package

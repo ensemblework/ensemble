@@ -68,6 +68,7 @@ function assetNames(version) {
     linuxX64: `ensemble-cli-${version}-linux-x64.tar.gz`,
     linuxArm: `ensemble-cli-${version}-linux-arm64.tar.gz`,
     windowsX64: `ensemble-cli-${version}-windows-x64.zip`,
+    windowsArm: `ensemble-cli-${version}-windows-arm64.zip`,
   };
 }
 
@@ -137,6 +138,11 @@ function renderScoop({ version, assets, urlFor, sha }) {
           hash: sha(assets.windowsX64),
           extract_dir: "ensemble",
         },
+        arm64: {
+          url: urlFor(assets.windowsArm),
+          hash: sha(assets.windowsArm),
+          extract_dir: "ensemble",
+        },
       },
       bin: "bin\\ensemble.exe",
       checkver: {
@@ -147,6 +153,9 @@ function renderScoop({ version, assets, urlFor, sha }) {
         architecture: {
           "64bit": {
             url: "https://github.com/ensemblework/ensemble/releases/download/cli-v$version/ensemble-cli-$version-windows-x64.zip",
+          },
+          arm64: {
+            url: "https://github.com/ensemblework/ensemble/releases/download/cli-v$version/ensemble-cli-$version-windows-arm64.zip",
           },
         },
       },
@@ -180,6 +189,9 @@ Installers:
   - Architecture: x64
     InstallerUrl: ${urlFor(assets.windowsX64)}
     InstallerSha256: ${sha(assets.windowsX64).toUpperCase()}
+  - Architecture: arm64
+    InstallerUrl: ${urlFor(assets.windowsArm)}
+    InstallerSha256: ${sha(assets.windowsArm).toUpperCase()}
 ManifestType: installer
 ManifestVersion: 1.6.0
 `;

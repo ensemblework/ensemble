@@ -20,6 +20,7 @@ test("renders package-manager metadata from release checksums", () => {
       `${"c".repeat(64)}  ensemble-cli-${version}-linux-x64.tar.gz`,
       `${"d".repeat(64)}  ensemble-cli-${version}-linux-arm64.tar.gz`,
       `${"e".repeat(64)}  ensemble-cli-${version}-windows-x64.zip`,
+      `${"f".repeat(64)}  ensemble-cli-${version}-windows-arm64.zip`,
       "",
     ].join("\n"),
   );
@@ -30,6 +31,10 @@ test("renders package-manager metadata from release checksums", () => {
   assert.equal(scoop.version, version);
   assert.equal(scoop.architecture["64bit"].extract_dir, "ensemble");
   assert.equal(scoop.architecture["64bit"].hash, "e".repeat(64));
+  assert.equal(scoop.architecture.arm64.url, `https://example.test/releases/ensemble-cli-${version}-windows-arm64.zip`);
+  assert.equal(scoop.architecture.arm64.hash, "f".repeat(64));
+  assert.equal(scoop.architecture.arm64.extract_dir, "ensemble");
+  assert.match(scoop.autoupdate.architecture.arm64.url, /\/cli-v\$version\/ensemble-cli-\$version-windows-arm64\.zip$/);
 
   const formula = readFileSync(join(out, "ensemble.rb"), "utf8");
   assert.match(formula, /on_macos do/);
@@ -47,6 +52,8 @@ test("renders package-manager metadata from release checksums", () => {
   assert.match(wingetInstaller, /RelativeFilePath: ensemble\\bin\\ensemble\.exe/);
   assert.match(wingetInstaller, /PortableCommandAlias: ensemble/);
   assert.match(wingetInstaller, /ManifestVersion: 1\.6\.0/);
+  assert.match(wingetInstaller, new RegExp(`- Architecture: x64\\n {4}InstallerUrl: \\S+-windows-x64\\.zip\\n {4}InstallerSha256: ${"E".repeat(64)}\\n`));
+  assert.match(wingetInstaller, new RegExp(`- Architecture: arm64\\n {4}InstallerUrl: \\S+-windows-arm64\\.zip\\n {4}InstallerSha256: ${"F".repeat(64)}\\n`));
 
   const nfpm = readFileSync(join(out, "nfpm-amd64.yaml"), "utf8");
   assert.match(nfpm, /arch: amd64/);
