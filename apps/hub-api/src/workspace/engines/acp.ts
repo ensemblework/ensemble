@@ -12,7 +12,9 @@
  * (`session/set_config_option`). Questions go through Ensemble's `ask_person` MCP tool, and an
  * agent's own form questions (`elicitation/create`) reach the person the same way (elicitation.ts).
  * None of these agents takes a name for a session, so a new task's session leads with the task's
- * title alone on its first line (app-sessions.ts).
+ * title alone on its first line (app-sessions.ts). The history an agent replays as it reopens a
+ * session (`session/load`) is kept apart from the run's work and handed to the run (`onReplay`):
+ * what the person said in the agent's own app since Ensemble's last run there leads the prompt.
  *
  * Launch details follow T3 Code's drivers (`packages/provider-grok`, `provider-opencode`,
  * `apps/server/src/provider/acp` in pingdotgg/t3code, MIT License, Copyright (c) 2026 T3 Tools Inc.).
@@ -23,8 +25,10 @@ import { ENGINE_LABELS, type AcpEngine } from "@ensemble/shared-types";
 import { opencodeProgram } from "../../subscriptions/agent-apps.js";
 import { antigravityArgs, antigravityAuthLink, antigravityEnv, antigravityInstalled } from "../../subscriptions/antigravity.js";
 import { agentEnv, quickRun } from "../../subscriptions/detect.js";
+import { acpTurns, MAX_REPLAYED } from "../../subscriptions/outside.js";
 import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
+import type { ReplayHook } from "../outside-runs.js";
 import { hostLaunch, type HostLaunch } from "../policy.js";
 import type { JobContext } from "../tools.js";
 import { titledPrompt } from "./app-sessions.js";
@@ -350,7 +354,7 @@ export function stopProcess(child: ChildProcessWithoutNullStreams): void {
 export async function runAcp(
   ctx: JobContext,
   id: AcpEngine,
-  options: { prompt: string; model?: string | null; effort?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: { prompt: string; model?: string | null; effort?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace; onReplay?: ReplayHook },
 ): Promise<EngineResult> {
   const agent = ACP_AGENTS[id];
   const label = ENGINE_LABELS[id];
@@ -382,7 +386,11 @@ export async function runAcp(
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
+  // A reopened session replays its history first: not this run's work, but it shows what the person said in
+  // the agent's own app since Ensemble's last run there (outside-runs.ts).
   let replaying = false;
+  const replayed: Array<Record<string, unknown>> = [];
+  let overflow = false;
   let signInLink = false;
   const usage: { window: { used: number; size: number } | null } = { window: null };
   const announced = new Map<string, string>();
@@ -394,7 +402,12 @@ export async function runAcp(
     throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
   };
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update" || replaying) return;
+    if (method !== "session/update") return;
+    if (replaying) {
+      if (replayed.length < MAX_REPLAYED) replayed.push(params);
+      else overflow = true;
+      return;
+    }
     const update = (params.update ?? {}) as {
       sessionUpdate?: string;
       content?: { type?: string; text?: string } | Array<{ type?: string; content?: { type?: string; text?: string } }>;
@@ -531,7 +544,12 @@ export async function runAcp(
     const observed = { ...(observedModel ? { model: observedModel } : {}), ...(now.thought?.currentValue ? { effort: now.thought.currentValue } : {}) };
     await ctx.event("engine", { engine: agent.trace, model: result.model, effort, session: sessionId, observed });
     await ctx.progress(`${label} started`);
-    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt) }];
+    // The reopened session's history as exchanges (`session/resume` replays none): the run brings in what the
+    // person said in the agent's own app since its last run there, and its note leads the prompt.
+    const history = options.resume && launch.resume === "session/load" && !overflow ? acpTurns(replayed) : null;
+    const note = history && options.onReplay ? await options.onReplay(sessionId, history).catch(() => null) : null;
+    const text = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
+    let prompt: Array<Record<string, unknown>> = [{ type: "text", text: note ? `${note}\n\n${text}` : text }];
     for (let round = 0; ; round += 1) {
       refusals.length = 0;
       const done = (await rpc.request("session/prompt", { sessionId, prompt })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
@@ -548,6 +566,9 @@ export async function runAcp(
     if (usage.window) await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size });
     await flushThought();
     result.text = reply.trim();
+    // The session's prompts now, for the next run's replay: the replayed ones and each one this run sent (refusals
+    // carried back too). Not counted when the history was not read, or for an agent that reopens with `session/resume`.
+    result.prompts = launch.resume === "session/load" && (history || !options.resume) ? (history?.length ?? 0) + result.turns : null;
     return result;
   } catch (error) {
     if (ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");

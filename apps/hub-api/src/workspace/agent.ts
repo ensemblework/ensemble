@@ -16,7 +16,7 @@ import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type 
 import { PageDocument } from "@ensemble/shared-types";
 import { recordChoiceOutcome } from "./session-choice/outcome.js";
 import { engineSessionOf, sessionToResume } from "./session-continuity.js";
-import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, runOutside } from "./outside-runs.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, replayOutside, runOutside, type ReplayHook } from "./outside-runs.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -55,6 +55,7 @@ import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
 import { runAgentTurn } from "../subscriptions/agents.js";
+import type { Outside } from "../subscriptions/outside.js";
 import { checkoutSlug, reserveCheckoutFolder, titleCheckoutSlug } from "./checkout-folder.js";
 import { EngineTransientError, SessionBusyError, SessionGoneError } from "./engines/registry.js";
 import { restartOf, type Restart } from "./engines/session-restart.js";
@@ -1031,10 +1032,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       const trace = engineTrace;
       // What the person said in this session in the agent's own app since Ensemble's last run in it (outside-runs.ts):
       // a step on the run, a short note leading its brief, and the session goes on.
-      const outside = resume && isCodeEngine(job.provider) ? await runOutside(prisma, job.provider, resume, ctx.root).catch(() => null) : null;
-      if (outside?.turns.length) {
+      const bringIn = async (outside: Outside | null, session: string): Promise<string | null> => {
+        if (!outside?.turns.length) return null;
         await trace.outside(`From ${outside.app}`, outsideStep(outside, user?.name ?? null));
-        enginePromptText = `${outsideNote(outside, user?.name ?? null)}\n\n${enginePromptText}`;
         logAi({
           kind: "agent.outside",
           userId,
@@ -1042,9 +1042,21 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           purpose: `Brought in from ${outside.app}`,
           output: outside.turns,
           refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
-          meta: { app: outside.app, session: resume, prompts: outside.turns.length, earlier: outside.earlier },
+          meta: { app: outside.app, session, prompts: outside.turns.length, earlier: outside.earlier },
         });
-      }
+        return outsideNote(outside, user?.name ?? null);
+      };
+      // Claude Code's, Copilot's and Codex's history is read before the engine starts.
+      const note = resume && isCodeEngine(job.provider) ? await bringIn(await runOutside(prisma, job.provider, resume, ctx.root).catch(() => null), resume) : null;
+      if (note) enginePromptText = `${note}\n\n${enginePromptText}`;
+      // Cursor's agent and the ACP agents replay theirs as the engine reopens the session, before the prompt goes.
+      // Read once a run: by a retry, the session also holds this run's own prompts.
+      let replayRead = false;
+      const onReplay: ReplayHook = async (session, history) => {
+        if (replayRead || !isCodeEngine(job.provider)) return null;
+        replayRead = true;
+        return bringIn(await replayOutside(prisma, job.provider, session, history).catch(() => null), session);
+      };
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
       // Claude Code, Copilot and the ACP agents check it themselves, against each model's own levels.
@@ -1066,9 +1078,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         job.provider === "codex"
           ? runCodex(ctx, { prompt, model: job.model, effort, serviceTier: codexTier, stopCheck, resume: session, chat, trace })
           : isAcpEngine(job.provider)
-            ? runAcp(ctx, job.provider, { prompt, model: job.model, effort: job.reasoningEffort, stopCheck, resume: session, chat, trace })
+            ? runAcp(ctx, job.provider, { prompt, model: job.model, effort: job.reasoningEffort, stopCheck, resume: session, chat, trace, onReplay })
           : job.provider === "cursor-agent"
-            ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
+            ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace, onReplay })
             : job.provider === "copilot-cli"
               ? runCopilot(ctx, {
                   prompt,
@@ -1136,9 +1148,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
       }
       if (!ran) throw new Error(`${engineName} did not run.`);
-      // How many prompts the session holds now, so the next run in it brings in only what the person adds after (outside-runs.ts).
+      // How many prompts the session holds now, so the next run in it brings in only what the person adds after (outside-runs.ts):
+      // as Cursor's and the ACP engines counted them from the replay, else read from the agent's history.
       const ranSession = await engineSessionOf(prisma, job.id).catch(() => null);
-      if (ranSession && isCodeEngine(job.provider)) await noteSessionPrompts(ctx, job.provider, ranSession, ctx.root);
+      if (ranSession && isCodeEngine(job.provider)) await noteSessionPrompts(ctx, job.provider, ranSession, ctx.root, ran.prompts);
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
