@@ -27,6 +27,8 @@ type Live = {
   /** The bytes of one of `spec.files`, read as the person who asked. */
   read: ((fileId: string) => Promise<Uint8Array | null>) | null;
   onDelta: (text: string) => void;
+  /** A line for the chat while the computer waits on something (the ChatGPT app holding a thread). */
+  onStatus?: (text: string) => void;
   picked: boolean;
   seq: number;
   heard: number;
@@ -65,11 +67,12 @@ export function errorFromComputer(problem: string | undefined, message: string |
   return new RuntimeError(text, 502);
 }
 
-/** Streamed text in order; a repeated batch (a retried post) is dropped. */
-export function streamInto(turn: Live, seq: number, text: string): void {
+/** Streamed text in order, with the computer's status line when it sent one; a repeated batch (a retried post) is dropped. */
+export function streamInto(turn: Live, seq: number, text: string, status?: string): void {
   heard(turn);
   if (seq <= turn.seq) return;
   turn.seq = seq;
+  if (status) turn.onStatus?.(status);
   if (text) turn.onDelta(text);
 }
 
@@ -80,6 +83,7 @@ export function runOnComputer(input: {
   onDelta: (text: string) => void;
   signal: AbortSignal;
   read?: (fileId: string) => Promise<Uint8Array | null>;
+  onStatus?: (text: string) => void;
 }): Promise<AgentTurnResult> {
   const id = randomUUID();
   // Tool calls and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
@@ -104,6 +108,7 @@ export function runOnComputer(input: {
       },
       read,
       onDelta: input.onDelta,
+      ...(input.onStatus ? { onStatus: input.onStatus } : {}),
       picked: false,
       seq: 0,
       heard: Date.now(),

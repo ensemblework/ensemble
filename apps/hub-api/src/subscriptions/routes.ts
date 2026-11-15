@@ -21,6 +21,7 @@ import { detectAgents } from "./detect.js";
 import { finishTurn, heard, liveTurn, streamInto } from "./relay.js";
 import { startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
+import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
 
 const isDesktopRuntime = () => process.env.ENSEMBLE_DESKTOP === "1";
 
@@ -45,7 +46,8 @@ const SignIn = Target.extend({ agent: z.enum(SUBSCRIPTION_PROVIDERS) });
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
 const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
-const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default("") });
+/** `status`: a line for the chat while the computer waits on something (0.8.0); older computers send none. */
+const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional() });
 const Done = z.object({
   result: z
     .object({
@@ -56,6 +58,12 @@ const Done = z.object({
       costUsd: z.number().nullable(),
       /** The turn went on in the chat's earlier agent session (false: a new one, with the chat so far). */
       resumed: z.boolean().optional(),
+      /** Why it started a new session in place of the chat's earlier one (0.8.0, session-restart.ts). */
+      restart: z
+        .object({ reason: z.enum(RESTART_REASONS as [RestartReason, ...RestartReason[]]), error: z.string().max(500).optional() })
+        .optional()
+        // A reason this server does not know yet, or anything malformed, leaves it out; the turn stands.
+        .catch(undefined),
     })
     .optional(),
   error: z.object({ problem: z.string().max(40).optional(), message: z.string().max(2000).optional() }).optional(),
@@ -181,7 +189,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ stop: true });
     const body = Stream.parse(request.body);
-    streamInto(turn, body.seq, body.text);
+    streamInto(turn, body.seq, body.text, body.status);
     return { stop: false };
   });
 

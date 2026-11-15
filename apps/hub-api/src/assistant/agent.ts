@@ -494,6 +494,8 @@ async function drive(
           computer: done.computer,
           // Which agent session the turn ran in, and whether it went on in it (false: a new one with the chat so far).
           session: { key: args.subscription?.sessionKey ?? args.conversationId, resumed: typeof done.resumed === "boolean" ? done.resumed : null },
+          // Why it started a new session in place of the chat's earlier one (workspace/engines/session-restart.ts).
+          ...(done.restart ? { restart: done.restart } : {}),
           title: truncateText(args.message, 80),
         },
       }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));

@@ -8,6 +8,7 @@ type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (err
 export class RpcConnection {
   private next = 0;
   private pending = new Map<number, Pending>();
+  private closed: string | null = null;
   onNotification: (method: string, params: Record<string, unknown>) => void = () => {};
   onRequest: (method: string, params: Record<string, unknown>) => Promise<unknown> = async () => {
     throw new Error("Not supported.");
@@ -23,6 +24,8 @@ export class RpcConnection {
   }
 
   request(method: string, params: unknown): Promise<Record<string, unknown>> {
+    // The agent stopped before this was asked (a program that could not start closes at once): nothing will answer.
+    if (this.closed !== null) return Promise.reject(new Error(this.closed));
     const id = ++this.next;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -66,6 +69,7 @@ export class RpcConnection {
   }
 
   close(reason: string): void {
+    this.closed ??= reason;
     for (const waiting of this.pending.values()) waiting.reject(new Error(reason));
     this.pending.clear();
   }

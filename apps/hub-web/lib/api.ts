@@ -849,7 +849,7 @@ export type AgentJob = {
    * A run continuing an earlier one that could not continue its agent session: `gone` (the agent no longer
    * had it: deleted in its own app), `deleted` (deleted in Ensemble). It started a new one with the earlier summary.
    */
-  sessionRestart?: "gone" | "deleted" | null;
+  sessionRestart?: "gone" | "deleted" | "busy" | null;
   deviceId?: string | null;
   deviceName?: string | null;
   /** In a shared space: whose computer runs it (null: the space's owner). */
