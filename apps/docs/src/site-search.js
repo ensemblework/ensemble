@@ -33,7 +33,7 @@ export function mountSearch() {
     const hit = hits[index];
     if (!hit || pending) return;
     const target = new URL(hit.url);
-    if (target.origin === 'https://docs.ensemblework.com') location.assign(target.pathname + target.hash);
+    if (target.origin === 'https://docs.ensemblework.com') { dialog.close(); location.assign(target.pathname + target.hash); }
   }
   function render(query) {
     results.replaceChildren();
