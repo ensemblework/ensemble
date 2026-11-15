@@ -151,7 +151,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     note: [
       `The ${run.sessionId ? "session" : "computer"} run for ${named} ${words}.${run.sessionId ? ` (Its session's id, for your tools only: ${run.sessionId}.)` : ""}`,
       restart
-        ? `Its agent's earlier conversation ${restart === "gone" ? "no longer existed in the agent (deleted or expired there)" : "had been deleted"}, so it worked in a new conversation from the task's brief and the earlier task's summary: it did not remember what was said before. Say so if it matters.`
+        ? `Its agent's earlier conversation ${restart === "gone" ? "no longer existed in the agent (deleted or expired there)" : restart === "busy" ? "was held open in the agent's own app (the ChatGPT app) the whole time it waited" : "had been deleted"}, so it worked in a new conversation from the task's brief and the earlier task's summary: it did not remember what was said before. Say so if it matters.`
         : "",
       report ? `The agent reported: ${report.outcome}. ${truncateText(report.summary, 1500)}${report.checks?.length ? `\nChecks: ${report.checks.map((check) => `${check.verdict} ${check.name}`).join("; ")}` : ""}` : "",
       job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",

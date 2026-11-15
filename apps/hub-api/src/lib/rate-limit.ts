@@ -139,9 +139,9 @@ export function isDeviceWrite(path: string): boolean {
   return /^\/api\/devices\/self\/jobs\/[^/]+\/progress$/.test(path);
 }
 
-/** A run's changed files and answers to file requests: their own bucket, so browsing never crowds out a run's heartbeat. */
+/** A run's changed files, answers to file requests and claims of relayed requests: their own bucket, so browsing never crowds out a run's heartbeat. */
 export function isDeviceFiles(path: string): boolean {
-  return /^\/api\/devices\/self\/(file|code)-requests\/[^/]+$/.test(path) || /^\/api\/devices\/self\/jobs\/[^/]+\/files$/.test(path);
+  return /^\/api\/devices\/self\/(file|code)-requests\/[^/]+$/.test(path) || /^\/api\/devices\/self\/code-requests\/[^/]+\/claim$/.test(path) || /^\/api\/devices\/self\/jobs\/[^/]+\/files$/.test(path);
 }
 
 /** Output of a terminal command the web started on this computer: its own bucket, apart from file answers and heartbeats. */

@@ -28,7 +28,8 @@ import { claudeFilesystem, engineSandboxPaths, openRoots, type EngineResult } fr
 import { answerForm } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
-import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionBusyError, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { BUSY_CARD, BUSY_WAIT, CodexThreadBusy, resumeCodexThread } from "./session-restart.js";
 import { EngineTrace } from "./trace.js";
 import { codexProject, codexProjectThreads, fileCodexAppProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
 import { agentProjectOf } from "../agent-projects.js";
@@ -359,10 +360,25 @@ export async function runCodex(
     const project = !options.resume && !options.chat ? agentProjectOf(ctx.job.context) : null;
     const projectId = project ? await codexProject(server, { id: project.id, name: project.name, folder: project.folder ?? ctx.root }) : null;
     let inProject = projectId !== null;
-    // The next message in a chat continues the same Codex thread, with this run's settings.
+    // The next message in a chat continues the same Codex thread, with this run's settings. While the
+    // ChatGPT app has the thread open it cannot be resumed here: the run waits for it, not using its minutes.
+    const resume = options.resume;
+    let told = false;
     const thread = (
-      options.resume
-        ? await server.request("thread/resume", { threadId: options.resume, ...settings }).catch((error: Error) => {
+      resume
+        ? await (ctx.waitForRun ?? (<T>(work: () => Promise<T>) => work()))(() =>
+            resumeCodexThread((method, params) => server.request(method, params), { threadId: resume, ...settings }, {
+              signal: ctx.signal,
+              ...BUSY_WAIT.task,
+              waiting: async () => {
+                if (told) return;
+                told = true;
+                await ctx.progress(BUSY_CARD);
+              },
+            }),
+          ).catch((error: Error) => {
+            if (ctx.signal.aborted) throw error;
+            if (error instanceof CodexThreadBusy) throw new SessionBusyError(`The ChatGPT app kept the thread open for ${Math.round(error.waitedMs / 60_000)} minutes: ${error.message}`);
             throw new SessionGoneError(`Codex could not reopen the chat's thread: ${error.message}`);
           })
         : await server.request("thread/start", { ...settings, serviceName: "ensemble", ...(projectId ? { projectId } : {}) }).catch((error: Error) => {

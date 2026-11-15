@@ -15,9 +15,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { accountIdOf } from "../lib/auth.js";
 import { appendLedger } from "../lib/ledger.js";
-import { CodeAnswer, codeCall, TerminalChunk, TERMINAL_OUTPUT_BYTES } from "../remote/contract.js";
+import { CodeAnswer, codeCall, runtimeInstanceOf, TerminalChunk, TERMINAL_OUTPUT_BYTES } from "../remote/contract.js";
 import { deviceOnline } from "./constants.js";
-import { askDeviceFor, storeAnswer } from "./file-relay.js";
+import { askDeviceFor, claimRequest, storeAnswer } from "./file-relay.js";
 import { fileAnswers, publishFileAnswer } from "./revoke-notify.js";
 import { ownDevice } from "./routes.js";
 import { currentDevice } from "./successor.js";
@@ -25,6 +25,8 @@ import { rememberRun, requireUnlocked, requireWebPerson, webUnlockRoutes } from 
 
 const ASK_MS = 20_000;
 const SLOW_MS = 55_000;
+/** Another runtime of the same computer claimed the request and answers it. */
+const TAKEN = "This request was picked up by another Ensemble on this computer.";
 const OUTPUT_WAIT_MS = 20_000;
 const RUN_TTL_SECONDS = 3600;
 
@@ -167,15 +169,33 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
 
   // ── what the computer posts back ──────────────────────────────────────
 
-  // Its answer to a code.request or terminal.request.
+  // Its answer to a code.request or terminal.request (and the other requests answered like one).
   app.post("/api/devices/self/code-requests/:id", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
     const { id } = request.params as { id: string };
     const answer = CodeAnswer.parse(request.body);
-    const stored = await storeAnswer(app.redis, device.id, id, answer);
+    const stored = await storeAnswer(app.redis, device.id, id, answer, runtimeInstanceOf(request.headers));
     if (stored === "unknown") return reply.code(410).send({ error: "Nobody is waiting for this answer." });
+    if (stored === "taken") return reply.code(409).send({ error: TAKEN });
     return { ok: true };
+  });
+
+  // Taken before the computer acts on a request that changes something there (a Code write, a session or
+  // project deletion): one runtime of the computer acts on it, any other is refused.
+  app.post("/api/devices/self/code-requests/:id/claim", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = request.params as { id: string };
+    const instance = runtimeInstanceOf(request.headers);
+    if (!instance) return reply.code(400).send({ error: "Update Ensemble on this computer: it did not say which of its runtimes is asking." });
+    const claimed = await claimRequest(app.redis, device.id, id, instance);
+    if (claimed === "unknown") return reply.code(410).send({ error: "Nobody is waiting for this answer." });
+    if (claimed === "taken") {
+      request.log.warn({ userId: device.userId, device: device.id }, `A second Ensemble on ${device.name} asked to act on a request another one took`);
+      return reply.code(409).send({ error: TAKEN });
+    }
+    return { claimed: true };
   });
 
   // Output of a command the web started there, one chunk at a time, in order. 410: stop sending.

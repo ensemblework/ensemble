@@ -49,7 +49,7 @@ import { parseReport } from "../node/report.js";
 import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { appPresence, cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSetUp, startSignIn } from "../subscriptions/signin.js";
-import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, PROJECT_DELETE_API, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, PROJECT_DELETE_API, parseClaim, RUNTIME_REPLACED_EVENT, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -65,6 +65,9 @@ export const REMOTE_NOTICE = {
   switchedOff: "Remote tasks were switched off on this Mac. Turn them on here when you want them again.",
 } as const;
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted", "blocked"]);
+
+/** Another runtime of this computer opened a newer event stream with the same pairing, and the web closed this one's. */
+class RuntimeReplaced extends Error {}
 
 let jobs: Record<string, HeldJob> | null = null;
 let lastHeartbeatAt = 0;
@@ -235,6 +238,12 @@ async function run(app: FastifyInstance, signal: AbortSignal): Promise<void> {
         await disconnect(app, error.status === 403 ? "rejected" : "removed");
         continue;
       }
+      if (error instanceof RuntimeReplaced) {
+        // Two runtimes on one computer: the other one does the work meanwhile. One that does not hold this computer's runtime lock stops by itself (desktop/main.ts).
+        app.log.warn(`another Ensemble on this computer connected to the web with the same pairing; this one waits ${Math.round(timing().replacedMs / 1000)} s before it connects again`);
+        await sleep(timing().replacedMs, signal);
+        continue;
+      }
       if (error instanceof RemoteError && error.status === 0) noteUnreachable();
       app.log.warn({ err: error }, "remote task connection dropped; retrying");
       await sleep(1500, signal);
@@ -270,6 +279,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
   const signal = abort.signal;
   const client = hostedClient(base, token);
   let fatal: RemoteError | null = null;
+  let replaced = false;
   const fail = (error: unknown) => {
     if (authRejected(error)) {
       fatal = error;
@@ -347,9 +357,15 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     streamUp = true;
     try {
       const onFrame = (event: string, data: unknown) => {
+        if (replaced) return;
         // device.revoked {deviceId, reason: "revoked"} is removal, before the 401 on reconnect.
         if (deviceRemovedEvent(event)) {
           fail(new RemoteError(401, "This computer is no longer paired."));
+          return;
+        }
+        if (event === RUNTIME_REPLACED_EVENT) {
+          replaced = true;
+          abort.abort();
           return;
         }
         if (event === "job.cancel") {
@@ -379,7 +395,13 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The owner previews, releases or discards a file kept here (protocol 7).
         if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
-        if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
+        if (event === "assistant.turn") {
+          void answerAssistantTurn(client, data)
+            .then((outcome) => {
+              if (outcome === "taken") app.log.warn("another Ensemble on this computer took an assistant turn first; this one left it");
+            })
+            .catch(fail);
+        }
         if (event === "assistant.stop") stopAssistantTurn(data);
         // The person deleted a chat: its agent session here goes too (docs/25 §4.9).
         if (event === "assistant.session.delete") void answerAssistantSessionDelete(client, data).catch(() => undefined);
@@ -415,6 +437,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
       streamUp = false;
     }
     if (fatal) throw fatal;
+    if (replaced) throw new RuntimeReplaced();
   } finally {
     clearInterval(heartbeat);
     clearInterval(sync);

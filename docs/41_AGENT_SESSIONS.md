@@ -31,6 +31,8 @@ The run uses the session's computer, folder and agent. It keeps the model, think
 
 If the agent's conversation is missing or expired, Ensemble starts a new session in the same folder with the full brief and the earlier result. The task page explains that the earlier conversation was not remembered. A session deleted through Ensemble is also restarted separately; it is never reopened.
 
+Codex can't continue a conversation while the ChatGPT app has it open. The run waits up to ten minutes, and its card says "Waiting for the ChatGPT app to let go of this conversation." Switch to another chat in the app, or quit the app, and the run goes on in the same conversation. If the app keeps it open the whole time, the run starts a new session as above, and the task page says why. The earlier conversation is kept and deleted with the session.
+
 Continuing a task keeps its existing folder grant, including across a chain of runs.
 
 ## 2. One folder per project
@@ -127,6 +129,8 @@ A coding session (`workspace/sessions.ts`) is one conversation with a coding age
 
 - Continuing a task in a session (Assign's "Continue an earlier task", the assistant's `session`, `Assign.session`) resumes the agent's own conversation (`earlierSession` walks back to the nearest recorded session) and sends the new task with a line saying it continues there (`sessionTaskPrompt`); the agent keeps what it learned and its prompt cache. A session that cannot be reopened (`SessionGoneError`) runs as a new one with the full prompt.
 - **A session that no longer exists.** The person may delete a session in the agent's own app, or the agent may expire it (Claude Code after 30 days). Every agent says so when asked to reopen it (Claude Code: "No conversation found", exit 1; Codex: "no rollout found for thread id"; Copilot, Cursor and the ACP agents: `session/load` refused), and the run goes on in a new session in the same folder with the full brief, which has the earlier task's title, outcome and summary ("This continues an earlier task"). Every agent keeps a session's id when it resumes it, so the web tells a resumed run from a restarted one by the ids computers already send (`sessionRestartOf` in `workspace/session-continuity.ts`): the task page says the earlier session no longer existed, the run's `SessionChoice.outcome.resumed` is false, and a node is told in its run note that the agent did not remember the earlier conversation.
+- **A session the agent's own app holds.** The ChatGPT app runs its own Codex app-server. A thread it has loaded (open in the app, or only looked at) has an active writer there (`~/.codex/thread-writer-locks`), so `thread/resume` from Ensemble's app-server answers `-32600 thread <id> already has an active writer`. That thread is not gone (`ACTIVE_WRITER` in `workspace/engines/session-restart.ts`). The Codex engine tries again every 30 seconds for up to 10 minutes (`resumeCodexThread`, `BUSY_WAIT.task`). The wait runs under `ctx.waitForRun`, so it neither uses the run's minutes nor counts as stalled. The run card says "Waiting for the ChatGPT app to let go of this conversation. Switch to another chat in the app, or quit the app." After the limit the engine throws `SessionBusyError`, and the run starts a new session as for a missing one. `sessionRestartOf` then answers `busy`, and the task page and a node's run note say the app held the conversation. The held thread stays on the earlier run's `engine` event, so deleting the session deletes it too.
+- **Why a run restarted its session** is recorded: the `engine_new_session` event and the new session's `engine` event carry `restart: { reason: "gone" | "busy", error }`. The `engine` event is relayed to the web with every engine, so `sessionRestartOf` reads it there. The run's `model.call` metric and its AI-activity entry carry the same `restart`, and the computer logs a warning line.
 - **A session deleted in Ensemble** (by the person, a node, or the clean-up) is not reopened at all (`sessionToResume`): a run continuing one of its runs ("Continue an earlier task" lists them as "its agent session was deleted: a new one starts there") works in that folder in a session of its own (`continuesSessionOf` in `workspace/sessions.ts`), which is listed, chosen and cleaned up like any other; the deleted session keeps only its own runs.
 - A run that continues a run in a folder the person granted (a shared folder) works in that folder however long the chain, since only the first run carries the grant (`grantedFolderOf` in `workspace/agent.ts`).
 - `Assign.session` (any run id in it) runs on the session's computer, under its current pairing, in its folder, with its agent, model, thinking level, context window and fast mode unless others are named (a run profile's do not apply); another agent or computer is refused. Each setting is kept, reset to the agent's own default (`"default"`, or `fast: false`), or set as named, separately (`sessionChoices` in `workspace/assign.ts`): naming a model keeps the thinking level and context window. The task's model tier adds nothing to a run in a session.
@@ -195,6 +199,22 @@ When more than half of the lines changed, or after 80 messages in one session (`
 
 Turns of one chat run one at a time; otherwise it starts one, with the chat so far (`session.history`, the last 12 messages) before the message. A session the agent cannot reopen, or an agent too old to keep one, falls back to a new session or none, with the chat so far. Sessions unused for 30 days (or the chat's `keepDays`) are dropped and deleted from the agent.
 
+**A session that cannot be reopened.** A Codex thread the ChatGPT app holds (§1) is waited for, every 10 seconds for up to 2 minutes (`BUSY_WAIT.chat`), and the chat shows "Waiting for the ChatGPT app…". The computer sends that line with its next batch of text (`status` on `POST …/assistant-turns/:id/stream`), so it stays in order with the reply. After the wait, or when any agent refuses to reopen a session, the chat goes on in a new session. The old session joins the chat's `retired` sessions (`forgetSession`), which are never resumed and are deleted from the agent with the chat. A session is dropped instead only when the agent said it no longer has it (`provenGone` in `workspace/engines/session-restart.ts`: Codex "no rollout found" or "thread not found", Claude Code "No conversation found", the ACP agents "Session not found").
+
+**Why a chat restarted its session.** A turn that did not go on in the chat's earlier session of the same agent says why in its result (`restart: { reason, error }`):
+
+| Reason | When |
+| --- | --- |
+| `busy` | The agent's own app held the session for the whole wait |
+| `gone` | The agent refused to reopen it (`error` has what it said) |
+| `touched` | Someone used it in the agent's app (below) |
+| `instructions` | Most of Ensemble's instructions changed |
+| `rotated` | The session carried `ROTATE_MESSAGES` messages |
+| `moved` | The chat went on elsewhere (another model or computer) since the session's last turn |
+| `expired` | The session went unused for its keeping days |
+
+The reasons come from `lookSession` in `turn-sessions.ts` and from the turn itself. The web records `restart` in the turn's `model.call` metric and its AI-activity entry, and the computer logs a warning line. A computer before 0.8.0 sends none, and a reason the web does not know is left out.
+
 A computer before `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) gets the chat so far in front of every message; a one-off completion (`complete` on a subscription: triage, a summary, a title) keeps no session, and leaves none in the agent: Claude Code runs it with `--no-session-persistence` and Codex in an ephemeral thread, while the session Copilot (named with `--session-id` from 1.0.78), Cursor's agent and the ACP agents save is deleted once the turn is over (`dropOneOff`), in the folder the turn ran in (Gemini CLI, OpenCode and Grok Build find a session by the folder it began in), which is removed after.
 
 **A session used outside Ensemble** (`subscriptions/session-touch.ts`). The person can open an Ensemble chat's session in the agent's own app or terminal. After each turn the computer notes how many prompts the agent's own transcript of the session holds (`prompts` in the store: Claude Code's `~/.claude/projects/<folder>/<id>.jsonl` user prompts, Copilot's `user.message` events in `session-state/<id>/events.jsonl`).
@@ -212,6 +232,8 @@ An ask on a surface (`POST /api/ensemble/invoke`: Today, a board, Needs me, Code
 ### 6. Deleting and cleaning up: implementation reference
 
 **Deleting a session** (`deleteAgentSession` in `workspace/delete-session.ts`). The person deletes a session from Ensemble Node's Sessions page, and a node asks for it with an owner-only confirmation card ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Every computer that ran the session must be online and report `sessionDelete: 1` ([26](26_CLI.md)); otherwise nothing is hidden and the person is told which computer to connect or update. Under the session's lock its queued runs are cancelled, then each computer deletes the agent's own saved history and Ensemble marks the session deleted.
+
+On a computer, one runtime does each deletion the web asks for (a session, a chat's session, a deleted project's Codex projects): the one that claims the request ([25 §2](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#2-pairing-and-local-state)), so two runtimes with one pairing never both do it.
 
 Ensemble's run records, project folders and files stay. A run that continues a deleted session's runs starts a session of its own (§1).
 

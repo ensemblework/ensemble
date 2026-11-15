@@ -21,6 +21,17 @@ export class SessionGoneError extends Error {
   }
 }
 
+/**
+ * The earlier session is still there, but the agent's own app held it for the whole wait (Codex: the ChatGPT
+ * app had the thread open): the run starts a new one all the same, and says why (session-restart.ts).
+ */
+export class SessionBusyError extends SessionGoneError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionBusyError";
+  }
+}
+
 /** Environment for the run's ensemble MCP server: chat turns also get the person's board (`ensemble_*` tools). */
 export function mcpEnv(credential: string, chat: boolean): Record<string, string> {
   return { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, ...(chat ? { ENSEMBLE_CHAT: "1" } : {}) };

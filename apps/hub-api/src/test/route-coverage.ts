@@ -310,6 +310,12 @@ export const subscriptionRouteCoverage: Readonly<Record<string, readonly RouteCh
   "POST /api/devices/self/assistant-turns/:id/done": ["happy-path"],
 };
 
+/** Relayed requests a computer's runtime answers, and claims before it changes something there. Owned by src/devices/code-routes.ts; checked in src/devices/runtime-instances.integration.test.ts. */
+export const runtimeClaimRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "POST /api/devices/self/code-requests/:id": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/devices/self/code-requests/:id/claim": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+};
+
 /** Ensemble spaces. Owned by src/spaces/routes.ts; checked in src/spaces/spaces.integration.test.ts. */
 export const spacesRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/spaces": ["happy-path", "isolation"],
@@ -435,6 +441,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
   ...subscriptionRouteCoverage,
+  ...runtimeClaimRouteCoverage,
   ...includedRouteCoverage,
   ...sharingRouteCoverage,
   ...linksRouteCoverage,

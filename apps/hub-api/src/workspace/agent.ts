@@ -55,7 +55,8 @@ import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPul
 import { cachedAgents } from "../subscriptions/detect.js";
 import { runAgentTurn } from "../subscriptions/agents.js";
 import { checkoutSlug, reserveCheckoutFolder, titleCheckoutSlug } from "./checkout-folder.js";
-import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
+import { EngineTransientError, SessionBusyError, SessionGoneError } from "./engines/registry.js";
+import { restartOf, type Restart } from "./engines/session-restart.js";
 import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
 import { MISSING_SECRET_RULE, secretRules } from "../lib/run-secrets.js";
 import { runCredentials } from "../credentials/run-env.js";
@@ -735,6 +736,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let waited = 0;
   /** Questions open on Needs me right now: an engine waiting on one is not stuck. */
   let waitingNow = 0;
+  /** Why the run started a new agent session in place of the one it continues: on its next `engine` event. */
+  let restarted: Restart | null = null;
   const budget = job.maxMinutes * 60_000;
   const remainingMs = () => budget - (Date.now() - started - waited);
 
@@ -818,7 +821,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       }
     },
     async event(kind, data) {
-      await prisma.workspaceEvent.create({ data: { jobId: job.id, kind, data: data as never } });
+      // A computer relays a run's `engine` events to the web, so the reason it restarted its session goes there too.
+      const withRestart = kind === "engine" && restarted && data && typeof data === "object" ? { ...(data as Record<string, unknown>), restart: restarted } : data;
+      await prisma.workspaceEvent.create({ data: { jobId: job.id, kind, data: withRestart as never } });
     },
     waitForPerson: async (work) => {
       const from = Date.now();
@@ -1058,10 +1063,14 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           const why = watch.reason();
           if (control.signal.aborted) throw failure;
           if (why === "time") throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
-          // The earlier session is gone (deleted, or made on another computer): start a new one, once.
+          // The earlier session is gone (deleted, or made on another computer), or its app held it for the whole
+          // wait (Codex in the ChatGPT app): start a new one, once, and say why.
           if (failure instanceof SessionGoneError && session && !sessionRestarted) {
             sessionRestarted = true;
-            await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300) });
+            restarted = restartOf(failure instanceof SessionBusyError ? "busy" : "gone", failure);
+            app.log.warn({ jobId: job.id, engine: job.provider, session, restart: restarted }, "could not continue the agent session; starting a new one");
+            await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300), restart: restarted });
+            if (failure instanceof SessionBusyError) await ctx.progress("The ChatGPT app kept the earlier conversation open, so Codex starts a new one with the earlier task's summary.");
             session = null;
             prompt = chat ? chatPrompt(ctx, job.instructions, { resumed: false, earlier: earlierSummary }) : fullPrompt;
             continue;
@@ -1099,7 +1108,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         kind: "model.call",
         taskId: job.taskId,
         runId: run.id,
-        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
+        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title, ...(restarted ? { restart: restarted } : {}) },
       });
       const undone = await undoUnapprovedCommits(ctx, watch);
       if (undone) await ctx.event("commit_undone", { note: undone });
@@ -1116,7 +1125,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         input: { prompt: enginePromptText },
         output: finalText,
         refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
-        meta: { tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, turns: ran.turns, tools: ran.toolCalls, costUsd: ran.costUsd },
+        meta: { tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, turns: ran.turns, tools: ran.toolCalls, costUsd: ran.costUsd, ...(restarted ? { restart: restarted } : {}) },
       });
       if (ran.trace) await ran.trace.finish(finalText, { model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut });
       else {

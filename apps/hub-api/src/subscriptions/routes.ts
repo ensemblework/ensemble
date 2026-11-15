@@ -17,12 +17,14 @@ import type { Device } from "@prisma/client";
 import { deviceOnline } from "../devices/constants.js";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { ownDevice } from "../devices/routes.js";
+import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { appPresence, detectAgents } from "./detect.js";
-import { finishTurn, heard, liveTurn, streamInto } from "./relay.js";
+import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
+import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
 
 const isDesktopRuntime = () => process.env.ENSEMBLE_DESKTOP === "1";
 
@@ -51,11 +53,15 @@ function computerApps(device: Pick<Device, "capabilities">): AgentApp[] | null {
 const Target = z.object({ deviceId: z.string().min(1).max(80) });
 const SignIn = Target.extend({ agent: z.enum(SUBSCRIPTION_PROVIDERS) });
 
+/** Another runtime of the same computer read the turn first and runs it. */
+const TAKEN = "This turn was picked up by another Ensemble on this computer.";
+
 /** A plain media type for a turn file's download; anything else goes as bytes. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
 const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
-const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default("") });
+/** `status`: a line for the chat while the computer waits on something (0.8.0); older computers send none. */
+const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional() });
 const Done = z.object({
   result: z
     .object({
@@ -66,6 +72,12 @@ const Done = z.object({
       costUsd: z.number().nullable(),
       /** The turn went on in the chat's earlier agent session (false: a new one, with the chat so far). */
       resumed: z.boolean().optional(),
+      /** Why it started a new session in place of the chat's earlier one (0.8.0, session-restart.ts). */
+      restart: z
+        .object({ reason: z.enum(RESTART_REASONS as [RestartReason, ...RestartReason[]]), error: z.string().max(500).optional() })
+        .optional()
+        // A reason this server does not know yet, or anything malformed, leaves it out; the turn stands.
+        .catch(undefined),
     })
     .optional(),
   error: z.object({ problem: z.string().max(40).optional(), message: z.string().max(2000).optional() }).optional(),
@@ -162,7 +174,10 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
-    turn.picked = true;
+    if (!pickTurn(turn, runtimeInstanceOf(request.headers))) {
+      request.log.warn({ userId: device.userId, device: device.id }, `A second Ensemble on ${device.name} asked for an assistant turn another one took`);
+      return reply.code(409).send({ error: TAKEN });
+    }
     heard(turn);
     return { spec: turn.spec };
   });
@@ -173,6 +188,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const params = request.params as { id: string; fileId: string };
     const turn = liveTurn(params.id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     const file = turn.spec.files?.find((row) => row.id === params.fileId);
     if (!file || !turn.read) return reply.code(404).send({ error: "That file is not part of this turn." });
     heard(turn);
@@ -196,6 +212,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ text: "This turn has ended.", isError: true });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ text: TAKEN, isError: true });
     const body = ToolCall.parse(request.body);
     heard(turn);
     try {
@@ -213,8 +230,9 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ stop: true });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ stop: true });
     const body = Stream.parse(request.body);
-    streamInto(turn, body.seq, body.text);
+    streamInto(turn, body.seq, body.text, body.status);
     return { stop: false };
   });
 
@@ -223,6 +241,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const turn = liveTurn((request.params as { id: string }).id, device.id);
     if (!turn) return reply.code(410).send({ error: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     finishTurn(turn, Done.parse(request.body));
     return { ok: true };
   });
