@@ -163,5 +163,5 @@ apps/quick-capture/           src-tauri/ + ui/
 | `release-version.mjs` | `pnpm version:sync` / `version:check` from `release.json` |
 | `export-desktop-web.mjs`, `assemble-desktop-sidecar.mjs` | `pnpm desktop:export` (static Hub export); `pnpm desktop:sidecar` (Node + hub-api into Tauri resources, `--dest` for the CLI) |
 | `desktop-*.mjs`, `build-mac-dmg.sh`, `package-mac-dmg.mjs`, `publish-desktop-recovery.mjs`, `verify-desktop-signatures.*` | Desktop API discovery and process spawning, build matrix, signed update manifest, Mac disk images (`pnpm desktop:dmg`), recovery publishing, signature checks ([DESKTOP](DESKTOP.md)) |
-| `package-cli.mjs`, `smoke-cli-package.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive |
+| `package-cli.mjs`, `smoke-cli-package.mjs`, `smoke-install-ps1.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive; `install.ps1` against a Windows archive ([26 §7](26_CLI.md#7-releases)) |
 | `measure-*.mjs`, `ui-walk.mjs`, `verify-followup.mjs` | Playwright performance and UI probes ([CACHING](CACHING.md)) |

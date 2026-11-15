@@ -36,7 +36,7 @@ Choose the installer for your operating system. After installation, open a termi
 
 winget (`EnsembleWork.EnsembleCLI`), npm (`ensemblework`) and AUR (`ensemble-cli-bin`) metadata is generated, but publication depends on release credentials (§7); the download guide lists only available channels.
 
-Every channel installs the same archive per target (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `windows-x64`):
+Every channel installs the same archive per target (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `windows-x64`, `windows-arm64`):
 
 ```
 ensemble/bin/ensemble        POSIX launcher (resolves symlinks)
@@ -46,9 +46,11 @@ ensemble/sidecar/node        Node runtime
 ensemble/sidecar/app/        hub-api, as the desktop sidecar uses it
 ```
 
-The archive is large because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH.
+The archive is large because it carries Node, Prisma and PGlite; on `windows-arm64` the sidecar carries Prisma's Rust-free client instead of a query engine ([DESKTOP §6](DESKTOP.md#6-build-and-package)). The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH.
 
 `ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (for packaging checks). Both scripts verify the archive against `SHA256SUMS.txt`.
+
+`install.sh` picks the target from `uname`. `install.ps1` reads the computer's processor from the system environment in the registry, so an x64 PowerShell on Windows on Arm still gets `windows-arm64`; a release whose `SHA256SUMS.txt` lists no `windows-arm64` archive gets `windows-x64`, which Windows 11 on Arm runs under emulation. Scoop and winget choose by their manifests' architectures (x64 and arm64).
 
 ### 1.1 Testing CLI
 
@@ -383,10 +385,10 @@ A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `
 
 Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). Jobs:
 
-1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine).
+1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`, `windows-11-arm`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine; on Windows, `ensemble.exe` and the sidecar's `node.exe` must be built for the runner's processor). On Windows, `scripts/smoke-install-ps1.mjs` then runs `install.ps1` against the archive on a local server and runs the installed command; on Arm it also checks the fallback to x64 for a release without an arm64 archive.
 2. **release**: `.deb`/`.rpm` with nfpm, the npm tarball, `SHA256SUMS.txt`, metadata from `packaging/render.mjs` (Homebrew formula, Scoop manifest, winget manifests, nfpm configs, AUR `PKGBUILD` and `.SRCINFO`), and a GitHub release created with `--latest=false` so the desktop updater's `releases/latest` is never a CLI release. Installers find the newest `cli-v*` release through the GitHub API.
 3. **homebrew**, **scoop**: push the formula to `ensemblework/homebrew-tap` and the manifest to `ensemblework/scoop-bucket` with the deploy keys `HOMEBREW_TAP_DEPLOY_KEY` and `SCOOP_BUCKET_DEPLOY_KEY`. The formula sets `version` explicitly (Homebrew would otherwise read "64" from `darwin-arm64`) and `version_scheme 1`; `packaging/render.test.mjs` checks both and runs with the CLI tests.
-4. **winget** (only with `WINGET_TOKEN`) and **npm** (only with `NPM_TOKEN`, with provenance).
+4. **winget** (only with `WINGET_TOKEN`: `wingetcreate submit` with the rendered manifests, whose installers are the x64 and arm64 zips) and **npm** (only with `NPM_TOKEN`, with provenance).
 
 Everything uses free services: Actions minutes on a public repository, GitHub Releases and the two public package repositories. Packages declare the repository license, `FSL-1.1-MIT` ([LICENSE.md](../LICENSE.md)), and every archive carries `LICENSE.md`.
 

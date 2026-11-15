@@ -11,7 +11,7 @@ The tables below show what runs automatically and what requires that manual work
 | Push or PR to `testing` | `test-web.yml` | Fast checks; on a push, then the testing API, test web app and testing CLI ([36](36_WEB_TESTING.md)) | ~3 min to checks, ~6 min to a live test site |
 | PR into `main` (a feature branch or `testing`) | `ci.yml` | Fast checks | ~3 min |
 | Push to `main` | `ci.yml`, then `deploy.yml` | Fast checks; then `production`, the API, the Hub and the landing page ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)) | ~6 min to production |
-| `cli-v<version>` tag | `cli-release.yml` | Builds on five targets, each packaged CLI smoke-run (seconds), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
+| `cli-v<version>` tag | `cli-release.yml` | Builds on six targets, each packaged CLI smoke-run (seconds; on Windows `install.ps1` too), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
 | `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on six targets; no tests | ~22 min (the Intel Mac build) |
 | Push to `main` | Cloudflare Workers Builds (Worker `ensemble-docs`, outside GitHub Actions) | Builds `apps/docs` and publishes `docs.ensemblework.com` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)) | A few minutes |
 

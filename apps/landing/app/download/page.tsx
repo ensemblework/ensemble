@@ -4,7 +4,7 @@ import { Mark } from "@/components/mark";
 import { OsInstallTabs } from "@/components/os-install-tabs";
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
 import { pageMetadata } from "@/lib/metadata";
-import { afterInstallCommands, editors, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
+import { afterInstallCommands, DESKTOP_VERSION, editors, hasArm64Installers, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
 
 export const dynamic = "force-static";
 
@@ -176,7 +176,8 @@ export default function DownloadPage() {
             <article>
               <h3>What systems are supported?</h3>
               <p>
-                macOS 13+ on Apple Silicon or Intel, Windows 10/11 x64, and Linux x64 or arm64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+). Git is
+                macOS 13+ on Apple Silicon or Intel, Windows 10/11 x64{hasArm64Installers(DESKTOP_VERSION) ? " or arm64" : ""}, and Linux x64 or arm64 with
+                glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+). Git is
                 needed for code tasks. The terminal app is about 120 MB because it carries its own Node runtime and local database.
               </p>
             </article>

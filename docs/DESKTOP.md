@@ -87,7 +87,7 @@ Desktop 0.6.6 uses file-scoped protection for Node's original viewer: a safe gen
 | Area | macOS | Windows | Linux |
 | --- | --- | --- | --- |
 | Desktop build | Apple silicon and Intel | arm64 and x64 | arm64 and x64 |
-| CLI package | arm64 and x64 | x64 | arm64 and x64 |
+| CLI package | arm64 and x64 | arm64 and x64 | arm64 and x64 |
 | Local database | PGlite | PGlite | PGlite |
 | OS sandbox ([24](24_DESKTOP_SANDBOXING.md)) | Seatbelt | Separate sandbox account after one elevated setup; local-drive work folders | bubblewrap, else Landlock |
 | Folder picker | Native dialog | Native dialog | Native dialog |
@@ -293,7 +293,7 @@ pnpm desktop:build      # tauri build
 
 Each target builds on a runner of its own architecture, never a cross build: the sidecar packs the runner's Node, Prisma engines and landrun, so it matches the app's architecture. Both Linux runners are Ubuntu 22.04, so both builds need glibc 2.35 or newer. Tauri cannot build an MSI for arm64, so Windows on Arm gets the NSIS installer only.
 
-Prisma 6 builds its query engine for Windows on x64 only, so the Windows arm64 sidecar carries Prisma's Rust-free client instead: `assemble-desktop-sidecar.mjs` generates it from a copy of the schema with `engineType = "client"`, and a WASM module compiles each query that the PGlite adapter runs. `apps/hub-api/src/lib/pglite-adapter.ts` wraps the adapter for that client (it finds `engineType = "client"` in the generated client's schema): bytes go to PGlite as binary, timestamps get their UTC offset, and constraint errors get the kinds that make them P2002, P2003 and the rest, as the Rust engine does. Before it finishes, the script runs the migrations on an in-memory database with that client and checks that a duplicate comes back as P2002. The hosted API and every other target keep the Rust engine.
+Prisma 6 builds its query engine for Windows on x64 only, so the Windows arm64 sidecar (the app's, and the `windows-arm64` CLI package's, [26 §1](26_CLI.md#1-install)) carries Prisma's Rust-free client instead: `assemble-desktop-sidecar.mjs` generates it from a copy of the schema with `engineType = "client"`, and a WASM module compiles each query that the PGlite adapter runs. `apps/hub-api/src/lib/pglite-adapter.ts` wraps the adapter for that client (it finds `engineType = "client"` in the generated client's schema): bytes go to PGlite as binary, timestamps get their UTC offset, and constraint errors get the kinds that make them P2002, P2003 and the rest, as the Rust engine does. Before it finishes, the script runs the migrations on an in-memory database with that client and checks that a duplicate comes back as P2002. The hosted API and every other target keep the Rust engine.
 
 On Linux the sidecar carries Prisma's query engines for OpenSSL 3 and 1.1 (x64: Debian/Ubuntu and RHEL/Fedora builds; arm64: one of each OpenSSL), since a build machine's own pick can be the wrong one (`LINUX_ENGINES` in `scripts/assemble-desktop-sidecar.mjs`, which also loads the OpenSSL 3 engine before it finishes).
 
