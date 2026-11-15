@@ -1498,6 +1498,20 @@ p {
   transform: none;
 }
 
+.desktop-other {
+  margin: 2px 22px 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.desktop-other a {
+  /* Inline padding widens the touch target without moving the line. */
+  padding: 10px 0;
+  color: var(--agent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .pill {
   padding: 3px 10px;
   border-radius: 999px;

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { desktopFiles, desktopUrl, DESKTOP_VERSION, osTabs, type OsId } from "@/lib/download";
+import { Fragment, useEffect, useState } from "react";
+import { desktopFiles, desktopOtherBuilds, desktopUrl, DESKTOP_VERSION, osTabs, type OsId } from "@/lib/download";
 
 function detectOs(): OsId {
   const platform = navigator.platform.toLowerCase();
@@ -16,11 +16,13 @@ export function DesktopDownloads() {
   const [mine, setMine] = useState<OsId | null>(null);
   useEffect(() => setMine(detectOs()), []);
   const files = desktopFiles();
+  const other = desktopOtherBuilds();
   const order = mine ? [mine, ...osTabs.map((tab) => tab.id).filter((id) => id !== mine)] : osTabs.map((tab) => tab.id);
   return (
     <div className="desktop-grid">
       {order.map((id) => {
         const tab = osTabs.find((row) => row.id === id)!;
+        const build = other[id];
         return (
           <article key={id} className={`desktop-card${id === mine ? " mine" : ""}`}>
             <div className="desktop-card-head">
@@ -33,6 +35,19 @@ export function DesktopDownloads() {
                 <span className="desktop-note">{file.note}</span>
               </a>
             ))}
+            {build ? (
+              <p className="desktop-other">
+                {build.arch}:{" "}
+                {build.files.map((file, index) => (
+                  <Fragment key={file.file}>
+                    {index ? " · " : null}
+                    <a href={desktopUrl(file.file)} aria-label={`${file.label} for ${build.arch}`} download>
+                      {file.label}
+                    </a>
+                  </Fragment>
+                ))}
+              </p>
+            ) : null}
           </article>
         );
       })}
