@@ -85,6 +85,8 @@ function render() {
   updateControls();
 }
 function updateControls() {
+  question.readOnly = !checked || mutating;
+  question.style.visibility = checked ? "" : "hidden";
   submit.disabled = !pending && (!checked || mutating || Boolean(historyFlight) || !question.value.trim());
   earlier.disabled = !checked || Boolean(historyFlight) || Boolean(pending);
   document.querySelector('#helper-history').disabled = !checked || Boolean(historyFlight) || Boolean(pending);
@@ -233,7 +235,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     if (!current()) return;
     turns = turns.filter(turn => turn !== draft);
-    question.value = text;
+    if (!question.value.trim()) question.value = text;
     if (!operation.controller.signal.aborted) showNotice(error.message);
     if (error.status === 401 || error.status === 409) { emptyConversation(); recheck = true; }
   } finally {

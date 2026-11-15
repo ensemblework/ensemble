@@ -147,3 +147,17 @@ test('continuing as a guest is explicit and sends no persistence or credentials'
     assert.equal(page.element('#helper-turns').textContent, '');
   } finally { page.close(); }
 });
+
+test('account verification hides an unsent draft and switching accounts discards it', async () => {
+  const page = setup();
+  try {
+    await page.signedIn();
+    page.element<HTMLTextAreaElement>('#helper-question').value = 'Private A draft';
+    page.w.dispatchEvent(new page.w.Event('focus'));
+    assert.equal(page.element<HTMLTextAreaElement>('#helper-question').style.visibility, 'hidden');
+    assert.equal(page.element<HTMLTextAreaElement>('#helper-question').readOnly, true);
+    await page.answer(page.take('/api/docs/session'), session(accountB));
+    await page.answer(page.take('/api/docs/history'), { turns: [], before: null });
+    assert.equal(page.element<HTMLTextAreaElement>('#helper-question').value, '');
+  } finally { page.close(); }
+});
