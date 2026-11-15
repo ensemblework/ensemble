@@ -143,7 +143,7 @@ Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL
 
 **Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml`. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project.
 
-After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds.
+After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on six platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds.
 
 `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
 
@@ -169,7 +169,7 @@ An alternative install of the same pull loop on Ubuntu 24.04 with root: `setup.s
 
 - **`.github/workflows/desktop.yml`** builds and publishes desktop installers on a `desktop-v*` tag, a push to the `desktop` branch, or by hand; it runs no tests and not on pull requests ([DESKTOP](DESKTOP.md), [37](37_PAUSED_CHECKS.md)).
 - **`.github/workflows/full-checks.yml`** runs the paused suites by hand (Actions → full-checks → Run workflow; [37](37_PAUSED_CHECKS.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
-- **`.github/workflows/cli-release.yml`** runs on a `cli-v<version>` tag (matching `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows, builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest. Secrets: `HOMEBREW_TAP_DEPLOY_KEY`, `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), optional `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice ([26 §7](26_CLI.md#7-releases)).
+- **`.github/workflows/cli-release.yml`** runs on a `cli-v<version>` tag (matching `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows (x64, arm64), builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest. Secrets: `HOMEBREW_TAP_DEPLOY_KEY`, `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), optional `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice ([26 §7](26_CLI.md#7-releases)).
 
 ### 9. API regression tests
 

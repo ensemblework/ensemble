@@ -9,7 +9,7 @@ Both branches run the same focused checks. The slower suites are available throu
 - Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
 - The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) are listed step by step in [37](37_PAUSED_CHECKS.md#what-runs-now). The Vercel build remains a real production frontend build.
 - A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
-- After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
+- After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows (x64/arm64) packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
 - PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
 - Testing has no docs site of its own: `docs.ensemblework.com` is published only from `main` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)).
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.

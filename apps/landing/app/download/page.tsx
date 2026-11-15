@@ -1,10 +1,11 @@
+import { Fragment } from "react";
 import { CopyCode } from "@/components/copy-code";
 import { DesktopDownloads } from "@/components/desktop-downloads";
 import { Mark } from "@/components/mark";
 import { OsInstallTabs } from "@/components/os-install-tabs";
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
 import { pageMetadata } from "@/lib/metadata";
-import { afterInstallCommands, editors, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
+import { afterInstallCommands, DESKTOP_VERSION, editors, hasArm64Installers, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
 
 export const dynamic = "force-static";
 
@@ -16,20 +17,32 @@ export const metadata = pageMetadata({ path: "/download", title: TITLE, descript
 
 type Segment = [className: string, text: string];
 
-/** A still of the `ensemble` app: the Tasks tab with a question waiting. */
+/**
+ * A still of the `ensemble` app: the Tasks tab with a question waiting. As in a terminal, every character takes
+ * one cell, so the columns line up only while each row keeps the `│` in column 32, under the `┬`. A character
+ * beyond Latin needs a glyph in `app/fonts/jetbrains-mono-symbols.woff2` (see `layout.tsx`) or a place in
+ * NO_MONO_GLYPH.
+ */
 const TERMINAL: Segment[][] = [
-  [["t-accent", " ◆ Ensemble "], ["t-tab", " Tasks · 1 needs you "], ["", "  Chat"], ["t-dim", "                    ~/code/shop-api"]],
-  [["t-dim", " ──────────────────────────────┬──────────────────────────────────────────"]],
-  [["t-warn", " NEEDS YOU 1"], ["t-dim", "                   │ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout test"]],
-  [["t-accent", " ▸ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout…  2m "], ["t-dim", "│ Claude Code · Ask · may commit · sandbox on"]],
-  [["t-dim", " RUNNING 1                     │"]],
+  [["t-accent", " ◆ Ensemble "], ["t-tab", " Tasks · 1 needs you "], ["", "  Chat"], ["t-dim", "                       ~/code/shop-api"]],
+  [["t-dim", " ───────────────────────────────┬────────────────────────────────────────────"]],
+  [["t-warn", " NEEDS YOU 1"], ["t-dim", "                    │ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout test"]],
+  [["t-accent", " ▸ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout… 2m "], ["t-dim", "│ Claude Code · Ask · may commit · sandbox on"]],
+  [["t-dim", " RUNNING 1                      │"]],
   [["t-accent", "   ● "], ["", "Add rate limiting       4m "], ["t-dim", "│ "], ["t-warn", "Claude Code asks:"]],
-  [["t-dim", " DONE 3                        │ "], ["", "Pin the clock with fake timers, or retry"]],
+  [["t-dim", " DONE 3                         │ "], ["", "Pin the clock with fake timers, or retry"]],
   [["t-ok", "   ✓ "], ["", "Release notes           1h "], ["t-dim", "│ "], ["", "the request twice?"]],
   [["", ""]],
   [["", " "], ["t-tab", " 1 ★ Pin the clock "], ["", "  2 Retry twice   "], ["t-warn", "3 Skip"], ["t-dim", "   or type your own answer"]],
   [["t-accent", " › "], ["t-dim", "Type your answer, or / for commands"]],
 ];
+
+/** No JetBrains Mono build has these, so each is drawn in a `.t-cell` box one cell wide. */
+const NO_MONO_GLYPH = /(★)/;
+
+function cells(text: string) {
+  return text.split(NO_MONO_GLYPH).map((part, index) => (index % 2 ? <span key={index} className="t-cell">{part}</span> : part));
+}
 
 export default function DownloadPage() {
   return (
@@ -118,7 +131,15 @@ export default function DownloadPage() {
           <pre className="terminal-still" aria-label="The ensemble app in a terminal, with a question waiting">
             {TERMINAL.map((line, row) => (
               <span key={row}>
-                {line.map(([className, text], index) => (className ? <span key={index} className={className}>{text}</span> : text))}
+                {line.map(([className, text], index) =>
+                  className ? (
+                    <span key={index} className={className}>
+                      {cells(text)}
+                    </span>
+                  ) : (
+                    <Fragment key={index}>{cells(text)}</Fragment>
+                  ),
+                )}
                 {"\n"}
               </span>
             ))}
@@ -176,7 +197,8 @@ export default function DownloadPage() {
             <article>
               <h3>What systems are supported?</h3>
               <p>
-                macOS 13+ on Apple Silicon or Intel, Windows 10/11 x64, and Linux x64 or arm64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+). Git is
+                macOS 13+ on Apple Silicon or Intel, Windows 10/11 x64{hasArm64Installers(DESKTOP_VERSION) ? " or arm64" : ""}, and Linux x64 or arm64 with
+                glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+). Git is
                 needed for code tasks. The terminal app is about 120 MB because it carries its own Node runtime and local database.
               </p>
             </article>

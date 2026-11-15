@@ -16,6 +16,10 @@ test("testing installers target a separate command, install root, release and ve
   assert.match(ps1, /bin\\ensemble-test.exe/);
   assert.match(ps1, /ENSEMBLE_TEST_VERSION/);
   assert.match(ps1, /\$Selected = @\{ Version = \$TestVersion; Tag = "cli-testing-latest" \}/);
+  // Windows on Arm: the arm64 testing archive when the prerelease lists one, else x64.
+  assert.match(ps1, /Find-Sum \$Sums "ensemble-test-cli-\$Version-windows-arm64\.zip"/);
+  assert.match(ps1, /\$ArchiveName = "ensemble-test-cli-\$Version-\$Target\.zip"/);
+  assert.doesNotMatch(ps1, /ensemble-cli-/);
   for (const text of [sh, ps1]) {
     assert.doesNotMatch(text, /\bENSEMBLE_INSTALL_DIR\b|\bENSEMBLE_VERSION\b|\bENSEMBLE_DOWNLOAD_BASE\b/);
   }

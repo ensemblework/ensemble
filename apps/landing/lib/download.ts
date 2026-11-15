@@ -33,7 +33,10 @@ export function desktopFiles(version = DESKTOP_VERSION): Record<OsId, DesktopFil
 /** The same installers built for another processor, shown as one line of links under a system's buttons. */
 export type DesktopOtherBuild = { arch: string; files: Array<{ label: string; file: string }> };
 
-/** Releases up to desktop-v0.8.0 were published without arm64 installers for Windows and Linux. */
+/**
+ * Releases up to 0.8.0 were published without arm64 builds for Windows (desktop-v and cli-v) and without the
+ * desktop app for Linux on arm64.
+ */
 export function hasArm64Installers(version: string): boolean {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
   return major > 0 || minor > 8 || (minor === 8 && patch > 0);
@@ -102,6 +105,7 @@ export const installChannels: Record<OsId, InstallChannel[]> = {
       id: "powershell",
       label: "PowerShell",
       commands: ["irm https://ensemblework.com/install.ps1 | iex"],
+      note: hasArm64Installers(DESKTOP_VERSION) ? "Picks x64 or arm64 to match this computer." : undefined,
       uninstall: ["ensemble runner uninstall", "Remove %LOCALAPPDATA%\\Programs\\Ensemble"],
     },
     {

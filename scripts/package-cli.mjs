@@ -10,7 +10,7 @@ import { releaseVersion, checkReleaseVersion } from "./release-version.mjs";
 checkReleaseVersion();
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64"]);
+const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64", "windows-arm64"]);
 
 const options = parseArgs(process.argv.slice(2));
 const testing = options.channel === "testing";
@@ -33,8 +33,8 @@ const ensembleDir = join(stageRoot, command);
 const binDir = join(ensembleDir, "bin");
 const libDir = join(ensembleDir, "lib");
 const sidecarDir = join(ensembleDir, "sidecar");
-const archiveName =
-  options.target === "windows-x64" ? `${command}-cli-${version}-${options.target}.zip` : `${command}-cli-${version}-${options.target}.tar.gz`;
+const windows = options.target.startsWith("windows-");
+const archiveName = `${command}-cli-${version}-${options.target}.${windows ? "zip" : "tar.gz"}`;
 const archivePath = join(outDir, archiveName);
 
 mkdirSync(outDir, { recursive: true });
@@ -66,13 +66,13 @@ writeFileSync(join(binDir, command), testing ? launcher.replaceAll("ENSEMBLE_LAU
 chmodSync(join(binDir, command), 0o755);
 writeFileSync(join(ensembleDir, "CHANNEL"), `${options.channel}\n`);
 
-if (options.target === "windows-x64") {
+if (windows) {
   buildWindowsLauncher(join(binDir, `${command}.exe`));
   writeWindowsCmd(join(binDir, `${command}.cmd`));
 }
 
 rmSync(archivePath, { force: true });
-if (options.target === "windows-x64") {
+if (windows) {
   // Zip output needs bsdtar: Windows ships it in System32, macOS as tar. The tar
   // from Git for Windows, often first on PATH, is GNU tar and cannot write zip.
   const bsdtar = process.platform === "win32" ? join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
@@ -129,7 +129,7 @@ function valueAfter(args, index, name) {
 
 function usage(message) {
   if (message) console.error(message);
-  console.error("Usage: node scripts/package-cli.mjs --target <darwin-arm64|darwin-x64|linux-x64|linux-arm64|windows-x64> [--out dist/cli] [--skip-sidecar]");
+  console.error(`Usage: node scripts/package-cli.mjs --target <${[...supportedTargets].join("|")}> [--out dist/cli] [--skip-sidecar]`);
   process.exit(1);
 }
 
@@ -171,11 +171,13 @@ function shQuote(value) {
 function buildWindowsLauncher(exePath) {
   const version = spawnSync("go", ["version"], { encoding: "utf8" });
   if (version.error || version.status !== 0) {
-    throw new Error("The windows-x64 package requires Go to build apps/cli/launcher/ensemble.exe. Install Go or run on the configured Windows release runner.");
+    throw new Error(`The ${options.target} package requires Go to build apps/cli/launcher/ensemble.exe. Install Go or run on the configured Windows release runner.`);
   }
+  // Built for the package's processor: an x64 launcher would still start on Windows on Arm, under emulation.
+  const goarch = { "windows-x64": "amd64", "windows-arm64": "arm64" }[options.target];
   run("go", ["build", "-o", exePath, "."], {
     cwd: join(root, "apps/cli/launcher"),
-    env: { ...process.env, GOOS: "windows", GOARCH: "amd64" },
+    env: { ...process.env, GOOS: "windows", GOARCH: goarch },
   });
 }
 

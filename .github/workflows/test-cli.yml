@@ -56,6 +56,8 @@ jobs:
             target: linux-arm64
           - os: windows-2022
             target: windows-x64
+          - os: windows-11-arm
+            target: windows-arm64
     env:
       ENSEMBLE_TEST_CLI_VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -70,7 +72,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: actions/setup-go@v6.4.0
-        if: matrix.target == 'windows-x64' || startsWith(matrix.target, 'linux-')
+        if: startsWith(matrix.target, 'windows-') || startsWith(matrix.target, 'linux-')
         with:
           go-version: "1.24.x"
           cache: false
@@ -81,16 +83,18 @@ jobs:
           ENSEMBLE_REQUIRE_LANDRUN: ${{ startsWith(matrix.target, 'linux-') && '1' || '' }}
         run: node scripts/package-cli.mjs --channel testing --target ${{ matrix.target }} --out dist/test-cli
       - name: Smoke package
-        if: matrix.target != 'windows-x64'
+        if: ${{ !startsWith(matrix.target, 'windows-') }}
         run: |
           mkdir -p dist/smoke
           tar -xzf dist/test-cli/ensemble-test-cli-${ENSEMBLE_TEST_CLI_VERSION}-${{ matrix.target }}.tar.gz -C dist/smoke
           node scripts/smoke-cli-package.mjs dist/smoke/ensemble-test
       - name: Smoke Windows package
-        if: matrix.target == 'windows-x64'
+        if: startsWith(matrix.target, 'windows-')
         shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          Expand-Archive -Path "dist/test-cli/ensemble-test-cli-$env:ENSEMBLE_TEST_CLI_VERSION-windows-x64.zip" -DestinationPath dist/smoke
+          Expand-Archive -Path "dist/test-cli/ensemble-test-cli-$env:ENSEMBLE_TEST_CLI_VERSION-$env:TARGET.zip" -DestinationPath dist/smoke
           node scripts/smoke-cli-package.mjs dist/smoke/ensemble-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v6

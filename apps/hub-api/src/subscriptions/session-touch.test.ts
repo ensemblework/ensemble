@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { claudeProjectName, claudePrompt, copilotPrompt, sessionPrompts } from "./session-touch.js";
-import { dropSession, findSession, forgetSession, lookSession, ROTATE_MESSAGES, saveSession, setNativeDropForTests } from "./turn-sessions.js";
+import { dropSession, findSession, forgetSession, lookSession, notePrompts, ROTATE_MESSAGES, saveSession, setNativeDropForTests } from "./turn-sessions.js";
 
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;
 
@@ -89,6 +89,34 @@ test("a session used outside Ensemble is kept unresumed, and deleted with the ch
     assert.deepEqual(dropped.sort(), ["first", "third"]);
   } finally {
     setNativeDropForTests(null);
+    if (saved === undefined) delete process.env.ENSEMBLE_REMOTE_STATE_DIR;
+    else process.env.ENSEMBLE_REMOTE_STATE_DIR = saved;
+    await rm(state, { recursive: true, force: true });
+  }
+});
+
+test("a turn that failed or was stopped notes its session's prompts: only in the chat's own session, the chat's place unmoved, an unknown count dropped", async () => {
+  const state = await mkdtemp(join(tmpdir(), "ensemble-noted-state-"));
+  const saved = process.env.ENSEMBLE_REMOTE_STATE_DIR;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
+  try {
+    const key = "chat-noted-000001";
+    await saveSession(key, "claude-code", "session-1", "Instructions", { next: 2, perTurn: true, prompts: 1 });
+    // The turn at position 2 failed after Claude Code took its message: a failed exchange does not move the chat on.
+    await notePrompts(key, "session-1", 2);
+    assert.deepEqual(await findSession(key, "claude-code", "Instructions", true, 2), { id: "session-1", text: null, prompts: 2 }, "the next message goes on in the session and reads only what comes after the failed one");
+    await notePrompts(key, "session-0", 5);
+    assert.equal((await findSession(key, "claude-code", "Instructions", true, 2))?.prompts, 2, "a session the chat no longer has notes nothing");
+    await notePrompts(key, "session-1", null);
+    const unknown = await findSession(key, "claude-code", "Instructions", true, 2);
+    assert.equal(unknown?.id, "session-1");
+    assert.equal(unknown?.prompts, undefined, "a count that could not be made is dropped: the next turn brings nothing in");
+    await forgetSession(key, { gone: true });
+    await notePrompts(key, "session-1", 3);
+    assert.equal(await findSession(key, "claude-code", "Instructions", true, 2), null, "a session forgotten meanwhile is not brought back");
+    await notePrompts("chat-noted-000002", "session-1", 3);
+    assert.equal(await findSession("chat-noted-000002", "claude-code", "Instructions", true), null, "nor is a chat made for it");
+  } finally {
     if (saved === undefined) delete process.env.ENSEMBLE_REMOTE_STATE_DIR;
     else process.env.ENSEMBLE_REMOTE_STATE_DIR = saved;
     await rm(state, { recursive: true, force: true });

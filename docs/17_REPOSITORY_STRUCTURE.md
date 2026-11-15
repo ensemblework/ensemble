@@ -135,7 +135,8 @@ apps/agent-runtime/ensemble_agent/
 └── plots/                    Matplotlib parse/run worker
 apps/agent-runtime/tests/     pytest suite
 
-apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, robots, sitemap), lib/
+apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, robots, sitemap; fonts/ holds the
+                              JetBrains Mono box-drawing and symbol glyphs Google's Latin subset lacks, with their OFL), lib/
                               (site, topics, download.ts install data), public/ (install.sh, install.ps1, llms.txt,
                               IndexNow key), scripts/indexnow.mjs, vercel.json (script headers, ensemblework.app redirects)
                               Privacy/terms own the hosted Google-data and Limited Use disclosures linked by the Google connector.
@@ -163,5 +164,5 @@ apps/quick-capture/           src-tauri/ + ui/
 | `release-version.mjs` | `pnpm version:sync` / `version:check` from `release.json` |
 | `export-desktop-web.mjs`, `assemble-desktop-sidecar.mjs` | `pnpm desktop:export` (static Hub export); `pnpm desktop:sidecar` (Node + hub-api into Tauri resources, `--dest` for the CLI) |
 | `desktop-*.mjs`, `build-mac-dmg.sh`, `package-mac-dmg.mjs`, `publish-desktop-recovery.mjs`, `verify-desktop-signatures.*` | Desktop API discovery and process spawning, build matrix, signed update manifest, Mac disk images (`pnpm desktop:dmg`), recovery publishing, signature checks ([DESKTOP](DESKTOP.md)) |
-| `package-cli.mjs`, `smoke-cli-package.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive |
+| `package-cli.mjs`, `smoke-cli-package.mjs`, `smoke-install-ps1.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive; `install.ps1` against a Windows archive ([26 §7](26_CLI.md#7-releases)) |
 | `measure-*.mjs`, `ui-walk.mjs`, `verify-followup.mjs` | Playwright performance and UI probes ([CACHING](CACHING.md)) |

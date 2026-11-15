@@ -6,6 +6,9 @@
 #   $env:LOCALAPPDATA\Programs\Ensemble\<version>\ensemble
 # and points a stable "current" junction/copy at that version.
 #
+# Windows on Arm gets the arm64 build; a release without one gets the x64 build,
+# which Windows 11 runs under emulation.
+#
 # Set $env:ENSEMBLE_VERSION = "0.1.0" (or "cli-v0.1.0") to pin a version.
 # Set $env:ENSEMBLE_DOWNLOAD_BASE to test against a directory containing the
 # archive and SHA256SUMS.txt.
@@ -46,6 +49,26 @@ function Download-File($Uri, $OutFile) {
   Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile
 }
 
+# The SHA-256 that SHA256SUMS.txt lists for a file, or $null.
+function Find-Sum($Lines, $Name) {
+  $Escaped = [regex]::Escape($Name)
+  foreach ($Line in $Lines) {
+    if ($Line -match "^([0-9a-fA-F]{64})\s+\*?$Escaped$") { return $Matches[1].ToLowerInvariant() }
+  }
+  return $null
+}
+
+# The computer's processor, not this PowerShell's: an x64 PowerShell on Windows on Arm runs under
+# emulation and sees AMD64 in its own environment. The system's environment in the registry has ARM64.
+function Get-Processor {
+  try {
+    $Key = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+    $Native = (Get-ItemProperty -LiteralPath $Key -Name PROCESSOR_ARCHITECTURE -ErrorAction Stop).PROCESSOR_ARCHITECTURE
+    if ($Native) { return $Native }
+  } catch {}
+  return $env:PROCESSOR_ARCHITECTURE
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
   Fail "only 64-bit Windows is supported"
 }
@@ -61,28 +84,35 @@ if ($Pinned) {
 
 $Version = $Selected.Version
 $Tag = $Selected.Tag
-$ArchiveName = "ensemble-cli-$Version-windows-x64.zip"
 $Base = $env:ENSEMBLE_DOWNLOAD_BASE
 if ([string]::IsNullOrWhiteSpace($Base)) {
   $Base = "https://github.com/$Repo/releases/download/$Tag"
 }
 $Base = $Base.TrimEnd("/")
-$ArchiveUrl = "$Base/$ArchiveName"
 $SumsUrl = "$Base/SHA256SUMS.txt"
 
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ("ensemble-install-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $Temp | Out-Null
 try {
-  Write-Host "Downloading Ensemble CLI $Version for windows-x64..."
-  $ArchivePath = Join-Path $Temp $ArchiveName
   $SumsPath = Join-Path $Temp "SHA256SUMS.txt"
-  Download-File $ArchiveUrl $ArchivePath
   Download-File $SumsUrl $SumsPath
+  $Sums = @(Get-Content $SumsPath)
 
-  $EscapedName = [regex]::Escape($ArchiveName)
-  $Line = Get-Content $SumsPath | Where-Object { $_ -match "^([0-9a-fA-F]{64})\s+\*?$EscapedName$" } | Select-Object -First 1
-  if (-not $Line) { Fail "SHA256SUMS.txt does not contain $ArchiveName" }
-  $Expected = ([regex]::Match($Line, "^([0-9a-fA-F]{64})")).Groups[1].Value.ToLowerInvariant()
+  $Target = "windows-x64"
+  if ((Get-Processor) -eq "ARM64") {
+    if (Find-Sum $Sums "ensemble-cli-$Version-windows-arm64.zip") {
+      $Target = "windows-arm64"
+    } else {
+      Write-Host "Ensemble CLI $Version has no build for Windows on Arm; installing the x64 build, which runs under emulation."
+    }
+  }
+  $ArchiveName = "ensemble-cli-$Version-$Target.zip"
+  $Expected = Find-Sum $Sums $ArchiveName
+  if (-not $Expected) { Fail "SHA256SUMS.txt does not contain $ArchiveName" }
+
+  Write-Host "Downloading Ensemble CLI $Version for $Target..."
+  $ArchivePath = Join-Path $Temp $ArchiveName
+  Download-File "$Base/$ArchiveName" $ArchivePath
   $Actual = (Get-FileHash -Algorithm SHA256 -Path $ArchivePath).Hash.ToLowerInvariant()
   if ($Actual -ne $Expected) { Fail "sha256 mismatch for $ArchiveName" }
 

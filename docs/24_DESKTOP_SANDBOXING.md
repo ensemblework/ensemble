@@ -67,7 +67,7 @@ Writing there is a change like any other folder's.
 
 None of these grants keys, browser data, app database or discovery files, or control of another process.
 
-Whatever the setting and mode, `outsideRefusal` (`workspace/guard.ts`) refuses keys, sign-ins and browser data (`SECRET_PATHS`), another account's files, Ensemble's own data and its git sign-in helper (`<workspace>/.askpass`), and refuses writes to the read-only copies of attached files (`<workspace>/files`), start-up files (shell profiles, `.gitconfig`, launch agents), system folders, Ensemble's own code and the home folder itself.
+Whatever the setting and mode, `outsideRefusal` (`workspace/guard.ts`) refuses keys, sign-ins and browser data (`SECRET_PATHS`), another account's files (in `/Users`, `/home` or the folder holding the person's home folder, other than their own and `/Users/Shared`), Ensemble's own data and its git sign-in helper (`<workspace>/.askpass`), and refuses writes to the read-only copies of attached files (`<workspace>/files`), start-up files (shell profiles, `.gitconfig`, launch agents), system folders, Ensemble's own code and the home folder itself.
 
 Device files such as `/dev/null`, temporary folders, tool caches and other projects are ordinary outside paths.
 
@@ -205,7 +205,7 @@ An agent may start any program on the PATH (`checkProgram` in `workspace/guard.t
 
 The person's terminal keeps its allow-list ([16](16_CODE_TAB.md)). Programs that reach another computer (`ssh`, `scp`, `sftp`, `nc`…) need the internet and follow the mode (§4). Interpreters still run code, so the OS sandbox must contain their subprocesses.
 
-A command is over when its own process exits: output still in the pipes is read for 2 seconds (`DRAIN_MS`), so a process it left running (a server, a stuck test worker) cannot hold the result open; the result notes what is still running, and the run's end stops it. A timeout or Stop kills the command's whole session, including a process that moved to a process group of its own (`timeout`, a shell with job control).
+A command is over when its own process exits: output still in the pipes is read for 2 seconds (`DRAIN_MS`), so a process it left running (a server, a stuck test worker) cannot hold the result open; the result notes what is still running, and the run's end stops it. A timeout or Stop kills the command's whole session, including a process that moved to a process group of its own (`timeout`, a shell with job control). macOS cannot list a session's processes, so there `sessionMembers` (`workspace/runner.ts`) takes the command's process group, every process its members started and every group they lead: a process that left the group after its parent ended is not found.
 
 Child environments are scrubbed of provider, session and device credentials. `runner.ts` enforces timeouts and kills the process tree on stop, keeping partial work; it cannot undo a completed remote write. Internet on/off is a per-run choice; there is no per-domain approval proxy for all traffic.
 

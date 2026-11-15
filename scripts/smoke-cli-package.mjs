@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,14 +23,15 @@ const version = readFileSync(join(packageDir, "VERSION"), "utf8").trim();
 const temp = mkdtempSync(join(tmpdir(), "ensemble-cli-smoke-"));
 
 try {
+  if (process.platform === "win32") checkWindowsMachine([launcher, join(packageDir, "sidecar", "node.exe")]);
   smokeVersion(launcher, version, temp);
   if (testing) {
     const wrong = spawnSync(launcher, ["login", "--api", "https://api.ensemblework.com", "--no-browser"], { encoding: "utf8", env: smokeEnv(temp) });
     if (wrong.status === 0 || !wrong.stderr.includes("only")) throw new Error("Testing CLI accepted the production API.");
   }
   if (!options.skipMcp) await smokeMcp(launcher, temp);
-  if (!options.skipSidecarHealth) await smokeSidecar(packageDir, temp);
-  console.error(`CLI package smoke OK (${version}).`);
+  const sidecar = options.skipSidecarHealth ? "" : await smokeSidecar(packageDir, temp);
+  console.error(`CLI package smoke OK (${[version, `${process.platform}-${process.arch}`, sidecar].filter(Boolean).join(", ")}).`);
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }
@@ -54,6 +55,33 @@ function parseArgs(args) {
 function launcherPath(packageDir) {
   if (process.platform === "win32") return join(packageDir, "bin", testing ? "ensemble-test.exe" : "ensemble.exe");
   return join(packageDir, "bin", testing ? "ensemble-test" : "ensemble");
+}
+
+/**
+ * Windows on Arm runs x64 programs too, under emulation, so a launcher or Node built for the wrong processor
+ * would pass every other check here. Both must be built for this computer's processor.
+ */
+function checkWindowsMachine(files) {
+  const names = { 0x8664: "x64", 0xaa64: "arm64", 0x14c: "x86" };
+  for (const file of files) {
+    const machine = peMachine(file);
+    const name = names[machine] ?? `machine 0x${machine.toString(16)}`;
+    if (name !== process.arch) throw new Error(`${file} is built for ${name}, not this computer's ${process.arch}.`);
+  }
+}
+
+function peMachine(file) {
+  const fd = openSync(file, "r");
+  try {
+    const dos = Buffer.alloc(64);
+    readSync(fd, dos, 0, dos.length, 0);
+    const header = Buffer.alloc(6);
+    if (dos.toString("latin1", 0, 2) === "MZ") readSync(fd, header, 0, header.length, dos.readUInt32LE(0x3c));
+    if (header.toString("latin1", 0, 4) !== "PE\0\0") throw new Error(`${file} is not a Windows program.`);
+    return header.readUInt16LE(4);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function smokeVersion(command, version, tempDir) {
@@ -178,6 +206,8 @@ async function smokeSidecar(packageDir, tempDir) {
       });
       if (refused.status !== 400 || !(await refused.text()).includes("only")) throw new Error("The packaged testing runtime did not reject production pairing.");
     }
+    const rustFree = existsSync(join(appDir, "node_modules", ".prisma", "client", "query_compiler_bg.wasm"));
+    return `sidecar /health on Prisma's ${rustFree ? "Rust-free client" : "query engine"}`;
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n--- sidecar logs ---\n${logs.slice(-4000)}`);
   } finally {
