@@ -105,4 +105,5 @@ test("the app-server connection pairs responses, answers Codex's requests, and p
   const left = server.request("x", {});
   server.close("Codex stopped.");
   await assert.rejects(left, /Codex stopped/);
+  await assert.rejects(server.request("y", {}), /Codex stopped/, "asked after it stopped: refused, never left waiting");
 });

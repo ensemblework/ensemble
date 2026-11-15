@@ -123,7 +123,7 @@ export interface HostedClient {
   assistantFile(turnId: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }): Promise<Uint8Array | null>;
   assistantTool(turnId: string, body: { name: string; input: unknown }): Promise<unknown>;
   /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
-  assistantStream(turnId: string, body: { seq: number; text: string }): Promise<{ stop: boolean }>;
+  assistantStream(turnId: string, body: { seq: number; text: string; status?: string }): Promise<{ stop: boolean }>;
   assistantDone(turnId: string, body: unknown): Promise<void>;
   /** Entries of the owner's AI activity log made here. False: a server without the route (they stay on this computer). */
   activity?(body: ActivityPost): Promise<boolean>;

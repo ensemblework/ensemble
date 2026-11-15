@@ -90,13 +90,17 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
     const spec: AgentTurnSpec = parsed.data;
     let seq = 0;
     let pending = "";
+    // A status line goes with the next batch, in order with the text (a server before 0.8.0 ignores it).
+    let status: string | null = null;
     let flushing: Promise<void> | null = null;
     const flush = async () => {
-      if (!pending) return;
+      if (!pending && !status) return;
       const text = pending;
+      const line = status;
       pending = "";
+      status = null;
       seq += 1;
-      const answer = await client.assistantStream(id, { seq, text });
+      const answer = await client.assistantStream(id, { seq, text, ...(line ? { status: line } : {}) });
       if (answer.stop) controller.abort();
     };
     const flushOnce = () => (flushing ??= flush().catch(() => undefined).finally(() => (flushing = null)));
@@ -111,6 +115,9 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
         },
         onDelta(text) {
           pending += text;
+        },
+        onStatus(text) {
+          status = text;
         },
         signal: controller.signal,
         async readFile(fileId) {
