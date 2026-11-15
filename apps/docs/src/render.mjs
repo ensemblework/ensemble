@@ -114,7 +114,7 @@ const iconPaths = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
   moon: '<path d="M20.8 13A9 9 0 0 1 11 3.2 9 9 0 1 0 20.8 13Z"/>',
 };
-const uiIcon = (name) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]}</svg>`;
+const uiIcon = (name) => `<svg width="${({ history: 15, clear: 15, expand: 14, close: 15, logout: 15, send: 14 })[name] ?? 16}" height="${({ history: 15, clear: 15, expand: 14, close: 15, logout: 15, send: 14 })[name] ?? 16}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]}</svg>`;
 
 export function pageHtml(page, pages, sourceRef, endpoint = "https://api.ensemblework.com/api/docs/ask") {
   const e = escapeHtml;
@@ -179,7 +179,7 @@ ${staticSVG(24, { id: "docs-panel-mark", tone: "auto" })}
 <div id="helper-clear-confirm" hidden><span>Clear this docs-chat history?</span><button id="helper-keep" type="button">Cancel</button><button id="helper-delete" type="button">Clear history</button></div>
 <div id="helper-conversation" class="assistant-conversation">
 <button id="helper-earlier" type="button" hidden>Load earlier messages</button>
-<div id="helper-welcome" class="assistant-welcome"><div class="assistant-welcome-head"><div class="assistant-welcome-mark">${staticSVG(32, { id: "docs-welcome-mark", tone: "auto" })}</div><div><h3 class="assistant-welcome-title">How can I help?</h3><p class="assistant-welcome-sub">Ask about using Ensemble. Answers link to the docs.</p></div></div><div class="assistant-starters"><button class="assistant-starter" type="button" data-docs-question="How do I connect an app?">Connect an app</button><button class="assistant-starter" type="button" data-docs-question="How do I share a page?">Share a page</button><button class="assistant-starter" type="button" data-docs-question="How do I run a task on my computer?">Run a task</button></div></div>
+<div id="helper-welcome" class="assistant-welcome"><div class="assistant-welcome-head"><div class="assistant-welcome-mark">${staticSVG(38, { id: "docs-welcome-mark", tone: "auto" })}</div><div><h3 class="assistant-welcome-title display">How can I help?</h3><p class="assistant-welcome-sub">Ask about using Ensemble. Answers link to the docs.</p></div></div><div class="assistant-starters"><button class="assistant-starter" type="button" data-docs-question="How do I connect an app?">Connect an app</button><button class="assistant-starter" type="button" data-docs-question="How do I share a page?">Share a page</button><button class="assistant-starter" type="button" data-docs-question="How do I run a task on my computer?">Run a task</button></div></div>
 <div id="helper-turns"></div>
 <div id="helper-waiting" role="status" hidden><span class="u-morph" data-loader aria-hidden="true"></span><span>Looking in the docs…</span><span id="helper-elapsed" aria-hidden="true"></span></div>
 </div>

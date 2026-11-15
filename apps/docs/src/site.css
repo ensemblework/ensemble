@@ -85,7 +85,7 @@ img { max-width: 100%; height: auto; }
 
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-.icon-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+.icon-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); }
 .icon-btn:hover { background: var(--hover); color: var(--ink); }
 #theme-toggle { width: 32px; padding: 0; }
 #docs-login { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -125,3 +125,6 @@ img { max-width: 100%; height: auto; }
 
 #helper-auth-recovery { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 #helper-auth-recovery button { border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised); padding: 6px 10px; font-size: 12px; }
+
+:root { --font-sans: Figtree; --font-display-face: Fraunces; --font-mono-face: "JetBrains Mono"; }
+.display { font-family: var(--font-display); font-weight: 500; letter-spacing: -.02em; }
