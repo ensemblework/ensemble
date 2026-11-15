@@ -11,7 +11,9 @@ import {
   codexAppOpen,
   codexProject,
   codexProjectThreads,
+  copilotSessionName,
   fileCodexAppProject,
+  nameCopilotSession,
   removeClaudeDesktopSessions,
   removeCodexAppProjects,
   sessionTitle,
@@ -19,6 +21,7 @@ import {
   stopCodexAppRetryForTests,
   syncClaudeAppDeletions,
   syncCodexAppProjects,
+  titledPrompt,
 } from "./app-sessions.js";
 
 const CLI = "e005f1b8-90f8-48f1-b6e8-b4b05ccc6304";
@@ -53,6 +56,41 @@ test("a session's title is one line of at most 80 characters", () => {
   assert.equal(sessionTitle("  Plan the\nlaunch  "), "Plan the launch");
   assert.equal(sessionTitle("x".repeat(100))?.length, 80);
   assert.equal(sessionTitle(""), null);
+  assert.equal(sessionTitle("Ring\u0007 the\u0000bell"), "Ring the bell", "no control characters");
+  assert.equal(sessionTitle(`${"x".repeat(78)}😀😀😀`), `${"x".repeat(78)}😀…`, "cut between characters, never inside one");
+});
+
+test("GitHub Copilot gets a name it takes: it refuses one with a double quote, and fails the whole run for it", () => {
+  assert.equal(copilotSessionName('Fix the "login" bug'), "Fix the 'login' bug");
+  assert.equal(copilotSessionName("  \n "), null);
+  assert.ok(copilotSessionName("y".repeat(300))!.length <= 100, "Copilot takes at most 100 characters");
+});
+
+test("an agent that takes no name gets the title alone on the first line of a new session's first message", () => {
+  // A task's brief opens with its title as a heading: that line becomes the title alone.
+  assert.equal(titledPrompt("Copilot note", "# Copilot note\n\nWrite KIWI in notes.txt.\n\n---\nHow this run works"), "Copilot note\n\nWrite KIWI in notes.txt.\n\n---\nHow this run works");
+  assert.equal(titledPrompt(" Plan the\nlaunch ", "# Plan the launch\nThe brief"), "Plan the launch\nThe brief");
+  // A chat's first message is Ensemble's instructions: the chat's title goes before them.
+  assert.equal(titledPrompt("Session test 244 chat", "You are the Ensemble assistant.\n\n---\n\nhi"), "Session test 244 chat\n\nYou are the Ensemble assistant.\n\n---\n\nhi");
+  assert.equal(titledPrompt("Other title", "# Brief\nrest"), "Other title\n\n# Brief\nrest");
+  assert.equal(titledPrompt(null, "# Brief"), "# Brief");
+  assert.equal(titledPrompt(" ", "Brief"), "Brief");
+  // At the start of a message these would run as a command or read a file: left as they were.
+  for (const title of ["/help me plan", "!ls notes", "@notes.md review", "?"]) assert.equal(titledPrompt(title, `# ${title}\nThe brief`), `# ${title}\nThe brief`, title);
+});
+
+test("a new Copilot session is named with Copilot's own /rename, only when the session's commands list it", async () => {
+  const sent: Array<{ method: string; params: unknown }> = [];
+  const rpc = { request: async (method: string, params?: unknown) => (sent.push({ method, params }), { stopReason: "end_turn" }) };
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["compact", "model"], confirmed: () => true }), false);
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: null, confirmed: () => true }), false);
+  assert.deepEqual(sent, [], "a Copilot without the command would take the line as a prompt");
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["model", "rename"], confirmed: () => true }), true);
+  assert.deepEqual(sent, [{ method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text: "/rename Copilot note" }] } }]);
+  // Copilot answers a name it refuses with a message, not an error: only its session_info_update confirms one.
+  assert.equal(await nameCopilotSession(rpc, { sessionId: "s1", name: "Copilot note", commands: ["rename"], confirmed: () => false }), false);
+  const stopped = { request: async () => Promise.reject(new Error("GitHub Copilot stopped.")) };
+  assert.equal(await nameCopilotSession(stopped, { sessionId: "s1", name: "Copilot note", commands: ["rename"], confirmed: () => false }), false, "never fails the run");
 });
 
 test("the Code tab's list is the one in the profile the Claude app runs on now, with the record of a session the app imported, and goes with the session", async () => {
