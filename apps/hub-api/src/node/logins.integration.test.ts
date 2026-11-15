@@ -11,17 +11,17 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import type { HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-logins-"));
+const scratch = homeScratch(".ensemble-logins-");
 // The simulated computer's own data folder: its key, saved logins, browser profile and evidence.
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
@@ -126,11 +126,14 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
-  setRunLoginSink(null);
-  await shutdownBrowser().catch(() => undefined);
-  site.close();
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    setRunLoginSink(null);
+    await shutdownBrowser().catch(() => undefined);
+    site.close();
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 type Call = { name: string; arguments: Record<string, unknown> };

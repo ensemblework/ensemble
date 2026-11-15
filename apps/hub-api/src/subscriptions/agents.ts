@@ -43,10 +43,11 @@ import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
-import { acpTurns, codexTurns, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
+import { acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
 import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
+import { addClaudeResult, claudeFromSubAgent, otherCodexThread, type ClaudeSpend } from "../workspace/engines/sub-agents.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -156,8 +157,6 @@ class SessionGone extends Error {
 class SessionBusy extends Error {
   outside: Outside | null = null;
 }
-/** At most this many updates of a replayed session are kept to read what the person added (outside.ts). */
-const MAX_REPLAYED = 50_000;
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
 
@@ -265,6 +264,10 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const result: AgentTurnResult = { text: "", model: null, tokensIn: null, tokensOut: null, costUsd: null };
   let failure: string | null = null;
   let finished = false;
+  // A turn whose background sub-agents finish after its answer answers again: tokens and cost over every result,
+  // and a later answer set apart from the earlier one as it streams.
+  let spend: ClaudeSpend | null = null;
+  let answered = false;
   const tools = new OwnToolLog("claude-code");
   try {
     for await (const line of createInterface({ input: child.stdout! })) {
@@ -288,18 +291,29 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
           }
         }
       } else if (message.type === "stream_event") {
+        // A sub-agent's own words (Agent tool) are not the reply.
+        if (claudeFromSubAgent(message)) continue;
         const event = (message.event ?? {}) as { type?: string; delta?: { type?: string; text?: string } };
-        if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) io.onDelta(event.delta.text);
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+          if (answered) io.onDelta("\n\n");
+          answered = false;
+          io.onDelta(event.delta.text);
+        }
       } else if (message.type === "result") {
         finished = true;
+        answered = true;
+        // The last result is the reply: an earlier one only said it was waiting on its sub-agents.
         result.text = typeof message.result === "string" ? message.result.trim() : "";
-        result.costUsd = typeof message.total_cost_usd === "number" ? message.total_cost_usd : null;
-        const usage = (message.usage ?? {}) as Record<string, number>;
-        result.tokensIn = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) || null;
-        result.tokensOut = usage.output_tokens ?? null;
-        if (message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")) {
-          failure = message.subtype === "error_max_turns" ? `it used all ${spec.maxTurns} steps without a final answer` : result.text || String(message.subtype ?? "an error");
-        }
+        spend = addClaudeResult(spend, message);
+        result.costUsd = spend.costUsd;
+        result.tokensIn = spend.tokensIn || null;
+        result.tokensOut = spend.tokensOut || null;
+        failure =
+          message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")
+            ? message.subtype === "error_max_turns"
+              ? `it used all ${spec.maxTurns} steps without a final answer`
+              : result.text || String(message.subtype ?? "an error")
+            : null;
       }
     }
     const code = await new Promise<number>((done) => (child.exitCode !== null ? done(child.exitCode) : child.once("close", (value) => done(value ?? 1))));
@@ -370,6 +384,9 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         tools.end(item.id, item.aggregatedOutput ?? item.result ?? item.error ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed);
       }
     }
+    // A sub-agent's thread (Codex's `spawn_agent`) reports here too, and often finishes first: only this thread's
+    // turn is the reply, its tokens the turn's, its end the turn's end. The sub-agent's calls above are logged.
+    if (otherCodexThread(params, threadId)) return;
     if (method === "item/agentMessage/delta" && typeof params.delta === "string") io.onDelta(params.delta);
     else if (method === "item/completed") {
       const item = (params.item ?? {}) as { type?: string; text?: string; phase?: string | null };

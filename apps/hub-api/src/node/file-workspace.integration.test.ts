@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { createHttpHarness } from "../test/http.js";
 
-const root = await mkdtemp(join(homedir(), ".ensemble-original-files-test-"));
+const root = homeScratch(".ensemble-original-files-test-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
 process.env.ENSEMBLE_NODE_WEB_ORIGIN = "https://node.example.test";
 const h = await createHttpHarness();
@@ -34,7 +35,14 @@ const stop = sseHub.onFrame(({ userId, frame }) => {
   const request = frame.data as Parameters<typeof nodeFileAnswer>[1];
   void (incomplete ? Promise.resolve({ status: 200, body: {} }) : nodeFileAnswer(h.app, request)).then(answer => key.inject({ method: "POST", url: `/api/devices/self/code-requests/${request.id}`, payload: answer }));
 });
-after(async () => { stop(); await h.close(); await rm(root, { recursive: true, force: true }); });
+after(async () => {
+  try {
+    stop();
+    await h.close();
+  } finally {
+    removeScratch(root);
+  }
+});
 const headers = { origin: process.env.ENSEMBLE_NODE_WEB_ORIGIN };
 let source: { kind: "node"; id: string; fileId: string; path: string };
 const open = (action: string, extra = {}) => owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source, action, ...extra } });

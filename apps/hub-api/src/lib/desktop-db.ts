@@ -12,3 +12,13 @@ export function setDesktopAdapter(value: Adapter | undefined): void {
 export function desktopAdapter(): Adapter | undefined {
   return adapter;
 }
+
+/**
+ * For a client built before the desktop database opens. Prisma's Rust-free client cannot be built
+ * without an adapter; with this one it is built, and its queries fail, as the Rust engine's would.
+ */
+export const closedDatabase = {
+  provider: "postgres",
+  adapterName: "ensemble-closed-database",
+  connect: () => Promise.reject(new Error("The local database is not open yet.")),
+} as unknown as Adapter;

@@ -78,11 +78,16 @@ test("native updater serves only the signed platform package from the desktop re
   const url=String(input);
   if(url.startsWith("https://api.github.com/repos/ensemblework/ensemble/releases"))return Response.json([{tag_name:"cli-v0.5.0"},{tag_name:"desktop-v0.4.0",assets:[{name:"latest.json",browser_download_url:"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/latest.json"}]}]);
   assert.equal(url,"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/latest.json");
-  return Response.json({version:"0.4.0",platforms:{"darwin-aarch64":{url:"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/Ensemble_arm64.app.tar.gz",signature:"fixture-signature"}}});
+  return Response.json({version:"0.4.0",platforms:{"darwin-aarch64":{url:"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/Ensemble_arm64.app.tar.gz",signature:"fixture-signature"},"linux-x86_64":{url:"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/Ensemble_0.4.0_amd64.AppImage",signature:"linux-x64-signature"},"linux-aarch64":{url:"https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/Ensemble_0.4.0_aarch64.AppImage",signature:"linux-arm64-signature"}}});
  };
  try {
   const response=await h.app.inject({method:"GET",url:"/api/desktop/update/darwin/aarch64/0.3.8"});assert.equal(response.statusCode,200,response.body);assert.equal(response.json().version,"0.4.0");assert.equal(response.json().signature,"fixture-signature");assert.equal(response.json().platforms,undefined);
   assert.equal((await h.app.inject({method:"GET",url:"/api/desktop/update/darwin/aarch64/0.4.0"})).statusCode,204);
+  for(const [arch,file,signature] of [["aarch64","Ensemble_0.4.0_aarch64.AppImage","linux-arm64-signature"],["x86_64","Ensemble_0.4.0_amd64.AppImage","linux-x64-signature"]]){
+   const linux=await h.app.inject({method:"GET",url:`/api/desktop/update/linux/${arch}/0.3.8`});assert.equal(linux.statusCode,200,linux.body);
+   assert.equal(linux.json().url,`https://github.com/ensemblework/ensemble/releases/download/desktop-v0.4.0/${file}`);assert.equal(linux.json().signature,signature);
+  }
+  assert.equal((await h.app.inject({method:"GET",url:"/api/desktop/update/windows/aarch64/0.3.8"})).statusCode,204,"no Windows arm64 package, so no update is offered");
  }finally{globalThis.fetch=originalFetch;}
 });
 

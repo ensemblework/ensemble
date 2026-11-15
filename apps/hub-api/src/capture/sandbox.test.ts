@@ -6,13 +6,14 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-capture-sandbox-"));
+const scratch = homeScratch(".ensemble-capture-sandbox-");
 const app = join(scratch, "app");
 const cookies = join(scratch, "display-cookie");
 const sockets = join(scratch, "sockets");
@@ -26,7 +27,7 @@ process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 
 const { captureAppWrapper, displayNumber } = await import("./sandbox.js");
 const { capabilities, prepareSandbox } = await import("../workspace/sandbox/spawn.js");
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => removeScratch(scratch));
 
 test("display numbers: local displays only", () => {
   assert.equal(displayNumber(":7"), "7");

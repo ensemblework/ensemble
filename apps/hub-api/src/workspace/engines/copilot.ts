@@ -30,6 +30,7 @@ import { ENSEMBLE_OWN_TOOLS, judgeEngineCall, type EngineAnswer, type EngineCall
 import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { RpcConnection } from "./rpc.js";
+import { copilotUpdateAgent, SUB_AGENT } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 
 type ToolCall = { toolCallId?: string; title?: string; kind?: string; locations?: Array<{ path?: string }>; rawInput?: unknown };
@@ -286,6 +287,7 @@ export async function runCopilot(
       used?: number;
       size?: number;
       availableCommands?: Array<{ name?: unknown }>;
+      _meta?: unknown;
     };
     if (update.sessionUpdate === "available_commands_update") {
       palette.commands = (update.availableCommands ?? []).flatMap((command) => (typeof command?.name === "string" ? [command.name] : []));
@@ -299,20 +301,22 @@ export async function runCopilot(
     }
     if (replaying) return;
     const single = Array.isArray(update.content) ? undefined : update.content;
+    // A sub-agent's (Copilot's task tool) words come on this session too, marked with its id: they are not the reply.
+    const sub = copilotUpdateAgent(update) !== null;
     if (update.sessionUpdate === "tool_call" && update.toolCallId && update.title) announced.set(update.toolCallId, update.title);
     if (update.sessionUpdate === "usage_update" && typeof update.used === "number" && typeof update.size === "number") usage.window = { used: update.used, size: update.size };
     void (async () => {
-      if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text) {
+      if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text && !sub) {
         // Kept before any await: the turn's result may be read as soon as the last chunk arrives.
         reply += single.text;
         await flushThought();
         appendLive(ctx.job.id, single.text);
-      } else if (update.sessionUpdate === "agent_thought_chunk" && single?.type === "text" && single.text) {
+      } else if (update.sessionUpdate === "agent_thought_chunk" && single?.type === "text" && single.text && !sub) {
         thought += single.text;
       } else if (update.sessionUpdate === "tool_call") {
         const flushed = flushThought();
         result.toolCalls += 1;
-        const summary = (update.title ?? update.kind ?? "tool").slice(0, 160);
+        const summary = `${sub ? SUB_AGENT : ""}${(update.title ?? update.kind ?? "tool").slice(0, 160)}`;
         const started = trace.toolStart(update.toolCallId ?? "", update.kind ?? "tool", update.rawInput ?? {}, summary);
         appendLive(ctx.job.id, `\n· ${summary}\n`);
         await ctx.event("tool", { name: update.kind ?? "tool", ok: true, summary, engine: "copilot" });

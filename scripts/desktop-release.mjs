@@ -7,7 +7,8 @@ async function walk(dir) { const rows = await readdir(dir, { withFileTypes: true
 const files = await walk(process.argv[2]);
 let artifacts = files.filter(file => /\.(dmg|msi|exe|deb|rpm|AppImage|tar\.gz|sig)$/.test(file));
 const choose = (pattern) => { const found = artifacts.filter(file => pattern.test(file) && !file.endsWith('.sig')); if (found.length !== 1) throw new Error(`Expected one update package for ${pattern}, got ${found.length}`); return found[0]; };
-const targets = { 'darwin-aarch64': choose(/aarch64.*\/bundle\/macos\/.*\.app\.tar\.gz$/), 'darwin-x86_64': choose(/x86_64.*\/bundle\/macos\/.*\.app\.tar\.gz$/), 'windows-x86_64': choose(/\/nsis\/.*\.exe$/), 'linux-x86_64': choose(/\/appimage\/.*\.AppImage$/) };
+// Tauri names Windows and Linux packages by architecture (x64 and arm64 setup.exe; amd64 and aarch64 AppImages). Both Mac archives are Ensemble.app.tar.gz, told apart by their target folder.
+const targets = { 'darwin-aarch64': choose(/aarch64.*\/bundle\/macos\/.*\.app\.tar\.gz$/), 'darwin-x86_64': choose(/x86_64.*\/bundle\/macos\/.*\.app\.tar\.gz$/), 'windows-x86_64': choose(/\/nsis\/[^/]*_x64-setup\.exe$/), 'windows-aarch64': choose(/\/nsis\/[^/]*_arm64-setup\.exe$/), 'linux-x86_64': choose(/\/appimage\/[^/]*_amd64\.AppImage$/), 'linux-aarch64': choose(/\/appimage\/[^/]*_aarch64\.AppImage$/) };
 const platforms = {};
 for (const [target,original] of Object.entries(targets)) {
   let file = original;

@@ -6,17 +6,17 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-captures-"));
+const scratch = homeScratch(".ensemble-captures-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "data");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 const { capturedFiles, recordCaptures, recordedNote, sweepOperationFolders } = await import("./captures.js");
 const { evidenceDir, operationEvidenceDir, isNodeOperation } = await import("./files.js");
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => removeScratch(scratch));
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da6364f8ffff3f0005fe02fea7d6a4a40000000049454e44ae426082", "hex");
 const WEBM = Buffer.concat([Buffer.from("1a45dfa3", "hex"), Buffer.alloc(60, 1)]);

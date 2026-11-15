@@ -10,13 +10,12 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-signin-"));
+const scratch = homeScratch(".ensemble-signin-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
@@ -151,11 +150,14 @@ function newBroker(name: string, display = false): InstanceType<typeof BrowserBr
 }
 
 after(async () => {
-  setLoginStateSink(null);
-  await endAllLogins("done").catch(() => undefined);
-  await closeCleanBrowsers().catch(() => undefined);
-  server.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    setLoginStateSink(null);
+    await endAllLogins("done").catch(() => undefined);
+    await closeCleanBrowsers().catch(() => undefined);
+    server.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 async function until<T>(check: () => Promise<T | null | false | undefined> | T | null | false | undefined, what: string, ms = 20_000): Promise<T> {

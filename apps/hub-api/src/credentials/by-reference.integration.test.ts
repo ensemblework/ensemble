@@ -8,15 +8,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-by-reference-"));
+const scratch = homeScratch(".ensemble-by-reference-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(scratch, "workspace");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
@@ -65,10 +65,13 @@ const ENGINE = `http://127.0.0.1:${port(h.app.server)}`;
 setLocalPort(port(h.app.server));
 
 after(async () => {
-  await h.close();
-  api.close();
-  evil.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    await h.close();
+    api.close();
+    evil.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 const CANARY = `sk_live_REFCANARY_${randomBytes(12).toString("hex")}`;

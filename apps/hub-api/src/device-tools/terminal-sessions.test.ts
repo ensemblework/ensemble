@@ -9,12 +9,12 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const base = mkdtempSync(join(homedir(), ".ensemble-live-terminal-"));
+const base = homeScratch(".ensemble-live-terminal-");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(base, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(base, "ensemble-workspace");
@@ -30,9 +30,12 @@ const { findOnPath } = await import("../capture/system.js");
 const { LiveAnswer } = await import("../remote/contract.js");
 
 after(async () => {
-  await closeAllSessions("stopped").catch(() => undefined);
-  setLiveTimingForTests(null);
-  rmSync(base, { recursive: true, force: true });
+  try {
+    await closeAllSessions("stopped").catch(() => undefined);
+    setLiveTimingForTests(null);
+  } finally {
+    removeScratch(base);
+  }
 });
 
 test("a screen as runs: colours as #rrggbb, bold, italic, underline, dim, trailing blanks left out; a secret hidden and drawn plain", async () => {

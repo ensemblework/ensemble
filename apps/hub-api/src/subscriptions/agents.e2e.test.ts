@@ -12,7 +12,7 @@ import { join } from "node:path";
 import test, { after } from "node:test";
 import Fastify from "fastify";
 import { engineRoutes } from "../routes/engine.js";
-import { setLocalPort } from "../workspace/engines/registry.js";
+import { localApiUrl, setLocalPort } from "../workspace/engines/registry.js";
 import { runAgentTurn } from "./agents.js";
 
 const FAKE_CLAUDE = String.raw`#!/usr/bin/env node
@@ -633,6 +633,112 @@ test("a Copilot that reports its session's totals is charged per turn: what the 
     assert.deepEqual([first.tokensIn, first.tokensOut, second.resumed], [1000, 10, true]);
     assert.deepEqual([second.tokensIn, second.tokensOut], [1000, 10], "not the session's 2000 so far");
   } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Codex chat's sub-agent (spawn_agent) reports on the same connection: its answer, tokens and turn end are not the chat's", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-codex-subagent-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.169.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'thread/start') return send({ id: message.id, result: { thread: { id: 'thread-1' }, model: 'gpt-test' } });
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    // As Codex 0.169 sends it: the sub-agent's thread reports first, from start to end, then the chat's own.
+    const child = { threadId: 'thread-2', turnId: 'turn-2' };
+    send({ method: 'turn/started', params: { threadId: 'thread-2', turn: { id: 'turn-2', status: 'inProgress', items: [] } } });
+    send({ method: 'item/agentMessage/delta', params: { ...child, itemId: 'm2', delta: 'PLUM' } });
+    send({ method: 'item/completed', params: { ...child, item: { type: 'agentMessage', id: 'm2', text: 'PLUM', phase: 'final_answer' } } });
+    send({ method: 'thread/tokenUsage/updated', params: { ...child, tokenUsage: { total: { inputTokens: 9000, outputTokens: 999 } } } });
+    send({ method: 'turn/completed', params: { threadId: 'thread-2', turn: { id: 'turn-2', status: 'completed' } } });
+    setTimeout(() => {
+      const own = { threadId: 'thread-1', turnId: 'turn-1' };
+      send({ method: 'item/agentMessage/delta', params: { ...own, itemId: 'm1', delta: 'DONE' } });
+      send({ method: 'item/completed', params: { ...own, item: { type: 'agentMessage', id: 'm1', text: 'DONE', phase: 'final_answer' } } });
+      send({ method: 'thread/tokenUsage/updated', params: { ...own, tokenUsage: { total: { inputTokens: 120, outputTokens: 30 } } } });
+      send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    }, 200);
+    return;
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  chmodSync(join(bin, "codex"), 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  // The turn's MCP config names the local API; this stand-in never calls it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const deltas: string[] = [];
+  try {
+    const result = await runAgentTurn(
+      { agent: "codex", model: "default", effort: null, system: "Instructions.", prompt: "Ask a sub-agent", tools: [], maxTurns: 4 },
+      { call: async () => ({ text: "{}" }), onDelta: (text) => deltas.push(text), signal: new AbortController().signal },
+    );
+    assert.equal(result.text, "DONE");
+    assert.deepEqual([result.tokensIn, result.tokensOut], [120, 30]);
+    assert.equal(deltas.join(""), "DONE");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Claude Code turn whose background sub-agent finishes after its answer: the last answer is the reply, set apart as it streams, and both stretches count", { timeout: 120_000 }, async (t) => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-claude-subagent-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  // As Claude Code 2.1.325 runs a background sub-agent under -p: the turn answers, the sub-agent's words name the
+  // Agent call that started it, then the turn answers again. The costs are the session's so far.
+  writeFileSync(join(bin, "claude"), String.raw`#!/usr/bin/env node
+const say = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  const delta = (text, parent) => say({ type: "stream_event", parent_tool_use_id: parent, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+  say({ type: "system", subtype: "init", session_id: "s1", model: "claude-haiku-test" });
+  delta("Waiting on the sub-agent.", null);
+  say({ type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "text", text: "PLUM" }] } });
+  delta("PLUM", "a1");
+  say({ type: "result", subtype: "success", is_error: false, result: "Waiting on the sub-agent.", total_cost_usd: 0.5, usage: { input_tokens: 60, output_tokens: 8 }, model_usage_since_last_result: { "claude-haiku-test": { inputTokens: 70, outputTokens: 12, costUSD: 0.004 } } });
+  say({ type: "system", subtype: "init", session_id: "s1", model: "claude-haiku-test" });
+  delta("DONE", null);
+  say({ type: "result", subtype: "success", is_error: false, result: "DONE", total_cost_usd: 0.51, usage: { input_tokens: 100, output_tokens: 20 }, model_usage_since_last_result: { "claude-haiku-test": { inputTokens: 100, outputTokens: 20, costUSD: 0.006 } } });
+});
+`);
+  chmodSync(join(bin, "claude"), 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  const app = Fastify();
+  await app.register(engineRoutes);
+  try {
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("this sandbox does not allow a loopback port");
+      throw error;
+    }
+    setLocalPort((app.server.address() as { port: number }).port);
+    const deltas: string[] = [];
+    const result = await runAgentTurn(
+      { agent: "claude-code", model: "haiku", effort: null, system: "You are the Ensemble assistant.", prompt: "Ask a sub-agent", tools: [], maxTurns: 8 },
+      { call: async () => ({ text: "{}" }), onDelta: (text) => deltas.push(text), signal: new AbortController().signal },
+    );
+    assert.equal(result.text, "DONE");
+    assert.equal(deltas.join(""), "Waiting on the sub-agent.\n\nDONE");
+    assert.deepEqual([result.tokensIn, result.tokensOut], [170, 32]);
+    assert.ok(Math.abs((result.costUsd ?? 0) - 0.01) < 1e-9, "this turn's cost, not the session's so far");
+  } finally {
+    await app.close();
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(root, { recursive: true, force: true });
   }

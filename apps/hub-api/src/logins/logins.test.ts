@@ -6,12 +6,12 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-logins-unit-"));
+const scratch = homeScratch(".ensemble-logins-unit-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = scratch;
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
@@ -21,7 +21,7 @@ const { identityHostOf, isLoopbackOrigin, isSignInPath } = await import("./detec
 const { urlMatches } = await import("./fill.js");
 const { ensembleDataDenies } = await import("../workspace/data-denies.js");
 
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => removeScratch(scratch));
 
 test("one-time codes: RFC 4226 and RFC 6238's vectors, from a base32 seed or an otpauth address", () => {
   const key = Buffer.from("12345678901234567890");
@@ -90,12 +90,12 @@ test("what the heuristics know: identity providers, sign-in addresses, this comp
 });
 
 test("logins.json is Ensemble's own data: denied to every run, named even before it exists", () => {
-  const home = mkdtempSync(join(homedir(), ".ensemble-logins-deny-"));
+  const home = homeScratch(".ensemble-logins-deny-");
   try {
     const denies = ensembleDataDenies({ env: { ENSEMBLE_REMOTE_STATE_DIR: join(home, "data"), ENSEMBLE_WORKSPACE_ROOT: join(home, "data", "workspace") }, home, platform: "linux" });
     for (const name of ["logins.json", "seal-key.json", "seal-seen.json"]) assert.ok(denies.includes(join(home, "data", name)), name);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    removeScratch(home);
   }
 });
 

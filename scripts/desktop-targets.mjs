@@ -5,6 +5,10 @@ export const DESKTOP_TARGETS = [
   { name: 'macos-x64', os: 'macos-15-intel', rust_targets: 'x86_64-apple-darwin', args: '--target x86_64-apple-darwin --bundles app --verbose' },
   { name: 'windows', os: 'windows-latest', rust_targets: 'x86_64-pc-windows-msvc', args: '--bundles msi,nsis' },
   { name: 'linux', os: 'ubuntu-22.04', rust_targets: 'x86_64-unknown-linux-gnu', args: '--bundles deb,rpm,appimage' },
+  // Built on an Arm runner, not cross-compiled: the sidecar packs the runner's own Node, Prisma engines and landrun.
+  { name: 'linux-arm64', os: 'ubuntu-22.04-arm', rust_targets: 'aarch64-unknown-linux-gnu', args: '--bundles deb,rpm,appimage' },
+  // Also native. Tauri's MSI cannot target arm64, so NSIS only; the sidecar carries Prisma's Rust-free client (no x64 engine).
+  { name: 'windows-arm64', os: 'windows-11-arm', rust_targets: 'aarch64-pc-windows-msvc', args: '--bundles nsis' },
 ];
 export function desktopTargets(name = 'all') {
   if (name === 'all') return DESKTOP_TARGETS;

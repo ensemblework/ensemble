@@ -11,16 +11,16 @@
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-node-capture-"));
+const scratch = homeScratch(".ensemble-node-capture-");
 // The simulated computer's own data folder: its evidence folders and settings.
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 const h = await createHttpHarness();
@@ -49,11 +49,14 @@ await new Promise<void>((resolve) => site.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${(site.address() as { port: number }).port}`;
 
 after(async () => {
-  await shutdownCapture().catch(() => undefined);
-  await shutdownBrowser().catch(() => undefined);
-  site.close();
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    await shutdownCapture().catch(() => undefined);
+    await shutdownBrowser().catch(() => undefined);
+    site.close();
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 type Call = { name: string; arguments: Record<string, unknown> };

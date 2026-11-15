@@ -15,8 +15,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
 import { vector } from "@electric-sql/pglite-pgvector";
-import { PrismaPGlite } from "pglite-prisma-adapter";
 import { setDesktopAdapter } from "./desktop-db.js";
+import { generatedRustFreeClient, pgliteAdapter } from "./pglite-adapter.js";
 
 const MIGRATIONS_TABLE = `
   CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
@@ -60,10 +60,21 @@ export function listMigrationFiles(dir: string): MigrationFile[] {
     });
 }
 
+/**
+ * Every session runs in UTC, like hosted Postgres. Prisma writes UTC wall time
+ * into `timestamp(3)` columns, while PGlite would take the computer's zone (cut
+ * to whole hours, and kept in postgresql.conf from the day the database was
+ * created), putting `NOW()`, `CURRENT_TIMESTAMP` defaults and `timestamptz`
+ * results of raw SQL off by that offset. A start parameter, unlike `SET`, also
+ * survives `RESET`.
+ */
+const START_PARAMS = [...PGlite.defaultStartParams, "-c", "TimeZone=UTC"];
+
 export async function openPglite(dataDir?: string): Promise<PGlite> {
   const db = new PGlite({
     dataDir,
     extensions: { pg_trgm, uuid_ossp, vector },
+    startParams: START_PARAMS,
   });
   await db.waitReady;
   return db;
@@ -173,7 +184,7 @@ export async function openMemoryDatabase(dir = migrationsDir()): Promise<void> {
 
 function activateDatabase(db: PGlite): void {
   active = db;
-  setDesktopAdapter(new PrismaPGlite(db) as never);
+  setDesktopAdapter(pgliteAdapter(db, { rustFree: generatedRustFreeClient() }) as never);
 }
 
 export async function closeDesktopDatabase(): Promise<void> {

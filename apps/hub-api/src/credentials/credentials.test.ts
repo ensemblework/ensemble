@@ -6,16 +6,16 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const dir = mkdtempSync(join(homedir(), ".ensemble-credentials-"));
+const dir = homeScratch(".ensemble-credentials-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = dir;
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
-after(() => rmSync(dir, { recursive: true, force: true }));
+after(() => removeScratch(dir));
 
 const { siteOrigins, trustedOrigins } = await import("./origins.js");
 const { hideValue } = await import("./secret-http.js");
