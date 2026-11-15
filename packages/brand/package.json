@@ -25,6 +25,10 @@
     "./agent": {
       "types": "./agent.d.ts",
       "default": "./agent.js"
+    },
+    "./assistant": {
+      "types": "./assistant.d.ts",
+      "default": "./assistant.js"
     }
   },
   "scripts": {

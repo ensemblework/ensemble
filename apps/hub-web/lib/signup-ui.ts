@@ -1,8 +1,11 @@
+export const DOCS_LOGIN_RETURN = "https://docs.ensemblework.com/#docs-chat";
+
 export const INVITE_ONLY = "This Ensemble is invite only.";
 
 export type SignupMode = "open" | "closed" | "allowlist";
 
 export function safeLoginNext(value: string | null): string | null {
+  if (value === DOCS_LOGIN_RETURN) return value;
   return value?.startsWith("/") && !value.startsWith("//") && !/[\\\u0000-\u0020]/.test(value) ? value : null;
 }
 

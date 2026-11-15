@@ -56,13 +56,17 @@ if (input.value) void search();
 const theme = document.querySelector("#theme-toggle");
 function themeLabel() {
   const light = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "light" : matchMedia("(prefers-color-scheme: light)").matches;
-  theme.textContent = light ? "Dark theme" : "Light theme";
+  theme.dataset.nextTheme = light ? "dark" : "light";
+  theme.setAttribute("aria-label", light ? "Switch to dark theme" : "Switch to light theme");
+  theme.title = theme.getAttribute("aria-label");
+  theme.querySelector('[data-theme-icon="sun"]').hidden = light;
+  theme.querySelector('[data-theme-icon="moon"]').hidden = !light;
 }
 theme.hidden = false;
 themeLabel();
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", themeLabel);
 theme.addEventListener("click", () => {
-  document.documentElement.dataset.theme = theme.textContent === "Dark theme" ? "dark" : "light";
+  document.documentElement.dataset.theme = theme.dataset.nextTheme;
   try { localStorage.setItem("ensemble.docs.theme", document.documentElement.dataset.theme); } catch { /* Session-only when storage is blocked. */ }
   themeLabel();
 });

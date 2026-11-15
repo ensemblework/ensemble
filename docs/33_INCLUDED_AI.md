@@ -36,7 +36,7 @@ The server also has a shared monthly ceiling. Once it is reached, included AI pa
 - **On a local-only computer:** included models are unavailable. Choose **Move to your Ensemble account** or **Connect this computer**, or use your own models.
 - **For server workspace jobs:** execution remains operator-only. Pair your own computer for ordinary hosted execution ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
 
-The public documentation helper uses the configured GPT-5 mini deployment with medium reasoning, without an account. It has a separate bounded anonymous allowance and does not charge account credits or write account usage rows. See [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs) for its requests, retention and limits.
+The public documentation helper uses the configured GPT-5 mini deployment with medium reasoning, without requiring an account. Optional sign-in saves only docs-chat history and does not change the model. It has a separate bounded docs-service allowance and does not charge account credits or write account usage rows. See [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs) for its requests, retention and limits.
 
 ## 5. When a call cannot run
 
@@ -138,7 +138,7 @@ So calls in flight cannot overrun either limit, and the ceiling is checked again
 - **Not on a local-only computer.** A desktop app or CLI not connected to an account lists included models as unavailable (`code: "included_local_only"` on the `/api/models` row) and refuses every included call with `included_local_only`: a desktop app kept local only ([DESKTOP](DESKTOP.md) §1.2) shows *Your own models only* with **Move to your Ensemble account**; a runtime not yet paired shows *Included models need your Ensemble account* with **Connect this computer**; the CLI a notice pointing at `/login`.
 - Server workspace jobs stay operator-only ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
 
-The public documentation helper uses the same configured GPT-5 mini deployment, with fixed medium reasoning, without an account. It has a separate bounded anonymous service allowance and does not charge account credits or write account usage rows. Its request, retention and limits are in [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).
+The public documentation helper uses the same configured GPT-5 mini deployment, with fixed medium reasoning, without requiring an account. Optional sign-in saves only docs-chat history; it does not select another model. It has a separate bounded service allowance and does not charge account credits or write account usage rows. Its request, retention and limits are in [Public documentation](40_PUBLIC_DOCUMENTATION.md#4-ask-the-docs).
 
 ### 5. When a call cannot run: implementation reference
 

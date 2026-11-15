@@ -1,3 +1,4 @@
+import { isDocsPath } from "../docs-helper/paths.js";
 import type { InjectOptions, RouteOptions } from "fastify";
 import { isPublicAuthPath } from "./auth-public.js";
 import { isMcpPublicPath } from "../mcp-oauth/paths.js";
@@ -5,6 +6,7 @@ import { routeCoverage } from "../test/route-coverage.js";
 
 export type RouteAuth =
   | "public"
+  | "docs-session"
   | "cors-preflight"
   | "event-ticket-or-identity"
   | "device-registration-proof"
@@ -26,12 +28,13 @@ export type InventoryRoute = {
 
 export function routeAuth(method: string, path: string): RouteAuth {
   if (method === "OPTIONS") return "cors-preflight";
+  if (path === "/api/docs/history") return "docs-session";
   if (path === "/api/events") return "event-ticket-or-identity";
   if (path === "/api/devices/register") return "device-registration-proof";
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";
   // A coding agent's hook in an engine run, or an assistant turn's tools: the run's (turn's) own secret, on loopback, on the desktop only.
   if (path === "/api/engine/ask" || path === "/api/engine/tool" || path === "/api/engine/tools" || path === "/api/engine/assistant/tools" || path === "/api/engine/assistant/tool" || path === "/api/engine/assistant/ask" || path === "/api/engine/git-credential") return "engine-run-secret";
-  if (path === "/api/docs/ask" || path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/api/desktop/connected" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path)) || isMcpPublicPath(path)) return "public";
+  if (isDocsPath(path) || path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/api/desktop/connected" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path)) || isMcpPublicPath(path)) return "public";
   if (path.startsWith("/api/internal/")) return "internal-token";
   if (path === "/api/node/hooks/routines/:id") return "routine-hook-token";
   return "identity";
@@ -45,7 +48,7 @@ export function collectRoutes(mode: InventoryRoute["mode"], routes: InventoryRou
       if (!isInjectMethod(method)) throw new Error(`Unsupported inventory HTTP method ${method}: ${route.url}`);
       const auth = routeAuth(method, route.url);
       const resourceChecks = routeCoverage[`${method} ${route.url}`] ?? [];
-      const protectedRoute = auth === "identity" || auth === "internal-token" || auth === "event-ticket-or-identity";
+      const protectedRoute = auth === "docs-session" || auth === "identity" || auth === "internal-token" || auth === "event-ticket-or-identity";
       routes.push({
         method,
         path: route.url,
