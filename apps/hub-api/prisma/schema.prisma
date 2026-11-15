@@ -1644,6 +1644,9 @@ model AssistantMessage {
   model          String?
   credentialSource String? @map("credential_source")
   credits        Float?
+  /// Brought in from the agent's own app (docs/41 §5): `{ app, at?, earlier? }` on a message the person or the agent
+  /// wrote there in the chat's session; null on Ensemble's own. Not part of the session's position in the chat.
+  outside        Json?
   createdAt      DateTime              @default(now()) @map("created_at")
   conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 

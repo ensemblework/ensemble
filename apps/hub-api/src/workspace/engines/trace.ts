@@ -125,6 +125,17 @@ export class EngineTrace {
     });
   }
 
+  /**
+   * What the person said in this session in the agent's own app since Ensemble's last run in it, brought in
+   * before the engine goes on (workspace/outside-runs.ts): one step, `title` "From the Claude app".
+   */
+  outside(title: string, body: string): Promise<void> {
+    const index = this.take();
+    if (index == null) return this.queue;
+    const now = new Date();
+    return this.write(index, { title, status: "done", output: preview(body, TRACE_PREVIEW.message), startedAt: now, endedAt: now });
+  }
+
   /** A tool call starts: its name, a one-line summary, and the arguments it was given. */
   toolStart(id: string, name: string, input: unknown, summary: string): Promise<void> {
     const index = this.take();

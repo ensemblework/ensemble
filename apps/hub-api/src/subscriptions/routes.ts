@@ -22,6 +22,7 @@ import { finishTurn, heard, liveTurn, streamInto } from "./relay.js";
 import { startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
 import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
+import { MAX_OUTSIDE_TURNS } from "./outside.js";
 
 const isDesktopRuntime = () => process.env.ENSEMBLE_DESKTOP === "1";
 
@@ -63,6 +64,15 @@ const Done = z.object({
         .object({ reason: z.enum(RESTART_REASONS as [RestartReason, ...RestartReason[]]), error: z.string().max(500).optional() })
         .optional()
         // A reason this server does not know yet, or anything malformed, leaves it out; the turn stands.
+        .catch(undefined),
+      /** What the person added in the agent's own app since Ensemble's last turn (0.8.0, subscriptions/outside.ts). */
+      outside: z
+        .object({
+          app: z.string().min(1).max(100),
+          turns: z.array(z.object({ prompt: z.string().max(5_000), answer: z.string().max(5_000), tools: z.string().max(300).optional(), at: z.string().max(40).optional() })).max(MAX_OUTSIDE_TURNS),
+          earlier: z.number().int().min(0).max(1_000_000),
+        })
+        .optional()
         .catch(undefined),
     })
     .optional(),

@@ -171,7 +171,7 @@ A computer that reports `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) keeps on
 
 Its `done` says whether the turn went on in the earlier session (`result.resumed`), which the web records with the turn's `model.call` metric (`session: { key, resumed }`). An older computer gets the history in front of the message instead.
 
-From 0.8.0, a turn that started a new session in place of the chat's earlier one also says why (`result.restart: { reason, error }`, [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)), and the web records it in the same metric. A batch on `/stream` may carry a `status` line for the chat while the computer waits ("Waiting for the ChatGPT app…"). An older server ignores both, and a reason it does not know is dropped without failing the turn.
+From 0.8.0, a turn that started a new session in place of the chat's earlier one also says why (`result.restart: { reason, error }`, [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)), and the web records it in the same metric. A turn whose session the person used in the agent's own app since Ensemble's last turn carries those exchanges (`result.outside: { app, turns, earlier }`), which the web saves into the chat before the turn's message. A batch on `/stream` may carry a `status` line for the chat while the computer waits ("Waiting for the ChatGPT app…"). An older server ignores both, and a reason it does not know is dropped without failing the turn.
 
 #### Use the agent’s own tools
 
