@@ -1235,8 +1235,10 @@ p {
   line-height: 1.65;
 }
 
+/* Single-column grids use minmax(0, 1fr): a plain 1fr column grows to its widest item's
+   min-content width, which can be wider than a phone and widens the whole page. */
 .editor-list {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .editor-card-head code,
@@ -1352,10 +1354,10 @@ p {
   .topic-points,
   .topic-links,
   .topic-links-4 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .footer {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1385,7 +1387,7 @@ p {
   }
   .needs,
   .cli-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1408,7 +1410,19 @@ p {
   .editor-snippets,
   .download-two,
   .faq-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor-card-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+  /* Config paths and URLs are single long words: let them break rather than widen the page. */
+  .editor-card-head p,
+  .editor-card-head code,
+  .download-note code,
+  .faq-grid code,
+  .section-lede code {
+    overflow-wrap: anywhere;
   }
   .trust-item,
   .trust-item + .trust-item {
@@ -1416,7 +1430,7 @@ p {
     border-left: 0;
   }
   .lanes {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .lane {
     min-height: 0;
@@ -1432,7 +1446,7 @@ p {
     display: none;
   }
   .beat {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
   .footer-links {
