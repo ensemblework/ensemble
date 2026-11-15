@@ -86,7 +86,7 @@ Desktop 0.6.6 uses file-scoped protection for Node's original viewer: a safe gen
 
 | Area | macOS | Windows | Linux |
 | --- | --- | --- | --- |
-| Desktop build | Apple silicon and Intel | x64 | arm64 and x64 |
+| Desktop build | Apple silicon and Intel | arm64 and x64 | arm64 and x64 |
 | CLI package | arm64 and x64 | x64 | arm64 and x64 |
 | Local database | PGlite | PGlite | PGlite |
 | OS sandbox ([24](24_DESKTOP_SANDBOXING.md)) | Seatbelt | Separate sandbox account after one elevated setup; local-drive work folders | bubblewrap, else Landlock |
@@ -101,7 +101,7 @@ Mobile native apps, the Mac App Store and Flatpak are not targets.
 
 Root `release.json` is the version for the native app, the interface, the API and the CLI; `scripts/release-version.mjs` checks every manifest against it.
 
-A `desktop-v<version>` tag matching `tauri.conf.json` publishes after every platform builds. `scripts/desktop-release.mjs` checks the five updater packages and their signatures, gives the two Mac archives distinct names (`Ensemble_<v>_darwin-aarch64.app.tar.gz`, `…_darwin-x86_64.app.tar.gz`) and writes `latest.json` with `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`, `linux-x86_64` (the amd64 AppImage) and `linux-aarch64` (the aarch64 AppImage). Everything uploads to a draft release, which is then published.
+A `desktop-v<version>` tag matching `tauri.conf.json` publishes after every platform builds. `scripts/desktop-release.mjs` checks the six updater packages and their signatures, gives the two Mac archives distinct names (`Ensemble_<v>_darwin-aarch64.app.tar.gz`, `…_darwin-x86_64.app.tar.gz`) and writes `latest.json` with `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64` (the x64 NSIS installer), `windows-aarch64` (the arm64 NSIS installer), `linux-x86_64` (the amd64 AppImage) and `linux-aarch64` (the aarch64 AppImage). Everything uploads to a draft release, which is then published.
 
 Updater signing uses `TAURI_SIGNING_PRIVATE_KEY` (applied with `src-tauri/tauri.signing.json`); publishing fails without signed packages, and PR builds may omit them.
 
@@ -280,7 +280,7 @@ pnpm desktop:build      # tauri build
 
 `pnpm desktop:sidecar` runs `scripts/assemble-desktop-sidecar.mjs`; `--dest <dir>` packs the same sidecar for the CLI. Bundles land in `apps/desktop/src-tauri/target/<target>/release/bundle/`.
 
-`.github/workflows/desktop.yml` builds on the `desktop` branch, `desktop-v*` tags and manual dispatch (not on pull requests, [37](37_PAUSED_CHECKS.md)) (`target`: all, `macos-arm64`, `macos-x64`, `windows`, `linux`, `linux-arm64`). `scripts/desktop-targets.mjs` defines the matrix:
+`.github/workflows/desktop.yml` builds on the `desktop` branch, `desktop-v*` tags and manual dispatch (not on pull requests, [37](37_PAUSED_CHECKS.md)) (`target`: all, `macos-arm64`, `macos-x64`, `windows`, `linux`, `linux-arm64`, `windows-arm64`). `scripts/desktop-targets.mjs` defines the matrix:
 
 | Target | Runner | Bundles | Artifact |
 | --- | --- | --- | --- |
@@ -289,8 +289,13 @@ pnpm desktop:build      # tauri build
 | `windows` | `windows-latest` | msi, nsis | `ensemble-desktop-windows` |
 | `linux` | `ubuntu-22.04` | deb, rpm, AppImage | `ensemble-desktop-linux` |
 | `linux-arm64` | `ubuntu-22.04-arm` | deb, rpm, AppImage | `ensemble-desktop-linux-arm64` |
+| `windows-arm64` | `windows-11-arm` | nsis | `ensemble-desktop-windows-arm64` |
 
-Each target builds on a runner of its own architecture, never a cross build: the sidecar packs the runner's Node, Prisma engines and landrun, so it matches the app's architecture. Both Linux runners are Ubuntu 22.04, so both builds need glibc 2.35 or newer. There is no Windows arm64 build: Prisma 6's query engine, which the sidecar loads, is built for Windows x64 only. On Linux it carries Prisma's query engines for OpenSSL 3 and 1.1 (x64: Debian/Ubuntu and RHEL/Fedora builds; arm64: one of each OpenSSL), since a build machine's own pick can be the wrong one (`LINUX_ENGINES` in `scripts/assemble-desktop-sidecar.mjs`, which also loads the OpenSSL 3 engine before it finishes).
+Each target builds on a runner of its own architecture, never a cross build: the sidecar packs the runner's Node, Prisma engines and landrun, so it matches the app's architecture. Both Linux runners are Ubuntu 22.04, so both builds need glibc 2.35 or newer. Tauri cannot build an MSI for arm64, so Windows on Arm gets the NSIS installer only.
+
+Prisma 6 builds its query engine for Windows on x64 only, so the Windows arm64 sidecar carries Prisma's Rust-free client instead: `assemble-desktop-sidecar.mjs` generates it from a copy of the schema with `engineType = "client"`, and a WASM module compiles each query that the PGlite adapter runs. `apps/hub-api/src/lib/pglite-adapter.ts` wraps the adapter for that client (it finds `engineType = "client"` in the generated client's schema): bytes go to PGlite as binary, timestamps get their UTC offset, and constraint errors get the kinds that make them P2002, P2003 and the rest, as the Rust engine does. Before it finishes, the script runs the migrations on an in-memory database with that client and checks that a duplicate comes back as P2002. The hosted API and every other target keep the Rust engine.
+
+On Linux the sidecar carries Prisma's query engines for OpenSSL 3 and 1.1 (x64: Debian/Ubuntu and RHEL/Fedora builds; arm64: one of each OpenSSL), since a build machine's own pick can be the wrong one (`LINUX_ENGINES` in `scripts/assemble-desktop-sidecar.mjs`, which also loads the OpenSSL 3 engine before it finishes).
 
 On Linux the `.deb` depends on `libxdo3` and the `.rpm` on `libxdo` (Fedora, or EPEL on RHEL); the AppImage carries its own copy.
 
@@ -298,7 +303,7 @@ The Intel disk image: `package-mac-dmg.mjs` creates a compressed APFS image with
 
 On a Mac, `pnpm desktop:dmg` (`scripts/build-mac-dmg.sh`) builds an unsigned disk image for that Mac's chip.
 
-Download names (`apps/landing/lib/download.ts`): `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and `Ensemble-<v>-1.x86_64.rpm` (Fedora, RHEL, openSUSE); on arm64, `Ensemble_<v>_aarch64.AppImage`, `Ensemble_<v>_arm64.deb` and `Ensemble-<v>-1.aarch64.rpm`. The AppImages run on other distributions.
+Download names (`apps/landing/lib/download.ts`): `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and `Ensemble-<v>-1.x86_64.rpm` (Fedora, RHEL, openSUSE); on arm64, `Ensemble_<v>_arm64-setup.exe`, `Ensemble_<v>_aarch64.AppImage`, `Ensemble_<v>_arm64.deb` and `Ensemble-<v>-1.aarch64.rpm`. The AppImages run on other distributions.
 
 ### 8. Logo, icon and motion
 
@@ -330,6 +335,7 @@ An override uses that origin's backend and sign-in; local data is not moved (§1
 | --- | --- |
 | Shell unit tests (navigation, the init script's origin guard, modes, assets, sidecar, diagnostics) | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Sidecar, runtime lock, user PATH | `pnpm --filter @ensemble/hub-api test` |
+| Prisma's Rust-free client on PGlite (the Windows arm64 sidecar) | `cd apps/hub-api && npx tsx --test src/lib/pglite-adapter.test.ts` |
 | Moving local data into an account (ids, merges, hostile rows, the transfer key) | `cd apps/hub-api && npx tsx --test src/transfer/transfer.integration.test.ts src/routes/cli-auth.integration.test.ts` |
 | WebKit and Chromium clicks against the export | `pnpm desktop:e2e` |
 | Release scripts | `node --test scripts/desktop-release.test.mjs scripts/desktop-targets.test.mjs scripts/package-mac-dmg.test.mjs` |

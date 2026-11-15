@@ -15,8 +15,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
 import { vector } from "@electric-sql/pglite-pgvector";
-import { PrismaPGlite } from "pglite-prisma-adapter";
 import { setDesktopAdapter } from "./desktop-db.js";
+import { generatedRustFreeClient, pgliteAdapter } from "./pglite-adapter.js";
 
 const MIGRATIONS_TABLE = `
   CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
@@ -173,7 +173,7 @@ export async function openMemoryDatabase(dir = migrationsDir()): Promise<void> {
 
 function activateDatabase(db: PGlite): void {
   active = db;
-  setDesktopAdapter(new PrismaPGlite(db) as never);
+  setDesktopAdapter(pgliteAdapter(db, { rustFree: generatedRustFreeClient() }) as never);
 }
 
 export async function closeDesktopDatabase(): Promise<void> {

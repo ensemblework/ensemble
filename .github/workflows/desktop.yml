@@ -1,7 +1,7 @@
 name: desktop
 
 # Builds on a release tag, a push to the desktop branch, or by hand: not on pull requests, so a
-# promotion does not wait for five native builds (docs/37_PAUSED_CHECKS.md).
+# promotion does not wait for six native builds (docs/37_PAUSED_CHECKS.md).
 on:
   workflow_dispatch:
     inputs:
@@ -9,7 +9,7 @@ on:
         description: Desktop target to build (recovery builds do not publish a release).
         type: choice
         default: all
-        options: [all, macos-arm64, macos-x64, windows, linux, linux-arm64]
+        options: [all, macos-arm64, macos-x64, windows, linux, linux-arm64, windows-arm64]
       recovery_source_run:
         description: Original tagged build run for packaging recovery (leave empty to build).
         type: string
@@ -171,7 +171,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
             [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" == "true" ]] || { echo "This release is already published." >&2; exit 1; }
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, Windows, and Linux on x64 and arm64. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, and for Windows and Linux on x64 and arm64. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
           fi
           node scripts/desktop-release.mjs bundles --upload
           # Marked latest: a local-only app reads releases/latest/download/latest.json (docs/DESKTOP.md §7). CLI releases never take it.

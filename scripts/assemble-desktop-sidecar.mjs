@@ -32,7 +32,11 @@ if (process.platform === "linux" && !linuxEngines) {
   console.error(`No Prisma query engines are listed for Linux ${process.arch}.`);
   process.exit(1);
 }
-const generate = generatePrismaClient(linuxEngines);
+// Prisma's one Windows query engine is x64, which an arm64 Node cannot load. On Windows on Arm the sidecar
+// carries Prisma's Rust-free client (`engineType = "client"`) instead: a WASM module compiles each query,
+// and the PGlite adapter runs it (apps/hub-api/src/lib/pglite-adapter.ts).
+const rustFreeClient = process.platform === "win32" && process.arch === "arm64";
+const generate = generatePrismaClient({ engines: linuxEngines, rustFree: rustFreeClient });
 if (generate !== 0) process.exit(generate);
 
 const deploy = run("pnpm", ["--filter", "@ensemble/hub-api", "deploy", appDir], { cwd: root });
@@ -51,6 +55,15 @@ if (linuxEngines) {
     console.error(`The sidecar's Prisma client has no query engine for ${missing.join(", ")}.`);
     process.exit(1);
   }
+}
+if (rustFreeClient) {
+  const client = join(appDir, "node_modules", ".prisma", "client");
+  if (!existsSync(join(client, "query_compiler_bg.wasm"))) {
+    console.error("The sidecar's Prisma client has no query compiler (query_compiler_bg.wasm).");
+    process.exit(1);
+  }
+  // A query engine left from an earlier `prisma generate` is the x64 one, and the Rust-free client never loads it.
+  for (const name of readdirSync(client)) if (name.endsWith(".node")) rmSync(join(client, name));
 }
 
 const nodeName = process.platform === "win32" ? "node.exe" : "node";
@@ -89,13 +102,29 @@ console.log(`sidecar assembled at ${dest}`);
 /**
  * Imports the sidecar's main packages with its own Node, and loads Prisma's query engine: constructing
  * the client fails on the "did not initialize yet" stub, and connecting (to a closed port) fails before
- * the network when the engine cannot load.
+ * the network when the engine cannot load. The Rust-free client has no engine to load, so it runs the
+ * app's migrations on an in-memory database and two queries, the second a duplicate that must come back
+ * as P2002 through the adapter.
  */
 function checkImports(engineLibrary) {
+  const prisma = rustFreeClient
+    ? [
+        "const { openMemoryDatabase } = await import('./src/lib/pglite-engine.ts');",
+        "await openMemoryDatabase();",
+        "const { prisma } = await import('./src/lib/prisma.ts');",
+        "const user = { email: 'check@sidecar.local', name: 'Sidecar check', passwordHash: 'check' };",
+        "await prisma.user.create({ data: user });",
+        "const duplicate = await prisma.user.create({ data: user }).then(() => 'none', (error) => error?.code);",
+        "if (duplicate !== 'P2002') throw new Error(`A duplicate user came back as ${duplicate}, not P2002.`);",
+        "console.log(`prisma-rust-free-ok ${process.platform}-${process.arch}`);",
+      ]
+    : [
+        "const { PrismaClient } = await import('@prisma/client');",
+        "await new PrismaClient().$connect().catch((error) => { if (/query engine|libquery/i.test(String(error?.message))) throw error; });",
+      ];
   const script = [
     "await import('fastify');",
-    "const { PrismaClient } = await import('@prisma/client');",
-    "await new PrismaClient().$connect().catch((error) => { if (/query engine|libquery/i.test(String(error?.message))) throw error; });",
+    ...prisma,
     "await import('@electric-sql/pglite');",
     // A node's terminal screenshots replay the screen in it (capture/screen.ts loads it only then).
     "await import('@xterm/headless');",
@@ -110,19 +139,23 @@ function checkImports(engineLibrary) {
   }
 }
 
-/** `prisma generate`, with every Linux engine when `engines` is set (a copy of the schema that lists them). */
-function generatePrismaClient(engines) {
+/**
+ * `prisma generate`, from a copy of the schema when the package needs more than the default: every Linux
+ * engine (`engines`), or the Rust-free client (`rustFree`).
+ */
+function generatePrismaClient({ engines, rustFree }) {
   const args = ["--filter", "@ensemble/hub-api", "exec", "prisma", "generate"];
-  if (!engines) return run("pnpm", args, { cwd: root });
+  if (!engines && !rustFree) return run("pnpm", args, { cwd: root });
   const schema = join(root, "apps", "hub-api", "prisma", "schema.prisma");
   const packageSchema = join(dirname(schema), "schema.package.prisma");
   const source = readFileSync(schema, "utf8");
-  const withTargets = source.replace(/(generator client \{\n)/, `$1  binaryTargets   = ${JSON.stringify(["native", ...engines])}\n`);
-  if (withTargets === source) {
+  const setting = rustFree ? `  engineType      = "client"\n` : `  binaryTargets   = ${JSON.stringify(["native", ...engines])}\n`;
+  const withSetting = source.replace(/(generator client \{\r?\n)/, `$1${setting}`);
+  if (withSetting === source) {
     console.error("Could not find `generator client {` in schema.prisma.");
     return 1;
   }
-  writeFileSync(packageSchema, withTargets);
+  writeFileSync(packageSchema, withSetting);
   try {
     return run("pnpm", [...args, "--schema", packageSchema], { cwd: root });
   } finally {
