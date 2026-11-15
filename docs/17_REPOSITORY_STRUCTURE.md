@@ -135,7 +135,8 @@ apps/agent-runtime/ensemble_agent/
 └── plots/                    Matplotlib parse/run worker
 apps/agent-runtime/tests/     pytest suite
 
-apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, robots, sitemap), lib/
+apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, robots, sitemap; fonts/ holds the
+                              JetBrains Mono box-drawing and symbol glyphs Google's Latin subset lacks, with their OFL), lib/
                               (site, topics, download.ts install data), public/ (install.sh, install.ps1, llms.txt,
                               IndexNow key), scripts/indexnow.mjs, vercel.json (script headers, ensemblework.app redirects)
                               Privacy/terms own the hosted Google-data and Limited Use disclosures linked by the Google connector.
