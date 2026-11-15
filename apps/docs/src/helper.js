@@ -114,7 +114,7 @@ function finishWaiting(operation) {
   waitMark.idle(); mark.idle();
 }
 function invalidate(invalidateSession = true) {
-  epoch++; chatsFlight = null; if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
+  epoch++; chatsFlight = null; closeHistory(); chatList.replaceChildren(); if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
   if (pending) { const operation = pending; pending = null; operation.controller.abort(); finishWaiting(operation); }
 }
 function emptyConversation() { chatId = null; chatsBefore = null; chatList.replaceChildren(); closeHistory(); turns = []; before = null; question.value = ''; question.style.height = ''; }

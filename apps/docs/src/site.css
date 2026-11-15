@@ -163,3 +163,5 @@ img { max-width: 100%; height: auto; }
 #docs-search[data-searching=true] .search-field { border-color: var(--edge); }
 @media (max-width: 760px) { .site-header { gap: 10px; } #search-trigger { min-width: 32px; width: auto; margin-left: auto; padding: 8px; } #search-trigger span, #search-trigger kbd { display: none; } .site-header nav { gap: 10px; } #docs-search { margin-top: 16px; } }
 @media (prefers-reduced-motion: reduce) { #docs-search[open] { animation: none; } }
+
+#query::-webkit-search-cancel-button { display: none; }

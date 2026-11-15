@@ -39,7 +39,7 @@ export function mountSearch() {
       const item = document.createElement('div'); item.id = `docs-result-${index}`; item.className = 'docs-search-hit'; item.role = 'option'; item.setAttribute('aria-selected', 'false');
       const label = document.createElement('strong'); highlight(label, hit.heading, query);
       const guide = document.createElement('span'); guide.className = 'docs-search-guide'; guide.textContent = hit.title.split(' · ')[0];
-      const excerpt = document.createElement('p'); highlight(excerpt, hit.excerpt, query);
+      const excerpt = document.createElement('p'); highlight(excerpt, hit.excerpt.startsWith(hit.heading + ' ') ? hit.excerpt.slice(hit.heading.length + 1) : hit.excerpt, query);
       const arrow = document.createElement('span'); arrow.className = 'docs-search-open'; arrow.textContent = '↵'; arrow.setAttribute('aria-hidden', 'true');
       item.append(guide, label, excerpt, arrow);
       item.addEventListener('pointermove', () => select(index));

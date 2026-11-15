@@ -183,3 +183,20 @@ test('New chat starts empty without erasing history, and History opens a selecta
     assert.equal(page.requests.filter(row => row.method === 'DELETE').length, 0);
   } finally { page.close(); }
 });
+
+test('a pending clear hides conversation titles before an account can change', async () => {
+  const page = setup();
+  try {
+    await page.signedIn(); page.click('#helper-history');
+    await page.answer(page.take('/api/docs/chats'), { chats: [{ id: 'legacy', title: 'Private A title', updatedAt: new Date().toISOString() }], before: null });
+    page.click('#helper-clear'); page.click('#helper-delete');
+    const clear = page.take('/api/docs/history', 'DELETE');
+    page.w.dispatchEvent(new page.w.Event('focus'));
+    assert.equal(page.element<HTMLElement>('#helper-history-panel').hidden, true);
+    assert.equal(page.element('#helper-chat-list').textContent, '');
+    await page.answer(clear, null, 204);
+    await page.answer(page.take('/api/docs/session'), session(accountB));
+    await page.answer(page.take('/api/docs/history'), { turns: [], before: null });
+    assert.doesNotMatch(page.element('#docs-helper').textContent!, /Private A title/);
+  } finally { page.close(); }
+});
