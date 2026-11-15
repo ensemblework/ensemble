@@ -213,7 +213,7 @@ The sidecar sets `ENSEMBLE_DESKTOP=1`, turns off `ENSEMBLE_DEV_AUTH_BYPASS`, use
 
 #### 3.3 One runtime per computer
 
-The desktop app and the CLI runner share the data folder, so a computer has one database, one pairing, one trusted-folder list and one sandbox setup. `runtime.lock` keeps a second sidecar off the database; the second one exits with code 75.
+The desktop app and the CLI runner share the data folder, so a computer has one database, one pairing, one trusted-folder list and one sandbox setup. `runtime.lock` keeps a second sidecar off the database; the second one exits with code 75. A running sidecar checks every 30 seconds that the lock still names it, and one that finds another process named there stops its remote work, closes the database and exits 75 as well ([26 §4](26_CLI.md#use-the-cli-alongside-the-desktop-app)).
 
 The shell attaches to a CLI runner that is already running (its `api.json` answers `/health` with its token), leaves it running on quit, and starts its own on the same port and token if that runner stops. A desktop-owned runtime stops with the app.
 

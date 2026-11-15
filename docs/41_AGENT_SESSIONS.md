@@ -213,6 +213,8 @@ An ask on a surface (`POST /api/ensemble/invoke`: Today, a board, Needs me, Code
 
 **Deleting a session** (`deleteAgentSession` in `workspace/delete-session.ts`). The person deletes a session from Ensemble Node's Sessions page, and a node asks for it with an owner-only confirmation card ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Every computer that ran the session must be online and report `sessionDelete: 1` ([26](26_CLI.md)); otherwise nothing is hidden and the person is told which computer to connect or update. Under the session's lock its queued runs are cancelled, then each computer deletes the agent's own saved history and Ensemble marks the session deleted.
 
+On a computer, one runtime does each deletion the web asks for (a session, a chat's session, a deleted project's Codex projects): the one that claims the request ([25 §2](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#2-pairing-and-local-state)), so two runtimes with one pairing never both do it.
+
 Ensemble's run records, project folders and files stay. A run that continues a deleted session's runs starts a session of its own (§1).
 
 **What goes from the agent** (`deleteNativeSession` in `workspace/engines/delete-session.ts`, used by every session deletion on this page; each agent's way in [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)). Only the session with that exact id is removed, and one the agent no longer has counts as deleted.
