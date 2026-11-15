@@ -33,7 +33,7 @@ for (const page of pages) {
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, pageHtml(page, pages, sourceRef));
 }
-for (const file of ["site.js", "site.css", "search.js", "theme.js"]) await cp(join(app, "src", file), join(out, file));
+for (const file of ["site.js", "site.css", "search.js", "site-search.js", "theme.js"]) await cp(join(app, "src", file), join(out, file));
 await build({ entryPoints: [join(app, "src/helper.js")], outfile: join(out, "helper.js"), bundle: true, format: "esm", minify: true });
 await cp(require.resolve("@ensemble/brand/motion.css"), join(out, "brand-motion.css"));
 await mkdir(join(out, "brand"));

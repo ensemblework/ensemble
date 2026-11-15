@@ -59,7 +59,7 @@ test('a delayed history page cannot restore messages after clearing them', async
   const page = setup();
   try {
     await page.signedIn(accountA, [turnA], 'older');
-    page.click('#helper-history');
+    page.click('#helper-earlier');
     const delayed = page.take('/api/docs/history?before=older');
     page.click('#helper-clear'); page.click('#helper-delete');
     await page.answer(page.take('/api/docs/history', 'DELETE'), null, 204);
@@ -121,10 +121,10 @@ test('session failures have a retry that restores history and consistent control
 test('a stale history read cannot restore signed-in content after logout', async () => {
   const page = setup();
   try {
-    await page.signedIn();
+    await page.signedIn(accountA, [turnA], 'older');
     // The pending history page is invalidated by sign-out even for the same account.
-    page.click('#helper-history');
-    const delayed = page.take('/api/docs/history');
+    page.click('#helper-earlier');
+    const delayed = page.take('/api/docs/history?before=older');
     page.click('#helper-logout');
     await page.answer(page.take('/api/docs/logout', 'POST'), null, 204);
     await page.answer(delayed, { turns: [turnA], before: null });
@@ -159,5 +159,27 @@ test('account verification hides an unsent draft and switching accounts discards
     await page.answer(page.take('/api/docs/session'), session(accountB));
     await page.answer(page.take('/api/docs/history'), { turns: [], before: null });
     assert.equal(page.element<HTMLTextAreaElement>('#helper-question').value, '');
+  } finally { page.close(); }
+});
+
+test('New chat starts empty without erasing history, and History opens a selectable list', async () => {
+  const page = setup();
+  try {
+    await page.signedIn();
+    page.click('#helper-new');
+    assert.equal(page.element('#helper-turns').textContent, '');
+    page.send('A fresh question');
+    const sent = page.take('/api/docs/ask', 'POST');
+    const payload = JSON.parse(String(sent.options.body));
+    assert.match(payload.chatId, /^[\da-f-]{36}$/);
+    await page.answer(sent, { saved: true, answer: 'Fresh answer', sources: [] });
+    page.click('#helper-history');
+    assert.equal(page.element<HTMLElement>('#helper-history-panel').hidden, false);
+    await page.answer(page.take('/api/docs/chats'), { chats: [{ id: 'legacy', title: 'Private A question', updatedAt: new Date().toISOString() }], before: null });
+    page.click('.helper-chat-item');
+    await page.answer(page.take('/api/docs/history?chatId=legacy'), { chatId: 'legacy', turns: [turnA], before: null });
+    assert.match(page.element('#helper-turns').textContent!, /Private A question/);
+    assert.equal(page.element<HTMLElement>('#helper-history-panel').hidden, true);
+    assert.equal(page.requests.filter(row => row.method === 'DELETE').length, 0);
   } finally { page.close(); }
 });
