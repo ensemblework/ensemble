@@ -415,6 +415,16 @@ async function writeDeletions(path: string, store: Record<string, Deleted>): Pro
   await replaceFile(path, JSON.stringify(store), 0o600);
 }
 
+/** Whether any profile's Code tab has a record of this session. */
+async function hasRecord(cliSessionId: string, where: Place): Promise<boolean> {
+  for (const profile of await claudeDesktopProfiles(where)) {
+    for (const folder of await orgFolders(profile)) {
+      for (const record of await recordFiles(folder.dir)) if ((await readObject(record.path))?.cliSessionId === cliSessionId) return true;
+    }
+  }
+  return false;
+}
+
 /** Removes every Code tab record of these sessions, in every profile and list. */
 async function removeRecords(ids: Set<string>, where: Place): Promise<void> {
   for (const profile of await claudeDesktopProfiles(where)) {
@@ -479,10 +489,12 @@ export function syncClaudeAppDeletions(options: DeletionOptions = {}): Promise<D
 /**
  * Removes the Code tab records of a Claude Code session Ensemble deleted, from every profile and list, and
  * remembers the deletion so a record the running app writes back goes too (`syncClaudeAppDeletions`).
- * Nothing is remembered on a computer without the Claude app.
+ * Nothing is remembered for a session the Code tab has no record of (a one-off turn's, one filed on another
+ * computer, a computer without the Claude app): the app loads its list from these records, so it cannot
+ * hold one without a record, and there is nothing to come back.
  */
 export async function removeClaudeDesktopSessions(cliSessionId: string, options: DeletionOptions = {}): Promise<DeletionResult> {
-  if (!(await claudeDesktopProfiles(options)).length) return "nothing";
+  if (!(await hasRecord(cliSessionId, options))) return "nothing";
   const path = await deletionsPath(options);
   await serialClaude(async () => {
     const store = await readDeletions(path);

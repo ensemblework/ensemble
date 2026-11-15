@@ -279,6 +279,7 @@ test("a deletion is settled only when the Claude app was closed before and after
     // The app starts while Ensemble removes the records: closed, then open.
     const answers = [false, true];
     const where = { home, platform: "darwin" as const, env: {}, state, retryMs: null };
+    appRecord(list, CLI, NOVEMBER, { cliSessionId: CLI });
     assert.equal(await removeClaudeDesktopSessions(CLI, { ...where, appOpen: async () => answers.shift() ?? true }), "owed");
 
     // While it is open, every few moments; settled once it is closed.
@@ -301,6 +302,10 @@ test("a deletion is settled only when the Claude app was closed before and after
     } finally {
       rmSync(none, { recursive: true, force: true });
     }
+    // A session the Code tab never listed (a one-off turn's, one filed on another computer): nothing to come back.
+    const unlisted = join(home, "runtime", "unlisted.json");
+    assert.equal(await removeClaudeDesktopSessions("11111111-2222-4333-8444-555555555555", { ...where, state: unlisted, appOpen: async () => true }), "nothing");
+    assert.equal(existsSync(unlisted), false, "and nothing remembered");
   } finally {
     stopClaudeAppRetryForTests();
     rmSync(home, { recursive: true, force: true });
