@@ -60,10 +60,21 @@ export function listMigrationFiles(dir: string): MigrationFile[] {
     });
 }
 
+/**
+ * Every session runs in UTC, like hosted Postgres. Prisma writes UTC wall time
+ * into `timestamp(3)` columns, while PGlite would take the computer's zone (cut
+ * to whole hours, and kept in postgresql.conf from the day the database was
+ * created), putting `NOW()`, `CURRENT_TIMESTAMP` defaults and `timestamptz`
+ * results of raw SQL off by that offset. A start parameter, unlike `SET`, also
+ * survives `RESET`.
+ */
+const START_PARAMS = [...PGlite.defaultStartParams, "-c", "TimeZone=UTC"];
+
 export async function openPglite(dataDir?: string): Promise<PGlite> {
   const db = new PGlite({
     dataDir,
     extensions: { pg_trgm, uuid_ossp, vector },
+    startParams: START_PARAMS,
   });
   await db.waitReady;
   return db;
