@@ -223,6 +223,8 @@ The packaged sidecar carries `scripts/ensemble-hook.mjs`, `scripts/ensemble-ask-
 
 The database is PGlite through the Prisma adapter, in `pglite/` under the data folder (`ENSEMBLE_DATA_DIR` overrides). Migrations run on launch.
 
+Its sessions run in UTC whatever the computer's zone, as hosted Postgres does: `openPglite` (`apps/hub-api/src/lib/pglite-engine.ts`) starts PGlite with `TimeZone=UTC`, which overrides the zone `postgresql.conf` took from the computer when the database was created. Prisma stores UTC in the `timestamp(3)` columns, so `NOW()` and `CURRENT_TIMESTAMP` in raw SQL have to be UTC too.
+
 An existing database is copied into `backups/` first (`ENSEMBLE_BACKUP_DIR` overrides); these same-disk copies are not off-machine backups. A database written by a newer build is refused: *This Ensemble database was written by a newer version of the app … Install that newer Ensemble, or restore a backup from the backups folder.*
 
 The key that encrypts saved model keys and the device token is `secret.key` next to `pglite/`, passed as `ENSEMBLE_SECRET_KEY_FILE`. A key at hub-api's default location, `<app>/.ensemble/secret.key`, is copied there once. The install folder is never written, so a read-only or replaced install keeps its saved keys. The OS keychain is not used for this key.
@@ -334,7 +336,7 @@ An override uses that origin's backend and sign-in; local data is not moved (§1
 | Check | Command |
 | --- | --- |
 | Shell unit tests (navigation, the init script's origin guard, modes, assets, sidecar, diagnostics) | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` |
-| Sidecar, runtime lock, user PATH | `pnpm --filter @ensemble/hub-api test` |
+| Sidecar, runtime lock, user PATH, the local database in UTC on a computer in another zone | `pnpm --filter @ensemble/hub-api test` |
 | Prisma's Rust-free client on PGlite (the Windows arm64 sidecar) | `cd apps/hub-api && npx tsx --test src/lib/pglite-adapter.test.ts` |
 | Moving local data into an account (ids, merges, hostile rows, the transfer key) | `cd apps/hub-api && npx tsx --test src/transfer/transfer.integration.test.ts src/routes/cli-auth.integration.test.ts` |
 | WebKit and Chromium clicks against the export | `pnpm desktop:e2e` |
