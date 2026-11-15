@@ -5,14 +5,14 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { prepareWorktree, removeWorktrees, worktreePath } from "./worktrees.js";
 
-const home = realpathSync(mkdtempSync(join(homedir(), ".ensemble-worktrees-test-")));
-after(() => rmSync(home, { recursive: true, force: true }));
+const home = realpathSync(homeScratch(".ensemble-worktrees-test-"));
+after(() => removeScratch(home));
 const workspace = join(home, "workspace");
 mkdirSync(workspace, { recursive: true });
 const userId = "local";

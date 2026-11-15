@@ -9,15 +9,14 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { createHttpHarness } from "../test/http.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-capture-run-"));
+const scratch = homeScratch(".ensemble-capture-run-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(scratch, "workspace");
 const h = await createHttpHarness();
@@ -31,7 +30,7 @@ const { findFfmpegs, chooseVideoEncoder } = await import("../capture/ffmpeg.js")
 const privacy: { previewFirst: string[] } = { previewFirst: [] };
 configureBrowser({ privacy: async () => ({ previewFirst: privacy.previewFirst }) });
 const noBrowser = browserBroker().chromium(true) ? false : "no Chromium on this computer (`ensemble capture setup` installs one)";
-const work = mkdtempSync(join(homedir(), ".ensemble-capture-run-work-"));
+const work = homeScratch(".ensemble-capture-run-work-");
 
 const site = createServer((request, response) => {
   response.setHeader("content-type", "text/html");
@@ -48,13 +47,16 @@ await h.app.listen({ port: 0, host: "127.0.0.1" });
 const port = (h.app.server.address() as { port: number }).port;
 
 after(async () => {
-  process.env.ENSEMBLE_DESKTOP = desktop;
-  await shutdownCapture().catch(() => undefined);
-  await shutdownBrowser().catch(() => undefined);
-  site.close();
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
-  rmSync(work, { recursive: true, force: true });
+  try {
+    process.env.ENSEMBLE_DESKTOP = desktop;
+    await shutdownCapture().catch(() => undefined);
+    await shutdownBrowser().catch(() => undefined);
+    site.close();
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+    removeScratch(work);
+  }
 });
 
 async function runFor(options: { network?: boolean; chat?: boolean } = {}) {

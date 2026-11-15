@@ -13,16 +13,15 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
 import type { HttpUser } from "../test/http.js";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-live-"));
+const scratch = homeScratch(".ensemble-live-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(scratch, "ensemble-workspace");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
@@ -40,6 +39,7 @@ const { answerNodeToolRequest } = await import("../device-tools/answer.js");
 const { closeAllSessions } = await import("../device-tools/terminal-sessions.js");
 const { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput, takeoverStats } = await import("../takeover/session.js");
 const { answerLoginResolve } = await import("../logins/answer.js");
+const { closeCleanBrowsers } = await import("../logins/clean-signin.js");
 const { configureBrowser, browserBroker, shutdownBrowser } = await import("../browser/index.js");
 const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
 const { findOnPath } = await import("../capture/system.js");
@@ -74,12 +74,17 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
-  await endAllTakeovers("stopped").catch(() => undefined);
-  await closeAllSessions("stopped").catch(() => undefined);
-  await shutdownBrowser().catch(() => undefined);
-  site.close();
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    await endAllTakeovers("stopped").catch(() => undefined);
+    await closeAllSessions("stopped").catch(() => undefined);
+    await shutdownBrowser().catch(() => undefined);
+    // The clean sign-in browser stays open for the next sign-in, writing its profile under the scratch folder.
+    await closeCleanBrowsers().catch(() => undefined);
+    site.close();
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 type Call = { name: string; arguments: Record<string, unknown> };

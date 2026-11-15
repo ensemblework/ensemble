@@ -8,16 +8,16 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync, existsSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { createServer, type Server } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
 // A stand-in home folder outside Ensemble's own checkout, holding a fake key; everything else lives in it.
-const base = mkdtempSync(join(homedir(), ".ensemble-node-tools-"));
+const base = homeScratch(".ensemble-node-tools-");
 const home = join(base, "home");
 const data = join(home, ".local", "share", "com.ensemblework.cli.testing");
 const work = join(home, "projects", "app");
@@ -56,7 +56,7 @@ const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
 const { runCommand } = await import("../workspace/runner.js");
 const { rememberSecretValues } = await import("../lib/redact.js");
 
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => removeScratch(base));
 
 /** The rules table and secrets in memory, as the policy and the command runner use them. */
 function memoryDb(secrets: Record<string, string> = {}) {

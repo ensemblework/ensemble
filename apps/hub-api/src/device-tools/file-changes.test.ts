@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { link, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const root = await mkdtemp(join(homedir(), ".ensemble-file-watch-test-"));
+const root = homeScratch(".ensemble-file-watch-test-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
 process.env.DATABASE_URL ??= "postgresql://localhost:1/unused";
 const { trackFileChanges } = await import("./file-changes.js");
 const { changedFileIdentity, flushFileChanges, originalFile } = await import("../remote/node-files.js");
 type Report = Parameters<NonNullable<import("../remote/client.js").HostedClient["reportFileChanges"]>>[0];
-after(() => rm(root, { recursive: true, force: true }));
+after(() => removeScratch(root));
 
 test("short commands in non-Git folders report actual writes, not dependencies or secrets, and retry offline metadata", async () => {
   const folder = join(root, "project");

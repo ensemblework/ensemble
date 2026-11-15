@@ -5,13 +5,14 @@
  * holding one is handed to a run, and the OS sandbox denies them even inside a folder a run was given.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
 // The testing CLI's layout: its workspace inside its data folder (apps/cli/src/sidecar.ts).
-const scratch = mkdtempSync(join(homedir(), ".ensemble-data-denies-"));
+const scratch = homeScratch(".ensemble-data-denies-");
 const data = join(scratch, "com.ensemblework.cli.testing");
 const workspace = join(data, "workspace");
 mkdirSync(join(workspace, "runs", "job"), { recursive: true });
@@ -31,7 +32,7 @@ const { ensembleDataDenies, isEnsembleData } = await import("./data-denies.js");
 const { holdsProtected, outsideRefusal } = await import("./guard.js");
 const { capabilities, prepareSandbox, prepareSpawn, startSandboxed } = await import("./sandbox/spawn.js");
 const { browserDeniedPaths } = await import("../browser/paths.js");
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => removeScratch(scratch));
 
 test("the testing CLI's data folder is denied entry by entry, all but its workspace", () => {
   const denies = ensembleDataDenies();

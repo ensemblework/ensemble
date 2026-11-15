@@ -5,18 +5,21 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import type { WorkspaceJob } from "@prisma/client";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import { createHttpHarness } from "../test/http.js";
 
 const h = await createHttpHarness();
-const ws = realpathSync(mkdtempSync(join(homedir(), ".ensemble-folder-claims-test-")));
+const ws = realpathSync(homeScratch(".ensemble-folder-claims-test-"));
 after(async () => {
-  rmSync(ws, { recursive: true, force: true });
-  await h.close();
+  try {
+    await h.close();
+  } finally {
+    removeScratch(ws);
+  }
 });
 const { outsidePath } = await import("./tools.js");
 const { holdFolder, noteChanges, setFolderPollForTests, writtenOutside } = await import("./folder-claims.js");
@@ -219,8 +222,8 @@ test("two runs each waiting on the other's folder would wait forever: the second
 });
 
 test("what a run takes: never Ensemble's own cache or the workspace whole; a parent folder of another run's is no conflict for a change elsewhere in it", async () => {
-  const outside = realpathSync(mkdtempSync(join(homedir(), ".ensemble-folder-claims-outside-")));
-  after(() => rmSync(outside, { recursive: true, force: true }));
+  const outside = realpathSync(homeScratch(".ensemble-folder-claims-outside-"));
+  after(() => removeScratch(outside));
   const app = join(outside, "app");
   mkdirSync(app);
   const a = await run("Work in app");

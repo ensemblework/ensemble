@@ -15,17 +15,16 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 import type { HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-takeover-"));
+const scratch = homeScratch(".ensemble-takeover-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 // A node's commands work in its own folder here, never in the computer's real workspace.
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(scratch, "workspace");
@@ -152,11 +151,14 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
-  await closeCleanBrowsers().catch(() => undefined);
-  await shutdownBrowser().catch(() => undefined);
-  site.close();
-  await h.close();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    await closeCleanBrowsers().catch(() => undefined);
+    await shutdownBrowser().catch(() => undefined);
+    site.close();
+    await h.close();
+  } finally {
+    removeScratch(scratch);
+  }
 });
 
 type Call = { name: string; arguments: Record<string, unknown> };

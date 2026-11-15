@@ -5,19 +5,18 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const scratch = mkdtempSync(join(homedir(), ".ensemble-capture-runtime-"));
+const scratch = homeScratch(".ensemble-capture-runtime-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = scratch;
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 const { privacyRules } = await import("./runtime.js");
 const { updateSettings, loadSettings } = await import("../remote/store.js");
 const { encrypt } = await import("../lib/secrets.js");
-after(() => rmSync(scratch, { recursive: true, force: true }));
+after(() => removeScratch(scratch));
 
 test("the rules are the saved secret values and this computer's site lists", async () => {
   assert.deepEqual(loadSettings().captureSites, { never: [], preview: [] }, "none until the owner adds some");

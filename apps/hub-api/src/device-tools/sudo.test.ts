@@ -11,14 +11,14 @@ import assert from "node:assert/strict";
 import type { SpawnOptions } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import test, { after } from "node:test";
 import { sealFor } from "@ensemble/shared-types";
+import { homeScratch, removeScratch } from "../test/home-scratch.js";
 
-const base = mkdtempSync(join(homedir(), ".ensemble-node-sudo-"));
+const base = homeScratch(".ensemble-node-sudo-");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(base, "data");
 process.env.ENSEMBLE_WORKSPACE_ROOT = join(base, "ensemble-workspace");
@@ -31,7 +31,7 @@ const { saveSealKey, makeSealKey } = await import("../credentials/seal-key.js");
 const { updateSettings } = await import("../remote/store.js");
 const { setForegroundMsForTests } = await import("./run.js");
 
-after(() => rmSync(base, { recursive: true, force: true }));
+after(() => removeScratch(base));
 
 const folder = { path: join(base, "ensemble-workspace", "nodes", "helper"), label: "@helper's folder", own: true };
 mkdirSync(folder.path, { recursive: true });

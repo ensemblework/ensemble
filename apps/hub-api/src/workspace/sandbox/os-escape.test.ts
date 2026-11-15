@@ -12,6 +12,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { homeScratch, removeScratch } from "../../test/home-scratch.js";
 import type { SandboxPolicy } from "./policy.js";
 import { capabilities, prepareNetwork, prepareSandbox, prepareSpawn, setupSandbox, startSandboxed } from "./spawn.js";
 
@@ -61,7 +62,7 @@ test("the OS sandbox keeps a command inside its folder", { timeout: 300_000 }, a
     return;
   }
   // The work folder lives under the home folder, like ~/ensemble-workspace does.
-  const parent = mkdtempSync(join(home, "ensemble-escape-"));
+  const parent = homeScratch("ensemble-escape-");
   const root = join(parent, "work");
   const outside = join(parent, "outside");
   mkdirSync(root);
@@ -127,7 +128,7 @@ test("the OS sandbox keeps a command inside its folder", { timeout: 300_000 }, a
       assert.notEqual(result.code, 0, result.output);
     });
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    removeScratch(parent);
     rmSync(sneaky, { recursive: true, force: true });
   }
 });
@@ -143,7 +144,7 @@ test("Windows: the internet goes out only through the sandbox's proxy", { timeou
     return;
   }
   await prepareNetwork();
-  const parent = mkdtempSync(join(home, "ensemble-escape-proxy-"));
+  const parent = homeScratch("ensemble-escape-proxy-");
   const curl = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "curl.exe");
   const fetchPage = (network: "none" | "outbound") =>
     new Promise<{ code: number; output: string }>((resolve, reject) => {
@@ -161,7 +162,7 @@ test("Windows: the internet goes out only through the sandbox's proxy", { timeou
     const offline = await fetchPage("none");
     assert.notEqual(offline.code, 0, offline.output);
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    removeScratch(parent);
   }
 });
 
@@ -172,7 +173,7 @@ test("with the internet on, a sandboxed command resolves host names", { timeout:
     return;
   }
   await prepareNetwork();
-  const parent = mkdtempSync(join(home, "ensemble-escape-dns-"));
+  const parent = homeScratch("ensemble-escape-dns-");
   try {
     // getaddrinfo, as git and curl use it. On macOS it goes through mDNSResponder's Unix socket.
     const script = `require("dns").lookup("github.com",(e,a)=>{if(e){console.error(e.code);process.exit(3)}console.log(a);process.exit(0)})`;
@@ -184,7 +185,7 @@ test("with the internet on, a sandboxed command resolves host names", { timeout:
       assert.notEqual(offline.code, 0, "no name lookups with the internet off");
     }
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    removeScratch(parent);
   }
 });
 
@@ -195,7 +196,7 @@ test("a run with the internet on can reach the network stack", { timeout: 60_000
     return;
   }
   await prepareNetwork();
-  const parent = mkdtempSync(join(home, "ensemble-escape-net-"));
+  const parent = homeScratch("ensemble-escape-net-");
   try {
     const server = createServer((socket) => socket.end("hello")).listen(0, "127.0.0.1");
     await new Promise((resolve) => server.once("listening", resolve));
@@ -214,7 +215,7 @@ test("a run with the internet on can reach the network stack", { timeout: 60_000
       server.close();
     }
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    removeScratch(parent);
   }
 });
 
@@ -224,7 +225,7 @@ test("a process monitor lists this computer's processes but reads none of them, 
     t.skip(caps.osSandbox ? "Windows has no process monitor in a terminal here" : `no OS sandbox here: ${caps.reason}`);
     return;
   }
-  const root = mkdtempSync(join(homedir(), ".ensemble-escape-procs-"));
+  const root = homeScratch(".ensemble-escape-procs-");
   try {
     // This runtime's own process holds what a command must never read: its environment, its files.
     const target = process.pid;
@@ -245,6 +246,6 @@ test("a process monitor lists this computer's processes but reads none of them, 
     // bubblewrap keeps the monitor in its own PID namespace (Landlock shares the system's, as for every command there).
     if (caps.mechanism === "bubblewrap") assert.notEqual(seen.signal, "sent", "never a signal to a process outside the sandbox");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    removeScratch(root);
   }
 });
