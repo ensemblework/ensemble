@@ -49,6 +49,11 @@ export type EngineResult = {
   costUsd: number | null;
   /** The run's steps as the engine worked (tool calls, thinking, messages); the caller adds the result. */
   trace?: EngineTrace;
+  /**
+   * How many prompts the agent's session holds as the run ends, when the engine counted them: Cursor's agent
+   * and the ACP agents, from the history the agent replayed and the prompts this run sent (outside-runs.ts).
+   */
+  prompts?: number | null;
 };
 
 /** Keys that would make `claude -p` bill an API key instead of the person's own sign-in. */

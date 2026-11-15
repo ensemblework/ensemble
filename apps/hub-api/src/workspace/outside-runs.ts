@@ -5,6 +5,8 @@
  * - A run that continues a session brings in what the person said in it since Ensemble's last run there: a
  *   step on the run ("From the Claude app") and a short note leading its brief, then the session goes on.
  *   Each run notes how many prompts its session holds when it ends (`session_prompts`, a local event).
+ *   Claude Code's, Copilot's and Codex's history is read before the run starts; Cursor's agent and the ACP
+ *   agents replay theirs as the run reopens the session (`session/load`), so their engines hand it back then.
  * - A new task in an Ensemble project lists the sessions the person started themselves in the project's
  *   folder since the project's last Ensemble run (a Claude Code or Copilot session there, a thread in its
  *   Codex project): title, last message and files changed. Ensemble only reads them, and never resumes,
@@ -14,8 +16,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PrismaClient } from "@prisma/client";
-import type { CodeEngine, SubscriptionProvider } from "@ensemble/shared-types";
-import { claudeTurns, codexTurns, copilotTurns, outsideOf, readOutside, type Outside, type OutsideTurn } from "../subscriptions/outside.js";
+import { ENGINE_LABELS, type CodeEngine, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeTurns, codexTurns, copilotTurns, OUTSIDE_APPS, outsideOf, readOutside, type Outside, type OutsideTurn } from "../subscriptions/outside.js";
 import { claudeProjectName, sessionPrompts } from "../subscriptions/session-touch.js";
 
 type Events = Pick<PrismaClient, "workspaceEvent">;
@@ -27,34 +29,63 @@ async function codexThread(threadId: string): Promise<OutsideTurn[] | null> {
   return read?.value ? codexTurns(read.value.thread) : null;
 }
 
-/** How many prompts the agent's session holds now; null when that cannot be read here (other agents). */
+/**
+ * How many prompts the session holds now; null when that cannot be read here (Cursor's agent and the ACP agents,
+ * whose engines count them from the session's replay instead).
+ */
 export async function sessionPromptCount(engine: CodeEngine, session: string, folder: string): Promise<number | null> {
   if (engine === "codex") return (await codexThread(session))?.length ?? null;
   if (engine === "claude-code" || engine === "copilot-cli") return sessionPrompts(engine as SubscriptionProvider, session, folder);
   return null;
 }
 
-/** Notes how many prompts a run's session holds as it ends, for the next run in it. Never fails the run. */
-export async function noteSessionPrompts(ctx: { event: (kind: string, data: Record<string, unknown>) => Promise<void> }, engine: CodeEngine, session: string, folder: string): Promise<void> {
-  const prompts = await sessionPromptCount(engine, session, folder).catch(() => null);
+/**
+ * Notes how many prompts a run's session holds as it ends, for the next run in it: `counted` when the engine
+ * counted them itself, else read from the agent's history. Never fails the run.
+ */
+export async function noteSessionPrompts(ctx: { event: (kind: string, data: Record<string, unknown>) => Promise<void> }, engine: CodeEngine, session: string, folder: string, counted?: number | null): Promise<void> {
+  const prompts = typeof counted === "number" ? counted : await sessionPromptCount(engine, session, folder).catch(() => null);
   if (prompts !== null) await ctx.event("session_prompts", { session, prompts }).catch(() => undefined);
+}
+
+/** How many prompts the session held when Ensemble's last run in it ended; null when no run noted it yet. */
+async function promptsNoted(prisma: Events, session: string): Promise<number | null> {
+  const mark = await prisma.workspaceEvent.findFirst({ where: { kind: "session_prompts", data: { path: ["session"], equals: session } }, orderBy: { sequence: "desc" }, select: { data: true } });
+  const since = (mark?.data as { prompts?: unknown } | null)?.prompts;
+  return typeof since === "number" ? since : null;
 }
 
 /**
  * What the person said in this agent session since Ensemble's last run in it, or null: nothing was, the
- * agent's history cannot be read here, or no run noted the session's prompts yet.
+ * agent's history cannot be read before the run (Cursor's agent and the ACP agents: `replayOutside`), or no
+ * run noted the session's prompts yet.
  */
 export async function runOutside(prisma: Events, engine: CodeEngine, session: string, folder: string): Promise<Outside | null> {
-  const mark = await prisma.workspaceEvent.findFirst({ where: { kind: "session_prompts", data: { path: ["session"], equals: session } }, orderBy: { sequence: "desc" }, select: { data: true } });
-  const since = (mark?.data as { prompts?: unknown } | null)?.prompts;
-  if (typeof since !== "number") return null;
+  if (engine !== "codex" && engine !== "claude-code" && engine !== "copilot-cli") return null;
+  const since = await promptsNoted(prisma, session);
+  if (since === null) return null;
   if (engine === "codex") {
     const turns = await codexThread(session);
     return turns ? outsideOf("Codex", turns, since) : null;
   }
-  if (engine === "claude-code" || engine === "copilot-cli") return readOutside(engine as SubscriptionProvider, session, folder, since);
-  return null;
+  return readOutside(engine as SubscriptionProvider, session, folder, since);
 }
+
+/**
+ * The same for Cursor's agent and the ACP agents, from the history the agent replayed as the run reopened the
+ * session (`session/load`, as exchanges: `acpTurns`): what came after the prompts Ensemble's last run noted.
+ */
+export async function replayOutside(prisma: Events, engine: CodeEngine, session: string, history: OutsideTurn[]): Promise<Outside | null> {
+  const since = await promptsNoted(prisma, session);
+  return since === null ? null : outsideOf(OUTSIDE_APPS[engine] ?? ENGINE_LABELS[engine], history, since);
+}
+
+/**
+ * How Cursor's and the ACP engines hand the run the history the agent replayed as it reopened the session
+ * (`session/load`), as exchanges, before the prompt goes: what the run answers (the note on what the person
+ * said in the agent's own app) leads the prompt.
+ */
+export type ReplayHook = (session: string, history: OutsideTurn[]) => Promise<string | null>;
 
 const clip = (text: string, max: number) => {
   const flat = text.replace(/\s+/g, " ").trim();

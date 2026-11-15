@@ -9,13 +9,17 @@
  * reject-once, never "always" (that would change the person's own Cursor allowlist). Cursor's
  * questions (`cursor/ask_question`) and Ensemble's `ask_person` MCP tool reach Needs me. Cursor
  * takes no name for a session and names it from its first message, so a new task's session leads
- * with the task's title alone on its first line (app-sessions.ts).
+ * with the task's title alone on its first line (app-sessions.ts). The history Cursor replays as it
+ * reopens a session (`session/load`) is kept apart from the run's work and handed to the run
+ * (`onReplay`): what the person said there since Ensemble's last run leads the prompt.
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { cursorAgentProgram } from "../../subscriptions/agent-apps.js";
 import { withoutHostSession } from "../../subscriptions/host-session.js";
+import { acpTurns, MAX_REPLAYED } from "../../subscriptions/outside.js";
 import { appendLive, touchLive } from "../live-log.js";
+import type { ReplayHook } from "../outside-runs.js";
 import { askPerson, type JobContext } from "../tools.js";
 import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
@@ -123,7 +127,7 @@ export async function answerCursor(
 
 export async function runCursor(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace; onReplay?: ReplayHook },
 ): Promise<EngineResult> {
   const agent = await cursorAgentBinary();
   if (!agent) throw new Error("Cursor's agent is not on this computer (the `cursor-agent` command). Install it (curl https://cursor.com/install -fsS | bash), run `agent login`, and Run again.");
@@ -158,11 +162,19 @@ export async function runCursor(
   let sessionId: string | null = null;
   // How full the session's context window is, when Cursor reports it (session choice weighs it).
   const fill: { window: { used: number; size: number } | null } = { window: null };
-  // Reopening a chat session replays its history as updates: those are not this turn's reply.
+  // Reopening a session replays its history as updates: those are not this turn's reply, but they show
+  // what the person said in the agent's own app since Ensemble's last run there (outside-runs.ts).
   let replaying = false;
+  const replayed: Array<Record<string, unknown>> = [];
+  let overflow = false;
   rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update" || replaying) return;
+    if (method !== "session/update") return;
+    if (replaying) {
+      if (replayed.length < MAX_REPLAYED) replayed.push(params);
+      else overflow = true;
+      return;
+    }
     const update = (params.update ?? {}) as {
       sessionUpdate?: string;
       content?: { type?: string; text?: string } | Array<{ content?: { type?: string; text?: string } }>;
@@ -266,7 +278,12 @@ export async function runCursor(
     const current = (session.models as { currentModelId?: unknown } | undefined)?.currentModelId;
     await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId, observed: typeof current === "string" && current ? { model: current } : {} });
     await ctx.progress("Cursor started");
-    const text = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
+    // The reopened session's history as exchanges: the run brings in what the person said in the agent's own
+    // app since its last run there, and its note leads the prompt.
+    const history = options.resume && !overflow ? acpTurns(replayed) : null;
+    const note = history && options.onReplay ? await options.onReplay(sessionId, history).catch(() => null) : null;
+    const brief = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
+    const text = note ? `${note}\n\n${brief}` : brief;
     const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     result.turns = 1;
     result.tokensIn += done.usage?.inputTokens ?? 0;
@@ -277,6 +294,8 @@ export async function runCursor(
     if (done.stopReason === "refusal") throw new Error("Cursor's agent refused the task.");
     await flushThought();
     result.text = reply.trim();
+    // The session's prompts now, for the next run's replay: the replayed ones and this run's. Not counted when the history was not read.
+    result.prompts = history || !options.resume ? (history?.length ?? 0) + result.turns : null;
     return result;
   } catch (error) {
     if (ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");

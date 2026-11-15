@@ -26,6 +26,8 @@ export type Outside = { app: string; turns: OutsideTurn[]; earlier: number };
 
 export const MAX_OUTSIDE_TURNS = 20;
 export const MAX_OUTSIDE_CHARS = 20_000;
+/** At most this many updates of a replayed ACP session are kept to read what the person added; a longer history is not read. */
+export const MAX_REPLAYED = 50_000;
 /** One message brought in is cut to this. */
 const MAX_PART = 4_000;
 /** A transcript larger than this is not read. */

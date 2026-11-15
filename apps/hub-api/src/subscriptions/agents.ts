@@ -43,7 +43,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
-import { acpTurns, codexTurns, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
+import { acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
 import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
@@ -156,8 +156,6 @@ class SessionGone extends Error {
 class SessionBusy extends Error {
   outside: Outside | null = null;
 }
-/** At most this many updates of a replayed session are kept to read what the person added (outside.ts). */
-const MAX_REPLAYED = 50_000;
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
 

@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { acpTurns } from "../subscriptions/outside.js";
 import { claudeProjectName } from "../subscriptions/session-touch.js";
 import { deleteNativeSession } from "./engines/delete-session.js";
-import { outsideNote, outsideStep, projectSessions, projectSessionsNote, runOutside } from "./outside-runs.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, replayOutside, runOutside } from "./outside-runs.js";
 
 const jsonl = (rows: unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
 const said = (text: string, entrypoint = "claude-desktop-3p") => ({ type: "user", entrypoint, timestamp: "2026-11-15T07:05:00.000Z", message: { role: "user", content: text } });
@@ -43,6 +44,29 @@ test("a run that continues a Claude Code session brings in what the person said 
     else process.env.CLAUDE_CONFIG_DIR = saved;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Cursor's agent and the ACP agents: what the person said comes from the session's replay, after the prompts the last run noted, and the engine's own count is noted", async () => {
+  const update = (value: Record<string, unknown>) => ({ sessionId: "ses_1", update: value });
+  const history = acpTurns([
+    update({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Write the plan." } }),
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Wrote it." } }),
+    update({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "Also remember MANGO" } }),
+    update({ sessionUpdate: "tool_call", kind: "edit", locations: [{ path: "/w/plan.md" }] }),
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Noted MANGO." } }),
+  ]);
+  const noted = (prompts: number) => events([{ kind: "session_prompts", data: { session: "ses_1", prompts } }]);
+  assert.equal(await replayOutside(events([]), "opencode", "ses_1", history), null, "no run noted the session's prompts yet");
+  assert.deepEqual(await replayOutside(noted(1), "opencode", "ses_1", history), { app: "OpenCode", turns: [{ prompt: "Also remember MANGO", answer: "Noted MANGO.", tools: "Edited 1 file", files: ["/w/plan.md"] }], earlier: 0 });
+  assert.equal((await replayOutside(noted(1), "cursor-agent", "ses_1", history))?.app, "Cursor");
+  assert.equal(await replayOutside(noted(2), "opencode", "ses_1", history), null, "nothing since");
+  assert.equal(await runOutside(noted(1), "opencode", "ses_1", "/w"), null, "not read before the run: the engine hands the replay over");
+
+  const marks: unknown[] = [];
+  const ctx = { event: async (kind: string, data: Record<string, unknown>) => void marks.push([kind, data]) };
+  await noteSessionPrompts(ctx, "opencode", "ses_1", "/w", 3);
+  await noteSessionPrompts(ctx, "opencode", "ses_1", "/w", null);
+  assert.deepEqual(marks, [["session_prompts", { session: "ses_1", prompts: 3 }]], "the engine's count; none when it could not count");
 });
 
 test("a new task in a project lists the sessions the person started there since its last run, never Ensemble's, and its clean-up leaves them", async () => {
