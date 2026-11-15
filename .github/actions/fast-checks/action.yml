@@ -42,7 +42,7 @@ runs:
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/bridge/docs.test.ts src/docs-helper/helper.test.ts src/docs-helper/routes.integration.test.ts src/docs-helper/history.integration.test.ts src/docs-helper/policy.test.ts src/routes/mcp.integration.test.ts
     - name: Shared assistant interaction contracts
       shell: bash
-      run: pnpm --filter @ensemble/hub-web exec node --import tsx --test components/assistant/ask-launcher.test.ts components/assistant/use-panel-size.test.tsx lib/docs-helper.test.ts
+      run: pnpm --filter @ensemble/hub-web exec node --import tsx --test components/assistant/ask-launcher.test.ts components/assistant/use-panel-size.test.tsx lib/docs-helper.test.ts lib/docs-search.test.ts
     - name: Focused web and API regressions
       shell: bash
       run: |

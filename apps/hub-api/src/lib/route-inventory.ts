@@ -28,7 +28,7 @@ export type InventoryRoute = {
 
 export function routeAuth(method: string, path: string): RouteAuth {
   if (method === "OPTIONS") return "cors-preflight";
-  if (path === "/api/docs/history") return "docs-session";
+  if ((path === "/api/docs/history" || path === "/api/docs/chats")) return "docs-session";
   if (path === "/api/events") return "event-ticket-or-identity";
   if (path === "/api/devices/register") return "device-registration-proof";
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";

@@ -403,6 +403,7 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
 
 export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/docs/session": ["happy-path", "isolation"],
+  "GET /api/docs/chats": ["happy-path", "isolation", "invalid-input"],
   "GET /api/docs/history": ["happy-path", "isolation", "invalid-input"],
   "DELETE /api/docs/history": ["happy-path", "isolation"],
   "POST /api/docs/logout": ["happy-path", "isolation"],

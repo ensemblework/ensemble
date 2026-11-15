@@ -13,7 +13,8 @@ import { authWebOrigin } from "../lib/auth-email.js";
 import { DOCS_ASK_PATH, DOCS_ORIGIN, DOCS_RETURN } from "./paths.js";
 export { isDocsPath } from "./paths.js";
 export const docsCors: FastifyCorsOptions = { origin: DOCS_ORIGIN, credentials: true, methods: ["GET", "POST", "DELETE"], allowedHeaders: ["Content-Type", "x-ensemble-docs-account"], exposedHeaders: ["Retry-After"] };
-const Question = z.object({ question: z.string().trim().min(1).max(500), remember: z.boolean().optional() }).strict();
+const ChatId = z.union([z.literal("legacy"), z.string().uuid()]);
+const Question = z.object({ question: z.string().trim().min(1).max(500), remember: z.boolean().optional(), chatId: ChatId.optional() }).strict();
 export type DocsDependencies = { index: ReturnType<typeof documentationIndex>; call: typeof callIncludedDocs; admit: (address: string) => Promise<number> };
 const historyRate = new MemoryRateLimiter();
 
@@ -34,12 +35,19 @@ export async function docsHelperRoutes(app: FastifyInstance, options: { dependen
     const who = await identity(request);
     return { user: who ? { id: who.id, name: who.name } : null, loginUrl: `${authWebOrigin()}/login?next=${encodeURIComponent(DOCS_RETURN)}` };
   });
+  app.get("/api/docs/chats", async (request, reply) => {
+    const who = await identity(request);
+    if (!who) return reply.code(401).send({ error: "Sign in to view your docs chats." });
+    if (!sameAccount(request, who.id)) return reply.code(409).send(changed);
+    const { before } = z.object({ before: ChatId.optional() }).parse(request.query);
+    return history.chats(who.id, before);
+  });
   app.get("/api/docs/history", async (request, reply) => {
     const who = await identity(request);
     if (!who) return reply.code(401).send({ error: "Sign in to view your docs history." });
     if (!sameAccount(request, who.id)) return reply.code(409).send(changed);
-    const { before } = z.object({ before: z.string().uuid().optional() }).parse(request.query);
-    return history.list(who.id, before);
+    const { before, chatId } = z.object({ before: z.string().uuid().optional(), chatId: ChatId.optional() }).parse(request.query);
+    return history.list(who.id, before, chatId);
   });
   app.delete("/api/docs/history", async (request, reply) => {
     const who = await identity(request);
@@ -74,7 +82,7 @@ export async function docsHelperRoutes(app: FastifyInstance, options: { dependen
       const answer = outsideDocs(parsed.data.question) ? scopeRefusal() : await answerQuestion(parsed.data.question, await deps.index(), (payload) => deps.call(payload, fetch, controller.signal));
       if (controller.signal.aborted) return;
       if (!who || generation === null) return answer;
-      const turn = await history.save(who, generation, parsed.data.question, answer);
+      const turn = await history.save(who, generation, parsed.data.question, answer, parsed.data.chatId);
       return { ...answer, saved: Boolean(turn), turn };
     } catch {
       return reply.code(503).send({ error: "The docs helper could not answer. Try again or use search." });
