@@ -20,6 +20,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ENGINE_LABELS, type AcpEngine } from "@ensemble/shared-types";
+import { opencodeProgram } from "../../subscriptions/agent-apps.js";
 import { antigravityArgs, antigravityAuthLink, antigravityEnv, antigravityInstalled } from "../../subscriptions/antigravity.js";
 import { agentEnv, quickRun } from "../../subscriptions/detect.js";
 import { GuardError } from "../guard.js";
@@ -135,7 +136,8 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     login: "Run `opencode auth login` there (or press Sign in under Settings → Models), then Run again.",
     sandbox: () => null,
     launch: async (input) => {
-      const found = await onPath("opencode");
+      // Also where OpenCode's installer puts it, or the copy the OpenCode app runs itself.
+      const found = await opencodeProgram({}, onPath);
       if (!found) return null;
       // Both ways OpenCode reads inline settings, so an older OpenCode without OPENCODE_PERMISSION still asks.
       const env = agentEnv({

@@ -47,8 +47,8 @@ import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
-import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
-import { startSignIn } from "../subscriptions/signin.js";
+import { appPresence, cachedAgents, detectAgents } from "../subscriptions/detect.js";
+import { startSetUp, startSignIn } from "../subscriptions/signin.js";
 import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, PROJECT_DELETE_API, parseClaim, RUNTIME_REPLACED_EVENT, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
@@ -132,6 +132,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // A deleted Ensemble project's Codex projects here go too (docs/30, In the agents' own apps).
     projectDelete: PROJECT_DELETE_API,
     agents: await agentsNow(),
+    // Agents' apps here that come without the agent (the Cursor app, VS Code with Copilot): the web offers Set up (`agents.setup`).
+    agentApps: appPresence(),
     // Coding agents this runtime can run a code task with; the web refuses others for this computer.
     engines: [...CODE_ENGINES],
     // Runs here can end in a pull request into any branch, and take any branch or git choice from the web (docs/24 §5.1).
@@ -410,6 +412,13 @@ async function session(app: FastifyInstance, base: string, token: string, parent
           const agent = typeof data === "object" && data !== null ? (data as { agent?: unknown }).agent : null;
           if (SUBSCRIPTION_PROVIDERS.includes(agent as SubscriptionProvider)) {
             void startSignIn(agent as SubscriptionProvider, () => void beat(app, client, signal).catch(fail)).catch((error: unknown) => app.log.warn({ err: error }, "sign-in could not start"));
+          }
+        }
+        // An agent whose app is here without it: the vendor's installer in a terminal window, then the same sign-in.
+        if (event === "agents.setup") {
+          const agent = typeof data === "object" && data !== null ? (data as { agent?: unknown }).agent : null;
+          if (SUBSCRIPTION_PROVIDERS.includes(agent as SubscriptionProvider)) {
+            void startSetUp(agent as SubscriptionProvider, () => void beat(app, client, signal).catch(fail)).catch((error: unknown) => app.log.warn({ err: error }, "set up could not start"));
           }
         }
       };

@@ -2,7 +2,7 @@
 
 import { Search, Sparkles, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { appWithoutAgent, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import type { SubscriptionComputer } from "@/lib/api";
 import { cx, Tag } from "../ui";
 import { Modal } from "./modal";
@@ -11,8 +11,9 @@ import { statusOf, SubscriptionMark } from "./subscriptions";
 const DOT = { green: "bg-ok", orange: "bg-[var(--warn)]", blue: "bg-accent", gray: "bg-line-strong" } as const;
 
 /**
- * Every AI plan Ensemble can use, like Manage API keys: the ones on your computer first, then the
- * rest with how to add them. Settings › Models shows only the ones found.
+ * Every AI plan Ensemble can use, like Manage API keys: the ones on your computer first (an agent's
+ * app there without the agent among them, with Set up), then the rest with how to add them.
+ * Settings › Models shows only the ones found.
  */
 export function SubscriptionsDialog({
   open,
@@ -31,8 +32,9 @@ export function SubscriptionsDialog({
 }) {
   const [query, setQuery] = useState("");
   const agentOf = (id: SubscriptionProvider): SubscriptionAgent | null => computer?.agents.find((row) => row.id === id) ?? null;
-  const found = SUBSCRIPTION_PROVIDERS.filter((id) => agentOf(id));
-  const rest = SUBSCRIPTION_PROVIDERS.filter((id) => !agentOf(id));
+  const appOf = (id: SubscriptionProvider) => (computer ? appWithoutAgent(id, computer.agents, computer.apps) : null);
+  const found = SUBSCRIPTION_PROVIDERS.filter((id) => agentOf(id) || appOf(id));
+  const rest = SUBSCRIPTION_PROVIDERS.filter((id) => !agentOf(id) && !appOf(id));
   const [picked, setPicked] = useState<SubscriptionProvider | null>(null);
   const pane = picked ?? found.find((id) => agentOf(id)?.signedIn === true) ?? found[0] ?? SUBSCRIPTION_PROVIDERS[0]!;
   const matches = useMemo(() => {
@@ -48,7 +50,7 @@ export function SubscriptionsDialog({
       <div className="flex shrink-0 gap-1 sm:flex-col">
         <div className="hidden px-2 pb-0.5 pt-2 text-2xs uppercase tracking-wide text-faint sm:block">{title}</div>
         {shown.map((id) => {
-          const status = statusOf(agentOf(id));
+          const status = statusOf(agentOf(id), appOf(id));
           const active = pane === id;
           return (
             <button

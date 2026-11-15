@@ -7,10 +7,15 @@
  * sign-in page it prints (`antigravity.ts`). The tool keeps the sign-in where it always does;
  * Ensemble never sees it. Then the tool is checked again every few seconds until it reports a
  * sign-in, or for six minutes.
+ *
+ * Setting up an agent whose app is here without it (the Cursor app, VS Code with Copilot;
+ * `agent-apps.ts`): the terminal window runs the vendor's own installer first, the one the Cursor
+ * app's `cursor agent` runs or GitHub's for Copilot CLI, then the same login.
  */
 import { homedir } from "node:os";
-import { SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
-import { openLink } from "../workspace/handoff.js";
+import { AGENT_APP_INFO, AGENT_APPS, SUBSCRIPTION_INFO, type AgentApp, type SubscriptionProvider } from "@ensemble/shared-types";
+import { openLink, psQuote, shQuote, type HandoffOpen } from "../workspace/handoff.js";
+import { appPresence, installedProgram, type Where } from "./agent-apps.js";
 import { signInAntigravity } from "./antigravity.js";
 import { agentBinary, refreshAgent } from "./detect.js";
 
@@ -33,8 +38,29 @@ export const LOGIN_ARGS: Record<Exclude<SubscriptionProvider, "antigravity">, st
 };
 
 const WATCH_MS = 6 * 60_000;
+/** A set up also waits for the vendor's download and install before the sign-in. */
+const SETUP_WATCH_MS = 20 * 60_000;
 const EVERY_MS = 8_000;
 const watching = new Set<SubscriptionProvider>();
+
+/** Checks the agent again every few seconds until it reports a sign-in or the time is up, then says so once. */
+function watchSignIn(agent: SubscriptionProvider, forMs: number, onChange: () => void): void {
+  if (watching.has(agent)) return;
+  watching.add(agent);
+  const started = Date.now();
+  const timer = setInterval(() => {
+    void refreshAgent(agent)
+      .then((row) => {
+        if (row?.signedIn || Date.now() - started > forMs) {
+          clearInterval(timer);
+          watching.delete(agent);
+          onChange();
+        }
+      })
+      .catch(() => undefined);
+  }, EVERY_MS);
+  timer.unref?.();
+}
 
 export async function startSignIn(
   agent: SubscriptionProvider,
@@ -55,21 +81,62 @@ export async function startSignIn(
     throw new Error(`${label} is not on this computer. ${info.install.label} (${info.install.url}) first.`);
   }
   await open({ url: null, commands: [], terminal: { folder: homedir(), program: found.path, args: [...(found.args ?? []), ...LOGIN_ARGS[agent]] } });
-  if (!watching.has(agent)) {
-    watching.add(agent);
-    const started = Date.now();
-    const timer = setInterval(() => {
-      void refreshAgent(agent)
-        .then((row) => {
-          if (row?.signedIn || Date.now() - started > WATCH_MS) {
-            clearInterval(timer);
-            watching.delete(agent);
-            onChange();
-          }
-        })
-        .catch(() => undefined);
-    }, EVERY_MS);
-    timer.unref?.();
-  }
+  watchSignIn(agent, WATCH_MS, onChange);
   return `A ${label} sign-in window opened on this computer. Finish signing in there; the browser shows ${label}'s own sign-in page.`;
+}
+
+const SET_UP: Record<AgentApp, { app: string; program: string; installer: string; signIn: string }> = {
+  "cursor-app": { app: "The Cursor app", program: "Cursor's agent", installer: "Cursor's installer", signIn: "Cursor's sign-in" },
+  "vscode-copilot": { app: "VS Code with GitHub Copilot", program: "Copilot CLI", installer: "GitHub's installer", signIn: "Copilot's sign-in" },
+};
+
+const NOT_FINISHED = "Setup did not finish.";
+
+/**
+ * What Set up runs in the terminal window: the vendor's own installer (`AGENT_APP_INFO`'s command, WinGet
+ * for Copilot on Windows), then the agent's login from where that installer put it. A window that would
+ * close by itself stays open when either fails, so the person can read why.
+ */
+export function setupCommand(app: AgentApp, input: Partial<Pick<Where, "platform" | "home" | "env">> = {}): Pick<NonNullable<HandoffOpen["terminal"]>, "program" | "args"> {
+  const platform = input.platform ?? process.platform;
+  const info = AGENT_APP_INFO[app];
+  const login = LOGIN_ARGS[info.agent as Exclude<SubscriptionProvider, "antigravity">];
+  if (platform === "win32") {
+    // Cursor's installer puts its folder on the PATH; WinGet's new Links folder needs the PATH read again.
+    const program = app === "cursor-app" ? "$program = Join-Path $env:LOCALAPPDATA 'cursor-agent\\cursor-agent.exe'" : "$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'); $program = (Get-Command copilot -ErrorAction SilentlyContinue).Source";
+    const install = app === "cursor-app" ? info.install.windows : `if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Host ${psQuote(`WinGet is not on this computer. Install Copilot CLI from ${SUBSCRIPTION_INFO[info.agent].install.url}, then press Sign in.`)}; exit 1 }; ${info.install.windows} --exact --source winget`;
+    const script = `${install}; ${program}; if ($program -and (Test-Path -LiteralPath $program)) { & $program ${login.map(psQuote).join(" ")} } else { Write-Host ${psQuote(NOT_FINISHED)} }`;
+    return { program: "powershell.exe", args: ["-NoProfile", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] };
+  }
+  const installed = installedProgram(app, { platform, home: input.home ?? homedir(), env: input.env ?? process.env });
+  const script = [
+    info.install.unix,
+    `if [ -x ${shQuote(installed)} ]; then ${[installed, ...login].map(shQuote).join(" ")} && exit 0; fi`,
+    "echo",
+    `printf '%s ' ${shQuote(`${NOT_FINISHED} Press Return to close this window.`)}`,
+    "read -r _",
+  ].join("\n");
+  return { program: "/bin/sh", args: ["-c", script] };
+}
+
+/**
+ * Set up for an agent whose app is here without it: a terminal window runs the vendor's installer, then the
+ * agent's sign-in, and the agent is checked again until it is signed in. With the agent already here, only the sign-in.
+ */
+export async function startSetUp(agent: SubscriptionProvider, onChange: () => void, open: typeof openLink = openLink): Promise<string> {
+  const info = SUBSCRIPTION_INFO[agent];
+  const app = AGENT_APPS.find((row) => AGENT_APP_INFO[row].agent === agent);
+  if (!app) throw new Error(`Ensemble sets up only Cursor's agent and Copilot CLI. ${info.install.label} (${info.install.url}).`);
+  if (!appPresence().includes(app)) throw new Error(`${SET_UP[app].app} was not found on this computer. ${info.install.label} (${info.install.url}) instead.`);
+  if (await agentBinary(agent)) return startSignIn(agent, onChange, open);
+  await open({ url: null, commands: [], terminal: { folder: homedir(), ...setupCommand(app) } });
+  watchSignIn(agent, SETUP_WATCH_MS, onChange);
+  const copy = SET_UP[app];
+  return `A terminal window opened on this computer: it installs ${copy.program} with ${copy.installer}, then opens ${copy.signIn}. Finish signing in there.`;
+}
+
+/** The web's words for a set up started on another computer. */
+export function setUpMessage(app: AgentApp, computer: string): string {
+  const copy = SET_UP[app];
+  return `A terminal window is opening on ${computer}: it installs ${copy.program} with ${copy.installer}, then opens ${copy.signIn}. Finish signing in there.`;
 }

@@ -144,7 +144,7 @@ Use these commands to connect an account, leave it or diagnose a setup problem.
 |---|---|
 | `ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]` | Device login (§4). Saves the MCP key with the grants approved on the `/link` page (changes, connected apps); when "Run tasks" is also approved, pairs this computer as a device |
 | `ensemble logout` | Revokes the key on the server, unpairs the device, clears local credentials. If the server is unreachable it still clears this computer and names the key to revoke under Connect your apps |
-| `ensemble status [--json]`, `ensemble doctor` | Account, API, sign-in, pairing, runner, folders (repositories marked), model keys, the secret key's fingerprint and the secrets mode, sandbox, configured editors. `doctor` exits 1 when a check fails and says how to fix it |
+| `ensemble status [--json]`, `ensemble doctor` | Account, API, sign-in, pairing, runner, folders (repositories marked), model keys, the secret key's fingerprint and the secrets mode, sandbox, configured editors. `doctor` exits 1 when a check fails and says how to fix it. With the runner running, `doctor` also notes an agent's app found without its agent, the Cursor app or VS Code with Copilot (`note  Cursor app found. Set up its agent: …`), with the vendor's install command and sign-in; a note is not a failure (`agent-apps.ts`, from the runner's `GET /api/subscriptions`; [30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)) |
 
 #### Choose folders and remote access
 
