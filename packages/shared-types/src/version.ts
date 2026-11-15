@@ -1,2 +1,2 @@
 /** Generated from release.json. Every surface uses this release number. */
-export const ENSEMBLE_VERSION = "0.8.1";
+export const ENSEMBLE_VERSION = "0.8.2";
