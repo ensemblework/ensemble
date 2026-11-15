@@ -24,6 +24,9 @@ if (process.platform !== "win32" || !match) {
 const [, version, target] = match;
 if (target !== `windows-${process.arch}`) throw new Error(`${basename(archive)} is not the build for this computer (windows-${process.arch}).`);
 const sha256 = createHash("sha256").update(readFileSync(archive)).digest("hex");
+// Windows PowerShell started from PowerShell 7 (as a CI step is) inherits 7's module path, and then cannot load
+// its own Get-FileHash. Without PSModulePath it builds its own, as when started from Explorer or a terminal.
+const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
 
 const cases = [{ served: basename(archive), expect: target }];
 // The same bytes under the x64 name stand in for a release published before Windows on Arm builds.
@@ -61,7 +64,7 @@ async function install(served, installDir) {
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   try {
     const env = {
-      ...process.env,
+      ...baseEnv,
       ENSEMBLE_VERSION: version,
       ENSEMBLE_DOWNLOAD_BASE: `http://127.0.0.1:${server.address().port}`,
       ENSEMBLE_INSTALL_DIR: installDir,
@@ -84,7 +87,7 @@ async function install(served, installDir) {
 }
 
 function powershell(command, env = {}) {
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", env: { ...process.env, ...env } });
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", env: { ...baseEnv, ...env } });
   if (result.status !== 0) throw new Error(`powershell.exe failed: ${result.stderr}`);
   return result.stdout;
 }
