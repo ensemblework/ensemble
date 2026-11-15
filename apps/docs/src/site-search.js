@@ -10,7 +10,9 @@ export function mountSearch() {
   let publication, loading, timer, generation = 0, selected = -1, hits = [], pending = false, enterPending = null;
   const apple = /Mac|iPhone|iPad/.test(navigator.platform);
   trigger.querySelector('kbd').textContent = apple ? '⌘ K' : 'Ctrl K';
+  const useful = query => query.replace(/\b(?:how|do|does|i|we|you|the|a|an|can|could|where|what|is|are|to|in|of|my|please)\b/gi, ' ').replace(/\s+/g, ' ').trim() || query;
   function highlight(element, text, query) {
+    query = useful(query);
     const words = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])];
     const pattern = words.length ? new RegExp(`(${words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'giu') : null;
     if (!pattern) { element.textContent = text; return; }
@@ -61,7 +63,7 @@ export function mountSearch() {
       }
       if (current !== generation || !dialog.open) return;
       if (query) {
-        const meaningful = query.replace(/\b(?:how|do|does|i|we|you|the|a|an|can|could|where|what|is|are|to|in|of|my|please)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        const meaningful = useful(query);
         hits = searchDocs(publication, meaningful || query, 12).results;
       }
       else hits = ['/00_project_overview/', '/28_ensemble_spaces/', '/29_sharing/', '/31_connectors_in_use/', '/32_files/', '/40_public_documentation/'].flatMap(path => {
