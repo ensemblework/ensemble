@@ -220,6 +220,61 @@ export function parseSubscriptionAgents(value: unknown): SubscriptionAgent[] {
 }
 
 /**
+ * Agents' desktop apps that come without the program Ensemble runs (docs/30 §8): the Cursor app
+ * (its agent is a separate install, `cursor-agent`) and VS Code with GitHub Copilot (Copilot runs
+ * inside VS Code; Ensemble needs Copilot CLI). A computer reports the ones it has (capabilities
+ * `agentApps`); with the app and not the agent, Set up installs the agent there with the vendor's
+ * own installer, then signs in.
+ */
+export const AGENT_APPS = ["cursor-app", "vscode-copilot"] as const;
+export type AgentApp = (typeof AGENT_APPS)[number];
+
+export type AgentAppInfo = {
+  /** The subscription whose agent the app goes with. */
+  agent: SubscriptionProvider;
+  /** How people call the app: "Cursor app found". */
+  name: string;
+  /** What Set up adds: "Set up its agent". */
+  setsUp: string;
+  /** The vendor's own install command, for a person to run themselves, then the agent's sign-in. */
+  install: { unix: string; windows: string; login: string };
+};
+
+export const AGENT_APP_INFO: Record<AgentApp, AgentAppInfo> = {
+  "cursor-app": {
+    agent: "cursor-agent",
+    name: "Cursor app",
+    setsUp: "its agent",
+    // What the app's own `cursor agent` runs when the agent is missing.
+    install: { unix: "curl https://cursor.com/install -fsS | bash", windows: "irm 'https://cursor.com/install?win32=true' | iex", login: "cursor-agent login" },
+  },
+  "vscode-copilot": {
+    agent: "copilot-cli",
+    name: "VS Code",
+    setsUp: "Copilot CLI",
+    install: { unix: "curl -fsSL https://gh.io/copilot-install | bash", windows: "winget install GitHub.Copilot", login: "copilot login" },
+  },
+};
+
+export function isAgentApp(value: unknown): value is AgentApp {
+  return (AGENT_APPS as readonly unknown[]).includes(value);
+}
+
+/** Read a computer's `agentApps` capability; an app this version does not know is left out. */
+export function parseAgentApps(value: unknown): AgentApp[] {
+  return Array.isArray(value) ? [...new Set(value.filter(isAgentApp))] : [];
+}
+
+/**
+ * The app a computer has for this subscription while it lacks the agent itself ("Cursor app found.
+ * Set up its agent"), or null: the agent is there, or no such app is.
+ */
+export function appWithoutAgent(id: SubscriptionProvider, agents: readonly Pick<SubscriptionAgent, "id">[], apps: readonly AgentApp[] | null | undefined): AgentApp | null {
+  if (agents.some((agent) => agent.id === id)) return null;
+  return (apps ?? []).find((app) => AGENT_APP_INFO[app].agent === id) ?? null;
+}
+
+/**
  * The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2
  * also takes the files attached to the person's message, 3 keeps one agent session per chat, 4 lets
  * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor.

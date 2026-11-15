@@ -56,6 +56,11 @@ runs:
         pnpm --filter ensemblework exec node --import tsx --test src/runner-service.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
+        # Agents' apps without their command line: detection, Set up and its route, the tiles and `ensemble doctor` (docs/30 §8).
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.integration.test.ts
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/subscriptions.test.tsx
+        pnpm --filter ensemblework exec node --import tsx --test src/agent-apps.test.ts
     - name: Active places and conditional saves
       shell: bash
       run: |

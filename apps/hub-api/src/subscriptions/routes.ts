@@ -1,8 +1,9 @@
 /**
  * Routes for the person's AI subscriptions (docs/30 §8, docs/25 §4.7).
  *
- * For the web: which computers have which agents (`GET /api/subscriptions`), check again, and
- * start a sign-in there. On the desktop runtime the computer is this one.
+ * For the web: which computers have which agents (`GET /api/subscriptions`), check again, start a
+ * sign-in there, and set up an agent whose app is there without it. On the desktop runtime the
+ * computer is this one.
  *
  * For a paired computer running an assistant turn the web handed it (device token only): read
  * the turn and the files attached to the message, call its tools, stream the reply text, say it
@@ -11,16 +12,17 @@
 import { hostname } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { ASSISTANT_TURNS_MIN, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent } from "@ensemble/shared-types";
+import { AGENT_APP_INFO, ASSISTANT_TURNS_MIN, parseAgentApps, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type AgentApp, type SubscriptionAgent } from "@ensemble/shared-types";
+import type { Device } from "@prisma/client";
 import { deviceOnline } from "../devices/constants.js";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { ownDevice } from "../devices/routes.js";
 import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
-import { detectAgents } from "./detect.js";
+import { appPresence, detectAgents } from "./detect.js";
 import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
-import { startSignIn } from "./signin.js";
+import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
 import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
 import { MAX_OUTSIDE_TURNS } from "./outside.js";
@@ -39,7 +41,15 @@ export type SubscriptionComputer = {
   /** Whether it can run assistant turns at all (new enough). */
   ready: boolean;
   agents: SubscriptionAgent[];
+  /** Agents' apps there that come without the agent (the Cursor app, VS Code with Copilot): Set up adds it. */
+  apps: AgentApp[];
 };
+
+/** The agents' apps a computer reports (capabilities `agentApps`); null from a runtime too old to set an agent up. */
+function computerApps(device: Pick<Device, "capabilities">): AgentApp[] | null {
+  const reported = (device.capabilities as { agentApps?: unknown } | null)?.agentApps;
+  return Array.isArray(reported) ? parseAgentApps(reported) : null;
+}
 
 const Target = z.object({ deviceId: z.string().min(1).max(80) });
 const SignIn = Target.extend({ agent: z.enum(SUBSCRIPTION_PROVIDERS) });
@@ -98,7 +108,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(prisma, request.userId);
     if (isDesktopRuntime()) {
       const agents = await detectAgents();
-      const computer: SubscriptionComputer = { id: "local", name: hostname().replace(/\.local$/, "") || "This computer", platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents };
+      const computer: SubscriptionComputer = { id: "local", name: hostname().replace(/\.local$/, "") || "This computer", platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents, apps: appPresence() };
       return { computers: [computer], preferred: settings.models.computer };
     }
     const devices = await prisma.device.findMany({ where: { userId: { in: deviceOwners(request.userId) }, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
@@ -114,6 +124,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
         appVersion: device.appVersion,
         ready: caps.turns >= ASSISTANT_TURNS_MIN,
         agents: deviceOnline(device.lastSeenAt) ? caps.agents : [],
+        apps: deviceOnline(device.lastSeenAt) ? (computerApps(device) ?? []) : [],
       };
     });
     return { computers, preferred: settings.models.computer };
@@ -142,6 +153,28 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     publishDeviceFrame(found.device.id, "agents.signin", { agent: body.agent });
     await appendLedger({ userId: request.userId, actor: "me", action: "subscription.sign_in", payload: { deviceId: found.device.id, agent: body.agent } }).catch(() => undefined);
     return reply.code(202).send({ message: `A sign-in window is opening on ${found.device.name}. Finish signing in there.` });
+  });
+
+  // An agent's app without the agent (the Cursor app, VS Code with Copilot): install the agent there with the vendor's installer, then sign in.
+  app.post("/api/subscriptions/set-up", async (request, reply) => {
+    const body = SignIn.parse(request.body);
+    if (isDesktopRuntime()) {
+      try {
+        return { message: await startSetUp(body.agent, () => undefined) };
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const found = await ownedComputer(request.userId, body.deviceId);
+    if (!found.ok) return reply.code(found.status).send({ error: found.error });
+    const info = SUBSCRIPTION_INFO[body.agent];
+    const apps = computerApps(found.device);
+    if (!apps) return reply.code(409).send({ error: `Update Ensemble on ${found.device.name} to set up ${info.label} there from here.` });
+    const setUp = apps.find((row) => AGENT_APP_INFO[row].agent === body.agent);
+    if (!setUp) return reply.code(409).send({ error: `${found.device.name} has no app Ensemble can set ${info.label} up from. ${info.install.label} there (${info.install.url}).` });
+    publishDeviceFrame(found.device.id, "agents.setup", { agent: body.agent });
+    await appendLedger({ userId: request.userId, actor: "me", action: "subscription.set_up", payload: { deviceId: found.device.id, agent: body.agent } }).catch(() => undefined);
+    return reply.code(202).send({ message: setUpMessage(setUp, found.device.name) });
   });
 
   // ── the computer's side of a relayed turn ──────────────────────────────────────────────────

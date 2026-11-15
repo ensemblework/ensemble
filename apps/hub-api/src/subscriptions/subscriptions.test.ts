@@ -1,21 +1,23 @@
-import { ASSISTANT_TURN_SESSIONS } from "@ensemble/shared-types";
+import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_SESSIONS, parseAgentApps } from "@ensemble/shared-types";
 /**
  * The person's own AI subscriptions (docs/30 §8): how each agent is found and read, the command
  * lines that keep an agent to Ensemble's tools, the answers to its own requests, which computer
  * runs a turn, and how a conversation is handed to an agent.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
+import { appPresence, copilotProgram, cursorAgentProgram, cursorAppPaths, installedProgram, isCursorAgent, opencodeAppCopy, opencodeProgram, type Where } from "./agent-apps.js";
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
 import { agentEnv, claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
-import { LOGIN_ARGS } from "./signin.js";
+import { LOGIN_ARGS, setupCommand } from "./signin.js";
 import { withoutHostSession } from "./host-session.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings } from "./own-tools.js";
@@ -239,6 +241,218 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
     assert.equal(claudeAppCopy("win32", home, { APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: local }), join(windows, "claude.exe"));
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** A stand-in computer under a temporary folder: a home, and a root for the system's own folders. */
+function standInComputer() {
+  const base = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-agent-apps-"));
+  const home = join(base, "home");
+  const root = join(base, "root");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(root, { recursive: true });
+  const program = (path: string, text = "#!/bin/sh\n") => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+    chmodSync(path, 0o755);
+    return path;
+  };
+  const on = (platform: NodeJS.Platform, path: Record<string, string> = {}, env: NodeJS.ProcessEnv = {}): Partial<Where> => ({ platform, home, root, env, onPath: async (name) => path[name] ?? null });
+  return { base, home, root, program, on, done: () => rmSync(base, { recursive: true, force: true }) };
+}
+
+test("the Cursor app without its agent is found, set up; the agent in ~/.local/bin is found without the PATH", async () => {
+  const computer = standInComputer();
+  try {
+    const linux = computer.on("linux");
+    assert.deepEqual(appPresence(linux), []);
+    // The .deb and .rpm packages install into /usr/share/cursor (with /usr/bin/cursor), and bundle no agent.
+    mkdirSync(join(computer.root, "usr", "share", "cursor", "resources", "app"), { recursive: true });
+    assert.deepEqual(appPresence(linux), ["cursor-app"]);
+    assert.equal(await cursorAgentProgram(linux), null);
+    assert.equal(appWithoutAgent("cursor-agent", [], appPresence(linux)), "cursor-app", "Cursor app found. Set up its agent");
+    // The app's Agents window keeps its own copy, signed in only through the app: never Ensemble's agent.
+    computer.program(join(computer.home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-agent-worker", "agent-cli", ".local", "bin", "cursor-agent"));
+    assert.equal(await cursorAgentProgram(linux), null);
+    // Cursor's installer puts it in ~/.local/bin, which a desktop runtime's PATH often lacks.
+    const installed = computer.program(join(computer.home, ".local", "bin", "cursor-agent"));
+    assert.equal(await cursorAgentProgram(linux), installed);
+    assert.equal(installedProgram("cursor-app", linux), installed);
+    assert.equal(appWithoutAgent("cursor-agent", [{ id: "cursor-agent" }], appPresence(linux)), null, "with the agent there, its own tile");
+  } finally {
+    computer.done();
+  }
+});
+
+test("Cursor's agent on the PATH is cursor-agent, or agent when that is Cursor's, before its installer's folder", async () => {
+  const computer = standInComputer();
+  try {
+    const installed = computer.program(join(computer.home, ".local", "bin", "cursor-agent"));
+    const version = join(computer.home, ".local", "share", "cursor-agent", "versions", "2026.11.13-eacade1", "cursor-agent");
+    const worker = join(computer.home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-agent-worker", "agent-cli", ".local", "bin", "cursor-agent");
+    assert.equal(await cursorAgentProgram(computer.on("linux", { "cursor-agent": "/usr/local/bin/cursor-agent" })), "/usr/local/bin/cursor-agent");
+    assert.equal(await cursorAgentProgram(computer.on("linux", { agent: version })), version, "the newer name, as Cursor's installer links it");
+    assert.equal(await cursorAgentProgram(computer.on("linux", { agent: "/usr/bin/agent" })), installed, "another vendor's agent is not Cursor's");
+    assert.equal(await cursorAgentProgram(computer.on("linux", { "cursor-agent": worker, agent: worker })), installed, "the Agents window's copy, even on the PATH");
+    assert.equal(isCursorAgent("C:\\Users\\mira\\AppData\\Local\\cursor-agent\\agent.exe"), true);
+    assert.equal(isCursorAgent(worker), false);
+    // On Windows Cursor's installer keeps it in %LOCALAPPDATA%\cursor-agent.
+    const local = join(computer.home, "AppData", "Local");
+    const windows = computer.on("win32", {}, { LOCALAPPDATA: local });
+    assert.equal(await cursorAgentProgram(windows), null);
+    const exe = computer.program(join(local, "cursor-agent", "cursor-agent.exe"));
+    assert.equal(await cursorAgentProgram(windows), exe);
+  } finally {
+    computer.done();
+  }
+});
+
+test("the Cursor app is found where it installs on macOS, Windows and Linux", () => {
+  const computer = standInComputer();
+  try {
+    const found = (where: Partial<Where>) => appPresence(where).includes("cursor-app");
+    const mac = computer.on("darwin");
+    assert.equal(found(mac), false);
+    assert.ok(cursorAppPaths(mac).includes(join(computer.root, "Applications", "Cursor.app")));
+    // The same app for Apple silicon and Intel: in /Applications, or the person's own Applications folder.
+    mkdirSync(join(computer.home, "Applications", "Cursor.app"), { recursive: true });
+    assert.equal(found(mac), true);
+    const local = join(computer.home, "AppData", "Local");
+    const programFiles = join(computer.root, "Program Files");
+    const windows = computer.on("win32", {}, { LOCALAPPDATA: local, ProgramFiles: programFiles });
+    assert.equal(found(windows), false);
+    computer.program(join(programFiles, "cursor", "Cursor.exe"), "");
+    assert.equal(found(windows), true, "the system installer");
+    rmSync(programFiles, { recursive: true, force: true });
+    computer.program(join(local, "Programs", "cursor", "Cursor.exe"), "");
+    assert.equal(found(windows), true, "the user installer");
+    const linux = computer.on("linux");
+    assert.equal(found(linux), false);
+    computer.program(join(computer.home, "Applications", "Cursor-3.30.8-x86_64.AppImage"));
+    assert.equal(found(linux), true, "an AppImage in ~/Applications");
+    rmSync(join(computer.home, "Applications"), { recursive: true, force: true });
+    mkdirSync(join(computer.root, "opt", "Cursor"), { recursive: true });
+    assert.equal(found(linux), true, "unpacked in /opt");
+  } finally {
+    computer.done();
+  }
+});
+
+test("VS Code with the Copilot extension and no copilot is found, set up; its bundled Copilot package is not a CLI", async () => {
+  const computer = standInComputer();
+  try {
+    const linux = computer.on("linux");
+    const app = join(computer.root, "usr", "share", "code", "resources", "app");
+    mkdirSync(join(app, "extensions", "git"), { recursive: true });
+    assert.deepEqual(appPresence(linux), [], "VS Code without Copilot");
+    // VS Code's built-in Copilot extension bundles Copilot's SDK as @github/copilot: no npm-loader.js, no program.
+    computer.program(join(app, "extensions", "copilot", "package.json"), JSON.stringify({ name: "copilot-chat", version: "0.74.0" }));
+    const bundled = join(app, "extensions", "copilot", "node_modules", "@github", "copilot");
+    computer.program(join(bundled, "package.json"), JSON.stringify({ name: "@github/copilot", version: "1.0.73", bin: { copilot: "npm-loader.js" } }));
+    computer.program(join(bundled, "sdk", "index.js"), "export {};\n");
+    computer.program(join(bundled, "shims.txt"), "Shims created successfully\n");
+    assert.deepEqual(appPresence(linux), ["vscode-copilot"]);
+    assert.equal(await copilotProgram(linux), null);
+    assert.equal(appWithoutAgent("copilot-cli", [], appPresence(linux)), "vscode-copilot", "VS Code found. Set up Copilot CLI");
+    // GitHub's install script, run as the person, puts it in ~/.local/bin.
+    const installed = computer.program(join(computer.home, ".local", "bin", "copilot"));
+    assert.equal(await copilotProgram(linux), installed);
+    assert.equal(installedProgram("vscode-copilot", linux), installed);
+    assert.equal(await copilotProgram(computer.on("linux", { copilot: "/usr/bin/copilot" })), "/usr/bin/copilot", "the PATH first");
+    // Homebrew on Apple silicon.
+    const brew = computer.program(join(computer.root, "opt", "homebrew", "bin", "copilot"));
+    rmSync(installed);
+    assert.equal(await copilotProgram(computer.on("darwin")), brew);
+    // An older VS Code on macOS, with the Copilot Chat extension added by the person.
+    const mac = computer.on("darwin");
+    mkdirSync(join(computer.root, "Applications", "Visual Studio Code.app", "Contents", "Resources", "app", "extensions"), { recursive: true });
+    assert.deepEqual(appPresence(mac), []);
+    mkdirSync(join(computer.home, ".vscode", "extensions", "github.copilot-chat-0.26.7"), { recursive: true });
+    assert.deepEqual(appPresence(mac), ["vscode-copilot"]);
+    // VS Code 1.109 on Windows keeps its resources in a folder named for the build; WinGet links Copilot CLI.
+    const local = join(computer.home, "AppData", "Local");
+    const windows = computer.on("win32", {}, { LOCALAPPDATA: local });
+    rmSync(join(computer.home, ".vscode"), { recursive: true, force: true });
+    computer.program(join(local, "Programs", "Microsoft VS Code", "Code.exe"), "");
+    assert.deepEqual(appPresence(windows), []);
+    computer.program(join(local, "Programs", "Microsoft VS Code", "0f0d87fa9a", "resources", "app", "extensions", "copilot", "package.json"), "{}");
+    assert.deepEqual(appPresence(windows), ["vscode-copilot"]);
+    assert.equal(await copilotProgram(windows), null);
+    const linked = computer.program(join(local, "Microsoft", "WinGet", "Links", "copilot.exe"), "");
+    assert.equal(await copilotProgram(windows), linked);
+  } finally {
+    computer.done();
+  }
+});
+
+test("OpenCode is the opencode command, then its installer's folder, then the copy the OpenCode app runs", async () => {
+  const computer = standInComputer();
+  try {
+    const none = async () => null;
+    assert.equal(await opencodeProgram(computer.on("darwin"), none), null);
+    const bundled = computer.program(join(computer.root, "Applications", "OpenCode.app", "Contents", "Resources", "opencode-cli"));
+    assert.deepEqual(await opencodeProgram(computer.on("darwin"), none), { program: bundled, args: [], via: "app" });
+    const installed = computer.program(join(computer.home, ".opencode", "bin", "opencode"));
+    assert.deepEqual(await opencodeProgram(computer.on("darwin"), none), { program: installed, args: [], via: "cli" });
+    assert.deepEqual(await opencodeProgram(computer.on("darwin"), async () => ({ program: "/usr/local/bin/opencode", args: [] })), { program: "/usr/local/bin/opencode", args: [], via: "cli" });
+    const local = join(computer.home, "AppData", "Local");
+    const exe = computer.program(join(local, "Programs", "OpenCode", "resources", "opencode-cli.exe"), "");
+    assert.equal(opencodeAppCopy(computer.on("win32", {}, { LOCALAPPDATA: local })), exe);
+    assert.equal(opencodeAppCopy(computer.on("linux")), null);
+    const deb = computer.program(join(computer.root, "opt", "OpenCode", "resources", "opencode-cli"));
+    assert.equal(opencodeAppCopy(computer.on("linux")), deb);
+  } finally {
+    computer.done();
+  }
+});
+
+test("a computer's agent apps are read loosely, and an app counts only while its agent is missing", () => {
+  assert.deepEqual(parseAgentApps(["cursor-app", "cursor-app", "vscode-copilot", "zed-app", 3]), ["cursor-app", "vscode-copilot"]);
+  assert.deepEqual(parseAgentApps(null), []);
+  assert.equal(appWithoutAgent("copilot-cli", [{ id: "claude-code" }], ["cursor-app", "vscode-copilot"]), "vscode-copilot");
+  assert.equal(appWithoutAgent("claude-code", [], ["cursor-app", "vscode-copilot"]), null, "no such app for Claude");
+  assert.equal(appWithoutAgent("cursor-agent", [], undefined), null, "an older computer reports none");
+  assert.equal(AGENT_APP_INFO["cursor-app"].agent, "cursor-agent");
+});
+
+test("Set up runs the vendor's own installer, then the agent's login from where that installer put it", () => {
+  const cursor = setupCommand("cursor-app", { platform: "linux", home: "/home/mira" });
+  assert.deepEqual(cursor.args.slice(0, 1), ["-c"]);
+  assert.equal(cursor.program, "/bin/sh");
+  assert.match(cursor.args[1]!, /^curl https:\/\/cursor\.com\/install -fsS \| bash\n/, "what the Cursor app's `cursor agent` runs");
+  assert.match(cursor.args[1]!, /'\/home\/mira\/\.local\/bin\/cursor-agent' 'login' && exit 0/);
+  const copilot = setupCommand("vscode-copilot", { platform: "darwin", home: "/Users/mira" });
+  assert.match(copilot.args[1]!, /^curl -fsSL https:\/\/gh\.io\/copilot-install \| bash\n/);
+  assert.match(copilot.args[1]!, /'\/Users\/mira\/\.local\/bin\/copilot' 'login' && exit 0/);
+  const decoded = (args: string[]) => Buffer.from(args[args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
+  const cursorWindows = setupCommand("cursor-app", { platform: "win32", home: "C:\\Users\\mira", env: {} });
+  assert.equal(cursorWindows.program, "powershell.exe");
+  assert.match(decoded(cursorWindows.args), /^irm 'https:\/\/cursor\.com\/install\?win32=true' \| iex; \$program = Join-Path \$env:LOCALAPPDATA 'cursor-agent\\cursor-agent\.exe'/);
+  assert.match(decoded(cursorWindows.args), /& \$program 'login'/);
+  const copilotWindows = decoded(setupCommand("vscode-copilot", { platform: "win32", home: "C:\\Users\\mira", env: {} }).args);
+  assert.match(copilotWindows, /winget install GitHub\.Copilot --exact --source winget; \$env:Path = /, "WinGet, then the PATH it changed");
+  assert.match(copilotWindows, /Get-Command copilot/);
+  assert.deepEqual(LOGIN_ARGS["cursor-agent"], ["login"]);
+});
+
+test("Set up's script installs, then signs in with the program the installer left, and keeps a failed window open", { skip: process.platform === "win32" }, () => {
+  const computer = standInComputer();
+  try {
+    // A stand-in curl whose "installer" leaves a stand-in agent in ~/.local/bin; the agent notes how it was started.
+    const bin = join(computer.base, "bin");
+    computer.program(join(bin, "curl"), `#!/bin/sh\ncat <<'EOF'\nmkdir -p "$HOME/.local/bin"\nprintf '#!/bin/sh\\necho "$*" > "$HOME/started"\\n' > "$HOME/.local/bin/cursor-agent"\nchmod +x "$HOME/.local/bin/cursor-agent"\nEOF\n`);
+    const command = setupCommand("cursor-app", { platform: "linux", home: computer.home });
+    const env = { PATH: [bin, "/usr/bin", "/bin"].join(delimiter), HOME: computer.home };
+    const ran = spawnSync(command.program, command.args, { env, input: "", encoding: "utf8" });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(readFileSync(join(computer.home, "started"), "utf8").trim(), "login");
+    // An installer that fails: the window says so and waits for Return instead of closing.
+    computer.program(join(bin, "curl"), "#!/bin/sh\nexit 6\n");
+    rmSync(join(computer.home, ".local"), { recursive: true, force: true });
+    const failed = spawnSync(command.program, command.args, { env, input: "\n", encoding: "utf8" });
+    assert.match(failed.stdout, /Setup did not finish\. Press Return to close this window\./);
+  } finally {
+    computer.done();
   }
 });
 
