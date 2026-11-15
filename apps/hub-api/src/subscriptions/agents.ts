@@ -43,6 +43,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
+import { acpTurns, codexTurns, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
 import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
@@ -98,6 +99,8 @@ export type AgentTurnResult = {
   resumed?: boolean;
   /** Why the turn started a new session in place of the chat's earlier one (session-restart.ts). */
   restart?: Restart;
+  /** What the person added in the agent's own app since Ensemble's last turn, brought in before this one (outside.ts). */
+  outside?: Outside;
 };
 
 export type AgentTurnIO = {
@@ -129,13 +132,15 @@ type McpServer = { command: string; args: string[]; env: Record<string, string> 
  * take one (Claude Code, Copilot); null for a turn that saves no session.
  */
 /** `usage`: the resumed session's totals as last reported, for an agent that reports the session's (Copilot). */
-type TurnSession = { id: string; resume: boolean; usage?: SessionUsage } | null;
+/** `since`: how many prompts the session held after Ensemble's last turn, for a driver that reads the rest as it reopens it (outside.ts). */
+type TurnSession = { id: string; resume: boolean; usage?: SessionUsage; since?: number } | null;
 /** `folder`: where the agent works; `own`: the chat's own folder, for the turn's settings files (the same unless the folder is shared). */
 /**
  * `oneOff`: the session an agent saved for a turn that keeps none, to delete from the agent afterwards.
  * `totals`: the session's token totals now, when the agent reports the session's rather than the turn's.
  */
-type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string | null; totals?: SessionUsage | null };
+/** `prompts`: how many prompts the session holds after this turn, from a driver that counted them as it reopened it. */
+type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string | null; totals?: SessionUsage | null; prompts?: number | null };
 type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<DriverResult>;
 
 /**
@@ -144,9 +149,15 @@ type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folde
  */
 class SessionGone extends Error {
   readonly proven = provenGone(this.message);
+  /** What the person added in the agent's app, read before the session failed to reopen: brought in all the same. */
+  outside: Outside | null = null;
 }
 /** The agent's own app held the chat's session for the whole wait (the ChatGPT app, a Codex thread): a new one, the old one kept. */
-class SessionBusy extends Error {}
+class SessionBusy extends Error {
+  outside: Outside | null = null;
+}
+/** At most this many updates of a replayed session are kept to read what the person added (outside.ts). */
+const MAX_REPLAYED = 50_000;
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
 
@@ -422,6 +433,10 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", params);
         throw error;
       });
+    // What the person added in Codex (the ChatGPT app or a terminal) since Ensemble's last turn, read before the
+    // thread is reopened (outside.ts); a Codex without `thread/read` brings nothing in.
+    const history = session?.resume ? await server.request("thread/read", { threadId: session.id, includeTurns: true }).then((read) => codexTurns((read as { thread?: Parameters<typeof codexTurns>[0] }).thread), () => null) : null;
+    const outside = history ? outsideOf(OUTSIDE_APPS.codex!, history, session?.since) : null;
     // While the ChatGPT app has the thread open it cannot be resumed here: the turn waits a little for it.
     let told = false;
     // No environment: Codex's own shell and file tools are not there at all. A resumed thread does not
@@ -438,8 +453,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
             },
           }).catch((error: Error) => {
             if (io.signal.aborted) throw error;
-            if (error instanceof CodexThreadBusy) throw new SessionBusy(error.message);
-            throw new SessionGone(error.message);
+            throw Object.assign(error instanceof CodexThreadBusy ? new SessionBusy(error.message) : new SessionGone(error.message), { outside });
           })
         : await start(projectId ? { ...settings, projectId } : settings).catch((error: Error) => {
             // A project removed in the Codex app since: the thread starts outside any project.
@@ -469,7 +483,9 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     const done = await turnDone;
     if (io.signal.aborted || done.status === "interrupted") throw aborted();
     if (done.status === "failed") throw agentProblem("codex", done.error ?? "the turn failed");
-    return { ...result, session: session ? threadId : null };
+    // A thread's turns, Ensemble's and the person's, are its prompts.
+    const prompts = !session ? null : history ? history.length + 1 : session.resume ? null : 1;
+    return { ...result, session: session ? threadId : null, prompts, ...(outside ? { outside } : {}) };
   } catch (error) {
     if (io.signal.aborted) throw aborted();
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported) throw error;
@@ -486,7 +502,21 @@ function loadsSessions(init: Record<string, unknown>): boolean {
   return (init.agentCapabilities as { loadSession?: unknown } | undefined)?.loadSession === true;
 }
 
-/** Reopens an ACP session, its replayed history ignored; one the agent cannot find is gone. */
+/**
+ * What a reopened ACP session's replay says (outside.ts): how many prompts the session holds after this turn,
+ * and what the person added in the agent's app since Ensemble's last turn. `replayed` is null when the agent
+ * replayed nothing (`session/resume`) or too much to read.
+ */
+function fromReplay(agent: SubscriptionProvider, session: TurnSession, replayed: Array<Record<string, unknown>> | null): { prompts: number | null; outside?: Outside } {
+  if (!session) return { prompts: null };
+  if (!session.resume) return { prompts: 1 };
+  if (!replayed) return { prompts: null };
+  const history = acpTurns(replayed);
+  const outside = outsideOf(OUTSIDE_APPS[agent] ?? SUBSCRIPTION_INFO[agent].label, history, session.since);
+  return { prompts: history.length + 1, ...(outside ? { outside } : {}) };
+}
+
+/** Reopens an ACP session, its replayed history kept apart from the turn's reply; one the agent cannot find is gone. */
 async function reopen(rpc: RpcConnection, method: "session/load" | "session/resume", id: string, cwd: string, mcpServers: unknown[], replaying: (on: boolean) => void): Promise<Record<string, unknown>> {
   replaying(true);
   try {
@@ -540,12 +570,20 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
-  // A reopened session replays its history first: that is not this turn's reply.
+  // A reopened session replays its history first: that is not this turn's reply, but it shows what the
+  // person added in the agent's app since Ensemble's last turn (outside.ts).
   let replaying = false;
+  const replayed: Array<Record<string, unknown>> = [];
+  let overflow = false;
   const tools = new OwnToolLog("cursor-agent");
   rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, "cursor-agent") : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update" || replaying) return;
+    if (method !== "session/update") return;
+    if (replaying) {
+      if (replayed.length < MAX_REPLAYED) replayed.push(params);
+      else overflow = true;
+      return;
+    }
     const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
     if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
       reply += update.content.text;
@@ -575,7 +613,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
     const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
     if (done.stopReason === "refusal") throw agentProblem("cursor-agent", "it refused the request");
-    return { text: reply.trim(), model, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId };
+    return { text: reply.trim(), model, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId, ...fromReplay("cursor-agent", session, overflow ? null : replayed) };
   } catch (error) {
     if (io.signal.aborted) throw aborted();
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
@@ -789,10 +827,18 @@ const runAcpTurn =
     let stderr = "";
     let sessionId: string | null = null;
     let replaying = false;
+    // A reopened session's replayed history: what the person added in the agent's app (outside.ts).
+    const replayed: Array<Record<string, unknown>> = [];
+    let overflow = false;
     const tools = new OwnToolLog(id);
     rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, id) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
-      if (method !== "session/update" || replaying) return;
+      if (method !== "session/update") return;
+      if (replaying) {
+        if (replayed.length < MAX_REPLAYED) replayed.push(params);
+        else overflow = true;
+        return;
+      }
       const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
       if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
         reply += update.content.text;
@@ -833,7 +879,7 @@ const runAcpTurn =
       const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
       if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
-      return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId };
+      return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId, ...fromReplay(id, session, launch.resume === "session/load" && !overflow ? replayed : null) };
     } catch (error) {
       if (io.signal.aborted) throw aborted();
       if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
@@ -939,11 +985,12 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
     const kept = look?.found ?? null;
     // Why the chat's earlier session, when it has one, does not go on: recorded with the turn (session-restart.ts).
     let restart: Restart | null = look?.declined ? restartOf(look.declined) : null;
-    // Someone sent the session prompts of their own in the agent's app since Ensemble's last turn: the chat goes
-    // on in a new session with Ensemble's own history, so none of that enters it (session-touch.ts).
-    const touched = kept && kept.prompts !== undefined && ((await sessionPrompts(spec.agent, kept.id, folder).catch(() => null)) ?? kept.prompts) > kept.prompts ? kept.id : null;
-    if (touched) restart = restartOf("touched");
-    const found = touched ? null : kept;
+    // What the person added in the agent's own app since Ensemble's last turn is brought into the chat before this
+    // message, and the session goes on (outside.ts). Claude Code's and Copilot's transcripts are read here; Codex
+    // and the ACP agents read theirs as they reopen the session (`since`).
+    const read = kept && kept.prompts !== undefined ? await readOutside(spec.agent, kept.id, folder, kept.prompts).catch(() => null) : null;
+    let outside: Outside | null = read;
+    const found = kept;
     // A resumed session whose instructions changed hears only what changed; most of them changed: a new session.
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
     if (found && update === null) restart = restartOf("instructions");
@@ -962,11 +1009,13 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
     let result: DriverResult;
     let resumed = Boolean(earlier);
     try {
-      result = await run(key ? (earlier ? { id: earlier, resume: true, ...(found?.usage ? { usage: found.usage } : {}) } : { id: randomUUID(), resume: false }) : null);
+      result = await run(key ? (earlier ? { id: earlier, resume: true, ...(found?.usage ? { usage: found.usage } : {}), ...(found?.prompts !== undefined ? { since: found.prompts } : {}) } : { id: randomUUID(), resume: false }) : null);
     } catch (error) {
       if (io.signal.aborted || !key) throw error;
       if (error instanceof SessionGone || error instanceof SessionBusy) {
         restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
+        // What the person added there before it could not be reopened still comes in.
+        outside ??= error.outside;
         // Kept to be deleted with the chat, unless the agent said it no longer has it.
         await forgetSession(key, { gone: error instanceof SessionGone && error.proven });
         resumed = false;
@@ -985,8 +1034,8 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
         ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
         perTurn,
         usage: result.totals ?? null,
-        prompts: await sessionPrompts(spec.agent, result.session, folder).catch(() => null),
-        ...(touched ? { retire: touched } : {}),
+        // How many prompts the session holds now, to read only what comes after next time (outside.ts).
+        prompts: result.prompts !== undefined ? result.prompts : await sessionPrompts(spec.agent, result.session, folder).catch(() => null),
       });
     }
     // A turn that keeps no session leaves none in the agent either, deleted in the folder it ran in, which goes after.
@@ -995,8 +1044,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
       handedOff = !key;
     }
     if (restart && !resumed) console.warn(`[ensemble] A ${info.label} chat went on in a new session: ${restart.reason}${restart.error ? ` (${restart.error})` : ""}`);
-    const { session: _session, oneOff: _oneOff, totals: _totals, ...answer } = result;
-    return { ...answer, resumed, ...(restart && !resumed ? { restart } : {}) };
+    outside ??= result.outside ?? null;
+    const { session: _session, oneOff: _oneOff, totals: _totals, prompts: _prompts, outside: _outside, ...answer } = result;
+    return { ...answer, resumed, ...(restart && !resumed ? { restart } : {}), ...(outside?.turns.length ? { outside } : {}) };
   } finally {
     bridge.close();
     // A chat's folder stays for its next turn; the files of this turn do not. A one-off's folder is dropOneOff's.

@@ -40,9 +40,10 @@ export const ROTATE_MESSAGES = 80;
 /** `usage`: the session's token totals as its agent last reported them (Copilot reports the whole session's, not a turn's). */
 /**
  * `prompts`: how many prompts the agent's own transcript held after Ensemble's last turn (session-touch.ts).
- * `retired`: earlier sessions of this chat that someone used outside Ensemble, or that could not be reopened
- * though the agent still has them; they are no longer resumed, and are deleted with the chat. `id` is empty
- * when only those remain, or when the chat has a folder and no session yet.
+ * `retired`: earlier sessions of this chat that could not be reopened though the agent still has them (before
+ * 0.8.0, also those someone used outside Ensemble; now what they said there is brought in and the session goes
+ * on, subscriptions/outside.ts); they are no longer resumed, and are deleted with the chat. `id` is empty when
+ * only those remain, or when the chat has a folder and no session yet.
  */
 type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string };
 export type SessionUsage = { in: number; out: number };
