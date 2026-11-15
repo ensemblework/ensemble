@@ -82,11 +82,27 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   const message = JSON.parse(line);
   if (message.id !== undefined && !message.method) { const resolve = waiting.get(message.id); waiting.delete(message.id); resolve && resolve(message.result); return; }
   if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true, embeddedContext: true } }, authMethods: [] } });
-  else if (message.method === "session/new") { session = message.params; seen.push("mcpservers:" + message.params.mcpServers.length); send({ id: message.id, result: { sessionId: "s1", configOptions: options() } }); }
+  else if (message.method === "session/new") {
+    session = message.params;
+    seen.push("mcpservers:" + message.params.mcpServers.length);
+    // Like Copilot CLI 1.0.109: the session's slash commands, before the answer.
+    send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Compact" }, { name: "rename", description: "Rename the current session", input: { hint: "name" } }] } } });
+    send({ id: message.id, result: { sessionId: "s1", configOptions: options() } });
+  }
   else if (message.method === "session/set_config_option") { if (message.params.configId === "model") { tier = "default"; seen.push("modelswitch"); } config[message.params.configId] = message.params.value; send({ id: message.id, result: { configOptions: options() } }); }
   else if (message.method === "session/prompt") {
-    prompts += 1;
     const text = message.params.prompt.map((part) => part.text || "").join("");
+    // Copilot runs its own /rename without a model turn, and says so in the session.
+    const rename = /^\\/rename (.+)$/.exec(text);
+    if (rename) {
+      seen.push("name:[" + rename[1] + "]");
+      send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "session_info_update", title: rename[1] } } });
+      send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Session renamed to: " + rename[1] } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+      return;
+    }
+    prompts += 1;
+    if (prompts === 1) seen.push("first:[" + text.split("\\n")[0] + "]");
     (prompts === 1 ? first(message.id) : second(message.id, text)).catch((error) => { console.error(error); process.exit(1); });
   }
 });
@@ -136,6 +152,9 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
     assert.match(summary, /window:long_context/, "the long window holds: the model is chosen as Copilot starts");
     assert.doesNotMatch(summary, /modelswitch/, "no model switch over ACP, which would drop the long window");
     assert.match(summary, /prompts:2/, "one follow-up after the refused call");
+    assert.match(summary, /name:\[Copilot run\]/, "the session is named after the task with Copilot's own /rename");
+    assert.match(summary, /first:\[# Copilot run\]/, "a named session gets the brief as it is");
+    assert.doesNotMatch(summary, /Session renamed to/, "what /rename answers is not the task's reply");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
   } finally {
     await side.stop();

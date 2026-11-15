@@ -44,8 +44,8 @@ import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, 
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { acpTurns, codexTurns, OUTSIDE_APPS, outsideOf, readOutside, type Outside } from "./outside.js";
-import { addClaudeDesktopSession, codexProject, codexProjectThreads, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle } from "../workspace/engines/app-sessions.js";
-import { dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
+import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
+import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
 
 export type AgentTurnSpec = {
@@ -163,6 +163,9 @@ class SessionUnsupported extends Error {}
 
 /** The first message of a session: Ensemble's instructions, for agents that have no system prompt, then the message. */
 const opening = (spec: AgentTurnSpec, session: TurnSession) => (session?.resume ? spec.prompt : `${spec.system}\n\n---\n\n${spec.prompt}`);
+
+/** The same for an agent that takes no name for a new chat session and names it after this message: the chat's title leads. */
+const titledOpening = (spec: AgentTurnSpec, session: TurnSession) => (session && !session.resume ? titledPrompt(sessionTitle(spec.session?.title), opening(spec, session)) : opening(spec, session));
 
 const chosen = (value: string | null | undefined): string | null => (value && value !== "default" ? value : null);
 
@@ -606,8 +609,8 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
     const started = session?.resume ? await reopen(rpc, "session/load", session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
     sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
-    // ACP has no system prompt: Ensemble's instructions lead a session's first message.
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(opening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+    // ACP has no system prompt: Ensemble's instructions lead a session's first message, after the chat's title.
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
     if (done.stopReason === "refusal") throw agentProblem("cursor-agent", "it refused the request");
     return { text: reply.trim(), model, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId, ...fromReplay("cursor-agent", session, overflow ? null : replayed) };
@@ -751,13 +754,14 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   const version = await copilotVersion(bin);
   const stdin = copilotReadsStdin(version);
   const usageFile = copilotAtLeast(version, COPILOT_USAGE_FILE_FROM) ? join(own ?? folder, `usage-${randomUUID()}.json`) : null;
-  const prompt = copilotPrompt(opening(spec, session), sections, process.platform, stdin);
+  const title = sessionTitle(spec.session?.title);
+  const name = session && !session.resume && title && (await helpHas(bin, ["help"], "--name", copilotEnv({}))) ? copilotSessionName(title) : null;
+  // A Copilot without --name names the session after its first message: the chat's title leads it.
+  const prompt = copilotPrompt(name ? opening(spec, session) : titledOpening(spec, session), sections, process.platform, stdin);
   // Copilot saves every run as a session: a one-off turn names its own, to delete it afterwards (from 1.0.78, which takes --session-id).
   const oneOff = !session && stdin ? randomUUID() : null;
   // Its own tools need a Copilot that loads a plugin for one run; an older one has only Ensemble's.
   const pluginDir = spec.ownTools && (await copilotTakesPlugins(bin)) ? await writeCopilotFloorPlugin(join(own ?? folder, "copilot-floor"), chatHookCommand("copilot-cli")) : null;
-  const title = sessionTitle(spec.session?.title);
-  const name = session && !session.resume && title && (await helpHas(bin, ["help"], "--name", copilotEnv({}))) ? title : null;
   const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir, name }), {
     cwd: folder,
     // A hook of the person's own Ensemble connection (`ensemble hooks connect`) stays out of the turn.
@@ -871,8 +875,8 @@ const runAcpTurn =
       const { model: modelOption, thought } = configChoices(config);
       if (model && modelOption && optionValues(modelOption).includes(model) && modelOption.currentValue !== model) await rpc.request("session/set_config_option", { sessionId, configId: modelOption.id, value: model });
       if (spec.effort && thought && optionValues(thought).includes(spec.effort)) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: spec.effort });
-      // ACP has no system prompt: Ensemble's instructions lead a session's first message.
-      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(opening(spec, session), files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+      // ACP has no system prompt: Ensemble's instructions lead a session's first message, after the chat's title.
+      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
       if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
       return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null, oneOff: session ? null : sessionId, ...fromReplay(id, session, launch.resume === "session/load" && !overflow ? replayed : null) };
@@ -948,10 +952,11 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   const thinking = checkEffort(spec.agent, spec.model ?? "default", spec.effort, { efforts: levels });
   if (!thinking.ok) throw new AgentTurnError("failed", thinking.message);
   spec = { ...spec, effort: thinking.send };
-  // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in); a
-  // node's chats share its project's folder, where its apps list them together.
+  // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in), named after
+  // the chat (turn-sessions.ts chatFolder); a node's chats share its project's folder, where its apps list them together.
   const group = key && spec.session?.group ? await groupFolder(spec.session.group) : null;
-  const folder = group ?? (key ? sessionFolder(key) : await mkdtemp(join(tmpdir(), "ensemble-turn-")));
+  const named = key && !group ? await chatFolder(key, { agent: spec.agent, title: spec.session?.title, keepDays: spec.session?.keepDays }) : null;
+  const folder = group ?? named?.folder ?? (await mkdtemp(join(tmpdir(), "ensemble-turn-")));
   if (key) await mkdir(folder, { recursive: true });
   // The turn's own files and settings stay out of a shared folder: one folder per chat beside it.
   const own = group ? sessionFolder(key!) : folder;
@@ -1025,6 +1030,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
       await saveSession(key, spec.agent, result.session, spec.system, {
         ...(position === undefined ? {} : { next: position + 2 }),
         ...(group ? { folder: group } : {}),
+        ...(named ? { dir: named.dir } : {}),
         ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
         perTurn,
         usage: result.totals ?? null,

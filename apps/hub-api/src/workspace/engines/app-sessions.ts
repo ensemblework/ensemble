@@ -1,10 +1,12 @@
 /**
- * How Ensemble's agent sessions show in each agent's own app (docs/30, In the agents' own apps). The
- * agents name a session after its first message, which for Ensemble is its instructions, and group
- * nothing by Ensemble's projects on their own:
+ * How Ensemble's agent sessions show in each agent's own app (docs/41 §3). The agents name a session
+ * after its first message, which for Ensemble is its instructions, and group nothing by Ensemble's
+ * projects on their own:
  *
  * - Titles: Claude Code and GitHub Copilot CLI take `--name` for a new session; Codex names a thread with
- *   `thread/name/set`. A chat is named after the chat, a task's session after the task.
+ *   `thread/name/set`; Copilot over ACP (a task's session) takes its own `/rename` (`nameCopilotSession`).
+ *   The other ACP agents and Cursor's agent take no name: a new session's first message has its title
+ *   alone on the first line (`titledPrompt`). A chat is named after the chat, a task's session after the task.
  * - Codex projects: an Ensemble project is a project of Codex's app-server (`project/create`), found again
  *   by Ensemble's id in its metadata, and a task's thread starts in it (`thread/start` `projectId`). The
  *   ChatGPT app's sidebar shows only the projects in its own file, `.codex-global-state.json` in Codex's
@@ -26,11 +28,49 @@ import { lstat, mkdir, readdir, readFile, readlink, rename, stat, unlink, writeF
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
-/** A session's title in an agent's list: one line, at most 80 characters. */
+/** Text as one line: control characters and runs of white space become one space. */
+export function oneLine(text: string | null | undefined): string {
+  return (text ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** A session's title in an agent's list: one line, at most 80 characters (never half of an emoji). */
 export function sessionTitle(text: string | null | undefined): string | null {
-  const line = (text ?? "").replace(/\s+/g, " ").trim();
+  const line = oneLine(text);
   if (!line) return null;
-  return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
+  const characters = Array.from(line);
+  return characters.length > 80 ? `${characters.slice(0, 79).join("").trimEnd()}…` : line;
+}
+
+/** A title GitHub Copilot takes as a session's name: it refuses one with a double quote, and fails the whole run for it. */
+export function copilotSessionName(text: string | null | undefined): string | null {
+  return sessionTitle(text)?.replace(/"/g, "'") ?? null;
+}
+
+/**
+ * A new session's first message for an agent that names the session after it and takes no name of its
+ * own: the title alone on the first line. A task's brief opens with its title as a heading, which
+ * becomes that line. A title that starts the way an agent reads a command or a file reference (`/help`,
+ * `!ls`, `@notes.md`) is left out: as the message's start it would run as one.
+ */
+export function titledPrompt(title: string | null | undefined, prompt: string): string {
+  const line = oneLine(title);
+  if (!line || /^[/!@?\\]/.test(line)) return prompt;
+  const first = prompt.split("\n", 1)[0] ?? "";
+  if (oneLine(first.replace(/^#{1,6}[ \t]+/, "")) === line) return line + prompt.slice(first.length);
+  return `${line}\n\n${prompt}`;
+}
+
+/**
+ * Names a new GitHub Copilot session over ACP with Copilot's own `/rename <name>`, sent as a prompt:
+ * Copilot runs it without a model turn or a message in the session, and keeps the name as one the
+ * person gave (`user_named`), so its first message does not rename it. Only when the session's
+ * command palette (`available_commands_update`) lists `rename`, since a Copilot without it would take
+ * the line as a prompt. True when Copilot confirmed the name (`session_info_update`, read by the caller).
+ */
+export async function nameCopilotSession(rpc: Rpc, input: { sessionId: string; name: string | null; commands: readonly string[] | null; confirmed: () => boolean }): Promise<boolean> {
+  if (!input.name || !input.commands?.includes("rename")) return false;
+  await rpc.request("session/prompt", { sessionId: input.sessionId, prompt: [{ type: "text", text: `/rename ${input.name}` }] }).catch(() => undefined);
+  return input.confirmed();
 }
 
 const helpCache = new Map<string, Promise<boolean>>();
