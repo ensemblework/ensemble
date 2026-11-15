@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,12 +7,16 @@ import type { WorkspaceJob } from "@prisma/client";
 
 // tools.ts pulls in the API config. A unit run has no .env; the value is never connected to.
 process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop";
+// The workspace these runs are judged in, whatever a .env says (without one, config.ts says /tmp/ensemble-workspace).
+const workspace = join(homedir(), "ensemble-workspace");
+process.env.ENSEMBLE_WORKSPACE_ROOT = workspace;
 const { hookCall, judgeEngineCall, judgeFloor, shellSegments } = await import("./judge.js");
 const { readsOnly } = await import("../tools.js");
 const { claudeFilesystem, claudeSettings } = await import("./claude-code.js");
+const { outsideRefusal } = await import("../guard.js");
 type Ctx = Parameters<typeof judgeEngineCall>[0];
 
-const root = join(homedir(), "ensemble-workspace", "runs", "job-1");
+const root = join(workspace, "runs", "job-1");
 
 function ctx(over: Omit<Partial<Ctx>, "job"> & { job?: Partial<WorkspaceJob> } = {}): Ctx {
   const events: Array<{ kind: string; data: unknown }> = [];
@@ -100,8 +104,6 @@ function answering(answer: "allow" | "deny", over: Omit<Partial<Ctx>, "job"> & {
   } as never);
   return { run, asked, saved };
 }
-
-const workspace = join(homedir(), "ensemble-workspace");
 
 test("unattended works anywhere in the workspace and the person's folders, sandboxed or not; the floor still holds", async () => {
   const other = join(workspace, "runs", "other", "notes.md");
@@ -198,11 +200,14 @@ test("ordinary commands an agent runs are not refused: code after -e, cd before 
 
 test("keys, start-up files and other accounts stay closed however the command is written", async () => {
   const direct = ctx({ sandboxed: false, strength: "advisory", outsideAccess: "read-write" });
-  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else", "pkill node"]) {
+  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "cd / && cat Users/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else", "pkill node"]) {
     assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command } })).decision, "deny", command);
   }
   assert.equal((await judgeEngineCall(direct, { tool: "Read", input: { file_path: join(homedir(), ".bashrc") } })).decision, "allow");
   assert.equal((await judgeEngineCall(direct, { tool: "Write", input: { file_path: join(homedir(), ".zshrc") } })).decision, "deny");
+  // On macOS /home (network accounts) links to the data volume, and paths are judged by their real path.
+  assert.match(outsideRefusal("/System/Volumes/Data/home/someone-else/notes", false) ?? "", /Another account's files/);
+  assert.equal(outsideRefusal("/Users/Shared/notes", true), null, "the folder every account shares");
 });
 
 test("Claude Code gets the hook on every tool, a strict sandbox, and the run's internet setting", () => {
@@ -342,7 +347,8 @@ test("a read the person allowed where reading asks never lets the run write ther
 });
 
 test("the agents' skill folders are read in every mode, and running a skill's script there does not count as changing them", async () => {
-  const base = mkdtempSync(join(tmpdir(), "ensemble-skills-"));
+  // A real path, as the judge resolves every path: on macOS the temporary folder is a link into /private.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-skills-")));
   const saved = process.env.CODEX_HOME;
   try {
     // A skill folder of the agent (Codex's, here) inside the run's workspace, so changing it would be asked about.
@@ -507,7 +513,7 @@ test("wrappers do not hide a never-run program, a remote shell or a shell outsid
 });
 
 test("a sandbox without a deny list never gets a writable root that holds a closed path", async () => {
-  const base = mkdtempSync(join(tmpdir(), "ensemble-roots-"));
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-roots-")));
   try {
     for (const name of ["code/ensemble", "code/other", "code/more", "ws/.askpass", "ws/runs", "plain"]) mkdirSync(join(base, name), { recursive: true });
     const closed = [join(base, "code", "ensemble"), join(base, "ws", ".askpass")];

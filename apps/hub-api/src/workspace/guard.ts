@@ -192,6 +192,12 @@ function underHome(home: string, real: string, names: string[]): string | undefi
 }
 
 /**
+ * Folders that hold accounts' home folders, besides the one holding this account's. Paths are judged
+ * by their real path, and on macOS `/home` (network accounts) is a link to /System/Volumes/Data/home.
+ */
+const ACCOUNT_FOLDERS = ["/Users", "/home", "/System/Volumes/Data/home"];
+
+/**
  * A path outside the work folder that a run is about to use (doc 24 §3). Whatever the mode and
  * whether or not the sandbox is on, an agent never reaches Ensemble's own data, keys and sign-ins
  * (`SECRET_PATHS`) or another account's files, and never writes start-up files, system folders,
@@ -223,7 +229,8 @@ export function outsideRefusal(real: string, write: boolean, home = HOME): strin
   }
   // Homebrew on Linux lives in its own account's folder; reading its programs is fine.
   if (!write && within("/home/linuxbrew", real)) return null;
-  if (dirname(real) === "/Users" || dirname(real) === "/home" || (dirname(home) !== home && within(dirname(home), real) && !within(home, real) && !within("/Users/Shared", real))) {
+  const accounts = dirname(home) !== home ? [...ACCOUNT_FOLDERS, dirname(home)] : ACCOUNT_FOLDERS;
+  if (accounts.some((folder) => within(folder, real)) && !within(home, real) && !within("/Users/Shared", real)) {
     return "Another account's files are off limits.";
   }
   if (write && (real === "/" || real === dirname(home))) return "Writing at the top of the disk is refused.";

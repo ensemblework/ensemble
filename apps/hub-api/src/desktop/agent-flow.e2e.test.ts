@@ -123,8 +123,9 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     await waitStatus(side, read.body.jobId!, ["succeeded"]);
 
     // ── with No access, an outside path asks, and is allowed for this run, never "always" ──────
+    // No access covers reads where the OS sandbox enforces it, and the sandbox is a beta, off by default (docs/24 §1).
     const outsideTask = await newTask(side, "[outside] Peek at /etc");
-    const outside = await assign(side, { taskId: outsideTask, delivery: "local", outsideAccess: "none" });
+    const outside = await assign(side, { taskId: outsideTask, delivery: "local", outsideAccess: "none", sandbox: true });
     assert.equal(outside.status, 201, JSON.stringify(outside.body));
     const outsideId = outside.body.jobId!;
     const ask = await pendingFor(side, outsideId);

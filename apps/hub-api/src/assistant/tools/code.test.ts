@@ -75,7 +75,9 @@ test("the tools refuse to run outside Ensemble Code", async () => {
 
 test("Ensemble Code is told its folder, its engine and the run profile", () => {
   const profile = { ...quickRunProfile(), name: "Careful", mode: "review" as const, delivery: "local" as const };
-  assert.equal(profileLine(profile), "Careful: Review only, local only, sandbox on, internet on");
+  // The OS sandbox is a beta, off unless the person turns it on (docs/24 §1).
+  assert.equal(profileLine(profile), "Careful: Review only, local only, sandbox off, internet on");
+  assert.equal(profileLine({ ...profile, sandbox: true, network: false }), "Careful: Review only, local only, sandbox on, internet off");
   const preamble = codePreamble({ folder: "/work/app", engine: "codex" }, profile);
   assert.match(preamble, /opened in \/work\/app/);
   assert.match(preamble, /runs Codex in the folder under the profile Careful: Review only, local only/);

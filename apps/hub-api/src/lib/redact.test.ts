@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { redactRequestUrl, redactText } from "./redact.js";
 
-test("event tickets and oauth codes are not logged in the url", () => {
+test("event tickets and OAuth codes, states and requests are not logged in the url; other values stay", () => {
   assert.equal(redactRequestUrl("/api/events?ticket=abc123"), "/api/events?ticket=[redacted]");
   assert.equal(
-    redactRequestUrl("/api/connectors/google/callback?code=secret-code&state=ok"),
-    "/api/connectors/google/callback?code=[redacted]&state=ok",
+    redactRequestUrl("/api/connectors/google/callback?code=secret-code&state=opaque&scope=email"),
+    "/api/connectors/google/callback?code=[redacted]&state=[redacted]&scope=email",
   );
+  assert.equal(
+    redactRequestUrl("/oauth/authorize?client_id=c1&code_challenge=x1&state=s1"),
+    "/oauth/authorize?client_id=c1&code_challenge=x1&state=[redacted]",
+  );
+  assert.equal(redactRequestUrl("/api/auth/oauth/google/start?mcp_request=m1"), "/api/auth/oauth/google/start?mcp_request=[redacted]");
+  assert.equal(redactRequestUrl("/oauth?request=req-1"), "/oauth?request=[redacted]");
+  assert.equal(redactRequestUrl("/oauth/token?code_verifier=v1"), "/oauth/token?code_verifier=[redacted]");
 });
 
 test("bearer tokens, internal tokens, and shaped keys are redacted", () => {

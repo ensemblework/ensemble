@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { killGroup, runCommand, sessionOf } from "./runner.js";
+import { killGroup, runCommand, sessionOf, sessionTree } from "./runner.js";
 
 const alive = (pid: number): boolean => {
   try {
@@ -19,6 +19,24 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 test("a Linux stat line gives the session id, whatever the command name holds", () => {
   assert.equal(sessionOf("4242 (node (tsx) x) S 1 4242 4200 0 -1 4194560"), 4200);
   assert.equal(sessionOf("7 (sh) R 1 7 7 34816 7"), 7);
+});
+
+test("without session ids (macOS), a session is its group, what its members started and the groups they lead", () => {
+  const ps = [
+    "  100     1   100", // the command, its session's leader
+    "  101   100   100", // a child in its group
+    "  102   101   102", // a job with a group of its own (`set -m`, `timeout`)
+    "  103   102   102", // in that job's group
+    "  104   103   104", // started by it, in yet another group
+    "  105     1   100", // left in the group after its parent ended
+    "  106     1   106", // left the group, then its parent ended: not found
+    "  200     1   200", // unrelated
+    "  201   200   200",
+    "  bad line",
+  ].join("\n");
+  assert.deepEqual(sessionTree([100], ps).sort((a, b) => a - b), [100, 101, 102, 103, 104, 105]);
+  assert.equal(sessionTree([100, 200], ps).length, 8, "a run's sessions from one look at the table");
+  assert.deepEqual(sessionTree([300], ps), []);
 });
 
 test("a command is over when its own process exits, even if a process it started keeps the output open", { skip: process.platform === "win32" }, async () => {
@@ -66,13 +84,19 @@ test("a timeout and Stop kill processes that left the command's process group", 
 
 test("after Stop, a tool call that does not end within the grace no longer holds the run", async () => {
   const { untilStopped } = await import("./agent.js");
-  const controller = new AbortController();
-  const never = new Promise<string>(() => undefined);
-  const waiting = untilStopped(never, controller.signal, 50);
-  controller.abort();
-  await assert.rejects(waiting, { name: "AbortError" });
-  assert.equal(await untilStopped(Promise.resolve("done"), new AbortController().signal, 50), "done");
-  const already = new AbortController();
-  already.abort();
-  await assert.rejects(untilStopped(never, already.signal, 20), { name: "AbortError" }, "a run stopped before the call still ends");
+  // The grace timer is unref'd, so it never keeps a finished process alive; here nothing else would.
+  const hold = setInterval(() => undefined, 1_000);
+  try {
+    const controller = new AbortController();
+    const never = new Promise<string>(() => undefined);
+    const waiting = untilStopped(never, controller.signal, 50);
+    controller.abort();
+    await assert.rejects(waiting, { name: "AbortError" });
+    assert.equal(await untilStopped(Promise.resolve("done"), new AbortController().signal, 50), "done");
+    const already = new AbortController();
+    already.abort();
+    await assert.rejects(untilStopped(never, already.signal, 20), { name: "AbortError" }, "a run stopped before the call still ends");
+  } finally {
+    clearInterval(hold);
+  }
 });
