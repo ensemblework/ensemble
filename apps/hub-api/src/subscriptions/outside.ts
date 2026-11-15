@@ -257,6 +257,16 @@ export function acpTurns(updates: Array<Record<string, unknown>>): OutsideTurn[]
   return turns;
 }
 
+/**
+ * How many prompts an ACP session holds once `sent` more follow the history it replayed, counted as `acpTurns`
+ * will count them in its next replay: a prompt the agent left unanswered (a run that failed) and the next one
+ * come back as one exchange.
+ */
+export function acpPrompts(history: OutsideTurn[], sent: number): number {
+  const last = history.at(-1);
+  return history.length + sent - (sent > 0 && last && !last.answer && !last.tools ? 1 : 0);
+}
+
 /** The agent's app as a chat says it: "In GitHub Copilot". Claude Code says where each prompt was typed. */
 export const OUTSIDE_APPS: Partial<Record<SubscriptionProvider, string>> = {
   "claude-code": "Claude Code",

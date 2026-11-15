@@ -3,21 +3,29 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acpTurns } from "../subscriptions/outside.js";
+import { acpPrompts, acpTurns } from "../subscriptions/outside.js";
 import { claudeProjectName } from "../subscriptions/session-touch.js";
 import { deleteNativeSession } from "./engines/delete-session.js";
-import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, replayOutside, runOutside } from "./outside-runs.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, promptsOf, replayOutside, runOutside, withPrompts } from "./outside-runs.js";
 
 const jsonl = (rows: unknown[]) => rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
 const said = (text: string, entrypoint = "claude-desktop-3p") => ({ type: "user", entrypoint, timestamp: "2026-11-15T07:05:00.000Z", message: { role: "user", content: text } });
 const answered = (text: string, tools: unknown[] = []) => ({ type: "assistant", message: { role: "assistant", content: [...tools, { type: "text", text }] } });
 
-/** A fake of the events a computer keeps: its runs' `engine` events and their `session_prompts`. */
-function events(rows: Array<{ kind: string; data: Record<string, unknown> }>) {
+type Row = { kind: string; data: Record<string, unknown>; jobId?: string };
+type Where = { kind?: string; jobId?: { not: string }; data?: { path: string[]; equals: unknown }; OR?: Where[] };
+
+/** A fake of the events a computer keeps, oldest first: its runs' `engine` events and their `session_prompts`. */
+function events(rows: Row[]) {
+  const matches = (row: Row, where: Where): boolean =>
+    (where.kind === undefined || row.kind === where.kind) &&
+    (where.jobId === undefined || row.jobId !== where.jobId.not) &&
+    (where.data === undefined || row.data[where.data.path[0]!] === where.data.equals) &&
+    (where.OR === undefined || where.OR.some((one) => matches(row, one)));
   return {
     workspaceEvent: {
-      findFirst: async ({ where }: { where: { kind: string; data: { path: string[]; equals: string } } }) => [...rows].reverse().find((row) => row.kind === where.kind && row.data[where.data.path[0]!] === where.data.equals) ?? null,
-      findMany: async ({ where }: { where: { kind: string } }) => rows.filter((row) => row.kind === where.kind),
+      findFirst: async ({ where }: { where: Where }) => [...rows].reverse().find((row) => matches(row, where)) ?? null,
+      findMany: async ({ where }: { where: Where }) => rows.filter((row) => matches(row, where)),
     },
   } as never;
 }
@@ -31,11 +39,11 @@ test("a run that continues a Claude Code session brings in what the person said 
     const folder = "/Users/me/ensemble-workspace/projects/launch";
     mkdirSync(join(root, "projects", claudeProjectName(folder)), { recursive: true });
     writeFileSync(join(root, "projects", claudeProjectName(folder), `${id}.jsonl`), jsonl([said("Write the plan.", "sdk-cli"), answered("Wrote it."), said("Also remember MANGO"), answered("Noted MANGO.", [{ type: "tool_use", name: "Edit", input: { file_path: `${folder}/plan.md` } }])]));
-    assert.equal(await runOutside(events([]), "claude-code", id, folder), null, "no run noted the session's prompts yet");
-    const outside = await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 1 } }]), "claude-code", id, folder);
+    assert.equal(await runOutside(events([]), "claude-code", id, folder, "run-2"), null, "no run noted the session's prompts yet");
+    const outside = await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 1 } }]), "claude-code", id, folder, "run-2");
     assert.deepEqual(outside, { app: "the Claude app", turns: [{ prompt: "Also remember MANGO", answer: "Noted MANGO.", tools: "Edited 1 file", files: [`${folder}/plan.md`], at: "2026-11-15T07:05:00.000Z" }], earlier: 0 });
-    assert.equal(await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 2 } }]), "claude-code", id, folder), null, "nothing since");
-    assert.equal(await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 1 } }]), "cursor-agent", id, folder), null, "an agent whose history is not read here");
+    assert.equal(await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 2 } }]), "claude-code", id, folder, "run-2"), null, "nothing since");
+    assert.equal(await runOutside(events([{ kind: "session_prompts", data: { session: id, prompts: 1 } }]), "cursor-agent", id, folder, "run-2"), null, "an agent whose history is not read here");
 
     assert.equal(outsideStep(outside!, "Akash"), "Akash: Also remember MANGO\nAgent: Noted MANGO. (Edited 1 file)");
     assert.equal(outsideNote(outside!, "Akash"), '(Since the last Ensemble run, Akash said in the Claude app:\n- "Also remember MANGO" (you edited 1 file)\nThat is part of this conversation already: take it into account.)');
@@ -56,17 +64,90 @@ test("Cursor's agent and the ACP agents: what the person said comes from the ses
     update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Noted MANGO." } }),
   ]);
   const noted = (prompts: number) => events([{ kind: "session_prompts", data: { session: "ses_1", prompts } }]);
-  assert.equal(await replayOutside(events([]), "opencode", "ses_1", history), null, "no run noted the session's prompts yet");
-  assert.deepEqual(await replayOutside(noted(1), "opencode", "ses_1", history), { app: "OpenCode", turns: [{ prompt: "Also remember MANGO", answer: "Noted MANGO.", tools: "Edited 1 file", files: ["/w/plan.md"] }], earlier: 0 });
-  assert.equal((await replayOutside(noted(1), "cursor-agent", "ses_1", history))?.app, "Cursor");
-  assert.equal(await replayOutside(noted(2), "opencode", "ses_1", history), null, "nothing since");
-  assert.equal(await runOutside(noted(1), "opencode", "ses_1", "/w"), null, "not read before the run: the engine hands the replay over");
+  assert.equal(await replayOutside(events([]), "opencode", "ses_1", history, "run-2"), null, "no run noted the session's prompts yet");
+  assert.deepEqual(await replayOutside(noted(1), "opencode", "ses_1", history, "run-2"), { app: "OpenCode", turns: [{ prompt: "Also remember MANGO", answer: "Noted MANGO.", tools: "Edited 1 file", files: ["/w/plan.md"] }], earlier: 0 });
+  assert.equal((await replayOutside(noted(1), "cursor-agent", "ses_1", history, "run-2"))?.app, "Cursor");
+  assert.equal(await replayOutside(noted(2), "opencode", "ses_1", history, "run-2"), null, "nothing since");
+  assert.equal(await runOutside(noted(1), "opencode", "ses_1", "/w", "run-2"), null, "not read before the run: the engine hands the replay over");
 
   const marks: unknown[] = [];
   const ctx = { event: async (kind: string, data: Record<string, unknown>) => void marks.push([kind, data]) };
   await noteSessionPrompts(ctx, "opencode", "ses_1", "/w", 3);
   await noteSessionPrompts(ctx, "opencode", "ses_1", "/w", null);
-  assert.deepEqual(marks, [["session_prompts", { session: "ses_1", prompts: 3 }]], "the engine's count; none when it could not count");
+  assert.deepEqual(
+    marks,
+    [
+      ["session_prompts", { session: "ses_1", prompts: 3 }],
+      ["session_prompts", { session: "ses_1", prompts: null }],
+    ],
+    "the engine's count; unknown when it could not count",
+  );
+});
+
+test("a run that fails, is stopped or is interrupted after it sent its prompt notes the session's prompts all the same: the next run never takes that prompt for the person's", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-outside-failed-"));
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  try {
+    // Claude Code: Ensemble's first run noted one prompt, then the person said something in the Claude app.
+    const id = "6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9d";
+    const folder = "/Users/me/ensemble-workspace/projects/launch";
+    const transcript = join(root, "projects", claudeProjectName(folder), `${id}.jsonl`);
+    mkdirSync(join(root, "projects", claudeProjectName(folder)), { recursive: true });
+    const before = [said("Write the plan.", "sdk-cli"), answered("Wrote it."), said("Also remember MANGO"), answered("Noted MANGO.")];
+    writeFileSync(transcript, jsonl(before));
+    const first: Row[] = [
+      { kind: "engine", data: { session: id }, jobId: "run-1" },
+      { kind: "session_prompts", data: { session: id, prompts: 1 }, jobId: "run-1" },
+    ];
+    assert.deepEqual((await runOutside(events(first), "claude-code", id, folder, "run-2"))?.turns.map((turn) => turn.prompt), ["Also remember MANGO"], "the next run brings it in");
+
+    // That run sent its prompt and failed before an answer: its note is read from the transcript, its prompt in it.
+    writeFileSync(transcript, jsonl([...before, said("Write the launch post.", "sdk-cli")]));
+    const failed: Row[] = [...first, { kind: "engine", data: { session: id }, jobId: "run-2" }];
+    const marks: Row[] = [];
+    await noteSessionPrompts({ event: async (kind, data) => void marks.push({ kind, data, jobId: "run-2" }) }, "claude-code", id, folder);
+    assert.deepEqual(marks.map((row) => row.data), [{ session: id, prompts: 3 }]);
+    assert.equal(await runOutside(events([...failed, ...marks]), "claude-code", id, folder, "run-3"), null, "nothing since the failed run");
+    // A run that noted nothing (Ensemble quit, or the computer lost power, as it ran): the count is not known, and nothing comes in.
+    assert.equal(await runOutside(events(failed), "claude-code", id, folder, "run-3"), null, "not the failed run's own prompt");
+
+    // What the person says after that comes in, and only that.
+    writeFileSync(transcript, jsonl([...before, said("Write the launch post.", "sdk-cli"), said("Make it shorter"), answered("Shortened it.")]));
+    assert.deepEqual((await runOutside(events([...failed, ...marks]), "claude-code", id, folder, "run-3"))?.turns.map((turn) => turn.prompt), ["Make it shorter"]);
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = saved;
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // Cursor's agent and the ACP agents count the session's prompts themselves, and carry the count on what they throw.
+  const stopped = withPrompts(new DOMException("Stopped", "AbortError"), "ses_1", 2);
+  assert.deepEqual(promptsOf(stopped), { session: "ses_1", prompts: 2 });
+  assert.deepEqual(promptsOf(withPrompts(new Error("The agent failed."), "ses_1", null)), { session: "ses_1", prompts: null }, "a count it could not make");
+  assert.equal(promptsOf(withPrompts(new Error("Not started."), null, 0)), null, "no session yet");
+  assert.equal(promptsOf(new Error("Another error.")), null);
+  // A prompt the agent left unanswered and the next one come back as one exchange when it replays the session.
+  const update = (value: Record<string, unknown>) => ({ sessionId: "ses_1", update: value });
+  const asked = (text: string) => update({ sessionUpdate: "user_message_chunk", content: { type: "text", text } });
+  const reply = (text: string) => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+  const unanswered = acpTurns([asked("Write the plan."), reply("Wrote it."), asked("Write the launch post.")]);
+  assert.equal(acpPrompts(unanswered, 0), 2);
+  assert.equal(acpPrompts(unanswered, 1), 2);
+  assert.equal(acpTurns([asked("Write the plan."), reply("Wrote it."), asked("Write the launch post."), asked("Make it shorter"), reply("Done.")]).length, 2, "as the next replay counts them");
+  assert.equal(acpPrompts(acpTurns([asked("Write the plan."), reply("Wrote it.")]), 1), 2);
+  assert.equal(acpPrompts([], 1), 1);
+
+  // An unknown count brings in nothing; the run asking may have reported the session already (an ACP engine's replay).
+  const session = (prompts: number | null): Row[] => [
+    { kind: "engine", data: { session: "ses_1" }, jobId: "run-1" },
+    { kind: "session_prompts", data: { session: "ses_1", prompts }, jobId: "run-1" },
+    { kind: "engine", data: { session: "ses_1" }, jobId: "run-2" },
+  ];
+  const history = acpTurns([asked("Write the plan."), reply("Wrote it."), asked("Also remember MANGO"), reply("Noted MANGO.")]);
+  assert.equal(await replayOutside(events(session(null)), "opencode", "ses_1", history, "run-2"), null);
+  assert.deepEqual((await replayOutside(events(session(1)), "opencode", "ses_1", history, "run-2"))?.turns.map((turn) => turn.prompt), ["Also remember MANGO"]);
+  assert.equal(await replayOutside(events(session(1)), "opencode", "ses_1", history, "run-3"), null, "run-2 used the session after the count and noted nothing");
 });
 
 test("a new task in a project lists the sessions the person started there since its last run, never Ensemble's, and its clean-up leaves them", async () => {

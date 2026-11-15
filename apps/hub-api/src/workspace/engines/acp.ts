@@ -25,10 +25,10 @@ import { ENGINE_LABELS, type AcpEngine } from "@ensemble/shared-types";
 import { opencodeProgram } from "../../subscriptions/agent-apps.js";
 import { antigravityArgs, antigravityAuthLink, antigravityEnv, antigravityInstalled } from "../../subscriptions/antigravity.js";
 import { agentEnv, quickRun } from "../../subscriptions/detect.js";
-import { acpTurns, MAX_REPLAYED } from "../../subscriptions/outside.js";
+import { acpPrompts, acpTurns, MAX_REPLAYED, type OutsideTurn } from "../../subscriptions/outside.js";
 import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
-import type { ReplayHook } from "../outside-runs.js";
+import { withPrompts, type ReplayHook } from "../outside-runs.js";
 import { hostLaunch, type HostLaunch } from "../policy.js";
 import type { JobContext } from "../tools.js";
 import { titledPrompt } from "./app-sessions.js";
@@ -391,6 +391,13 @@ export async function runAcp(
   let replaying = false;
   const replayed: Array<Record<string, unknown>> = [];
   let overflow = false;
+  /** The replay as exchanges, once read: null for a new session, or when the history was not read. */
+  let history: OutsideTurn[] | null = null;
+  /** The prompts this run sent into the session, one the agent has not answered yet included. */
+  let sent = 0;
+  // How many prompts the session holds: the replayed ones and each one this run sent (refusals carried back too).
+  // Not counted when the history was not read, or for an agent that reopens with `session/resume`.
+  const held = () => (launch.resume === "session/load" && (history || !options.resume) ? acpPrompts(history ?? [], sent) : null);
   let signInLink = false;
   const usage: { window: { used: number; size: number } | null } = { window: null };
   const announced = new Map<string, string>();
@@ -546,12 +553,13 @@ export async function runAcp(
     await ctx.progress(`${label} started`);
     // The reopened session's history as exchanges (`session/resume` replays none): the run brings in what the
     // person said in the agent's own app since its last run there, and its note leads the prompt.
-    const history = options.resume && launch.resume === "session/load" && !overflow ? acpTurns(replayed) : null;
+    history = options.resume && launch.resume === "session/load" && !overflow ? acpTurns(replayed) : null;
     const note = history && options.onReplay ? await options.onReplay(sessionId, history).catch(() => null) : null;
     const text = options.resume || options.chat ? options.prompt : titledPrompt(ctx.taskTitle, options.prompt);
     let prompt: Array<Record<string, unknown>> = [{ type: "text", text: note ? `${note}\n\n${text}` : text }];
     for (let round = 0; ; round += 1) {
       refusals.length = 0;
+      sent += 1;
       const done = (await rpc.request("session/prompt", { sessionId, prompt })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       result.turns += 1;
       result.tokensIn += done.usage?.inputTokens ?? 0;
@@ -566,13 +574,13 @@ export async function runAcp(
     if (usage.window) await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size });
     await flushThought();
     result.text = reply.trim();
-    // The session's prompts now, for the next run's replay: the replayed ones and each one this run sent (refusals
-    // carried back too). Not counted when the history was not read, or for an agent that reopens with `session/resume`.
-    result.prompts = launch.resume === "session/load" && (history || !options.resume) ? (history?.length ?? 0) + result.turns : null;
+    // The session's prompts now, for the next run's replay.
+    result.prompts = held();
     return result;
   } catch (error) {
-    if (ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");
-    throw error;
+    // A prompt sent before the run failed or was stopped is in the session all the same: the count goes with what
+    // is thrown, for the run to note (outside-runs.ts).
+    throw withPrompts(ctx.signal.aborted ? new DOMException("Stopped", "AbortError") : error, sessionId, held());
   } finally {
     ctx.signal.removeEventListener("abort", stop);
     unregisterEngineRun(ctx.job.id);
