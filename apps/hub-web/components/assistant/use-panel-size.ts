@@ -3,52 +3,11 @@
 import { useCallback, useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { usePersistentState } from "@/lib/prefs";
 
-export type PanelSize = { width: number; height: number };
-type Viewport = { width: number; height: number };
-/** The floating panel is anchored bottom-right, so it grows from its left edge, its top edge or the corner between them. */
-export type PanelEdge = "left" | "top" | "corner";
-
+import { PANEL_PHONE_MAX, PANEL_EDGES, panelBounds, clampPanelSize, defaultPanelSize, readPanelSize, draggedPanelSize, type PanelSize, type PanelEdge } from "@ensemble/brand/assistant";
+export { PANEL_PHONE_MAX, PANEL_EDGES, PANEL_DEFAULT, PANEL_MIN, PANEL_MARGIN, panelBounds, clampPanelSize, defaultPanelSize, readPanelSize, draggedPanelSize, type PanelSize, type PanelEdge } from "@ensemble/brand/assistant";
+type Viewport = PanelSize;
 export const PANEL_SIZE_KEY = "ensemble.assistant.size";
-export const PANEL_EDGES: readonly PanelEdge[] = ["left", "top", "corner"];
-/** The stylesheet's size, `min(660px, 94vw)` × `min(720px, 85vh)`, before anything is dragged. */
-export const PANEL_DEFAULT: PanelSize = { width: 660, height: 720 };
-export const PANEL_MIN: PanelSize = { width: 380, height: 440 };
-/** The gap the panel keeps to the window on every side (`bottom-5 right-5`). */
-export const PANEL_MARGIN = 20;
-/** Phones get the full-width panel and no handles (the same break as the panel's mobile styles). */
-export const PANEL_PHONE_MAX = 640;
 const STEP = 16;
-
-/** The largest panel the window holds; the smallest one is the minimum unless the window is smaller still. */
-export function panelBounds(viewport: Viewport): { min: PanelSize; max: PanelSize } {
-  const max = { width: Math.max(0, viewport.width - 2 * PANEL_MARGIN), height: Math.max(0, viewport.height - 2 * PANEL_MARGIN) };
-  return { min: { width: Math.min(PANEL_MIN.width, max.width), height: Math.min(PANEL_MIN.height, max.height) }, max };
-}
-
-export function clampPanelSize(size: PanelSize, viewport: Viewport): PanelSize {
-  const { min, max } = panelBounds(viewport);
-  return {
-    width: Math.round(Math.min(max.width, Math.max(min.width, size.width))),
-    height: Math.round(Math.min(max.height, Math.max(min.height, size.height))),
-  };
-}
-
-export function defaultPanelSize(viewport: Viewport): PanelSize {
-  return clampPanelSize({ width: Math.min(PANEL_DEFAULT.width, viewport.width * 0.94), height: Math.min(PANEL_DEFAULT.height, viewport.height * 0.85) }, viewport);
-}
-
-/** A saved size, or null for anything else in storage. */
-export function readPanelSize(value: unknown): PanelSize | null {
-  if (!value || typeof value !== "object") return null;
-  const { width, height } = value as { width?: unknown; height?: unknown };
-  if (typeof width !== "number" || typeof height !== "number" || !Number.isFinite(width) || !Number.isFinite(height)) return null;
-  return { width, height };
-}
-
-/** The size after dragging `edge` by (dx, dy) from `start`: the bottom-right corner stays where it is. */
-export function draggedPanelSize(start: PanelSize, edge: PanelEdge, dx: number, dy: number, viewport: Viewport): PanelSize {
-  return clampPanelSize({ width: edge === "top" ? start.width : start.width - dx, height: edge === "left" ? start.height : start.height - dy }, viewport);
-}
 
 function currentViewport(): Viewport {
   return { width: window.innerWidth, height: window.innerHeight };

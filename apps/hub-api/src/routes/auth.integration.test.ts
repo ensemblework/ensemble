@@ -575,3 +575,17 @@ test("exports isolate users and omit secrets; erasure revokes tokens and blocks 
   await assert.rejects(harness.prisma.auditLedger.create({ data: { userId: owner.id, actor: "system", action: "late completion", hash: "test" } }), /foreign key/i);
   assert.equal(await harness.prisma.task.count({ where: { userId: other.id } }), 1);
 });
+
+test("docs sign-in returns to the fixed docs chat, with the normal shared session", async () => {
+  profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+  const started = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=docs" });
+  assert.equal(started.statusCode, 302);
+  const state = new URL(String(started.headers.location)).searchParams.get("state")!;
+  const back = await harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state)}`, headers: { cookie: `${cookie(started, "ensemble_login_flow")}; ${cookie(started, "ensemble_login_return")}` } });
+  assert.equal(back.headers.location, "https://docs.ensemblework.com/#docs-chat");
+  const session = await harness.app.inject({ method: "GET", url: "/api/docs/session", headers: { cookie: cookie(back) } });
+  assert.equal(session.statusCode, 200, session.body);
+  assert.equal(session.json().user.name, "Mira");
+  createdIds.push(session.json().user.id);
+  assert.equal((await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=https://evil.example" })).statusCode, 400);
+});

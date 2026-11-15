@@ -4,7 +4,7 @@ Bring your tasks, pages, projects, people, files, meetings and code into one wor
 
 Choose how to work below, then follow the guide for the task you want to do. Each feature lists its current limits.
 
-The [public docs](40_PUBLIC_DOCUMENTATION.md) include local search and an anonymous docs-only helper with linked sources. It cannot read your Ensemble account.
+The [public docs](40_PUBLIC_DOCUMENTATION.md) include local search and a docs-only helper with linked sources. Guests leave no saved history; optional sign-in keeps a separate docs-chat history without workspace access.
 
 ## 2. How work flows
 

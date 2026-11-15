@@ -39,6 +39,12 @@ await cp(require.resolve("@ensemble/brand/motion.css"), join(out, "brand-motion.
 await mkdir(join(out, "brand"));
 for (const icon of icons.icon) await cp(join(root, "apps/hub-web/public", icon.url), join(out, icon.url));
 const hubCss = await readFile(join(root, "apps/hub-web/app/globals.css"), "utf8");
+const assistantStart = hubCss.indexOf(".ask-launcher {");
+const assistantEnd = hubCss.indexOf("/* ── Onboarding", assistantStart);
+const popStart = hubCss.indexOf("@keyframes pop-in {");
+const popEnd = hubCss.indexOf(".note-panel {", popStart);
+if (assistantStart < 0 || assistantEnd < 0 || popStart < 0 || popEnd < 0) throw new Error("Hub assistant styles could not be found.");
+await writeFile(join(out, "assistant.css"), hubCss.slice(assistantStart, assistantEnd) + hubCss.slice(popStart, popEnd));
 const dark = hubCss.match(/:root,\s*\[data-theme="dark"\]\s*\{([\s\S]*?)^\}/m)?.[1];
 const light = hubCss.match(/\[data-theme="light"\]\s*\{([\s\S]*?)^\}/m)?.[1];
 if (!dark || !light) throw new Error("Hub theme tokens could not be found.");

@@ -32,7 +32,7 @@ test("internal references are excluded, and deep links resolve to their own topi
   assert.doesNotMatch(fixture.map((page) => page.markdown).join("\n"), /Private implementation|Do not publish/);
 });
 
-test("every page has a credential-free helper shell and the exact disclaimer", () => {
+test("every page has a docs-only helper shell and the exact disclaimer", () => {
   for (const page of published) {
     const html = pageHtml(page, published, "testing");
     assert.match(html, /id="docs-launcher"/);
@@ -49,7 +49,7 @@ test("the site ships shared Hub tokens, hashed icons, local fonts and no client 
   const html = await readFile(new URL("../out/index.html", import.meta.url), "utf8");
   assert.match(html, /\/brand\/favicon-[a-f\d]+\.png/);
   const bundle = await readFile(new URL("../out/helper.js", import.meta.url), "utf8");
-  assert.match(bundle, /credentials:"omit"/);
+  assert.match(bundle, /"include":"omit"/);
   assert.doesNotMatch(bundle, /api-key|AZURE_FOUNDRY_API_KEY|gpt-5-mini|reasoning.effort/);
 });
 

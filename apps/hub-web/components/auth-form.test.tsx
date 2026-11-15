@@ -185,3 +185,10 @@ test("sign-up shows the password rule first and refuses a password of spaces wit
     await view.done();
   }
 });
+
+test("email sign-in and signup can return to the docs chat without changing other flows", () => {
+  const docs = "https://docs.ensemblework.com/#docs-chat";
+  assert.equal(authRedirectTarget("login", {}, docs), docs);
+  assert.equal(authRedirectTarget("signup", { verificationSent: true }, docs), docs);
+  assert.equal(authRedirectTarget("login", {}, "https://docs.ensemblework.com/evil"), "/today");
+});
