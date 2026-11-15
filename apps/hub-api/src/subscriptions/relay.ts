@@ -30,6 +30,8 @@ type Live = {
   /** A line for the chat while the computer waits on something (the ChatGPT app holding a thread). */
   onStatus?: (text: string) => void;
   picked: boolean;
+  /** The runtime that read the turn first (its instance id, `INSTANCE_HEADER`); null for an older one that sends none. */
+  pickedBy: string | null;
   seq: number;
   heard: number;
   /** Tool calls running now: a long one (a browser task, a sign-in) is work, not silence. */
@@ -47,6 +49,25 @@ export function liveTurn(id: string, deviceId: string): Live | null {
 
 export function heard(turn: Live): void {
   turn.heard = Date.now();
+}
+
+/**
+ * A runtime of the computer reads the turn. The first to read it takes it; another runtime of the same
+ * computer (two with one pairing) is refused, so one turn never runs twice. The one that took it may read
+ * it again.
+ */
+export function pickTurn(turn: Pick<Live, "picked" | "pickedBy">, instance: string | null): boolean {
+  if (!turn.picked) {
+    turn.picked = true;
+    turn.pickedBy = instance;
+    return true;
+  }
+  return instance !== null && turn.pickedBy === instance;
+}
+
+/** Whether this runtime may work on the turn: the one that took it, any runtime before one has, and anyone when an older runtime took it. */
+export function turnFor(turn: Pick<Live, "picked" | "pickedBy">, instance: string | null): boolean {
+  return !turn.picked || turn.pickedBy === null || turn.pickedBy === instance;
 }
 
 /** The computer stopped talking about the turn: nothing heard for a while, and no tool call of it running here. */
@@ -110,6 +131,7 @@ export function runOnComputer(input: {
       onDelta: input.onDelta,
       ...(input.onStatus ? { onStatus: input.onStatus } : {}),
       picked: false,
+      pickedBy: null,
       seq: 0,
       heard: Date.now(),
       busy: 0,

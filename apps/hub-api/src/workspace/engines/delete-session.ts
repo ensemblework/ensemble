@@ -50,6 +50,59 @@ async function folders(path: string): Promise<string[]> {
   catch (error) { if (missing(error)) return []; throw error; }
 }
 
+async function files(path: string): Promise<string[]> {
+  try { return (await readdir(path, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name); }
+  catch (error) { if (missing(error)) return []; throw error; }
+}
+
+/** cursor-agent's config folder (cursor-config `paths.js`, 2026.09 to 2026.11), which holds its terminal chats and its ACP sessions. */
+function cursorConfigDir(): string {
+  const configured = process.env.CURSOR_CONFIG_DIR;
+  if (configured?.trim()) return configured;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return xdg?.trim() ? join(xdg, "cursor") : join(homedir(), ".cursor");
+}
+
+/** The session id a Gemini CLI session file records: in its first line (JSON Lines), else in the whole file (JSON). */
+async function geminiRecordedId(path: string): Promise<string | null> {
+  const text = await readFile(path, "utf8").catch((error: unknown) => { if (missing(error)) return null; throw error; });
+  if (text === null) return null;
+  const recorded = (json: string): unknown => { try { return (JSON.parse(json) as { sessionId?: unknown } | null)?.sessionId; } catch { return undefined; } };
+  const id = recorded(text.split("\n", 1)[0] ?? "") ?? recorded(text);
+  return typeof id === "string" ? id : null;
+}
+
+/**
+ * Gemini CLI's `--delete-session <id>` deletes the Nth session of its current folder's list when the list lacks the id and
+ * the id reads as N (`3d7b4ba0-…` is 3), and each start of Gemini also clears expired sessions in the background, so no
+ * check made just before can rule that out. Ensemble removes the session's files itself instead, found by the exact id
+ * recorded in them, with what Gemini names by that id (gemini-cli 0.68 `sessionOperations.ts`): `tmp/<project>/chats/
+ * session-<time>-<first 8 of the id>.jsonl` (`.json` from older versions) in `~/.gemini`, or `~/.cache/.gemini` for a run
+ * in Gemini's macOS sandbox, GEMINI_CLI_HOME standing for `~` when set; subagents in `chats/<id>/<subagent id>.jsonl`.
+ */
+async function removeGeminiSession(sessionId: string): Promise<void> {
+  const home = process.env.GEMINI_CLI_HOME || homedir();
+  const named = new RegExp(`^session-.+-${sessionId.slice(0, 8)}\\.jsonl?$`);
+  for (const tmp of [join(home, ".gemini", "tmp"), join(home, ".cache", ".gemini", "tmp")]) {
+    for (const project of await folders(tmp)) {
+      const chats = join(tmp, project, "chats");
+      for (const name of await files(chats)) {
+        if (!named.test(name) || await geminiRecordedId(join(chats, name)) !== sessionId) continue;
+        const subagents = (await folders(chats)).includes(sessionId)
+          ? (await files(join(chats, sessionId))).map(file => file.replace(/\.jsonl?$/, "")).filter(id => uuid.test(id))
+          : [];
+        for (const id of [sessionId, ...subagents]) {
+          await removeHistory(tmp, [project, "logs", `session-${id}.jsonl`]);
+          await removeHistory(tmp, [project, "tool-outputs", `session-${id}`]);
+          await removeHistory(tmp, [project, id]);
+        }
+        await removeHistory(tmp, [project, "chats", sessionId]);
+        await removeHistory(tmp, [project, "chats", name]);
+      }
+    }
+  }
+}
+
 async function command(program: string, args: string[], cwd: string, env = process.env): Promise<void> {
   await new Promise<void>((done, reject) => {
     const child = spawn(program, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -126,9 +179,11 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
   SessionId.parse(sessionId);
   if (engine === "claude-code" || engine === "cursor-agent") {
     if (!uuid.test(sessionId)) throw new Error("This agent's recorded session ID is invalid.");
+    // Cursor's agent run over ACP, as Ensemble runs it, keeps the session apart from its terminal chats.
+    if (engine === "cursor-agent") await removeHistory(cursorConfigDir(), ["acp-sessions", sessionId]);
     const root = engine === "claude-code"
       ? join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects")
-      : join(homedir(), ".cursor", "chats");
+      : join(cursorConfigDir(), "chats");
     for (const folder of await folders(root)) {
       await removeHistory(root, [folder, engine === "claude-code" ? `${sessionId}.jsonl` : sessionId]);
       if (engine === "claude-code") await removeHistory(root, [folder, sessionId]);
@@ -171,6 +226,11 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     }
     return;
   }
+  if (engine === "gemini-cli") {
+    if (!uuid.test(sessionId)) throw new Error("This agent's recorded session ID is invalid.");
+    await removeGeminiSession(sessionId);
+    return;
+  }
   if (engine === "qwen-code") {
     // Qwen Code: <home>/projects/<project>/chats/<id>.jsonl, with a title file beside it.
     const root = join(process.env.QWEN_HOME || join(homedir(), ".qwen"), "projects");
@@ -195,7 +255,7 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
   }
   const launch = await ACP_AGENTS[engine].launch({ root: cwd, sandboxed: false, trusted: false });
   if (!launch) throw new Error(`The ${engine} agent is not installed. Install it on this computer and retry deletion.`);
-  const args = engine === "grok-cli" ? ["sessions", "delete", sessionId] : engine === "opencode" ? ["session", "delete", sessionId] : engine === "gemini-cli" ? ["--delete-session", sessionId] : null;
+  const args = engine === "grok-cli" ? ["sessions", "delete", sessionId] : engine === "opencode" ? ["session", "delete", sessionId] : null;
   if (!args) throw new Error("This agent has no verified native session deletion method. Its history has not been hidden.");
   try { await command(launch.program, [...launch.base, ...args], cwd, launch.env); }
   catch (error) { if (!(error instanceof Error && absentSession(error.message, sessionId))) throw error; }

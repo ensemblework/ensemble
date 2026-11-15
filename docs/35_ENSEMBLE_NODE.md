@@ -1137,10 +1137,10 @@ The computer advertises `capabilities.sessionDelete: 1` and handles `session.del
 | GitHub Copilot | Its headless server's `session.delete`, checking `success` |
 | Codex / ChatGPT's Codex | App-server `thread/delete`, not archive |
 | Claude Code | Exact session transcript and subagent directory under its configured `projects` history |
-| Cursor | Exact UUID chat directory under `.cursor/chats/<workspace>` |
+| Cursor | Exact UUID ACP session directory (`acp-sessions/<id>`) and chat directory (`chats/<workspace>/<id>`) in Cursor's config folder ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up-implementation-reference)) |
 | Grok Build | `grok sessions delete <id>` |
 | OpenCode | `opencode session delete <id>` |
-| Gemini CLI | `gemini --delete-session <id>` in its recorded workspace |
+| Gemini CLI | The session file that records the exact UUID, with that id's logs, tool outputs and subagents; never `gemini --delete-session`, which can delete another session ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up-implementation-reference)) |
 | Antigravity | The pinned ACP server's exact conversation `.db`/sidecar/WAL files and per-session brain directory under its isolated home; never credentials or shared configuration |
 
 A session the agent says it no longer has (deleted in its own app, or expired: "not found" naming that session, or Codex's "no rollout found") counts as deleted, for every agent above.
