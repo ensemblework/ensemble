@@ -171,7 +171,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
             [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" == "true" ]] || { echo "This release is already published." >&2; exit 1; }
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, Windows, and Linux on x64 and Arm64. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, Windows, and Linux on x64 and arm64. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
           fi
           node scripts/desktop-release.mjs bundles --upload
           # Marked latest: a local-only app reads releases/latest/download/latest.json (docs/DESKTOP.md §7). CLI releases never take it.

@@ -36,7 +36,7 @@ const packages=Object.values(manifest.platforms).map(entry=>{
  if(matches.length!==1)throw new Error('Updater package names are not unique.');return matches[0];
 });
 execFileSync(process.execPath,['scripts/verify-desktop-signatures.mjs','apps/desktop/src-tauri/tauri.conf.json',...packages],{stdio:'inherit'});
-const notes=join(dir,'notes.md');await writeFile(notes,`Ensemble ${releaseVersion} for Apple silicon and Intel Macs, Windows, and Linux on x64 and Arm64. Includes the real-world testing fixes and signed in-app updates. Intel disk-image packaging was recovered without changing application source or version. OS code-signing certificates remain unconfigured.\n`);
+const notes=join(dir,'notes.md');await writeFile(notes,`Ensemble ${releaseVersion} for Apple silicon and Intel Macs, Windows, and Linux on x64 and arm64. Includes the real-world testing fixes and signed in-app updates. Intel disk-image packaging was recovered without changing application source or version. OS code-signing certificates remain unconfigured.\n`);
 if(!existing)execFileSync('gh',['release','create',tag,'--repo',repo,'--verify-tag','--draft','--title',`Ensemble desktop ${releaseVersion}`,'--notes-file',notes],{stdio:'inherit'});
 execFileSync(process.execPath,['scripts/desktop-release.mjs',bundles,'--upload'],{stdio:'inherit'});
 execFileSync('gh',['release','edit',tag,'--repo',repo,'--draft=false','--latest'],{stdio:'inherit'});
