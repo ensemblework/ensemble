@@ -36,6 +36,7 @@ import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
+import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, type ClaudeSpend } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
@@ -272,6 +273,8 @@ export async function runClaudeCode(
   let failure: string | null = null;
   let started = false;
   let sessionId: string | null = null;
+  // The run's tokens and cost over every result it gives (a run with background sub-agents answers more than once).
+  let spend: ClaudeSpend | null = null;
   let stderr = "";
   const stop = () => {
     if (!child.pid) return;
@@ -301,6 +304,8 @@ export async function runClaudeCode(
         continue;
       }
       if (message.type === "system" && message.subtype === "init") {
+        // A run answers again once its background sub-agents finish, with a new `init`: the run started once.
+        if (started) continue;
         started = true;
         result.model = typeof message.model === "string" ? message.model : null;
         sessionId = typeof message.session_id === "string" ? message.session_id : null;
@@ -308,6 +313,8 @@ export async function runClaudeCode(
         await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null, observed: { ...(result.model ? { model: result.model } : {}) } });
         await ctx.progress(`Claude Code started${result.model ? ` (${result.model})` : ""}`);
       } else if (message.type === "assistant") {
+        // A sub-agent's (Agent tool): its tool calls are work in the folder, its words and context are not the run's.
+        const sub = claudeFromSubAgent(message);
         const body = (message.message ?? {}) as { content?: Array<Record<string, unknown>>; usage?: Record<string, number>; model?: string };
         const usage = body.usage ?? {};
         const totals = {
@@ -315,17 +322,18 @@ export async function runClaudeCode(
           tokensIn: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) || null,
           tokensOut: usage.output_tokens ?? null,
         };
-        if (totals.tokensIn) lastInput = totals.tokensIn;
+        if (totals.tokensIn && !sub) lastInput = totals.tokensIn;
         for (const part of body.content ?? []) {
           if (part.type === "thinking" && typeof part.thinking === "string") {
-            await trace.thinking(part.thinking);
+            if (!sub) await trace.thinking(part.thinking);
           } else if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+            if (sub) continue;
             appendLive(ctx.job.id, `${part.text.trim()}\n`);
             await ctx.progress(part.text.trim().split("\n")[0]!.slice(0, 160));
             await trace.message(part.text, totals);
           } else if (part.type === "tool_use") {
             result.toolCalls += 1;
-            const summary = summarize(String(part.name ?? "tool"), (part.input ?? {}) as Record<string, unknown>);
+            const summary = `${sub ? SUB_AGENT : ""}${summarize(String(part.name ?? "tool"), (part.input ?? {}) as Record<string, unknown>)}`;
             appendLive(ctx.job.id, `· ${summary}\n`);
             await ctx.event("tool", { name: part.name, ok: true, summary, engine: "claude-code" });
             await trace.toolStart(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {}, summary);
@@ -343,20 +351,21 @@ export async function runClaudeCode(
           await trace.toolEnd(String(part.tool_use_id ?? ""), content, part.is_error !== true);
         }
       } else if (message.type === "result") {
+        // The last result is the run's answer: an earlier one only said it was waiting on its sub-agents.
         result.text = typeof message.result === "string" ? message.result : "";
-        result.turns = typeof message.num_turns === "number" ? message.num_turns : result.turns;
-        result.costUsd = typeof message.total_cost_usd === "number" ? message.total_cost_usd : null;
-        const usage = (message.usage ?? {}) as Record<string, number>;
-        result.tokensIn = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
-        result.tokensOut = usage.output_tokens ?? 0;
+        result.turns += typeof message.num_turns === "number" ? message.num_turns : 0;
+        spend = addClaudeResult(spend, message);
+        result.costUsd = spend.costUsd;
+        result.tokensIn = spend.tokensIn;
+        result.tokensOut = spend.tokensOut;
         const window = claudeWindow(message.modelUsage, result.model);
         if (window) await ctx.event("engine_context", { ...window, ...(lastInput ? { used: lastInput } : {}) });
-        if (message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")) {
-          failure =
-            message.subtype === "error_max_turns"
+        failure =
+          message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")
+            ? message.subtype === "error_max_turns"
               ? `Claude Code reached the limit of ${options.maxTurns} turns.`
-              : `Claude Code stopped: ${result.text || String(message.subtype)}`;
-        }
+              : `Claude Code stopped: ${result.text || String(message.subtype)}`
+            : null;
       }
     }
     const code = await new Promise<number>((done) => (child.exitCode !== null ? done(child.exitCode) : child.once("close", (value) => done(value ?? 1))));

@@ -30,6 +30,7 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionBusyError, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { BUSY_CARD, BUSY_WAIT, CodexThreadBusy, resumeCodexThread } from "./session-restart.js";
+import { otherCodexThread, SUB_AGENT } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { codexProject, codexProjectThreads, fileCodexAppProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
 import { agentProjectOf } from "../agent-projects.js";
@@ -213,6 +214,9 @@ export async function runCodex(
   const held: string[] = [];
   server.onNotification = (method, params) => {
     const earlier = [...handling];
+    // A sub-agent's thread (Codex's `spawn_agent`) reports here too, and often finishes first. Its tool calls are
+    // work in the folder, kept in the trace as a sub-agent's; its messages, tokens and turn end are not the run's.
+    const child = otherCodexThread(params, threadId);
     const work = (async () => {
       if (method === "item/started" || method === "item/completed") {
         const item = (params.item ?? {}) as {
@@ -233,14 +237,14 @@ export async function runCodex(
           error?: unknown;
         };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
-        if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim() && (item.phase === "final_answer" || item.phase === null || item.phase === undefined)) result.text = item.text.trim();
+        if (!child && method === "item/completed" && item.type === "agentMessage" && item.text?.trim() && (item.phase === "final_answer" || item.phase === null || item.phase === undefined)) result.text = item.text.trim();
         const isTool = item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall";
         // Trace calls come first, before any await: these handlers run concurrently, and a call's
         // completion can be handled while its start is still waiting on the event write.
         const traced: Array<Promise<void>> = [];
         if (method === "item/started" && isTool) {
           result.toolCalls += 1;
-          const summary = item.type === "commandExecution" ? `Run ${String(item.command ?? "").slice(0, 160)}` : item.type === "fileChange" ? `Change ${(item.changes ?? []).map((change) => change.path).join(", ").slice(0, 160)}` : `Use ${item.tool ?? "a tool"}`;
+          const summary = `${child ? SUB_AGENT : ""}${item.type === "commandExecution" ? `Run ${String(item.command ?? "").slice(0, 160)}` : item.type === "fileChange" ? `Change ${(item.changes ?? []).map((change) => change.path).join(", ").slice(0, 160)}` : `Use ${item.tool ?? "a tool"}`}`;
           const input = item.type === "commandExecution" ? { command: item.command } : item.type === "fileChange" ? { files: (item.changes ?? []).map((change) => change.path) } : { tool: item.tool, arguments: item.arguments };
           traced.push(trace.toolStart(item.id ?? "", item.type ?? "tool", input, summary));
           appendLive(ctx.job.id, `· ${summary}\n`);
@@ -257,14 +261,14 @@ export async function runCodex(
           // An MCP tool's answer is its result (or error), a command's its output.
           traced.push(trace.toolEnd(item.id ?? "", item.aggregatedOutput ?? item.result ?? item.error ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed));
         }
-        if (method === "item/completed" && item.type === "reasoning") traced.push(trace.thinking([item.text ?? "", ...(item.summary ?? [])].filter(Boolean).join("\n")));
-        if (method === "item/completed" && item.type === "agentMessage" && item.phase && item.phase !== "final_answer" && item.text?.trim()) traced.push(trace.message(item.text));
+        if (!child && method === "item/completed" && item.type === "reasoning") traced.push(trace.thinking([item.text ?? "", ...(item.summary ?? [])].filter(Boolean).join("\n")));
+        if (!child && method === "item/completed" && item.type === "agentMessage" && item.phase && item.phase !== "final_answer" && item.text?.trim()) traced.push(trace.message(item.text));
         await Promise.all(traced);
-        if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim()) {
+        if (!child && method === "item/completed" && item.type === "agentMessage" && item.text?.trim()) {
           appendLive(ctx.job.id, `${item.text.trim()}\n`);
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));
         }
-      } else if (method === "thread/tokenUsage/updated") {
+      } else if (method === "thread/tokenUsage/updated" && !child) {
         const usage = (params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number }; last?: { inputTokens?: number }; modelContextWindow?: number | null };
         const total = usage.total ?? {};
         // The last request's input (the conversation so far): how full the thread's context is (session-choice).
@@ -276,7 +280,7 @@ export async function runCodex(
           reportedWindow = usage.modelContextWindow;
           await ctx.event("engine_context", { size: usage.modelContextWindow, context: "default" });
         }
-      } else if (method === "turn/completed") {
+      } else if (method === "turn/completed" && !child) {
         if (lastInput && reportedWindow) await ctx.event("engine_context", { size: reportedWindow, context: "default", used: lastInput });
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null };
         // Bounded: a handler stuck writing an event must not hold the turn open.

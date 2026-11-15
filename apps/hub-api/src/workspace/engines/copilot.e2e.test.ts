@@ -75,6 +75,11 @@ async function second(promptId, text) {
   seen.push("model:" + config.model, "effort:" + config.reasoning_effort, "prompts:" + prompts, "allowalloff:" + (config.allow_all === "off"));
   seen.push("window:" + tier);
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "usage_update", used: 1234, size: tier === "long_context" ? 922000 : 200000 } } });
+  // A sub-agent (Copilot's task tool) speaks on this session too, marked with its agent id (Copilot CLI 1.0.109).
+  const sub = { "github.com/copilot": { agentId: "f1905b8e" } };
+  send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "The sub-agent thinks." }, _meta: sub } } });
+  send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "call_sub", title: "Read notes.md", kind: "read", status: "completed", rawInput: {}, _meta: sub } } });
+  send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "PLUM " }, _meta: sub } } });
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: seen.join(" ") } } } });
   send({ id: promptId, result: { stopReason: "end_turn", usage: { inputTokens: 200, outputTokens: 20 } } });
 }
@@ -124,7 +129,7 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
       json: { taskId: task.body.task.id, kind: "code", engine: "copilot-cli", model: "gpt-5.6-luna", reasoningEffort: "low", contextTier: "long_context", mode: "unattended", sandbox: false, delivery: "local" },
     });
     assert.ok(assigned.body.jobId, JSON.stringify(assigned.body));
-    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null } = { status: "queued" };
+    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null; runId?: string | null } = { status: "queued" };
     for (let i = 0; i < 240 && !["succeeded", "failed", "blocked", "cancelled"].includes(job.status); i += 1) {
       await sleep(500);
       const polled = await side.api<{ job: typeof job }>(`/api/agent/jobs/${assigned.body.jobId}`).catch((error: Error) => {
@@ -155,6 +160,11 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
     assert.match(summary, /name:\[Copilot run\]/, "the session is named after the task with Copilot's own /rename");
     assert.match(summary, /first:\[# Copilot run\]/, "a named session gets the brief as it is");
     assert.doesNotMatch(summary, /Session renamed to/, "what /rename answers is not the task's reply");
+    // A sub-agent's words are not the reply; its tool call is in the trace, marked.
+    assert.doesNotMatch(summary, /PLUM/);
+    const steps = (await side.api<{ run: { steps: Array<{ title: string; reasoning?: string | null }> } }>(`/api/runs/${job.runId}`)).body.run.steps;
+    assert.ok(steps.some((step) => step.title === "Sub-agent: Read notes.md"), steps.map((step) => step.title).join(" | "));
+    assert.ok(!steps.some((step) => (step.reasoning ?? "").includes("The sub-agent thinks")), "the sub-agent's thinking is not the run's");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
   } finally {
     await side.stop();

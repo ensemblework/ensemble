@@ -54,7 +54,16 @@ seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume")
 seen.push("brief:" + (/^# Engine run\\n/.test(prompt) ? "title-first" : "other") + ":" + (prompt.includes("Weekly digest") ? "unpicked-skill" : "no-unpicked-skill") + ":" + (/You are working for|Internet: on/.test(prompt) ? "noise" : "lean"));
 const host = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_HOST_AUTH_ENV_VAR", "CLAUDE_CODE_MESSAGING_TOKEN", "ANTHROPIC_BASE_URL"].filter((name) => process.env[name] !== undefined);
 seen.push("host:" + (host.join(",") || "none"), "own:" + (process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? "none"));
-say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
+// A background sub-agent (Agent tool), as Claude Code 2.1.325 runs one under -p: its messages name the call that
+// started it, and the run answers twice, the first time only to say it is waiting. Costs: the session's so far.
+say({ type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: { description: "Reply with PLUM", prompt: "Reply with PLUM." } }] } });
+say({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "Async agent launched successfully." }] } });
+say({ type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "tool_use", id: "a2", name: "Read", input: { file_path: "notes.md" } }], usage: { input_tokens: 90000 } } });
+say({ type: "user", parent_tool_use_id: "a1", message: { content: [{ type: "tool_result", tool_use_id: "a2", content: "notes" }] } });
+say({ type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "text", text: "PLUM" }], usage: { input_tokens: 90000 } } });
+say({ type: "result", subtype: "success", is_error: false, num_turns: 2, result: "The sub-agent is still running.", total_cost_usd: 0.5, usage: { input_tokens: 60, output_tokens: 8 }, model_usage_since_last_result: { "claude-test": { inputTokens: 70, outputTokens: 12, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.004 } } });
+say({ type: "system", subtype: "init", session_id: "s1", model: "claude-test", cwd: process.cwd() });
+say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.51, usage: { input_tokens: 100, output_tokens: 20 }, model_usage_since_last_result: { "claude-test": { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.006 } } });
 `;
 
 test("Claude Code as the engine: every tool call is judged by the run's rules", { timeout: 300_000 }, async () => {
@@ -84,7 +93,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
       json: { taskId: task.body.task.id, kind: "code", engine: "claude-code", reasoningEffort: "high", mode: "unattended", sandbox: false, delivery: "local" },
     });
     assert.ok(assigned.body.jobId, JSON.stringify(assigned.body));
-    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null } = { status: "queued" };
+    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null; runId?: string | null; tokensIn?: number; tokensOut?: number; turns?: number; costUsd?: number | null } = { status: "queued" };
     for (let i = 0; i < 240 && !["succeeded", "failed", "blocked", "cancelled"].includes(job.status); i += 1) {
       await sleep(500);
       job = (await side.api<{ job: typeof job }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.job;
@@ -104,6 +113,14 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.match(summary, /resume:none insession:false/, "a new task starts a new session");
     assert.match(summary, /brief:title-first:no-unpicked-skill:lean/, "the brief opens with the task, carries only picked skills, and no noise");
     assert.match(summary, /host:none own:0/, "Claude Code signs in with the person's own settings, not the app session's");
+    // A background sub-agent: the last answer is the summary, both stretches count (this run's cost, not the
+    // session's so far), and the sub-agent's tool call is in the trace, marked, while its words are not the run's.
+    assert.doesNotMatch(summary, /still running|PLUM/);
+    assert.deepEqual([job.tokensIn, job.tokensOut, job.turns], [170, 32, 5]);
+    assert.ok(Math.abs((job.costUsd ?? 0) - 0.01) < 1e-9, String(job.costUsd));
+    const steps = (await side.api<{ run: { steps: Array<{ title: string; output: string | null }> } }>(`/api/runs/${job.runId}`)).body.run.steps;
+    assert.ok(steps.some((step) => step.title === "Sub-agent: Read notes.md"), steps.map((step) => step.title).join(" | "));
+    assert.ok(!steps.some((step) => step.title === "Message" && (step.output ?? "").includes("PLUM")), "the sub-agent's words are not a message of the run");
 
     // Continuing it: the same folder, and Claude Code resumes its own session with the new task.
     const next = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Follow-up" } });
