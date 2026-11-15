@@ -46,6 +46,14 @@ async function work(cwd) {
   });
   seen.push("mcp:" + reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2).result.content[0].text);
   seen.push("policy:" + thread.approvalPolicy, "sandbox:" + thread.sandbox, "trust:" + thread.config.projects[cwd].trust_level, "keys:" + (process.env.OPENAI_API_KEY ? "leaked" : "none"));
+  // A sub-agent (spawn_agent) is a thread of its own that reports on this connection, and finishes first.
+  send({ method: "turn/started", params: { threadId: "t2", turn: { id: "u2", status: "inProgress", items: [] } } });
+  send({ method: "item/started", params: { threadId: "t2", turnId: "u2", startedAtMs: 0, item: { type: "commandExecution", id: "c-sub", command: "ls", cwd, status: "inProgress" } } });
+  send({ method: "item/completed", params: { threadId: "t2", turnId: "u2", completedAtMs: 0, item: { type: "commandExecution", id: "c-sub", command: "ls", cwd, status: "completed", exitCode: 0, aggregatedOutput: "hello.txt" } } });
+  send({ method: "item/completed", params: { threadId: "t2", turnId: "u2", completedAtMs: 0, item: { type: "agentMessage", id: "m-sub", text: "PLUM", phase: "final_answer" } } });
+  send({ method: "thread/tokenUsage/updated", params: { threadId: "t2", turnId: "u2", tokenUsage: { total: { totalTokens: 9999, inputTokens: 9000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 999, reasoningOutputTokens: 0 }, last: {}, modelContextWindow: null } } });
+  send({ method: "turn/completed", params: { threadId: "t2", turn: { id: "u2", status: "completed", error: null, items: [] } } });
+  await new Promise((resolve) => setTimeout(resolve, 300));
   send({ method: "thread/tokenUsage/updated", params: { threadId: "t1", turnId: "u1", tokenUsage: { total: { totalTokens: 150, inputTokens: 120, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 30, reasoningOutputTokens: 0 }, last: {}, modelContextWindow: null } } });
   send({ method: "item/completed", params: { threadId: "t1", turnId: "u1", completedAtMs: 0, item: { type: "agentMessage", id: "m1", text: seen.join(" "), phase: "final_answer" } } });
   send({ method: "turn/completed", params: { threadId: "t1", turn: { id: "u1", status: "completed", error: null, items: [] } } });
@@ -76,7 +84,7 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
       json: { taskId: task.body.task.id, kind: "code", engine: "codex", reasoningEffort: "high", mode: "unattended", sandbox: false, delivery: "local" },
     });
     assert.ok(assigned.body.jobId, JSON.stringify(assigned.body));
-    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null } = { status: "queued" };
+    let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null; runId?: string | null; tokensIn?: number; tokensOut?: number } = { status: "queued" };
     for (let i = 0; i < 240 && !["succeeded", "failed", "blocked", "cancelled"].includes(job.status); i += 1) {
       await sleep(500);
       const polled = await side.api<{ job: typeof job }>(`/api/agent/jobs/${assigned.body.jobId}`).catch((error: Error) => {
@@ -96,6 +104,12 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     assert.match(summary, /trust:untrusted/, "the folder's own .codex/ does not run");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Codex");
     assert.match(summary, /effort:high/, "the thinking level chosen for the run reaches Codex");
+    // The sub-agent's thread ended first: its turn end, answer and tokens are not the run's; its command is in the trace, marked.
+    assert.doesNotMatch(summary, /PLUM/);
+    assert.deepEqual([job.tokensIn, job.tokensOut], [120, 30]);
+    const steps = (await side.api<{ run: { steps: Array<{ title: string; output: string | null }> } }>(`/api/runs/${job.runId}`)).body.run.steps;
+    assert.ok(steps.some((step) => step.title === "Sub-agent: Run ls"), steps.map((step) => step.title).join(" | "));
+    assert.ok(!steps.some((step) => (step.output ?? "").includes("PLUM")), "the sub-agent's answer is not a step of the run");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
 
     // A folder the person trusts is trusted in Codex too, so its own .codex/ runs as in their Codex.

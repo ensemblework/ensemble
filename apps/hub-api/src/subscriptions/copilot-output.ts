@@ -1,3 +1,4 @@
+import { copilotEventFromSubAgent } from "../workspace/engines/sub-agents.js";
 import type { OwnToolLog } from "./own-tools.js";
 
 /** Consume only events emitted by the Copilot process Ensemble started for this turn. */
@@ -8,10 +9,13 @@ export function copilotOutput(model: string | null, onDelta: (text: string) => v
   return {
     result,
     line(line: string) {
-      let event: { type?: string; data?: Record<string, unknown> };
+      let event: { type?: string; data?: Record<string, unknown>; agentId?: unknown };
       try { event = JSON.parse(line); } catch { return; }
       const data = event?.data;
       if (!data) return;
+      // A sub-agent's (Copilot's task tool) messages carry its agent id: they are not the reply. Its tool calls
+      // and usage still count as the turn's.
+      const sub = copilotEventFromSubAgent(event);
       if (event.type === "tool.execution_start" && typeof data.toolCallId === "string") {
         tools?.start(data.toolCallId, String(data.toolName ?? "tool"), data.arguments ?? {});
       } else if (event.type === "tool.execution_complete" && typeof data.toolCallId === "string") {
@@ -22,11 +26,11 @@ export function copilotOutput(model: string | null, onDelta: (text: string) => v
         if (valid(data.inputTokens)) result.tokensIn = (result.tokensIn ?? 0) + data.inputTokens;
         if (valid(data.outputTokens)) result.tokensOut = (result.tokensOut ?? 0) + data.outputTokens;
         // Copilot's cost field is not USD or Ensemble credits. Do not reinterpret it as either.
-      } else if (event.type === "assistant.message_delta" && typeof data.deltaContent === "string") {
+      } else if (event.type === "assistant.message_delta" && typeof data.deltaContent === "string" && !sub) {
         if (!streamed && result.text) onDelta("\n\n");
         streamed += data.deltaContent;
         onDelta(data.deltaContent);
-      } else if (event.type === "assistant.message" && typeof data.content === "string") {
+      } else if (event.type === "assistant.message" && typeof data.content === "string" && !sub) {
         const rest = data.content.startsWith(streamed) ? data.content.slice(streamed.length) : streamed ? "" : data.content;
         if (rest) { if (!streamed && result.text) onDelta("\n\n"); onDelta(rest); }
         result.text += (result.text ? "\n\n" : "") + data.content;

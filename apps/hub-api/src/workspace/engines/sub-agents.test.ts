@@ -1,0 +1,67 @@
+/**
+ * Telling a session's sub-agents apart from the session's own work on its stream (#272). The Claude Code
+ * figures are from real runs of Claude Code 2.1.325 (a background sub-agent under `-p`; a resumed session).
+ */
+import assert from "node:assert/strict";
+import test from "node:test";
+import { addClaudeResult, claudeFromSubAgent, copilotEventFromSubAgent, copilotUpdateAgent, otherCodexThread } from "./sub-agents.js";
+
+test("a Codex notification about another thread is a sub-agent's", () => {
+  assert.equal(otherCodexThread({ threadId: "child" }, "parent"), true);
+  assert.equal(otherCodexThread({ threadId: "parent" }, "parent"), false);
+  assert.equal(otherCodexThread({}, "parent"), false, "a notification that names no thread is the connection's");
+  assert.equal(otherCodexThread({ threadId: "child" }, null), false, "before the session's thread is known nothing is set aside");
+});
+
+test("Copilot marks a sub-agent's ACP updates and JSON events with its agent id", () => {
+  assert.equal(copilotUpdateAgent({ _meta: { "github.com/copilot": { agentId: "f1905b8e" } } }), "f1905b8e");
+  assert.equal(copilotUpdateAgent({ _meta: { "github.com/copilot": { agentId: "" } } }), null);
+  assert.equal(copilotUpdateAgent({ _meta: { other: { agentId: "x" } } }), null);
+  assert.equal(copilotUpdateAgent({}), null);
+  assert.equal(copilotEventFromSubAgent({ agentId: "7ec2f61b", data: { content: "PLUM" } }), true);
+  assert.equal(copilotEventFromSubAgent({ data: { content: "PLUM", parentToolCallId: "toolu_1" } }), true);
+  assert.equal(copilotEventFromSubAgent({ data: { content: "DONE" } }), false);
+});
+
+test("a Claude Code message from a sub-agent names the Agent tool call that started it", () => {
+  assert.equal(claudeFromSubAgent({ type: "assistant", parent_tool_use_id: "toolu_01BcvC" }), true);
+  assert.equal(claudeFromSubAgent({ type: "assistant", parent_tool_use_id: null }), false);
+  assert.equal(claudeFromSubAgent({ type: "assistant" }), false);
+});
+
+test("a Claude Code run that answers twice: tokens and cost over both stretches, sub-agent included", () => {
+  // The run started a background sub-agent, said it was waiting (result 0), then answered (result 1).
+  const first = addClaudeResult(null, {
+    result_index: 0,
+    total_cost_usd: 0.004649305,
+    usage: { input_tokens: 4, output_tokens: 341, cache_read_input_tokens: 20683, cache_creation_input_tokens: 21208 },
+    model_usage_since_last_result: { "claude-haiku-5-5": { inputTokens: 6, outputTokens: 347, cacheReadInputTokens: 20683, cacheCreationInputTokens: 34147, costUSD: 0.004649305 } },
+  });
+  const both = addClaudeResult(first, {
+    result_index: 1,
+    total_cost_usd: 0.00495066,
+    usage: { input_tokens: 4, output_tokens: 5, cache_read_input_tokens: 21208, cache_creation_input_tokens: 691 },
+    model_usage_since_last_result: { "claude-haiku-5-5": { inputTokens: 4, outputTokens: 5, cacheReadInputTokens: 21208, cacheCreationInputTokens: 691, costUSD: 0.000301355 } },
+  });
+  // The first stretch's tokens include the sub-agent's 12,941 (its 2 in, 6 out and 12,939 cache writes).
+  assert.equal(both.tokensIn, 6 + 20683 + 34147 + 4 + 21208 + 691);
+  assert.equal(both.tokensOut, 347 + 5);
+  assert.ok(Math.abs((both.costUsd ?? 0) - 0.00495066) < 1e-12);
+});
+
+test("a resumed Claude Code session: the run's own cost, not the session's total so far", () => {
+  const spend = addClaudeResult(null, {
+    total_cost_usd: 0.00379922,
+    usage: { input_tokens: 2, output_tokens: 5, cache_read_input_tokens: 20653, cache_creation_input_tokens: 67 },
+    modelUsage: { "claude-haiku-5-5": { inputTokens: 6, outputTokens: 15, cacheReadInputTokens: 34462, cacheCreationInputTokens: 27572, costUSD: 0.00379922 } },
+    model_usage_since_last_result: { "claude-haiku-5-5": { inputTokens: 2, outputTokens: 5, cacheReadInputTokens: 20653, cacheCreationInputTokens: 67, costUSD: 0.000217605 } },
+  });
+  assert.deepEqual(spend, { tokensIn: 2 + 20653 + 67, tokensOut: 5, costUsd: 0.000217605, perResult: true });
+});
+
+test("an older Claude Code without the per-stretch field: each result's own usage, and its total cost", () => {
+  const first = addClaudeResult(null, { total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
+  const both = addClaudeResult(first, { total_cost_usd: 0.012, usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 70 } });
+  assert.deepEqual(both, { tokensIn: 200, tokensOut: 25, costUsd: 0.012, perResult: false });
+  assert.deepEqual(addClaudeResult(null, { usage: {} }), { tokensIn: 0, tokensOut: 0, costUsd: null, perResult: false });
+});
