@@ -116,6 +116,42 @@ test("an ask keeps its days and its named folder, also when its session could no
   assert.deepEqual(await chatFolder(key, { agent: "copilot-cli", title: "Ask Ensemble: Launch plan", keepDays: 1 }), placed);
 });
 
+test("a replaced session is deleted from the agent and the chat goes on in its folder; a chat unused past its days goes with it", async () => {
+  const key = "9a0b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
+  const placed = await chatFolder(key, { agent: "copilot-cli", title: "Long chat" });
+  mkdirSync(placed.folder, { recursive: true });
+  writeFileSync(join(placed.folder, "system.md"), "Rules.");
+  await saveSession(key, "copilot-cli", "first-session", "Rules.", { next: 2, dir: placed.dir });
+  await settle();
+  dropped.length = 0;
+  // Rotated (or its instructions changed): a new session of the same agent.
+  await saveSession(key, "copilot-cli", "second-session", "Rules.", { next: 4, dir: placed.dir });
+  await settle();
+  assert.deepEqual(dropped, [{ id: "first-session", folder: placed.folder }], "deleted from Copilot, from the folder it began in");
+  assert.ok(existsSync(join(placed.folder, "system.md")), "the chat goes on in its folder");
+  // Another agent takes the chat over: its old session goes, the folder stays.
+  await saveSession(key, "codex", "thread-3", "Rules.", { next: 6, perTurn: true, dir: placed.dir });
+  await settle();
+  assert.ok(dropped.some((row) => row.id === "second-session"));
+  assert.ok(existsSync(join(placed.folder, "system.md")));
+  // A chat from before named folders, the same.
+  const legacy = "0b1c2d3e-4f5a-4b6c-8d7e-8f9a0b1c2d3e";
+  mkdirSync(sessionFolder(legacy), { recursive: true });
+  await saveSession(legacy, "gemini-cli", "old-gemini", "Rules.", { next: 2 });
+  await saveSession(legacy, "gemini-cli", "new-gemini", "Rules.", { next: 4 });
+  await settle();
+  assert.ok(dropped.some((row) => row.id === "old-gemini" && row.folder === sessionFolder(legacy)));
+  assert.ok(existsSync(sessionFolder(legacy)));
+  // Unused past its keeping days: the whole chat is dropped, its folder too, when another chat's turn saves.
+  writeFileSync(storePath, JSON.stringify({ ...store(), [key]: { ...store()[key], at: 0 } }));
+  dropped.length = 0;
+  await saveSession("1c2d3e4f-5a6b-4c7d-8e8f-9a0b1c2d3e4f", "codex", "thread-4", "Rules.", { next: 2, perTurn: true });
+  await settle();
+  assert.deepEqual(dropped, [{ id: "thread-3", folder: placed.folder }]);
+  assert.equal(existsSync(placed.folder), false, "an expired chat's folder goes with it");
+  assert.ok(!(key in store()));
+});
+
 test("a folder name in the store that is a path is never used", async () => {
   const key = "7b8c9d0e-1f2a-4b3c-8d4e-5f6a7b8c9d0e";
   writeFileSync(storePath, JSON.stringify({ ...store(), [key]: { agent: "codex", id: "thread-9", instructions: "x", at: Date.now(), dir: "../../outside" } }));

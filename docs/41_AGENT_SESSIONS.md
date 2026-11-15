@@ -205,7 +205,7 @@ A message that got no answer (its computer was offline, the turn failed before r
 
 For an agent that keeps the instructions from a session's first message (Copilot, Cursor's agent, the ACP agents), changed instructions do not start a new session, since a node's instructions change on most messages (the skills matched to the message, a new memory, the room). The message is led by what changed instead (`instructionsUpdate`: "Your instructions changed since this conversation began", the lines now part of them and the lines no longer part of them).
 
-When more than half of the lines changed, or after 80 messages in one session (`ROTATE_MESSAGES`), it starts a new session with the chat so far. A session replaced in the store (a new one for the same chat) is deleted from the agent at once, with its folder when the folder is the chat's own.
+When more than half of the lines changed, or after 80 messages in one session (`ROTATE_MESSAGES`), it starts a new session with the chat so far. A session replaced in the store (a new one for the same chat) is deleted from the agent at once; the chat goes on in its folder, which stays.
 
 **A group of chats, one project folder.** A turn may name a group (`session.group {id, name}`, with `session.keepDays`): its agent then works in the group's project folder (`projectFolder` in `workspace/agent-projects.ts`, `<workspace>/projects/<name>`), so the agent's own app lists the group's sessions together, as it groups sessions by folder; the turn's own files stay in the chat's folder. An Ensemble Node's turns use the node as the group ("<Name> (Ensemble Node)") and keep a session 7 days unused ([30 §10.2](30_ENGINES.md#102-a-nodes-brain)).
 

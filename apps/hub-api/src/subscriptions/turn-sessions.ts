@@ -153,19 +153,19 @@ export type SaveOptions = { next?: number; folder?: string; keepDays?: number; p
 
 /**
  * Remembers the chat's session after a turn, and drops sessions unused for their keeping days, and the
- * one this session replaced: the agent's own history of each too (its app no longer lists it), then
- * its folder when it is the chat's own.
+ * one this session replaced: the agent's own history of each too (its app no longer lists it). A chat
+ * unused for its keeping days goes with its own folder; one whose session was replaced goes on there.
  */
 export async function saveSession(key: string, agent: SubscriptionProvider, id: string, instructions: string, options: SaveOptions | number = {}): Promise<void> {
   const opts: SaveOptions = typeof options === "number" ? { next: options } : options;
   const dropped = await serial(async () => {
     const store = await read();
     const now = Date.now();
-    const old: Array<[string, Entry]> = [];
+    const old: Array<[string, Entry, boolean]> = [];
     for (const [other, entry] of Object.entries(store)) {
       if (other !== key && now - entry.at >= keepMs(entry)) {
         delete store[other];
-        old.push([other, entry]);
+        old.push([other, entry, true]);
       }
     }
     const before = store[key];
@@ -174,8 +174,8 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
     // Another session took the chat's place: the old one would only clutter the agent's app (one used outside
     // Ensemble stays, unresumed, until the chat goes). Earlier retired sessions move to the new entry; on
     // another agent they go with the old one. An entry with no session yet (`chatFolder`) only names the folder.
-    if (before && !sameAgent && (before.id || before.retired?.length)) old.push([key, before]);
-    else if (before && before.id && before.id !== id && !retiring) old.push([key, { ...before, retired: undefined }]);
+    if (before && !sameAgent && (before.id || before.retired?.length)) old.push([key, before, false]);
+    else if (before && before.id && before.id !== id && !retiring) old.push([key, { ...before, retired: undefined }, false]);
     const retired = sameAgent ? [...(before?.retired ?? []), ...(retiring ? [before!.id] : [])].filter((one) => one && one !== id) : [];
     const continued = before && before.id === id;
     const from = continued ? before.from : opts.next === undefined ? undefined : Math.max(0, opts.next - 2);
@@ -210,12 +210,13 @@ export function setNativeDropForTests(drop: Drop | null): void {
   dropForTests = drop;
 }
 
-async function dropNative(entries: Array<[string, Entry]>): Promise<void> {
+/** `chat`: the whole chat is dropped (deleted, or unused for its keeping days), not only a session it replaced. */
+async function dropNative(entries: Array<[string, Entry, boolean]>): Promise<void> {
   const { deleteNativeSession } = dropForTests ? { deleteNativeSession: dropForTests } : await import("../workspace/engines/delete-session.js");
-  for (const [key, entry] of entries) {
+  for (const [key, entry, chat] of entries) {
     for (const id of [entry.id, ...(entry.retired ?? [])]) if (id) await deleteNativeSession(entry.agent, id, entry.folder ?? ownFolder(key, entry)).catch(() => undefined);
-    // A group's folder (a node's project) is shared: only a chat's own folder goes with it.
-    if (!entry.folder) await rm(ownFolder(key, entry), { recursive: true, force: true }).catch(() => undefined);
+    // A group's folder (a node's project) is shared, and a chat that goes on works in its own: only a dropped chat's own folder goes.
+    if (chat && !entry.folder) await rm(ownFolder(key, entry), { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -247,7 +248,7 @@ export async function dropSession(key: string): Promise<boolean> {
     await write(store);
     return found;
   });
-  if (entry) await dropNative([[key, entry]]);
+  if (entry) await dropNative([[key, entry, true]]);
   else await rm(sessionFolder(key), { recursive: true, force: true }).catch(() => undefined);
   return Boolean(entry);
 }
