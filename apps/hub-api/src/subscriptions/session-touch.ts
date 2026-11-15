@@ -1,12 +1,11 @@
 /**
- * Whether someone used an Ensemble chat's agent session outside Ensemble (docs/30 §8): the person
- * opened it in the agent's own app or terminal and sent it prompts of their own. Read from the agent's
- * own transcript (never its credentials): how many prompts the session holds. Ensemble notes the count
- * after each of its turns (turn-sessions.ts `prompts`); a larger count before its next turn means
- * prompts it did not send, and the chat goes on in a new session with Ensemble's own history, so what
- * was said there never enters Ensemble's chat. Known for Claude Code and GitHub Copilot, whose
- * transcripts are plain files; with any other agent, or a transcript Ensemble cannot find, the session
- * is resumed as before.
+ * Whether someone used an Ensemble chat's agent session outside Ensemble (docs/41 §5): the person opened
+ * it in the agent's own app or terminal and sent it prompts of their own. Read from the agent's own
+ * transcript (never its credentials): how many prompts the session holds. Ensemble notes the count after
+ * each of its turns (turn-sessions.ts `prompts`); a larger count before its next turn means prompts it did
+ * not send, which are brought into Ensemble before it goes on in the same session (outside.ts). Read here
+ * for Claude Code and GitHub Copilot, whose transcripts are plain files; Codex and the ACP agents count
+ * their turns as they reopen the session (subscriptions/agents.ts).
  */
 import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -53,7 +52,8 @@ export const copilotPrompt = (line: string): boolean => line.includes('"type":"u
 /** Claude Code's folder for a working folder's sessions: every character but a letter or digit becomes "-". */
 export const claudeProjectName = (folder: string): string => folder.replace(/[^a-zA-Z0-9]/g, "-");
 
-async function claudeTranscript(id: string, folder: string): Promise<string | null> {
+/** Where Claude Code keeps this session's transcript: in its folder's project, else wherever it is found by id. */
+export async function claudeTranscript(id: string, folder: string): Promise<string | null> {
   const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects");
   const direct = join(root, claudeProjectName(folder), `${id}.jsonl`);
   if (await stat(direct).then((info) => info.isFile(), () => false)) return direct;
@@ -66,10 +66,13 @@ async function claudeTranscript(id: string, folder: string): Promise<string | nu
   return null;
 }
 
+/** GitHub Copilot's events of this session. */
+export const copilotEvents = (id: string): string => join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "session-state", id, "events.jsonl");
+
 /** How many prompts the agent's own transcript of this session holds; null when that cannot be read here. */
 export async function sessionPrompts(agent: SubscriptionProvider, id: string, folder: string): Promise<number | null> {
   if (!ID.test(id)) return null;
-  if (agent === "copilot-cli") return countLines(join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "session-state", id, "events.jsonl"), copilotPrompt);
+  if (agent === "copilot-cli") return countLines(copilotEvents(id), copilotPrompt);
   if (agent === "claude-code") {
     const path = await claudeTranscript(id, folder);
     return path ? countLines(path, claudePrompt) : null;

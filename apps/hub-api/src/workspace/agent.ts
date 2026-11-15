@@ -16,6 +16,7 @@ import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type 
 import { PageDocument } from "@ensemble/shared-types";
 import { recordChoiceOutcome } from "./session-choice/outcome.js";
 import { engineSessionOf, sessionToResume } from "./session-continuity.js";
+import { noteSessionPrompts, outsideNote, outsideStep, projectSessions, projectSessionsNote, runOutside } from "./outside-runs.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -356,6 +357,23 @@ export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | 
  * session), if the same agent: that run's, else the nearest earlier run's in the same chain, for a
  * run that stopped before its agent started (workspace/sessions.ts).
  */
+/**
+ * The brief's list of sessions the person started on their own in this task's Ensemble project folder since
+ * the project's last Ensemble run here (outside-runs.ts); empty outside a project or before its first run.
+ */
+async function ownProjectSessions(prisma: PrismaClient, job: { id: string; userId: string; context: unknown }, root: string, person: string | null): Promise<string> {
+  const project = agentProjectOf(job.context);
+  if (!project || !root) return "";
+  const last = await prisma.workspaceJob.findFirst({
+    where: { userId: job.userId, id: { not: job.id }, startedAt: { not: null }, context: { path: ["agentProject", "id"], equals: project.id } },
+    orderBy: { startedAt: "desc" },
+    select: { startedAt: true, finishedAt: true },
+  });
+  const since = last?.finishedAt ?? last?.startedAt;
+  if (!since) return "";
+  return projectSessionsNote(await projectSessions(prisma, { id: project.id, folder: project.folder ?? root }, since), person);
+}
+
 async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null; context: unknown }): Promise<{ session: string | null; summary: string | null }> {
   if (!job.continueFromJobId) return { session: null, summary: null };
   const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
@@ -990,6 +1008,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           return null;
         });
         fullPrompt = enginePrompt(ctx, await brief(app, ctx, settings, files, copies));
+        // The sessions the person started on their own in this project's folder since its last Ensemble run (outside-runs.ts).
+        const own = await ownProjectSessions(prisma, job, ctx.root, user?.name ?? null).catch(() => "");
+        if (own) fullPrompt = `${fullPrompt}\n\n${own}`;
         enginePromptText = fullPrompt;
         // Carrying on an interrupted run: the same engine session when it still exists, told why it stopped.
         if (carryOn) {
@@ -1008,6 +1029,22 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
       engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : isAcpEngine(job.provider) ? ACP_AGENTS[job.provider].trace : job.provider!);
       const trace = engineTrace;
+      // What the person said in this session in the agent's own app since Ensemble's last run in it (outside-runs.ts):
+      // a step on the run, a short note leading its brief, and the session goes on.
+      const outside = resume && isCodeEngine(job.provider) ? await runOutside(prisma, job.provider, resume, ctx.root).catch(() => null) : null;
+      if (outside?.turns.length) {
+        await trace.outside(`From ${outside.app}`, outsideStep(outside, user?.name ?? null));
+        enginePromptText = `${outsideNote(outside, user?.name ?? null)}\n\n${enginePromptText}`;
+        logAi({
+          kind: "agent.outside",
+          userId,
+          app: job.provider,
+          purpose: `Brought in from ${outside.app}`,
+          output: outside.turns,
+          refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
+          meta: { app: outside.app, session: resume, prompts: outside.turns.length, earlier: outside.earlier },
+        });
+      }
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
       // Claude Code, Copilot and the ACP agents check it themselves, against each model's own levels.
@@ -1099,6 +1136,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
       }
       if (!ran) throw new Error(`${engineName} did not run.`);
+      // How many prompts the session holds now, so the next run in it brings in only what the person adds after (outside-runs.ts).
+      const ranSession = await engineSessionOf(prisma, job.id).catch(() => null);
+      if (ranSession && isCodeEngine(job.provider)) await noteSessionPrompts(ctx, job.provider, ranSession, ctx.root);
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;

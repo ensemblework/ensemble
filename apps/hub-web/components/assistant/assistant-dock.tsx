@@ -138,6 +138,7 @@ export function Message({
   /** The records this reply may name by id, and whether its question asked for ids. Default: its own. */
   context?: ReplyContext;
 }) {
+  if (message.outside) return <OutsideMessage message={message} outside={message.outside} />;
   if (message.role === "user") {
     const { parts, rest } = splitQuoted(message.content);
     return (
@@ -200,6 +201,24 @@ export function Message({
         <CopyReply content={plainText} />
       </div>
     </article>
+  );
+}
+
+/** A message said in the agent's own app, brought into the chat before Ensemble's next one (docs/41 §5): marked with where and when. */
+function OutsideMessage({ message, outside }: { message: AssistantMessageRecord; outside: NonNullable<AssistantMessageRecord["outside"]> }) {
+  const when = outside.at ? new Date(outside.at) : null;
+  const time = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
+  const user = message.role === "user";
+  return (
+    <div className={`assistant-turn ${user ? "assistant-user-turn" : "assistant-answer-turn"}`} data-outside>
+      {outside.earlier ? <p className="text-[12px] leading-[17px] text-muted">…and {outside.earlier} earlier message{outside.earlier === 1 ? "" : "s"} in {outside.app}</p> : null}
+      <p className="text-[12px] leading-[17px] text-muted">{`In ${outside.app}${time ? ` · ${time}` : ""}`}</p>
+      {user ? (
+        <div className="assistant-user-message"><ChatText text={message.content} mentions={message.mentions} /></div>
+      ) : (
+        <div className="assistant-answer-body"><AssistantAnswer content={message.content} /></div>
+      )}
+    </div>
   );
 }
 

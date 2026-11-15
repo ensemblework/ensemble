@@ -1257,6 +1257,11 @@ export type AssistantMessageRecord = {
   model: string | null;
   createdAt: string;
   credentialSource?: string | null;
+  /**
+   * Said in the agent's own app in the chat's session and brought into the chat before Ensemble's next message
+   * (docs/41 §5): where ("the Claude app"), when, and on the first one how many earlier exchanges were left out.
+   */
+  outside?: { app: string; at?: string; earlier?: number } | null;
 };
 
 /** A computer the person's AI subscriptions run on, and the agents it found. */

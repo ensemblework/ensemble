@@ -43,6 +43,8 @@ Project-folder runs take turns so two runs do not change the same folder at once
 
 Renaming a project keeps its folder and sessions. A removed folder is recreated when needed; projects with the same name receive distinct folders. Turning the switch off stops this automatic grouping for new work.
 
+If you start sessions of your own in a project's folder (a Claude Code or Copilot session there, or a new thread in its Codex project), the project's next task is told about them: their title, last message and files changed. They stay yours. Ensemble only reads them, and never continues, renames, moves or deletes them.
+
 ## 3. In the agents' own apps
 
 Ensemble attempts to give sessions meaningful titles and group project work in the agent's app. This is best effort and never fails the task.
@@ -73,7 +75,7 @@ An assistant chat normally uses one conversation with the plan's agent. Each lat
 
 Changing model or computer, losing the agent session, or rotating a long session can start a fresh one with Ensemble's recent conversation context. For agents that keep their initial instructions, small instruction changes are sent as updates; major changes or 80 messages trigger a fresh session.
 
-If you use a Claude or Copilot session outside Ensemble and its transcript shows new prompts, the next Ensemble turn starts separately. That prevents the outside conversation from entering the chat. Other agents may not provide that transcript check.
+You can open a chat's session in the agent's own app (the Claude app, Codex in the ChatGPT app, Copilot, Cursor and others) and keep talking there. Ensemble doesn't watch the app. The next time you write in the Ensemble chat, it first brings in what you and the agent said there, marked "In the Claude app" (or wherever it was) with the time. Then it goes on in the same session, so the agent remembers both. Tool calls show as one line, such as "Edited 2 files, ran 3 commands". At most the latest 20 exchanges come in, and the chat notes how many earlier ones were left out.
 
 ### Ask Ensemble sessions
 
@@ -131,6 +133,7 @@ A coding session (`workspace/sessions.ts`) is one conversation with a coding age
 - **A session that no longer exists.** The person may delete a session in the agent's own app, or the agent may expire it (Claude Code after 30 days). Every agent says so when asked to reopen it (Claude Code: "No conversation found", exit 1; Codex: "no rollout found for thread id"; Copilot, Cursor and the ACP agents: `session/load` refused), and the run goes on in a new session in the same folder with the full brief, which has the earlier task's title, outcome and summary ("This continues an earlier task"). Every agent keeps a session's id when it resumes it, so the web tells a resumed run from a restarted one by the ids computers already send (`sessionRestartOf` in `workspace/session-continuity.ts`): the task page says the earlier session no longer existed, the run's `SessionChoice.outcome.resumed` is false, and a node is told in its run note that the agent did not remember the earlier conversation.
 - **A session the agent's own app holds.** The ChatGPT app runs its own Codex app-server. A thread it has loaded (open in the app, or only looked at) has an active writer there (`~/.codex/thread-writer-locks`), so `thread/resume` from Ensemble's app-server answers `-32600 thread <id> already has an active writer`. That thread is not gone (`ACTIVE_WRITER` in `workspace/engines/session-restart.ts`). The Codex engine tries again every 30 seconds for up to 10 minutes (`resumeCodexThread`, `BUSY_WAIT.task`). The wait runs under `ctx.waitForRun`, so it neither uses the run's minutes nor counts as stalled. The run card says "Waiting for the ChatGPT app to let go of this conversation. Switch to another chat in the app, or quit the app." After the limit the engine throws `SessionBusyError`, and the run starts a new session as for a missing one. `sessionRestartOf` then answers `busy`, and the task page and a node's run note say the app held the conversation. The held thread stays on the earlier run's `engine` event, so deleting the session deletes it too.
 - **Why a run restarted its session** is recorded: the `engine_new_session` event and the new session's `engine` event carry `restart: { reason: "gone" | "busy", error }`. The `engine` event is relayed to the web with every engine, so `sessionRestartOf` reads it there. The run's `model.call` metric and its AI-activity entry carry the same `restart`, and the computer logs a warning line.
+- **A session the person used in the agent's own app** (`workspace/outside-runs.ts`). A run notes how many prompts its session holds as it ends: a local `session_prompts` event `{ session, prompts }`, counted from Claude Code's and Copilot's transcripts and from Codex's `thread/read`. A run that continues the session reads what came after that count, with the same readers as a chat (§5). It adds a step "From the Claude app" (or wherever) with the exchanges, which the task page shows with the run's steps. Its brief opens with a short note: "Since the last Ensemble run, <name> said in the Claude app: …". It records the import as `agent.outside`, and the session goes on. A session no run noted yet brings in nothing. The ACP agents' task sessions are not read this way yet.
 - **A session deleted in Ensemble** (by the person, a node, or the clean-up) is not reopened at all (`sessionToResume`): a run continuing one of its runs ("Continue an earlier task" lists them as "its agent session was deleted: a new one starts there") works in that folder in a session of its own (`continuesSessionOf` in `workspace/sessions.ts`), which is listed, chosen and cleaned up like any other; the deleted session keeps only its own runs.
 - A run that continues a run in a folder the person granted (a shared folder) works in that folder however long the chain, since only the first run carries the grant (`grantedFolderOf` in `workspace/agent.ts`).
 - `Assign.session` (any run id in it) runs on the session's computer, under its current pairing, in its folder, with its agent, model, thinking level, context window and fast mode unless others are named (a run profile's do not apply); another agent or computer is refused. Each setting is kept, reset to the agent's own default (`"default"`, or `fast: false`), or set as named, separately (`sessionChoices` in `workspace/assign.ts`): naming a model keeps the thinking level and context window. The task's model tier adds nothing to a run in a session.
@@ -150,6 +153,13 @@ Session lists (the Sessions page, Continue an earlier task, `ensemble sessions`)
 - The run's rules say it is the project's folder, that `AGENTS.md` has the brief (and, when the project changed since the folder's last run, to read it again), and to keep files only this task needs in a folder named for it. Codex, Copilot, Cursor and OpenCode read `AGENTS.md` themselves; headless Claude Code reads only the person's own settings in an Ensemble folder (a run could otherwise plant hooks for the next one), so its brief comes through the prompt's context and the rule, and `CLAUDE.md` is for the person opening the folder in the Claude app.
 - Which folder is which project's, and the hash of the brief each last got, is kept in `projects/.ensemble-projects.json`, beside the folders and outside any of them, so nothing a run writes in a project folder can point Ensemble at another. A renamed project keeps its folder (and its agents' sessions); one removed is made again under its name; another project with the same name gets its short id after the name. Opening a project's task in the agent's own app ([30 §4](30_ENGINES.md#4-in-the-agents-own-app-or-a-terminal)) opens the project's folder too.
 - Off with Settings → Agents → Agent sessions → *One folder per project* (`orchestration.projectFolders`). Apps' own "Projects" (claude.ai, ChatGPT) have no API an agent run can use; the working folder is what the coding agents group by.
+
+**Sessions the person started in a project** (`projectSessions` in `workspace/outside-runs.ts`). A new task in an Ensemble project lists the sessions the person started there since the project's last Ensemble run on this computer (its newest run's end). The list goes in the brief under "Sessions <name> started in this project outside Ensemble", at most 5, newest first, each with its app, title (first message), last message and the files changed. The sources are:
+- Claude Code transcripts in the folder's project (`~/.claude/projects/<folder>/`)
+- Copilot sessions whose `session.start` names the folder
+- the threads of the project's Codex project, found by `metadata.ensembleProjectId` or its folder; listing never makes one
+
+Ensemble's own sessions are never listed: the ones on its runs' `engine` events and its chats' sessions. The brief says they are the person's and are not to be continued, renamed or deleted. Ensemble's clean-up deletes only the sessions its runs recorded, so it leaves these alone.
 
 ### 3. In the agents' own apps: implementation reference
 
@@ -207,7 +217,6 @@ Turns of one chat run one at a time; otherwise it starts one, with the chat so f
 | --- | --- |
 | `busy` | The agent's own app held the session for the whole wait |
 | `gone` | The agent refused to reopen it (`error` has what it said) |
-| `touched` | Someone used it in the agent's app (below) |
 | `instructions` | Most of Ensemble's instructions changed |
 | `rotated` | The session carried `ROTATE_MESSAGES` messages |
 | `moved` | The chat went on elsewhere (another model or computer) since the session's last turn |
@@ -217,9 +226,20 @@ The reasons come from `lookSession` in `turn-sessions.ts` and from the turn itse
 
 A computer before `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) gets the chat so far in front of every message; a one-off completion (`complete` on a subscription: triage, a summary, a title) keeps no session, and leaves none in the agent: Claude Code runs it with `--no-session-persistence` and Codex in an ephemeral thread, while the session Copilot (named with `--session-id` from 1.0.78), Cursor's agent and the ACP agents save is deleted once the turn is over (`dropOneOff`), in the folder the turn ran in (Gemini CLI, OpenCode and Grok Build find a session by the folder it began in), which is removed after.
 
-**A session used outside Ensemble** (`subscriptions/session-touch.ts`). The person can open an Ensemble chat's session in the agent's own app or terminal. After each turn the computer notes how many prompts the agent's own transcript of the session holds (`prompts` in the store: Claude Code's `~/.claude/projects/<folder>/<id>.jsonl` user prompts, Copilot's `user.message` events in `session-state/<id>/events.jsonl`).
+**A session used outside Ensemble** (`subscriptions/outside.ts`, `session-touch.ts`). The person can open an Ensemble chat's session in the agent's own app or terminal. A session Ensemble created stays Ensemble's. Nothing is watched: after each turn the computer notes how many prompts the session holds (`prompts` in the store), and before the next turn it reads the exchanges after that count:
 
-When the count is higher before the next turn, someone sent it prompts of their own: the chat goes on in a new session with Ensemble's own history, so nothing said there enters the chat, and the touched session is kept unresumed (`retired`) and deleted with the chat or when its entry expires. Other agents, and a transcript the computer cannot read, are resumed without this check.
+| Agent | Where they are read |
+| --- | --- |
+| Claude Code (and the Claude app's Code tab) | The transcript, `~/.claude/projects/<folder>/<id>.jsonl`. Its `entrypoint` says where each prompt was typed (`claude-desktop`, `claude-desktop-3p`: the Claude app; `claude-vscode`: VS Code; `cli`: a terminal) |
+| GitHub Copilot | `user.message`, `assistant.message` and `tool.execution_start` events in `~/.copilot/session-state/<id>/events.jsonl` |
+| Codex | `thread/read` with `includeTurns` on Codex's app-server, before `thread/resume`; each turn is one exchange |
+| Cursor and the ACP agents that reopen with `session/load` | The history the agent replays as it reopens the session (`session/update` notifications), kept apart from the turn's reply. Antigravity reopens with `session/resume`, which replays nothing |
+
+Each exchange is the person's message, the agent's last answer, and one line for its tool calls ("Edited 2 files, ran 3 commands"); a tool's output never comes in. At most the newest 20 exchanges and 20,000 characters come in (`MAX_OUTSIDE_TURNS`, `MAX_OUTSIDE_CHARS`), each message cut to 4,000; the rest are counted (`earlier`).
+
+They go back with the turn's result (`outside: { app, turns, earlier }`). The web saves them as the chat's messages just before the turn's message, each marked with where and when it was said (`assistant_messages.outside`: `{ app, at, earlier }`, `assistant/outside.ts`). The chat shows them as "In the Claude app". A new session gets them with the chat so far ("Said in the Claude app, outside Ensemble"). They don't count in `sessionPosition`, since the session already has them. Each import is recorded in the person's AI activity (`agent.outside`).
+
+Then the session goes on: it is no longer retired and replaced. The count after the turn includes them, so they come in once. A session that cannot be read keeps working as before. One that cannot be reopened is replaced as above, and what was read before it failed still comes in.
 
 **Ask Ensemble: one short session per page** (`assistant/ask-sessions.ts`). An inline ask (`@ensemble` in a page, task, project, deliverable or meeting notes; `POST /api/pages/:kind/:id/ensemble`) runs on the tier in Settings → Assistant → *Ask Ensemble model* (`assistant.askTier`, Medium unless changed; the chat's default tier is separate). When that tier is an AI plan, each page has one session per person who asks there (`session.key` `ask-<kind>-<hash of person, kind and id>`, sent without `position`, so the computer resumes it however many asks came before): asking again continues it.
 
