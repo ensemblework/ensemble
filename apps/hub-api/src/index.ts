@@ -20,6 +20,8 @@ import { setLocalPort } from "./workspace/engines/registry.js";
 import { trustChanged } from "./workspace/trust-share.js";
 import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
+import { switchSandboxBetaOff } from "./lib/sandbox-beta.js";
+import { serverRunsOwnCode } from "./devices/constants.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
 import { startPageSearchBackfill } from "./pages/search-backfill.js";
 import { startNode } from "./node/runs.js";
@@ -36,6 +38,17 @@ export async function startHub(): Promise<HubServer> {
   const app = await buildApp();
   const desktop = hubCorsPolicy().desktop;
   if (desktop) await ensureDesktopUser();
+  // The OS sandbox is in beta: settings saved with the old default (on) are switched off once, before any
+  // job is made. A server whose own runner runs code keeps its isolation. Idempotent; a failure is logged
+  // and the Hub still starts.
+  if (!serverRunsOwnCode()) {
+    try {
+      const switched = await switchSandboxBetaOff(prisma);
+      if (switched.checked > 0) app.log.info(switched, "turned the sandbox beta off in saved settings");
+    } catch (error) {
+      app.log.error({ err: error }, "could not turn the sandbox beta off in saved settings");
+    }
+  }
   // Which OS sandbox works on this computer, found once before any job or plot starts.
   const sandbox = await prepareSandbox().catch((error: unknown) => {
     app.log.error({ err: error }, "could not check the OS sandbox");

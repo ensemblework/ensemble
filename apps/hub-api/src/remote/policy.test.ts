@@ -138,14 +138,19 @@ test("web settings apply when this computer accepts them, and only narrow when i
   if (!isRefusal(older)) assert.equal(older.assign.mode, "unattended");
 });
 
-test("the web's sandbox toggle applies only when this computer accepts web settings", () => {
+test("the web's sandbox choice applies when this computer accepts web settings; otherwise the web can only turn it on", () => {
   const folders = [{ label: "notes", path: "/Users/person/notes", kind: "folder" as const, access: "read-write" as const }];
   const off = planLocalJob(spec({ folderLabel: "notes", sandbox: false }), settings(folders), () => null);
   assert.ok(!isRefusal(off) && off.assign.sandbox === false);
-  const kept = planLocalJob(spec({ folderLabel: "notes", sandbox: false }), settings(folders, false), () => null);
-  assert.ok(!isRefusal(kept) && kept.assign.sandbox === true);
+  const on = planLocalJob(spec({ folderLabel: "notes", sandbox: true }), settings(folders), () => null);
+  assert.ok(!isRefusal(on) && on.assign.sandbox === true);
+  // Left out: this computer's own Sandbox by default decides when the job is made (off unless turned on there).
+  const own = planLocalJob(spec({ folderLabel: "notes", sandbox: false }), settings(folders, false), () => null);
+  assert.ok(!isRefusal(own) && own.assign.sandbox === undefined, "without web settings, an off from the web is not taken");
+  const narrowed = planLocalJob(spec({ folderLabel: "notes", sandbox: true }), settings(folders, false), () => null);
+  assert.ok(!isRefusal(narrowed) && narrowed.assign.sandbox === true, "the web may still turn it on");
   const older = planLocalJob(spec({ folderLabel: "notes" }), settings(folders), () => null);
-  assert.ok(!isRefusal(older) && older.assign.sandbox === true);
+  assert.ok(!isRefusal(older) && older.assign.sandbox === undefined, "a server that sends none: this computer decides");
   const outside = planLocalJob(spec({ folderLabel: "notes", outsideAccess: "read-write" }), settings(folders), () => null);
   assert.ok(!isRefusal(outside) && outside.assign.outsideAccess === "read-write");
   const ownSetting = planLocalJob(spec({ folderLabel: "notes", outsideAccess: "read-write" }), settings(folders, false), () => null);

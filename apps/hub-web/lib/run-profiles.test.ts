@@ -11,6 +11,13 @@ test("Quick is the default until a profile is saved: Review only, no git limits,
   assert.equal(defaultProfile(undefined, null, quick).id, "quick");
 });
 
+test("Quick follows Sandbox by default, which is in beta and off unless turned on", () => {
+  assert.equal(quick.sandbox, true, "turned on in Settings");
+  assert.equal(quickProfile(undefined).sandbox, false);
+  assert.equal(quickProfile({}).sandbox, false);
+  assert.equal(quickProfile({ defaultExecution: "native" }).sandbox, false);
+});
+
 test("the marked default wins, else the first saved profile", () => {
   const careful = { ...quick, id: "a", name: "Careful", mode: "ask" as const };
   const away = { ...quick, id: "b", name: "Away", mode: "unattended" as const };

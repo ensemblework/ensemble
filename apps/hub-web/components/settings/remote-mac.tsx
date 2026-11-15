@@ -114,7 +114,7 @@ function RemoteMacSettings() {
       </div>
       {mac && !mac.paired ? <p className="mt-3 text-[12px] text-muted">Pair this computer to turn on the switches below.</p> : null}
       <div className="mt-2 divide-y divide-[var(--line)]">
-      <SettingRow title="Allow remote tasks" description="Web tasks run here, in the same sandbox." info="Tasks assigned on the web run on this computer, with this computer's model key and the same sandbox. Off until you turn it on.">
+      <SettingRow title="Allow remote tasks" description="Web tasks run here, under the same rules." info="Tasks assigned on the web run on this computer, with this computer's model key and the same checks as tasks you start here. Off until you turn it on.">
         <Toggle checked={Boolean(mac?.enabled)} disabled={!mac?.paired || save.isPending} label="Allow remote tasks" onChange={(enabled) => save.mutate({ enabled })} />
       </SettingRow>
       <SettingRow

@@ -123,7 +123,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   web:
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
-    "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
+    "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). It is in beta: a run uses it when its run profile turns the sandbox on. No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   browser:
     "Usage: ensemble browser logins [list] | save-login <site> [--totp] | forget-login <site>\nLogins saved on this computer for Ensemble's browser. When a page your agents or nodes open asks you to sign in, its card offers \"Use saved login\": the browser fills the saved user name and password (and a one-time code from a saved seed) itself. No model, agent or run sees them, and nothing is sent to Ensemble on the web. They are kept in Ensemble's data folder, encrypted with this computer's local key.\n  save-login    asks for the user name, then the password without showing it (or reads them from stdin, one per line). --totp also asks for the one-time-code seed. Sites are https, or this computer's own http://localhost.\n  forget-login  deletes the site's saved login.",
   capture:
@@ -944,14 +944,15 @@ async function commandDoctor(args: string[]): Promise<void> {
     ["Git on PATH", Boolean(status.git), "install git; code tasks need it"],
     ["Node 20 or newer", nodeMajor >= 20, "upgrade Node"],
   ];
-  const runner = await runningRunner(resolveCliPaths());
-  const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
-  if (sandbox) checks.push(["OS sandbox", sandbox.osSandbox, sandbox.setup?.needed ? "run `ensemble sandbox setup`" : sandbox.reason]);
   let failed = 0;
   for (const [label, ok, fix] of checks) {
     if (!ok) failed += 1;
     console.log(`${ok ? "ok  " : "fail"}  ${label}${ok ? "" : ` — ${fix}`}`);
   }
+  // The OS sandbox is in beta and off by default: reported, never a failure.
+  const runner = await runningRunner(resolveCliPaths());
+  const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
+  if (sandbox) console.log(sandbox.osSandbox ? "ok    OS sandbox (beta)" : `info  OS sandbox (beta): ${sandbox.setup?.needed ? "not set up. Run `ensemble sandbox setup` to try it." : sandbox.reason}`);
   // An agent's app here without its agent (the Cursor app, VS Code with Copilot): a note, not a failure.
   for (const note of runner ? agentAppNotes(await localComputer(runner)) : []) console.log(`note  ${note.label}: ${note.fix}`);
   console.log("");

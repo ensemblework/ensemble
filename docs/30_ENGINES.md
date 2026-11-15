@@ -24,7 +24,7 @@ Choose Claude Code in Assign, then select an available model. Thinking levels, l
 
 Commands and edits follow the run's permissions. Questions and approvals appear in **Needs me**, including on the web or phone. In **Run unattended**, a question uses its recommended answer and records that decision on the task.
 
-With Sandbox on, Claude Code needs a supported sandbox on macOS or Linux. It cannot start sandboxed on native Windows or Linux without the required sandbox tools. The run explains what is missing. Its live log shows progress, tools, tokens and the final summary.
+With Sandbox on (a beta, off by default; [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)), Claude Code needs a supported sandbox on macOS or Linux. It cannot start sandboxed on native Windows or Linux without the required sandbox tools. The run explains what is missing. Its live log shows progress, tools, tokens and the final summary.
 
 ## 2. Codex as the engine
 
@@ -77,7 +77,7 @@ Thinking, context window and fast mode appear only when supported. Changing the 
 
 Each uses its own account and available models. Ensemble checks tool requests and routes questions to Needs me. With the OpenCode app and no `opencode` command, Ensemble runs the copy the app runs itself.
 
-Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can enable. Gemini CLI and Qwen Code support it on macOS only. A run with Sandbox on stops when its agent cannot provide one; select a supported agent or deliberately change that run's sandbox choice.
+The sandbox is a beta and off by default ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)), so these agents run as the others do. Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can enable; Gemini CLI and Qwen Code support it on macOS only. With the beta on, a run with Sandbox on stops when its agent cannot provide one: select a supported agent or turn the sandbox off for that run.
 
 ### 3.4 What the agent says it runs with
 
@@ -168,7 +168,7 @@ Choose the agent for the work and the computer's available permissions. All supp
 | Long context | Claude Code and supported Copilot models |
 | Fast mode | Supported Claude Code and Codex models |
 | Browser and capture | Through the computer's Ensemble tools, subject to the run mode |
-| OS sandbox | Agent- and platform-dependent; see each agent's section |
+| OS sandbox | A beta, off by default ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)); when on, agent- and platform-dependent: see each agent's section |
 | Personal skills | The agent's own supported skill locations and trusted project configuration |
 
 ### 10.2 A node's brain
@@ -292,7 +292,7 @@ The Assign dialog (`components/agent/assign-dialog.tsx`) offers the same menus f
 
 Under it are the model's facts (vendor, cost, context sizes); *Thinking* appears when the model has levels (its own default named, "Default (Medium)"), *Context window* when it has two, and *Fast mode* when the model has one (faster output that uses more of the plan: Claude Code's `fastMode`, Codex's fast service tier). A model without the chosen level or long window resets that choice, and so does changing agent.
 
-The dialog says when the agent is not signed in on that computer (with its login command), when Ensemble there is too old to run it, or what its check reported. For an agent with no OS sandbox there (`engineSandboxes`) and Sandbox on, it says the run will stop and to turn Sandbox off (§3.3).
+The dialog says when the agent is not signed in on that computer (with its login command), when Ensemble there is too old to run it, or what its check reported. For an agent with no OS sandbox there (`engineSandboxes`) and the sandbox beta on, it says the agent runs without it and sends the run that way (§3.3).
 
 `engineAssign` sends `model`, `reasoningEffort`, `contextTier` and `fast` for every agent; the runner on the computer checks them again against that model, and one the model does not take is left out with an `engine_note`. Fast mode is kept on the job's context (`fastOf`) and sent to a paired computer as `fast`. Run profiles, Quick assign, Run again and the assistant's `hub_assign_agent` keep all four; the CLI's `/model` offers the same choices ([26](26_CLI.md)). Tests: `engines/copilot.test.ts`, `engines/copilot.e2e.test.ts` (with a stand-in `copilot`).
 
@@ -316,7 +316,7 @@ Every `session/request_permission` is read by `acpCalls` (a command from `rawInp
 
 Ensemble offers form questions (`clientCapabilities.elicitation.form`), so an agent's `elicitation/create` (OpenCode's question tool) reaches the person as `ask_person` does (§1 step 4); without it OpenCode tells its model the question could not be shown. Refusals go back as the next message, at most `REFUSAL_FOLLOW_UPS` times. `usage_update` is recorded as `engine_context`. A chat message continues the session.
 
-**Sandbox.** Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can turn on, and Gemini CLI and Qwen Code have one only on macOS (`--sandbox`, Seatbelt). A run with Sandbox on stops with "<agent> has no OS sandbox Ensemble can turn on here. Turn the sandbox off for this run: Ensemble still judges every command, edit, outside read and fetch <agent> asks to make."
+**Sandbox.** Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have no OS sandbox Ensemble can turn on, and Gemini CLI and Qwen Code have one only on macOS (`--sandbox`, Seatbelt). The sandbox is a beta and off by default ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)); with it on, a run with Sandbox on stops with "<agent> has no OS sandbox Ensemble can turn on here. Turn the sandbox off for this run: Ensemble still judges every command, edit, outside read and fetch <agent> asks to make."
 
 **Antigravity's install** (`subscriptions/antigravity.ts`). Google publishes the agent as a zip per platform on `dl.google.com` (`agy-acp-server-1.3.0-<os>-<arch>.zip`, a few hundred MB). Sign in (or *Install and sign in* on its tile) downloads it once, checks it against the pinned SHA-256 and unpacks it (`ditto`, `unzip`, Python's `zipfile` or `tar`) into `<state>/agents/antigravity/versions/1.3.0/`.
 
@@ -560,7 +560,7 @@ A task can still be opened in the app itself (§4), where the app's own settings
 | Resume and steer | `--resume`; a steer is the next run resuming | `thread/resume` | `session/load` | `session/load` | `session/load` (Antigravity `session/resume`) |
 | The person's skills | `~/.claude/skills`, `~/.agents/skills`, enabled plugins; a project's `.claude/skills` in a folder trusted by name | `~/.codex/skills` (with `.system`), `~/.agents/skills`, plugins; a project's in a trusted folder | Its own and `~/.cursor/skills` | `~/.copilot/skills`, `~/.agents/skills`, installed plugins, built-in skills | Gemini `~/.gemini/skills` and extensions; OpenCode `~/.config/opencode/skill(s)`; Vibe `~/.vibe/skills`; Qwen `~/.qwen/skills` and extensions; Kimi `~/.kimi-code/skills`; all of these and `~/.agents/skills`; Antigravity runs in Ensemble's own home, so the person's Antigravity skills do not load |
 | Sign-in check | `claude auth status --json` | `account/read` | `cursor-agent status` | `auth.getStatus` (keychain-aware) | `grok models`, `opencode auth list`, an ACP probe (Gemini, Vibe, Qwen, Kimi: a session that fails for want of a sign-in, or Vibe's "Missing API key", is signed out), the sign-in file (Antigravity) |
-| OS sandbox | Its own (Seatbelt, bubblewrap) | Its own | Its own | `--sandbox` | Gemini and Qwen on macOS only; none for the others: a sandboxed run stops at once, and a node's start says so before the run (`refuseUnsandboxable` in `node/sessions.ts`) and picks an agent that has one when its profile names none |
+| OS sandbox (a beta, off by default) | Its own (Seatbelt, bubblewrap) | Its own | Its own | `--sandbox` | Gemini and Qwen on macOS only; none for the others: a sandboxed run stops at once, and a node's start says so before the run (`refuseUnsandboxable` in `node/sessions.ts`) and picks an agent that has one when its profile names none |
 | Version gates | Models by `minVersion` | None | None | None | Gemini's and Qwen's `--acp` or `--experimental-acp`, read from its help |
 
 **Skill folders** (`agentSkillRoots` in `engines/skills.ts`): `~/.agents/skills`; `~/.claude/skills`, `~/.claude/plugins/marketplaces`, `~/.claude/plugins/cache` (or under `CLAUDE_CONFIG_DIR`); `~/.codex/skills`, `~/.codex/plugins/cache` (or under `CODEX_HOME`); `~/.copilot/skills`, `~/.copilot/installed-plugins` (or under `COPILOT_HOME`) and Copilot's own package (`~/.cache/copilot/pkg`); `~/.cursor/skills`, `~/.cursor/skills-cursor`; `~/.gemini/skills`, `~/.gemini/extensions`, `~/.gemini/antigravity/skills`; `~/.config/opencode/skill` and `skills`; `~/.vibe/skills` (or under `VIBE_HOME`); `~/.qwen/skills`, `~/.qwen/extensions`; `~/.kimi-code/skills` (or under `KIMI_CODE_HOME`). A link into one of them is followed. Credential files there (`.env`, keys) and git's own files are left to the usual rules.

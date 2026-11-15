@@ -250,7 +250,11 @@ export const OrchestrationSettings = z.object({
   maxMinutes: z.number().int().min(5).max(480).default(60),
   planWithTaskModel: z.boolean().default(true),
   requireTestsBeforeCommit: z.boolean().default(true),
-  defaultExecution: z.enum(["sandbox", "native"]).default("sandbox"),
+  /**
+   * Settings → Agents → Sandbox by default. The OS sandbox is in beta, so new code tasks run without
+   * it unless the person turns it on (docs/24 §1).
+   */
+  defaultExecution: z.enum(["sandbox", "native"]).default("native"),
   /**
    * Beyond the Ensemble workspace, what the agent may do with a path outside
    * its work folder without asking: read it (default), read and write it, or
@@ -336,7 +340,8 @@ export const RunProfile = z.object({
   delivery: z.enum(["local", "commit", "push"]).default("push"),
   askBeforePublish: z.boolean().default(false),
   mode: RunMode.default("review"),
-  sandbox: z.boolean().default(true),
+  /** The OS sandbox, in beta: off unless the person turns it on (docs/24 §1). */
+  sandbox: z.boolean().default(false),
   useCredentials: z.boolean().default(false),
   network: z.boolean().default(true),
   markDone: z.boolean().default(true),
@@ -370,7 +375,7 @@ export function quickRunProfile(orchestration?: { defaultExecution?: string; san
     delivery: "push",
     askBeforePublish: false,
     mode: "review",
-    sandbox: orchestration?.defaultExecution !== "native",
+    sandbox: orchestration?.defaultExecution === "sandbox",
     useCredentials: false,
     network: orchestration?.sandboxNetwork ?? true,
     markDone: true,

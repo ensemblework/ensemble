@@ -432,6 +432,8 @@ An Ensemble Node mission may build in parallel in one repository ([35 §8.15](35
 
 `acceptWebApprovals` (*Accept approvals from the web and phone*, `ensemble approvals`) is **on by default**. When on, the web's run settings apply and supported risky decisions can be confirmed remotely. When off, risky answers stay on the computer and web settings can only narrow local permissions.
 
+The sandbox (a beta, off by default; [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)) follows the same rule: the web's choice while the computer accepts web settings; otherwise the web can only turn it on, and the computer's own Settings → Agents → Sandbox by default decides (`planLocalJob`, then `sandboxFor`).
+
 The computer checks its own pending decision and action hash; the first valid answer wins, and a timeout never allows.
 
 A task from the web is limited in git only by the person's own choices: its Git choice (No limits by default), its branch (current, a new one by name, or an existing one), *Use my git sign-in* for private and SSH repositories (applied when the computer accepts web settings), and a pull request into any branch ([24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)).

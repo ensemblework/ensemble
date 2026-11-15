@@ -235,7 +235,7 @@ export const JobSpec = z
      */
     networkAccess: z.boolean().optional(),
     askBeforePublish: z.boolean().optional(),
-    /** The sandbox toggle from the Assign dialog. Older servers omit it (sandbox on). */
+    /** The sandbox toggle from the Assign dialog. Older servers omit it: this computer's own Sandbox by default decides. */
     sandbox: z.boolean().optional(),
     /** Outside the work folder in a sandboxed run: read only, read and write, or nothing. */
     outsideAccess: z.enum(["none", "read", "read-write"]).nullish(),

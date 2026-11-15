@@ -14,7 +14,7 @@ import { useToast } from "../toast";
 import { TERMINAL_DESKTOP_BODY, TERMINAL_DESKTOP_TITLE, useDesktopShell } from "../code/terminal-desktop-note";
 import { currentTerminalAccess } from "../code/terminal-address";
 import { pickFolderNative } from "@/lib/desktop-dialog";
-import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
+import { BetaTag, InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 import { confirmAction } from "@/components/ask-dialog";
 import { isEmailAddress } from "@ensemble/shared-types";
 import { Modal } from "./modal";
@@ -122,7 +122,12 @@ export function SandboxSection({ settings, patch }: Props) {
   return (
     <SectionCard title="Sandbox and access" description="Defaults for new tasks; change them per task when you assign.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Sandbox by default" description="Commands run inside this computer's sandbox." info="Isolate commands with this computer's OS sandbox. Override per task; keys and browser data stay private.">
+        <SettingRow
+          title="Sandbox by default"
+          tag={<BetaTag />}
+          description="Commands run inside this computer's sandbox."
+          info="The sandbox is being rebuilt and may stop some agents from running. When on, new tasks run commands inside this computer's OS sandbox; you can turn it off per task. Keys and browser data stay private either way."
+        >
           <Toggle label="Sandbox by default" checked={orchestration.defaultExecution === "sandbox"} onChange={(on) => set({ defaultExecution: on ? "sandbox" : "native" })} />
         </SettingRow>
         <SettingRow title="Internet for agent commands" description="For cloning, installing packages and the web." info="The default for new tasks. Turn it off for tasks whose inputs you do not trust.">
