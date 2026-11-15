@@ -21,7 +21,7 @@
   --max: 1160px;
   --font-body: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-title: var(--font-display), ui-serif, Georgia, serif;
-  --font-code: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-code: var(--font-mono), var(--font-mono-symbols), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 *,
@@ -1575,6 +1575,14 @@ p {
 
 .terminal-still .t-dim {
   color: var(--faint);
+}
+
+/* A glyph no JetBrains Mono build has comes from another font at that font's width; this box keeps it to one
+   cell. 0.6em is JetBrains Mono's advance exactly; 1ch comes out 1/64 px short in Chrome. */
+.terminal-still .t-cell {
+  display: inline-flex;
+  justify-content: center;
+  width: 0.6em;
 }
 
 @media (max-width: 860px) {
