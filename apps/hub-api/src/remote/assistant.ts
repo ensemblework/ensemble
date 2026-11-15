@@ -12,7 +12,7 @@ import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptio
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { TURN_FILES_MAX, TurnFileShape } from "../subscriptions/turn-files.js";
 import { SESSION_KEY } from "../subscriptions/turn-sessions.js";
-import type { HostedClient } from "./client.js";
+import { RemoteError, type HostedClient } from "./client.js";
 
 /** Turns at once on one computer; more are refused with a reason. */
 export const MAX_TURNS_AT_ONCE = 3;
@@ -59,7 +59,11 @@ function turnId(data: unknown): string {
   return typeof data === "object" && data !== null && typeof (data as { id?: unknown }).id === "string" ? (data as { id: string }).id.slice(0, 80) : "";
 }
 
-export async function answerAssistantTurn(client: HostedClient, data: unknown, run: typeof runAgentTurn = runAgentTurn): Promise<void> {
+/**
+ * Answers one turn. "taken": the web gave it to another runtime of this computer that read it first (two
+ * runtimes on one computer), so this one left it alone.
+ */
+export async function answerAssistantTurn(client: HostedClient, data: unknown, run: typeof runAgentTurn = runAgentTurn): Promise<"taken" | void> {
   const id = turnId(data);
   if (!id || running.has(id)) return;
   if (running.size >= MAX_TURNS_AT_ONCE) {
@@ -70,7 +74,13 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
   running.set(id, controller);
   let timer: NodeJS.Timeout | null = null;
   try {
-    const body = (await client.assistantTurn(id)) as { spec?: unknown } | null;
+    let body: { spec?: unknown } | null;
+    try {
+      body = (await client.assistantTurn(id)) as { spec?: unknown } | null;
+    } catch (error) {
+      if (error instanceof RemoteError && error.status === 409) return "taken";
+      throw error;
+    }
     if (!body) return;
     const parsed = Spec.safeParse(body.spec);
     if (!parsed.success) {

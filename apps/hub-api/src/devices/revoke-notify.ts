@@ -6,19 +6,23 @@
  * handled by one hub-api must still reach the others, so the notice goes out on
  * Redis pub/sub. Each process writes `device.revoked` to its own sockets and
  * closes them. The desktop app runs one process against memory Redis, which
- * fans the same channel out in-process. A `files.request` frame for a device
- * and the "answered" signal for a file request travel the same way, on their
- * own channels.
+ * fans the same channel out in-process. A `files.request` frame for a device,
+ * the "answered" signal for a file request, and a runtime's newly opened stream
+ * (which ends the older streams of other runtimes with the same pairing) travel
+ * the same way, on their own channels.
  */
 import { EventEmitter } from "node:events";
 import { Redis, type RedisOptions } from "ioredis";
 import { env } from "../config.js";
+import { logAi } from "../lib/ai-activity.js";
 import { redis } from "../lib/redis.js";
 import { sseHub } from "../lib/sse.js";
+import { RUNTIME_REPLACED_EVENT } from "../remote/contract.js";
 
 export const DEVICE_REVOKED_CHANNEL = "ensemble:device:revoked";
 export const DEVICE_FRAME_CHANNEL = "ensemble:device:frame";
 export const FILE_ANSWER_CHANNEL = "ensemble:device:file-answer";
+export const DEVICE_STREAM_CHANNEL = "ensemble:device:stream";
 
 /** Emits a request id when its answer is stored, in every process that hears the bus. */
 export const fileAnswers = new EventEmitter();
@@ -42,6 +46,30 @@ function deliverFrame(message: string): void {
   }
   if (typeof frame.deviceId !== "string" || !frame.deviceId || typeof frame.event !== "string") return;
   sseHub.publish(`device:${frame.deviceId}`, { event: frame.event, data: frame.data ?? {} });
+}
+
+/** A runtime opened its stream: `{deviceId, userId, name, instance, openedAt}`. Older streams of other runtimes for that device end. */
+function replaceStreams(message: string): void {
+  let notice: { deviceId?: unknown; userId?: unknown; name?: unknown; instance?: unknown; openedAt?: unknown };
+  try {
+    notice = JSON.parse(message) as typeof notice;
+  } catch {
+    return;
+  }
+  if (typeof notice.deviceId !== "string" || !notice.deviceId || typeof notice.instance !== "string" || typeof notice.openedAt !== "number") return;
+  const closed = sseHub.replace(`device:${notice.deviceId}`, { instance: notice.instance, openedAt: notice.openedAt }, { event: RUNTIME_REPLACED_EVENT, data: {} });
+  if (!closed.length || typeof notice.userId !== "string") return;
+  const name = typeof notice.name === "string" ? notice.name : "this computer";
+  logAi({
+    kind: "server.log",
+    userId: notice.userId,
+    app: "server",
+    name: "warn",
+    ok: false,
+    output: `Another Ensemble runtime on ${name} connected with the same pairing while an earlier one's connection was open. The earlier connection was closed, so only the newer runtime gets this computer's work.`,
+    refs: { device: notice.deviceId },
+    meta: { kept: notice.instance.slice(0, 8), closed: closed.map((instance) => instance.slice(0, 8)) },
+  });
 }
 
 function deliver(message: string): void {
@@ -108,11 +136,12 @@ async function openBus(): Promise<boolean> {
     subscriber.on("message", (channel: string, message: string) => {
       if (channel === DEVICE_FRAME_CHANNEL) deliverFrame(message);
       else if (channel === FILE_ANSWER_CHANNEL) fileAnswers.emit(message);
+      else if (channel === DEVICE_STREAM_CHANNEL) replaceStreams(message);
       else deliver(message);
     });
     await ensureConnected(publisher);
     await ensureConnected(subscriber);
-    await subscriber.subscribe(DEVICE_REVOKED_CHANNEL, DEVICE_FRAME_CHANNEL, FILE_ANSWER_CHANNEL);
+    await subscriber.subscribe(DEVICE_REVOKED_CHANNEL, DEVICE_FRAME_CHANNEL, FILE_ANSWER_CHANNEL, DEVICE_STREAM_CHANNEL);
     remote = true;
     return true;
   } catch {
@@ -146,7 +175,7 @@ export async function stopDeviceRevokeBus(): Promise<void> {
     }
   } else if (sub) {
     try {
-      await sub.unsubscribe(DEVICE_REVOKED_CHANNEL, DEVICE_FRAME_CHANNEL, FILE_ANSWER_CHANNEL);
+      await sub.unsubscribe(DEVICE_REVOKED_CHANNEL, DEVICE_FRAME_CHANNEL, FILE_ANSWER_CHANNEL, DEVICE_STREAM_CHANNEL);
     } catch {
       // The socket is already closed.
     }
@@ -193,6 +222,24 @@ export function publishDeviceFrame(deviceId: string, event: string, data: Record
       if (!count) deliverFrame(message);
     },
     () => deliverFrame(message),
+  );
+}
+
+/**
+ * A runtime of a computer opened its event stream. The streams other runtimes of that computer opened
+ * before it end with `device.replaced`, in every process, and the owner's AI activity log says so.
+ */
+export function publishRuntimeStream(input: { deviceId: string; userId: string; name: string; instance: string; openedAt: number }): void {
+  const message = JSON.stringify(input);
+  if (!remote || !publisher) {
+    replaceStreams(message);
+    return;
+  }
+  void publisher.publish(DEVICE_STREAM_CHANNEL, message).then(
+    (count) => {
+      if (!count) replaceStreams(message);
+    },
+    () => replaceStreams(message),
   );
 }
 

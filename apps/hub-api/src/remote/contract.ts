@@ -44,6 +44,8 @@ export const ROUTES = {
   fileAnswer: (requestId: string) => `/api/devices/self/file-requests/${encodeURIComponent(requestId)}`,
   /** This computer's answer to a `code.request` or `terminal.request` from the web (protocol 4). */
   codeAnswer: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}`,
+  /** Taken before a relayed request that changes something here is acted on: one runtime acts on it (409: another took it). */
+  claimRequest: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}/claim`,
   /** Output of a terminal command the web started here, in order (protocol 4). */
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
   /** A file the run's worker attached, as raw bytes with `EVIDENCE_HEADERS` (protocol 6). */
@@ -97,6 +99,8 @@ export const timing = () => ({
   syncMs: ms("ENSEMBLE_REMOTE_SYNC_MS", 2_000),
   /** The decision long poll; `waitFor()` allows up to 55 s. */
   waitSeconds: Math.min(55, Math.max(1, Math.round(ms("ENSEMBLE_REMOTE_WAIT_MS", 25_000) / 1000))),
+  /** How long a runtime whose stream another runtime of the computer replaced waits before it connects again. */
+  replacedMs: ms("ENSEMBLE_REMOTE_REPLACED_MS", 30_000),
 });
 
 export const LOG_CHUNK_BYTES = 64 * 1024;
@@ -143,6 +147,24 @@ export const RESUME_WINDOW_MS = 24 * 3600_000;
 /** What a protocol 1 server takes. */
 export const LEGACY_EVENT_KINDS = ["prepared", "tool", "command"] as const;
 export const LEGACY_SUMMARY_CHARS = 8000;
+
+/**
+ * Which runtime process on a computer made a request: a random id each runtime makes when it starts,
+ * sent on its event stream and its calls. Two runtimes with one pairing are told apart by it: the
+ * server keeps only the newer one's stream (`RUNTIME_REPLACED_EVENT` ends the older one), and an
+ * assistant turn or a relayed request that changes something goes to the one runtime that took it.
+ */
+export const INSTANCE_HEADER = "x-ensemble-instance";
+const INSTANCE = /^[A-Za-z0-9_-]{8,64}$/;
+
+export function runtimeInstanceOf(headers: Record<string, string | string[] | undefined>): string | null {
+  const raw = headers[INSTANCE_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" && INSTANCE.test(value) ? value : null;
+}
+
+/** The last frame on a runtime's event stream when another runtime of the same computer opened a newer one. */
+export const RUNTIME_REPLACED_EVENT = "device.replaced";
 
 /** The heading the task page goes under inside `task.description`, for computers that do not read `task.page`. */
 export const PAGE_HEADING = "## The task page (what the person wrote; the task itself)";
