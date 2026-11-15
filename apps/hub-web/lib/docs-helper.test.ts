@@ -200,3 +200,16 @@ test('a pending clear hides conversation titles before an account can change', a
     assert.doesNotMatch(page.element('#docs-helper').textContent!, /Private A title/);
   } finally { page.close(); }
 });
+
+test('a failed old chat-list request cannot overwrite a reopened History panel', async () => {
+  const page = setup();
+  try {
+    await page.signedIn(); page.click('#helper-history');
+    const old = page.take('/api/docs/chats');
+    page.click('#helper-history-close'); page.click('#helper-history');
+    await page.answer(page.take('/api/docs/chats'), { chats: [{ id: 'legacy', title: 'Current chat', updatedAt: new Date().toISOString() }], before: null });
+    old.reject(new Error('Old failure')); await tick();
+    assert.match(page.element('#helper-chat-list').textContent!, /Current chat/);
+    assert.doesNotMatch(page.element('#helper-chat-list').textContent!, /Old failure/);
+  } finally { page.close(); }
+});

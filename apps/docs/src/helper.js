@@ -217,7 +217,7 @@ async function showChats(older = false) {
       chatList.append(button);
     }
     chatsBefore = data.before; moreChats.hidden = !chatsBefore;
-  } catch (error) { if (epoch === flight.epoch && account?.id === flight.owner) chatList.textContent = `${error.message} Close History and try again.`; }
+  } catch (error) { if (epoch === flight.epoch && account?.id === flight.owner && chatsFlight === flight && !historyPanel.hidden) chatList.textContent = `${error.message} Close History and try again.`; }
   finally { if (chatsFlight === flight) { chatsFlight = null; moreChats.disabled = false; } }
 }
 document.querySelector('#helper-history').addEventListener('click', () => { if (historyPanel.hidden) showChats(); else closeHistory(); });
