@@ -111,9 +111,38 @@ export function sessionOf(stat: string): number | null {
   return Number.isInteger(session) ? session : null;
 }
 
-/** Every process still in a session: on Linux from /proc, elsewhere from `pgrep -s`. */
-export function sessionMembers(session: number): number[] {
-  if (process.platform === "win32" || session <= 1) return [];
+/**
+ * The processes in `ps -A -o pid=,ppid=,pgid=` lines that belong with sessions whose ids cannot be
+ * read: each leader's process group (a session leader never leaves it), every process a member
+ * started, and every group a member leads. A process that left its group after its parent ended is
+ * not found.
+ */
+export function sessionTree(ids: Iterable<number>, psLines: string): number[] {
+  const leaders = new Set(ids);
+  const rows = psLines
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter((row) => row.length === 3 && row.every((value) => Number.isInteger(value) && value > 0));
+  const members = new Set<number>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [pid, ppid, pgid] of rows) {
+      if (members.has(pid!) || !(leaders.has(pgid!) || members.has(ppid!) || members.has(pgid!))) continue;
+      members.add(pid!);
+      grew = true;
+    }
+  }
+  return [...members];
+}
+
+/**
+ * Every process still in these sessions, from one look at the process table: on Linux from /proc; on
+ * macOS, whose `ps` shows no session id and whose `pgrep` has no `-s`, from the process tree
+ * (`sessionTree`); elsewhere from `pgrep -s`.
+ */
+export function sessionMembers(ids: Iterable<number>): number[] {
+  const wanted = new Set([...ids].filter((id) => id > 1));
+  if (process.platform === "win32" || !wanted.size) return [];
   if (process.platform === "linux") {
     const found: number[] = [];
     let names: string[] = [];
@@ -125,25 +154,39 @@ export function sessionMembers(session: number): number[] {
     for (const name of names) {
       if (!/^\d+$/.test(name)) continue;
       try {
-        if (sessionOf(readFileSync(`/proc/${name}/stat`, "utf8")) === session) found.push(Number(name));
+        const session = sessionOf(readFileSync(`/proc/${name}/stat`, "utf8"));
+        if (session !== null && wanted.has(session)) found.push(Number(name));
       } catch {
         // gone already
       }
     }
     return found;
   }
-  const listed = spawnSync("pgrep", ["-s", String(session)], { encoding: "utf8", timeout: 5_000 });
-  return (listed.stdout ?? "").split(/\s+/).filter((pid) => /^\d+$/.test(pid)).map(Number);
+  if (process.platform === "darwin") {
+    const listed = spawnSync("/bin/ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8", timeout: 5_000 });
+    return sessionTree(wanted, listed.stdout ?? "");
+  }
+  return [...wanted].flatMap((session) => {
+    const listed = spawnSync("pgrep", ["-s", String(session)], { encoding: "utf8", timeout: 5_000 });
+    return (listed.stdout ?? "").split(/\s+/).filter((pid) => /^\d+$/.test(pid)).map(Number);
+  });
 }
 
-/** Kills a session: its process group, and each process that left the group but not the session. */
-function killSession(session: number): void {
-  try {
-    process.kill(-session, "SIGKILL");
-  } catch {
-    // no such group any more
+/** Kills sessions: their process groups, and each process that left its group but not its session. */
+function killSessions(ids: number[]): void {
+  // `kill(-1)` would signal every process this account may.
+  const leaders = ids.filter((id) => id > 1);
+  if (!leaders.length) return;
+  // Listed before the groups die too: on macOS a process that left its group is found through its parent.
+  const before = sessionMembers(leaders);
+  for (const id of leaders) {
+    try {
+      process.kill(-id, "SIGKILL");
+    } catch {
+      // no such group any more
+    }
   }
-  for (const pid of sessionMembers(session)) {
+  for (const pid of new Set([...before, ...sessionMembers(leaders)])) {
     if (pid === process.pid) continue;
     try {
       process.kill(pid, "SIGKILL");
@@ -160,7 +203,7 @@ function killTree(child: ChildProcess): void {
     spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     return;
   }
-  killSession(child.pid);
+  killSessions([child.pid]);
   try {
     child.kill("SIGKILL");
   } catch {
@@ -172,7 +215,7 @@ function killTree(child: ChildProcess): void {
 export function killGroup(group: string): number {
   const set = live.get(group);
   for (const child of set ?? []) killTree(child);
-  if (process.platform !== "win32") for (const session of sessions.get(group) ?? []) killSession(session);
+  if (process.platform !== "win32") killSessions([...(sessions.get(group) ?? [])]);
   sessions.delete(group);
   const count = set?.size ?? 0;
   live.delete(group);
@@ -298,7 +341,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
       drain = setTimeout(() => {
         child.stdout?.destroy();
         child.stderr?.destroy();
-        const left = child.pid && process.platform !== "win32" ? sessionMembers(child.pid) : [];
+        const left = child.pid && process.platform !== "win32" ? sessionMembers([child.pid]) : [];
         finish(code, signal, left);
       }, DRAIN_MS);
       drain.unref?.();
