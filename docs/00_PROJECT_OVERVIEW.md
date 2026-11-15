@@ -171,7 +171,7 @@ A catalog entry is a connection option, not a promise of native search, an impor
 - Personal API keys are checked and stored encrypted per account. Provider discovery is cached with explicit refresh. Provider and model are always named together; effort levels are validated.
 - Included AI defaults to **GPT-5 mini and GPT-4.1 mini**, with **20,000 credits per account per UTC month** (`DEFAULT_MONTHLY_CREDITS`), within each environment's operator ceiling and a per-call reservation. Hosted dev/test uses Visual Studio Azure credits. Luna, Sol and Grok are not currently included; eligible deployments can be explicitly enabled later. Azure paid grounding is opt-in; free web search remains available ([33](33_INCLUDED_AI.md)).
 - Included models work on the web, on Ensemble Node and on a paired desktop or CLI, from one list and one allowance per account. A local-only desktop app has none (it uses the person's own keys and AI subscriptions); no Azure key is ever copied to a computer.
-- Subscriptions on paired computers are a separate source. External coding engines use their own local sign-in.
+- Subscriptions on paired computers are a separate source. External coding engines use their own local sign-in. An agent's app that comes without the agent, the Cursor app or VS Code with Copilot, shows its plan with **Set up**, which installs the agent there with the vendor's installer and signs in ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
 - Run usage separates reported tokens, included credits, estimated prices and unknown prices.
 
 Details: [01 §6](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [30](30_ENGINES.md), [33](33_INCLUDED_AI.md).

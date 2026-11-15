@@ -16,6 +16,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentHandoff, PrismaClient } from "@prisma/client";
 import type { Normalized, Source } from "../lib/decisions.js";
+import { copilotProgram, cursorAgentProgram } from "../subscriptions/agent-apps.js";
 import { withoutHostSession } from "../subscriptions/host-session.js";
 import { within } from "./guard.js";
 import { hostExecutable } from "./policy.js";
@@ -220,10 +221,10 @@ export async function agentPresence(platform = process.platform, home = homedir(
   return [
     { id: "claude", name: "Claude", app: claudeApp, cli: await onPath("claude") },
     { id: "codex", name: "Codex", app: codexApp, cli: await onPath("codex") },
-    // Cursor's `cursor` launcher needs the app; its agent's command line is `cursor-agent`.
-    { id: "cursor", name: "Cursor", app: cursorApp, cli: await onPath("cursor-agent") },
+    // Cursor's `cursor` launcher needs the app; its agent's command line is `cursor-agent`, also where Cursor's installer puts it.
+    { id: "cursor", name: "Cursor", app: cursorApp, cli: await cursorAgentProgram({ platform, home, env }) },
     { id: "vscode", name: "VS Code", app: codeApp, cli: await onPath("code") },
-    { id: "copilot", name: "GitHub Copilot CLI", app: false, cli: await onPath("copilot") },
+    { id: "copilot", name: "GitHub Copilot CLI", app: false, cli: await copilotProgram({ platform, home, env }) },
   ];
 }
 

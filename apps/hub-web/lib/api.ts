@@ -2,7 +2,7 @@ import type { SecretAnswer, SecretTarget } from "./node-secret";
 import type { McpOAuthConnections, McpOAuthConsent, McpOAuthDecision } from "@ensemble/shared-types";
 import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type AgentApp, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -1271,6 +1271,8 @@ export type SubscriptionComputer = {
   /** New enough to run assistant turns. */
   ready: boolean;
   agents: SubscriptionAgent[];
+  /** Agents' apps there that come without the agent (the Cursor app, VS Code with Copilot). */
+  apps?: AgentApp[];
 };
 
 export type SubscriptionsView = { computers: SubscriptionComputer[]; preferred: string | null };
@@ -1740,6 +1742,8 @@ export const api = bindClient({
   subscriptions: () => get<SubscriptionsView>("/api/subscriptions"),
   checkSubscriptions: (deviceId: string) => post<{ sent?: boolean; agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { deviceId }),
   signInSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/sign-in", { deviceId, agent }),
+  /** Installs the agent with the vendor's installer on a computer that has only its app, then signs in. */
+  setUpSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/set-up", { deviceId, agent }),
   pairDevice: () => post<{ code: string; expiresAt: string }>("/api/devices/pair", {}),
   renameDevice: (id: string, name: string) => patch(`/api/devices/${id}`, { name }),
   revokeDevice: (id: string) => del<void>(`/api/devices/${id}`),
