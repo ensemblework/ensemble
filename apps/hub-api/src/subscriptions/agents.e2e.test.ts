@@ -525,6 +525,97 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   }
 });
 
+test("a Codex chat waits while the ChatGPT app holds its thread, then goes on in it; held too long, it goes on in a new thread and keeps the old one for deletion", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-codex-busy-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const log = join(root, "codex.jsonl");
+  // Each app-server refuses \`thread/resume\` as the ChatGPT app does while it has the thread open, STANDIN_BUSY times.
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const busy = process.env.STANDIN_BUSY === 'always' ? Infinity : Number(process.env.STANDIN_BUSY || 0);
+let refused = 0;
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.169.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'thread/start' || message.method === 'thread/resume') appendFileSync(process.env.STANDIN_CODEX, JSON.stringify({ method: message.method, threadId: message.params.threadId }) + "\\n");
+  if (message.method === 'thread/start') return send({ id: message.id, result: { thread: { id: process.env.STANDIN_THREAD }, model: 'gpt-test' } });
+  if (message.method === 'thread/resume') {
+    if (refused < busy) {
+      refused += 1;
+      return send({ id: message.id, error: { code: -32600, message: 'thread ' + message.params.threadId + ' already has an active writer' } });
+    }
+    return send({ id: message.id, result: { thread: { id: message.params.threadId }, model: 'gpt-test' } });
+  }
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Done.', phase: 'final_answer' } } });
+    return send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  chmodSync(join(bin, "codex"), 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_CODEX: process.env.STANDIN_CODEX, STANDIN_BUSY: process.env.STANDIN_BUSY, STANDIN_THREAD: process.env.STANDIN_THREAD, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_CODEX = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  const { BUSY_WAIT } = await import("../workspace/engines/session-restart.js");
+  const { dropSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const timing = { ...BUSY_WAIT.chat };
+  BUSY_WAIT.chat = { everyMs: 20, limitMs: 150 };
+  const dropped: string[] = [];
+  setNativeDropForTests(async (_agent, id) => void dropped.push(id));
+  const statuses: string[] = [];
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, onStatus: (text: string) => void statuses.push(text), signal: new AbortController().signal };
+  const key = "8d7c6b5a-4938-4726-9b1c-2d3e4f5a6b7c";
+  const turn = (prompt: string, position: number, busy: string, thread: string) => {
+    process.env.STANDIN_BUSY = busy;
+    process.env.STANDIN_THREAD = thread;
+    return runAgentTurn({ agent: "codex", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: "", position } }, io);
+  };
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; threadId?: string });
+  try {
+    const first = await turn("Remember KIWI.", 0, "0", "thread-1");
+    assert.equal(first.resumed, false);
+    assert.equal(first.restart, undefined, "a new chat restarts nothing");
+
+    // The person has the thread open in the ChatGPT app for a moment.
+    const second = await turn("What did I ask you to remember?", 2, "1", "unused");
+    assert.equal(second.resumed, true, "the same thread, once the app let go");
+    assert.equal(second.restart, undefined);
+    assert.deepEqual(statuses, ["Waiting for the ChatGPT app…"]);
+    assert.deepEqual(calls().slice(1).map((call) => `${call.method} ${call.threadId ?? ""}`), ["thread/resume thread-1", "thread/resume thread-1"]);
+
+    // The app keeps it open past the wait: a new thread, and the reason recorded.
+    const third = await turn("And now?", 4, "always", "thread-2");
+    assert.equal(third.resumed, false);
+    assert.equal(third.restart?.reason, "busy");
+    assert.match(third.restart?.error ?? "", /already has an active writer/);
+    assert.equal(calls().at(-1)?.method, "thread/start");
+    const store = JSON.parse(readFileSync(join(root, "state", "assistant-sessions.json"), "utf8")) as Record<string, { id: string; retired?: string[] }>;
+    assert.equal(store[key]?.id, "thread-2");
+    assert.deepEqual(store[key]?.retired, ["thread-1"], "the held thread is kept for deletion, not forgotten");
+    await new Promise((done) => setTimeout(done, 20));
+    assert.deepEqual(dropped, [], "and not deleted while the chat lives");
+
+    assert.equal(await dropSession(key), true);
+    await new Promise((done) => setTimeout(done, 20));
+    assert.deepEqual(dropped.sort(), ["thread-1", "thread-2"], "deleting the chat deletes both");
+  } finally {
+    BUSY_WAIT.chat = timing;
+    setNativeDropForTests(null);
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Copilot that reports its session's totals is charged per turn: what the turn added", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-totals-"));
   const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_TOTALS: process.env.STANDIN_TOTALS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };

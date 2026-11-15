@@ -7,7 +7,7 @@ import { deleteNativeSession } from "../workspace/engines/delete-session.js";
 import { lockSession, runsOfSession, sessionOfJob, sessionDeletionOf } from "../workspace/sessions.js";
 import { stopJob } from "../workspace/worker.js";
 import { loadHeld } from "./store.js";
-import type { HostedClient } from "./client.js";
+import { claimedHere, type HostedClient } from "./client.js";
 import type { CodeAnswer } from "./contract.js";
 
 export const SESSION_DELETE_API = 1;
@@ -94,10 +94,12 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
   }
 }
 
-export async function answerSessionDelete(app: FastifyInstance, client: HostedClient, input: unknown): Promise<void> {
+/** Answers the web's request; the one runtime of this computer that takes it deletes the sessions (`claimedHere`). */
+export async function answerSessionDelete(app: FastifyInstance, client: Pick<HostedClient, "answerCode" | "claimRequest">, input: unknown): Promise<void> {
   const parsed = Request.safeParse(input);
   const id = parsed.success ? parsed.data.id : typeof input === "object" && input && "id" in input && typeof input.id === "string" ? input.id : null;
   if (!id) { app.log.warn("Session deletion request has no request ID"); return; }
+  if (parsed.success && !(await claimedHere(client, id))) return;
   let answer: CodeAnswer;
   try {
     if (!parsed.success) throw new Error("Invalid session deletion request.");

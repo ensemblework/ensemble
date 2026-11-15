@@ -38,12 +38,20 @@ export async function sessionToResume(prisma: Pick<PrismaClient, "workspaceJob" 
   return null;
 }
 
-export type SessionRestart = "gone" | "deleted";
+export type SessionRestart = "gone" | "deleted" | "busy";
+
+/** Why the computer started a new agent session for this run, as its newest `engine` event says (workspace/agent.ts). */
+async function engineRestartOf(prisma: Pick<PrismaClient, "workspaceEvent">, jobId: string): Promise<string | null> {
+  const started = await prisma.workspaceEvent.findFirst({ where: { jobId, kind: "engine" }, orderBy: { sequence: "desc" }, select: { data: true } });
+  const restart = (started?.data as { restart?: { reason?: unknown } } | null)?.restart;
+  return restart && typeof restart.reason === "string" ? restart.reason : null;
+}
 
 /**
  * For a run that continues an earlier one by the same agent: `gone` when it could not resume the agent
- * session it should have (the agent no longer had it), `deleted` when that session had been deleted in
- * Ensemble, so the run started a new one on purpose. Null otherwise, and before the run has a session.
+ * session it should have (the agent no longer had it), `busy` when the agent's own app held that session
+ * for the whole wait (Codex: the ChatGPT app had the thread open), `deleted` when that session had been
+ * deleted in Ensemble, so the run started a new one on purpose. Null otherwise, and before the run has a session.
  */
 export async function sessionRestartOf(
   prisma: Pick<PrismaClient, "workspaceJob" | "workspaceEvent">,
@@ -56,5 +64,6 @@ export async function sessionRestartOf(
   if (!mine) return null;
   if (!continuesSessionOf(job, previous)) return "deleted";
   const expected = await sessionToResume(prisma, job);
-  return expected && expected !== mine ? "gone" : null;
+  if (!expected || expected === mine) return null;
+  return (await engineRestartOf(prisma, job.id)) === "busy" ? "busy" : "gone";
 }

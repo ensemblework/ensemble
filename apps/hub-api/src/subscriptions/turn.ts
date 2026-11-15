@@ -204,15 +204,15 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   };
   try {
     const result = computer.local
-      ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...(spec.files ? { readFile: input.files!.read } : {}) })
-      : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...(spec.files ? { read: input.files!.read } : {}) });
+      ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...(spec.files ? { readFile: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) })
+      : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...(spec.files ? { read: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) });
     logAi({
       ...logged,
       model: result.model ?? spec.model,
       ok: true,
       durationMs: Date.now() - started,
       output: result.text,
-      meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}) },
+      meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}), ...(result.restart ? { restart: result.restart } : {}) },
     });
     return { ...result, computer: computer.name };
   } catch (error) {

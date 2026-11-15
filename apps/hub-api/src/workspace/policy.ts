@@ -33,7 +33,9 @@ export function forgetExecutablesForTests(): void {
 
 export async function hostExecutable(name: string): Promise<string> {
   const cached = executables.get(name);
-  if (cached) return cached;
+  // A program updated since is looked up again: Homebrew, for one, removes the old version's folder.
+  if (cached && (await lstat(cached).then((info) => info.isFile(), () => false))) return cached;
+  executables.delete(name);
   const filename = process.platform === "win32" && !name.endsWith(".exe") ? `${name}.exe` : name;
   const pathVar = process.env.PATH ?? process.env.Path ?? "";
   for (const directory of pathVar.split(delimiter)) {

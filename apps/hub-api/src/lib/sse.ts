@@ -18,6 +18,8 @@ export type Listener = {
   share?: { kind: string; resourceId: string; shareId?: string; linkId?: string };
   /** The account channel of someone working in another space: personal frames only. */
   personalOnly?: boolean;
+  /** A computer's runtime on its device stream: which runtime process (`INSTANCE_HEADER`), and when the stream opened. */
+  runtime?: { instance: string; openedAt: number };
 };
 
 type Subscriber = { reply: FastifyReply; listener: Listener };
@@ -120,6 +122,31 @@ class SseHub {
         subscriber.reply.raw.end("event: sharing.changed\ndata: {}\n\n");
       } catch {
         // Already gone.
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Ends the streams of other runtimes on a device's channel that opened before `newest`, writing `frame` as
+   * their last. Whatever order two openings are handled in, only the newest stays. The runtimes closed.
+   */
+  replace(channel: string, newest: { instance: string; openedAt: number }, frame: Frame): string[] {
+    const set = this.channels.get(channel);
+    if (!set) return [];
+    const closed: string[] = [];
+    for (const subscriber of [...set]) {
+      const runtime = subscriber.listener.runtime;
+      if (!runtime || runtime.instance === newest.instance) continue;
+      if (runtime.openedAt > newest.openedAt || (runtime.openedAt === newest.openedAt && runtime.instance > newest.instance)) continue;
+      this.drop(channel, subscriber);
+      closed.push(runtime.instance);
+      const socket = subscriber.reply.raw;
+      if (socket.destroyed || socket.writableEnded) continue;
+      try {
+        socket.end(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`);
+      } catch {
+        // The computer already hung up.
       }
     }
     return closed;

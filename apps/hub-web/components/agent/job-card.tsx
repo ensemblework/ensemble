@@ -274,7 +274,9 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
         <div className="mt-1.5 text-[12px] leading-[17px] text-muted" data-testid="job-session-restart">
           {job.sessionRestart === "gone"
             ? `The earlier task's session no longer exists in ${agentName(job.provider)} (deleted or expired there), so this run started a new session in the same folder, with the earlier task's summary.`
-            : "The earlier task's agent session was deleted in Ensemble, so this run started a new session in the same folder, with the earlier task's summary."}
+            : job.sessionRestart === "busy"
+              ? "The ChatGPT app kept the earlier task's conversation open for the whole wait, so this run started a new session in the same folder, with the earlier task's summary. Before continuing a task, switch to another chat in the app or quit it."
+              : "The earlier task's agent session was deleted in Ensemble, so this run started a new session in the same folder, with the earlier task's summary."}
         </div>
       ) : null}
       {job.sessionChoice ? (

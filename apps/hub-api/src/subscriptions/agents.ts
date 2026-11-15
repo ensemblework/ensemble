@@ -44,7 +44,8 @@ import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, 
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
-import { chatFolder, dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
+import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
+import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -95,6 +96,8 @@ export type AgentTurnResult = {
   costUsd: number | null;
   /** The turn went on in the chat's earlier session. */
   resumed?: boolean;
+  /** Why the turn started a new session in place of the chat's earlier one (session-restart.ts). */
+  restart?: Restart;
 };
 
 export type AgentTurnIO = {
@@ -103,6 +106,8 @@ export type AgentTurnIO = {
   signal: AbortSignal;
   /** The bytes of one of `spec.files`; null when it cannot be had. */
   readFile?: (id: string) => Promise<Uint8Array | null>;
+  /** A line for the chat while the turn waits on something (the ChatGPT app holding the chat's thread). */
+  onStatus?: (text: string) => void;
 };
 
 export type AgentTurnProblem = "not_installed" | "signed_out" | "limit" | "failed";
@@ -133,8 +138,15 @@ type TurnSession = { id: string; resume: boolean; usage?: SessionUsage } | null;
 type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string | null; totals?: SessionUsage | null };
 type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<DriverResult>;
 
-/** The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one. */
-class SessionGone extends Error {}
+/**
+ * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
+ * `proven`: the agent said it no longer has it; otherwise it is kept to be deleted with the chat.
+ */
+class SessionGone extends Error {
+  readonly proven = provenGone(this.message);
+}
+/** The agent's own app held the chat's session for the whole wait (the ChatGPT app, a Codex thread): a new one, the old one kept. */
+class SessionBusy extends Error {}
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
 
@@ -410,11 +422,23 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", params);
         throw error;
       });
+    // While the ChatGPT app has the thread open it cannot be resumed here: the turn waits a little for it.
+    let told = false;
     // No environment: Codex's own shell and file tools are not there at all. A resumed thread does not
     // keep that, so every turn asks for it again (turn/start below).
     const thread = (
       session?.resume
-        ? await server.request("thread/resume", { threadId: session.id, ...resumeSettings }).catch((error: Error) => {
+        ? await resumeCodexThread((method, params) => server.request(method, params), { threadId: session.id, ...resumeSettings }, {
+            signal: io.signal,
+            ...BUSY_WAIT.chat,
+            waiting: () => {
+              if (told) return;
+              told = true;
+              io.onStatus?.(BUSY_STATUS);
+            },
+          }).catch((error: Error) => {
+            if (io.signal.aborted) throw error;
+            if (error instanceof CodexThreadBusy) throw new SessionBusy(error.message);
             throw new SessionGone(error.message);
           })
         : await start(projectId ? { ...settings, projectId } : settings).catch((error: Error) => {
@@ -448,7 +472,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     return { ...result, session: session ? threadId : null };
   } catch (error) {
     if (io.signal.aborted) throw aborted();
-    if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
+    if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported) throw error;
     throw agentProblem("codex", error instanceof Error ? error.message : String(error));
   } finally {
     tools.close();
@@ -911,13 +935,18 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
     // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
     const perTurn = spec.agent === "claude-code" || spec.agent === "codex";
     const position = spec.session?.position;
-    const kept = key ? await findSession(key, spec.agent, spec.system, perTurn, position) : null;
+    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position) : null;
+    const kept = look?.found ?? null;
+    // Why the chat's earlier session, when it has one, does not go on: recorded with the turn (session-restart.ts).
+    let restart: Restart | null = look?.declined ? restartOf(look.declined) : null;
     // Someone sent the session prompts of their own in the agent's app since Ensemble's last turn: the chat goes
     // on in a new session with Ensemble's own history, so none of that enters it (session-touch.ts).
     const touched = kept && kept.prompts !== undefined && ((await sessionPrompts(spec.agent, kept.id, folder).catch(() => null)) ?? kept.prompts) > kept.prompts ? kept.id : null;
+    if (touched) restart = restartOf("touched");
     const found = touched ? null : kept;
     // A resumed session whose instructions changed hears only what changed; most of them changed: a new session.
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
+    if (found && update === null) restart = restartOf("instructions");
     const earlier = found && update !== null ? found.id : null;
     const run = (session: TurnSession) =>
       DRIVERS[spec.agent]({
@@ -936,8 +965,10 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
       result = await run(key ? (earlier ? { id: earlier, resume: true, ...(found?.usage ? { usage: found.usage } : {}) } : { id: randomUUID(), resume: false }) : null);
     } catch (error) {
       if (io.signal.aborted || !key) throw error;
-      if (error instanceof SessionGone) {
-        await forgetSession(key);
+      if (error instanceof SessionGone || error instanceof SessionBusy) {
+        restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
+        // Kept to be deleted with the chat, unless the agent said it no longer has it.
+        await forgetSession(key, { gone: error instanceof SessionGone && error.proven });
         resumed = false;
         result = await run({ id: randomUUID(), resume: false });
       } else if (error instanceof SessionUnsupported) {
@@ -963,8 +994,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
       dropOneOff(spec.agent, result.oneOff, key ? undefined : folder);
       handedOff = !key;
     }
+    if (restart && !resumed) console.warn(`[ensemble] A ${info.label} chat went on in a new session: ${restart.reason}${restart.error ? ` (${restart.error})` : ""}`);
     const { session: _session, oneOff: _oneOff, totals: _totals, ...answer } = result;
-    return { ...answer, resumed };
+    return { ...answer, resumed, ...(restart && !resumed ? { restart } : {}) };
   } finally {
     bridge.close();
     // A chat's folder stays for its next turn; the files of this turn do not. A one-off's folder is dropOneOff's.

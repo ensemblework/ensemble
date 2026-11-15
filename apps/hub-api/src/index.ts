@@ -1,6 +1,7 @@
 import { startMetricsServer } from "./analytics/prometheus.js";
 import { flushAiActivity } from "./lib/ai-activity.js";
 import { env } from "./config.js";
+import type { FastifyBaseLogger } from "fastify";
 import { buildApp } from "./app.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
 import { startScheduler } from "./jobs/scheduler.js";
@@ -27,6 +28,7 @@ import { syncClaudeAppDeletions, syncCodexAppProjects } from "./workspace/engine
 export type HubServer = {
   port: number;
   close: () => Promise<void>;
+  log: FastifyBaseLogger;
 };
 
 export async function startHub(): Promise<HubServer> {
@@ -133,7 +135,7 @@ export async function startHub(): Promise<HubServer> {
     app.log.info({ port, discovery: file }, "desktop discovery file written");
   }
   app.log.info({ port }, `hub-api listening on ${host}:${port}`);
-  return { port, close: () => close(false) };
+  return { port, close: () => close(false), log: app.log };
 }
 
 if (process.env.ENSEMBLE_DESKTOP_EMBED !== "1") {

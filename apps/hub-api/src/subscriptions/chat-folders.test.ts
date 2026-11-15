@@ -60,22 +60,23 @@ test("a chat from before named folders keeps its folder while a session of it be
   mkdirSync(sessionFolder(key), { recursive: true });
   await saveSession(key, "gemini-cli", "older-session", "Rules.", { next: 2 });
   assert.deepEqual(await chatFolder(key, { agent: "gemini-cli", title: "Weekly review" }), { folder: sessionFolder(key), dir: key }, "Gemini CLI finds the session by this folder");
-  // Used outside Ensemble and set aside: it is deleted with the chat, from the folder it began in.
+  // One used outside Ensemble, and one that could not be reopened though Gemini may still have it, are set aside:
+  // both are deleted with the chat, from the folder they began in.
   await saveSession(key, "gemini-cli", "newer-session", "Rules.", { next: 4, retire: "older-session" });
   await forgetSession(key);
   assert.deepEqual(await chatFolder(key, { agent: "gemini-cli", title: "Weekly review" }), { folder: sessionFolder(key), dir: key });
   dropped.length = 0;
   await dropSession(key);
-  assert.deepEqual(dropped, [{ id: "older-session", folder: sessionFolder(key) }]);
+  assert.deepEqual(dropped, [{ id: "older-session", folder: sessionFolder(key) }, { id: "newer-session", folder: sessionFolder(key) }]);
 });
 
 test("a folder no session began in takes the chat's name: an old one moves, and so does one whose chat was renamed", async () => {
-  // A chat from before whose session could not be reopened: nothing of it is left in its folder to find.
+  // A chat from before whose session its agent no longer has: nothing of it is left in its folder to find.
   const legacy = "5d6e7f80-1a2b-4c3d-9e4f-5a6b7c8d9e0f";
   mkdirSync(sessionFolder(legacy), { recursive: true });
   writeFileSync(join(sessionFolder(legacy), "system.md"), "Rules.");
   await saveSession(legacy, "opencode", "gone-session", "Rules.", { next: 2 });
-  await forgetSession(legacy);
+  await forgetSession(legacy, { gone: true });
   const moved = await chatFolder(legacy, { agent: "opencode", title: "Weekly review" });
   assert.deepEqual(moved, { folder: join(chats, "weekly-review-5d6e7f80"), dir: "weekly-review-5d6e7f80" });
   assert.ok(existsSync(join(moved.folder, "system.md")) && !existsSync(sessionFolder(legacy)), "the folder moved to its name");

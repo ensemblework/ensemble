@@ -40,8 +40,9 @@ export const ROTATE_MESSAGES = 80;
 /** `usage`: the session's token totals as its agent last reported them (Copilot reports the whole session's, not a turn's). */
 /**
  * `prompts`: how many prompts the agent's own transcript held after Ensemble's last turn (session-touch.ts).
- * `retired`: earlier sessions of this chat that someone used outside Ensemble; they are no longer resumed,
- * and are deleted with the chat. `id` is empty when only those remain, or when the chat has a folder and no session yet.
+ * `retired`: earlier sessions of this chat that someone used outside Ensemble, or that could not be reopened
+ * though the agent still has them; they are no longer resumed, and are deleted with the chat. `id` is empty
+ * when only those remain, or when the chat has a folder and no session yet.
  */
 type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string };
 export type SessionUsage = { in: number; out: number };
@@ -91,15 +92,28 @@ export type Found = { id: string; text: string | null; usage?: SessionUsage; pro
  * has as text is resumed with an update (`instructionsUpdate`); an older entry with only a hash, on a
  * changed hash, is not.
  */
-export function findSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<Found | null> {
+export async function findSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<Found | null> {
+  return (await lookSession(key, agent, instructions, perTurn, position)).found;
+}
+
+/**
+ * Why the chat's session of this agent is not resumed (workspace/engines/session-restart.ts): unused for its
+ * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), or
+ * an older entry's instructions changed (`instructions`).
+ */
+export type Declined = "expired" | "moved" | "rotated" | "instructions";
+
+/** `findSession`, and why the chat's session of this agent is not resumed when it has one. */
+export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<{ found: Found | null; declined?: Declined }> {
   return serial(async () => {
     const entry = (await read())[key];
-    if (!entry || !entry.id || entry.agent !== agent || Date.now() - entry.at >= keepMs(entry)) return null;
+    if (!entry || !entry.id || entry.agent !== agent) return { found: null };
+    if (Date.now() - entry.at >= keepMs(entry)) return { found: null, declined: "expired" };
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
-    if (position !== undefined && entry.next !== undefined && entry.next !== position) return null;
-    if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return null;
-    if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return null;
-    return { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) };
+    if (position !== undefined && entry.next !== undefined && entry.next !== position) return { found: null, declined: "moved" };
+    if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return { found: null, declined: "rotated" };
+    if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return { found: null, declined: "instructions" };
+    return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) } };
   });
 }
 
@@ -239,15 +253,18 @@ export async function dropSession(key: string): Promise<boolean> {
 }
 
 /**
- * Forgets a chat's session (it could not be reopened); its retired sessions stay listed for deletion with the chat,
- * and its folder stays its own.
+ * Forgets a chat's session that could not be reopened. Unless the agent said it no longer has it (`gone`), it
+ * joins the chat's retired sessions: not resumed, and deleted from the agent with the chat (a thread the
+ * ChatGPT app held open, a refusal that may pass). Earlier retired sessions stay listed either way, and the
+ * chat's folder stays its own.
  */
-export function forgetSession(key: string): Promise<void> {
+export function forgetSession(key: string, options: { gone?: boolean } = {}): Promise<void> {
   return serial(async () => {
     const store = await read();
     const entry = store[key];
     if (!entry) return;
-    if (entry.retired?.length || entry.dir) store[key] = { ...entry, id: "" };
+    const retired = [...(entry.retired ?? []), ...(entry.id && !options.gone ? [entry.id] : [])].filter((id, index, all) => id && all.indexOf(id) === index);
+    if (retired.length || entry.dir) store[key] = { ...entry, id: "", ...(retired.length ? { retired } : {}) };
     else delete store[key];
     await write(store);
   });
