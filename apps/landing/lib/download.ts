@@ -33,16 +33,17 @@ export function desktopFiles(version = DESKTOP_VERSION): Record<OsId, DesktopFil
 /** The same installers built for another processor, shown as one line of links under a system's buttons. */
 export type DesktopOtherBuild = { arch: string; files: Array<{ label: string; file: string }> };
 
-/** Releases up to desktop-v0.8.0 were published without Linux arm64 installers. */
-export function hasLinuxArm64(version: string): boolean {
+/** Releases up to desktop-v0.8.0 were published without arm64 installers for Windows and Linux. */
+export function hasArm64Installers(version: string): boolean {
   const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
   return major > 0 || minor > 8 || (minor === 8 && patch > 0);
 }
 
-/** Linux on arm64 (the `linux-arm64` build in `scripts/desktop-targets.mjs`). */
+/** Windows and Linux on arm64 (the `windows-arm64` and `linux-arm64` builds in `scripts/desktop-targets.mjs`). */
 export function desktopOtherBuilds(version = DESKTOP_VERSION): Partial<Record<OsId, DesktopOtherBuild>> {
-  if (!hasLinuxArm64(version)) return {};
+  if (!hasArm64Installers(version)) return {};
   return {
+    windows: { arch: "arm64", files: [{ label: ".exe installer", file: `Ensemble_${version}_arm64-setup.exe` }] },
     linux: {
       arch: "arm64",
       files: [

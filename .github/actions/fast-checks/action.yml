@@ -94,4 +94,6 @@ runs:
       run: |
         node --test infra/deploy/testing/deploy.test.mjs
         node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs scripts/desktop-targets.test.mjs
+        # Prisma's Rust-free client on PGlite, which the Windows arm64 sidecar carries; desktop.yml builds only on tags.
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/lib/pglite-adapter.test.ts
         pnpm --filter @ensemble/hub-api route:inventory:check

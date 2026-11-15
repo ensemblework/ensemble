@@ -12,7 +12,7 @@ The tables below show what runs automatically and what requires that manual work
 | PR into `main` (a feature branch or `testing`) | `ci.yml` | Fast checks | ~3 min |
 | Push to `main` | `ci.yml`, then `deploy.yml` | Fast checks; then `production`, the API, the Hub and the landing page ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)) | ~6 min to production |
 | `cli-v<version>` tag | `cli-release.yml` | Builds on five targets, each packaged CLI smoke-run (seconds), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
-| `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on five targets; no tests | ~22 min (the Intel Mac build) |
+| `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on six targets; no tests | ~22 min (the Intel Mac build) |
 | Push to `main` | Cloudflare Workers Builds (Worker `ensemble-docs`, outside GitHub Actions) | Builds `apps/docs` and publishes `docs.ensemblework.com` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)) | A few minutes |
 
 The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*). Its fixtures are in memory (PGlite) or local: no paid model, vendor directory or real agent account is used.
@@ -27,7 +27,7 @@ The **fast checks** are one composite action, `.github/actions/fast-checks`, use
 | Sandbox beta, off by default | The sandbox's defaults (Sandbox by default, run profiles, Quick, the assign request), the one-time switch-off of saved settings on PGlite, a computer's sandbox rule for web tasks, Antigravity assigned from the assistant without the sandbox, the Beta tag in Settings ([24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta)) |
 | MCP OAuth, named tools and consent | The bridge's typecheck and catalog, OAuth discovery, consent, PKCE, client and resource binding, refresh and revocation, named and legacy tools, the consent and sign-in forms and their routes ([Context Bridge](CONTEXT_BRIDGE.md)) |
 | Included model defaults and credit-safe search | Included model defaults, pricing, the credit budget, the included runtime, web search and Node's model choice ([33](33_INCLUDED_AI.md)) |
-| Deployment guards, release scripts and route inventory | The testing deploy guard, the desktop release, version and target scripts, `route:inventory:check` |
+| Deployment guards, release scripts and route inventory | The testing deploy guard, the desktop release, version and target scripts, Prisma's Rust-free client on PGlite (the Windows arm64 sidecar, [DESKTOP §6](DESKTOP.md#6-build-and-package)), `route:inventory:check` |
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
 
@@ -44,7 +44,7 @@ Actions → **full-checks** → *Run workflow* runs all of these on any branch.
 | *agent-runtime tests* | The Python runtime's `pytest` | ~2 min |
 | *Production builds (Hub and landing)* | `next build` of both sites; Vercel builds them again at deploy | ~3 min |
 | *macOS sandbox escapes* (`desktop-seatbelt`) | Escape, trust, planted-file and git-gate tests on macOS, and the Mac disk-image packager test | ~1.5 min |
-| Desktop builds on pull requests | All four installers built for every PR into `main` | 12–26 min |
+| Desktop builds on pull requests | Every desktop target's installers built for every PR into `main` | 12–26 min |
 
 A regression outside the fast checks can reach production. A Hub build error appears during deployment, after the API has moved. A sandbox or platform problem can first appear in a release build or during use.
 
