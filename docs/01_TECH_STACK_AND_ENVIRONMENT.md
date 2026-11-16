@@ -128,7 +128,7 @@ SQL account-lifetime constraints differ from Prisma's relation model on purpose.
 
 Workflow files are authoritative for pinned action and runtime versions.
 
-**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`; each step and what it covers: [37](37_PAUSED_CHECKS.md#what-runs-now)).
+**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. It runs the fast checks shared with testing (`.github/actions/fast-checks`) as four parallel jobs, one per `part` (types, regressions, sessions, rest), about two minutes in all. Then *Typecheck and unit tests*, the required check, passes only when all four passed. Each step, its part and what it covers: [37](37_PAUSED_CHECKS.md#what-runs-now).
 
 It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
 

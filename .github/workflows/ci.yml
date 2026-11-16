@@ -19,11 +19,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The fast checks in four parts at once: typechecks, the focused web and API regressions, sessions
+  # (with Node plans and agent apps), and the rest.
   checks:
-    # This name is the required status check on main and on the production branch.
-    name: Typecheck and unit tests
+    name: Fast checks (${{ matrix.part }})
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [types, regressions, sessions, rest]
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/fast-checks
+        with:
+          part: ${{ matrix.part }}
+  # This name is the required status check on main and on the production branch. It passes only when
+  # every part passed.
+  required:
+    name: Typecheck and unit tests
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every part passed
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: |
+          echo "Fast checks: $RESULT"
+          test "$RESULT" = "success"
