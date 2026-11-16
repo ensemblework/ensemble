@@ -75,6 +75,10 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID_TEST }}
+          # What the Hub is built from. A push that leaves all of it alone uploads nothing to Vercel;
+          # a manual run always publishes.
+          paths: apps/hub-web packages/block-diagrams packages/brand packages/ide-theme packages/shared-types package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json turbo.json .vercelignore .github/actions/vercel-deploy
+          force: ${{ github.event_name == 'workflow_dispatch' }}
   testing-cli:
     name: Publish matching testing CLI
     needs: publish
