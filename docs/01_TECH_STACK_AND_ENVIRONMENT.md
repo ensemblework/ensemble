@@ -144,7 +144,7 @@ It is the required status check on `main` and `production`. The slower suites (t
 
 Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_APP`, `VERCEL_PROJECT_ID_LANDING`. The Vercel projects hold build settings (root `apps/hub-web` or `apps/landing`) and the Hub's `NEXT_PUBLIC_*` values. Server secrets stay in the server's env file and never go to GitHub or Vercel.
 
-**Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml`. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. As in production, the deploy is skipped when nothing the Hub is built from changed since the test project's live deployment, and a manual run always deploys.
+**Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml`. The testing environment is paused at the last commit synced from `main`, so it runs only when a test round pushes `testing` ([36](36_WEB_TESTING.md)). Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. As in production, the deploy is skipped when nothing the Hub is built from changed since the test project's live deployment, and a manual run always deploys.
 
 After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on six platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds.
 

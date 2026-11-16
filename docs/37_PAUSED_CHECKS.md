@@ -8,7 +8,7 @@ The tables below show what runs automatically and what requires that manual work
 
 | Event | Workflow | What it does | Time |
 | --- | --- | --- | --- |
-| Push or PR to `testing` | `test-web.yml` | Fast checks; on a push, then the testing API, test web app and testing CLI ([36](36_WEB_TESTING.md)) | ~3 min to checks, ~6 min to a live test site |
+| Push or PR to `testing` | `test-web.yml` | Fast checks; on a push, then the testing API, the test web app (when something the Hub is built from changed) and testing CLI ([36](36_WEB_TESTING.md)) | ~3 min to checks, ~6 min to a live test site |
 | PR into `main` (a feature branch or `testing`) | `ci.yml` | Fast checks | ~3 min |
 | Push to `main` | `ci.yml`, then `deploy.yml` | Fast checks; then `production`, the API, the Hub and the landing page ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)) | ~6 min to production |
 | `cli-v<version>` tag | `cli-release.yml` | Builds on six targets, each packaged CLI smoke-run (on Windows `install.ps1` too), `.deb`/`.rpm`, release, Homebrew and Scoop | ~18 min (the Windows on Arm build) |
