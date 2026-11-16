@@ -1,15 +1,19 @@
 # Web and CLI testing and production promotion
 
-Use the test Hub and the separate `ensemble-test` CLI to try changes with isolated accounts and data. Start development on `testing`, check the deployed result, then open a promotion PR to `main`.
+The test Hub and the separate `ensemble-test` CLI try changes with isolated accounts and data.
+
+**The testing environment is paused.** Changes go to `main` through pull requests ([AGENTS.md](../AGENTS.md)). `testing`, `testing-live`, the test site, the testing API and `cli-testing-latest` stay at the last commit synced from `main`, and nothing deploys there until someone pushes `testing`. A test round, when one is wanted, starts from `main` (below).
 
 Both branches run the same focused checks. The slower suites are available through **full-checks**; run them before a risky change ([37](37_PAUSED_CHECKS.md)). Testing CLI packages build after the test site publishes, so they do not delay the web deployment. Desktop and cross-platform sandbox builds are separate.
 
-## Daily development
+## A test round
 
-- Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
+- **Start** from the released code: fast-forward `testing` to `main` (`git push origin <main sha>:refs/heads/testing`, never a force push). Then push to `testing`, or open feature PRs against it; both run `test-web.yml`.
+- **Finish** by bringing the tested work to `main` with a PR, as below.
+- **Vercel uploads:** each push that changes what the Hub is built from publishes the test site, which uses the same Vercel upload allowance as production ([AGENTS.md](../AGENTS.md)). Batch website changes during a round.
 - The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) are listed step by step in [37](37_PAUSED_CHECKS.md#what-runs-now). The Vercel build remains a real production frontend build.
-- A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
-- After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows (x64/arm64) packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
+- A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project. That publish is skipped when nothing the Hub is built from changed since the test project's live deployment, so a push that changes only the API, the CLI or docs uploads nothing to Vercel. A manual run of `test-web.yml` always publishes. How the skip works: [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys).
+- After the frontend publishes or is skipped, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows (x64/arm64) packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
 - PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
 - Testing has no docs site of its own: `docs.ensemblework.com` is published only from `main` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)).
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
@@ -42,11 +46,11 @@ Production uses `ensemble login` and the production website. A code, account or 
 
 ## Promotion to production
 
-Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
+Open a PR from a feature branch (or from `testing` after a test round) to `main`. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
 
-A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit on `testing` before the promotion PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
+A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit, merged to `main` in its own PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
 
-Bring the released `main` back into `testing` after promotion (a fast-forward when `testing` has nothing newer) so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
+`testing` does not follow `main` by itself: it moves only when a test round fast-forwards it. Do not merge environment secrets, databases or deployment pointer branches.
 
 ## Environments
 

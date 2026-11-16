@@ -2,12 +2,27 @@ name: Fast checks
 description: >-
   The checks every push and pull request into testing and main runs before anything deploys:
   versions in step, shared/API/web/CLI types, CLI channel isolation, focused web and API
-  regressions, public docs and read-only lookup, deployment guards, release scripts and the route inventory. About two minutes.
-  The slower suites are paused in full-checks.yml (docs/37_PAUSED_CHECKS.md).
+  regressions, public docs and read-only lookup, deployment guards, release scripts and the route inventory. About five
+  minutes in one job; ci.yml runs it as four parallel parts (`part`). The slower suites are paused in full-checks.yml
+  (docs/37_PAUSED_CHECKS.md).
+
+inputs:
+  part:
+    description: >-
+      Which checks to run: `types` (versions and typechecks), `regressions` (focused web and API regressions),
+      `sessions` (agent sessions, Node plans and agent apps), `rest` (every other step), or `all`.
+    required: false
+    default: all
 
 runs:
   using: composite
   steps:
+    - name: Check the part
+      shell: bash
+      env:
+        PART: ${{ inputs.part }}
+      run: |
+        case "$PART" in all|types|regressions|sessions|rest) ;; *) echo "::error::Unknown fast-checks part: $PART"; exit 1 ;; esac
     - uses: pnpm/action-setup@v5
       with:
         version: 12.6.0
@@ -18,22 +33,28 @@ runs:
     - name: Install
       shell: bash
       run: pnpm install --frozen-lockfile
+    # Every part's API tests and typechecks need the Prisma client.
+    - name: Prisma client
+      shell: bash
+      run: pnpm db:generate
     - name: Versions and types
+      if: inputs.part == 'all' || inputs.part == 'types'
       shell: bash
       run: |
         pnpm version:check
-        pnpm db:generate
         pnpm --filter @ensemble/shared-types typecheck
         pnpm --filter @ensemble/hub-api typecheck
         pnpm --filter @ensemble/hub-web typecheck
         pnpm --filter ensemblework typecheck
     - name: CLI channel boundaries
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         pnpm --filter ensemblework exec node --import tsx --test src/testing-channel.test.ts src/paths.test.ts src/auth-flow.test.ts src/editors.test.ts src/launcher-update-services.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/remote/client-channel.test.ts
         node --test scripts/testing-cli.test.mjs
     - name: Published docs and read-only lookup
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         pnpm --filter @ensemble/docs build
@@ -41,9 +62,11 @@ runs:
         pnpm --filter @ensemble/context-bridge exec node --import tsx --test --test-name-pattern="documentation through the bridge" test/mcp.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/bridge/docs.test.ts src/docs-helper/helper.test.ts src/docs-helper/routes.integration.test.ts src/docs-helper/history.integration.test.ts src/docs-helper/policy.test.ts src/routes/mcp.integration.test.ts
     - name: Shared assistant interaction contracts
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: pnpm --filter @ensemble/hub-web exec node --import tsx --test components/assistant/ask-launcher.test.ts components/assistant/use-panel-size.test.tsx lib/docs-helper.test.ts lib/docs-search.test.ts
     - name: Focused web and API regressions
+      if: inputs.part == 'all' || inputs.part == 'regressions'
       shell: bash
       run: |
         pnpm --filter @ensemble/hub-web exec node --import tsx --test components/runs/run-preview.test.tsx components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx components/connectors/store-dialog.test.tsx components/morning-brief.test.tsx lib/session-cookie.test.ts
@@ -51,9 +74,13 @@ runs:
         pnpm --filter @ensemble/hub-api exec tsx --test src/routes/page-boards.integration.test.ts src/routes/cookie-namespace.integration.test.ts src/lib/production.test.ts src/node/file-workspace.integration.test.ts src/device-tools/file-changes.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/workspace/checkout-folder.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-name-pattern="file questions go directly|session deletion stops|local session deletion" src/node/session-control.integration.test.ts
+        pnpm --filter ensemblework exec node --import tsx --test src/runner-service.test.ts
+    - name: Sessions, Node plans and agent apps
+      if: inputs.part == 'all' || inputs.part == 'sessions'
+      shell: bash
+      run: |
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/workspace/engines/delete-session.test.ts src/workspace/engines/app-sessions.test.ts src/remote/project-delete.test.ts src/subscriptions/session-touch.test.ts src/subscriptions/chat-folders.test.ts src/context/summarize.test.ts src/desktop/runtime-lock.test.ts src/lib/pglite-utc.test.ts src/remote/runtime-claims.test.ts src/workspace/engines/session-restart.test.ts src/subscriptions/outside.test.ts src/workspace/engines/sub-agents.test.ts src/subscriptions/copilot-output.test.ts src/subscriptions/outside.e2e.test.ts src/assistant/outside.test.ts src/workspace/outside-runs.test.ts src/workspace/outside-runs.e2e.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/ask-sessions.integration.test.ts src/assistant/delete-chat.integration.test.ts src/workspace/project-delete.integration.test.ts src/devices/runtime-instances.integration.test.ts
-        pnpm --filter ensemblework exec node --import tsx --test src/runner-service.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
         # Agents' apps without their command line: detection, Set up and its route, the tiles and `ensemble doctor` (docs/30 §8).
@@ -62,12 +89,14 @@ runs:
         pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/subscriptions.test.tsx
         pnpm --filter ensemblework exec node --import tsx --test src/agent-apps.test.ts
     - name: Active places and conditional saves
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/save-merge.test.ts
         pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/active-place-gate.test.tsx components/save-conflict-host.test.tsx
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/routes/active-places.integration.test.ts src/routes/save-conflicts.integration.test.ts
     - name: Sandbox beta, off by default
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/sandbox-beta.test.ts
@@ -75,6 +104,7 @@ runs:
         pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/assign-agent.integration.test.ts
         pnpm --filter @ensemble/hub-web exec node --import tsx --test components/settings/sandbox-section.test.tsx lib/run-profiles.test.ts
     - name: MCP OAuth, named tools and consent
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         pnpm --filter @ensemble/context-bridge typecheck
@@ -83,6 +113,7 @@ runs:
         pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/mcp-consent.test.tsx components/auth-form.test.tsx lib/signup-ui.test.ts lib/app-routes.test.ts
         pnpm --filter @ensemble/shared-types exec tsx --test src/mcp-oauth.test.ts
     - name: Included model defaults and credit-safe search
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       env:
         DATABASE_URL: postgresql://localhost/unused
@@ -90,6 +121,7 @@ runs:
         pnpm --filter @ensemble/shared-types exec tsx --test src/included.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/included/pricing.test.ts src/included/budget.integration.test.ts src/runtime/included.test.ts src/runtime/web-search.test.ts src/node/model.test.ts
     - name: Deployment guards, release scripts and route inventory
+      if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
         node --test infra/deploy/testing/deploy.test.mjs
