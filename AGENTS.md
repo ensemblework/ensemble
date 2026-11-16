@@ -87,11 +87,19 @@ Details: [`docs/17_REPOSITORY_STRUCTURE.md`](docs/17_REPOSITORY_STRUCTURE.md).
 
 ## Commands
 
-### Web testing and promotion
+### Branches, deploys and Vercel's upload limit
 
-Feature/UI/fix iteration belongs on `testing`, or on a feature branch opened against `testing`, unless the user explicitly requests a production release. Its public test site and separate `ensemble-test` CLI use isolated accounts and state. Fast web/API/CLI boundary checks precede deployment; testing CLI packages follow the successful test-site publish. Production CLI and native release pipelines do not run there; no testing native app is published. Read [`docs/36_WEB_TESTING.md`](docs/36_WEB_TESTING.md) before changing deployment behavior.
+Changes go to `main`: work on a feature branch and open a PR to `main`. The PR runs `ci.yml`'s fast checks; the slower suites are paused until development stabilizes ([`docs/37_PAUSED_CHECKS.md`](docs/37_PAUSED_CHECKS.md)), so run the local checks below for the area you changed, and `full-checks` by hand before a risky change. Merging deploys production: `deploy.yml` advances `production`, the API server pulls it, and the Hub and landing page are published on Vercel when something they are built from changed ([`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)).
 
-`main` is the production promotion target. Promote reviewed testing work (or a feature branch) with a PR to `main`; it runs the same fast checks as testing, and the slower suites are paused until development stabilizes ([`docs/37_PAUSED_CHECKS.md`](docs/37_PAUSED_CHECKS.md)): run the local checks below for the area you changed, and `full-checks` by hand before a risky change. Never push `production` or `testing-live` by hand during ordinary development: their workflows advance them after checks. Never copy production users, sessions or connected-app credentials into testing. Keep operator values and runbooks in `private/`, not public docs.
+The testing environment (`testing`, `testing-live`, the test site, the testing API and the `ensemble-test` CLI) is paused at the last commit synced from `main`. Use it only when the user asks for a test round: fast-forward `testing` to `main` first, as [`docs/36_WEB_TESTING.md`](docs/36_WEB_TESTING.md) describes, and read that guide before changing deployment behaviour.
+
+The Hub, landing page, test site and Ensemble Node sites share one Vercel account on the free plan: 5,000 file uploads a day across all of them, and one website publish uploads hundreds of files. Past the limit every publish fails with `api-upload-free` until the 24-hour window frees up. To stay under it:
+
+- Batch website changes (`apps/hub-web`, `apps/landing` and the packages they use) into fewer merges on busy days. Merges that leave the sites alone upload nothing.
+- Don't dispatch `deploy.yml` or `test-web.yml` by hand, or re-run publish jobs, without need: a manual run always publishes.
+- A publish that fails with `api-upload-free` is the account's quota, not the code. Wait for the window, then re-run only the failed jobs (`gh run rerun <run id> --failed`).
+
+A release bumps `release.json`, runs `pnpm version:sync` and merges both in one PR to `main`; then the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI and the desktop app. Never push `production` or `testing-live` by hand: their workflows advance them after checks. Never copy production users, sessions or connected-app credentials into testing. Keep operator values and runbooks in `private/`, not public docs.
 
 ```bash
 pnpm install
