@@ -1,5 +1,7 @@
 name: Publish on Vercel
-description: Build one Vercel project from this checkout and publish it to production.
+description: >-
+  Build one Vercel project from this checkout and publish it to production. With `paths`, publish only
+  when those paths changed since the commit the project's live production deployment was built from.
 
 inputs:
   token:
@@ -11,21 +13,60 @@ inputs:
   project-id:
     description: Vercel project id
     required: true
+  paths:
+    description: >-
+      Space-separated git pathspecs the site is built from. When set, the build and the upload are
+      skipped if none of them changed since the commit recorded on the live production deployment
+      (its `ensembleCommit` meta). Empty: always publish.
+    required: false
+    default: ""
+  force:
+    description: '"true" publishes even when nothing in `paths` changed (a manual run, a changed Vercel setting).'
+    required: false
+    default: "false"
+
+outputs:
+  published:
+    description: '"true" when a deployment was published, "false" when nothing it is built from changed.'
+    value: ${{ steps.publish.outputs.published }}
 
 runs:
   using: composite
   steps:
     - name: Pull settings, build, publish
+      id: publish
       shell: bash
       env:
         VERCEL_TOKEN: ${{ inputs.token }}
         VERCEL_ORG_ID: ${{ inputs.org-id }}
         VERCEL_PROJECT_ID: ${{ inputs.project-id }}
         VERCEL_TELEMETRY_DISABLED: "1"
+        SITE_PATHS: ${{ inputs.paths }}
+        FORCE: ${{ inputs.force }}
       run: |
         set -euo pipefail
+        commit="$(git rev-parse HEAD)"
         # Root Directory, build command and NEXT_PUBLIC_* values come from the Vercel project.
         npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+        # The account takes a limited number of file uploads a day (5,000 on the Hobby plan, across every
+        # project), and one publish uploads hundreds of new files. A push that leaves the site's files alone
+        # publishes nothing: compare with the commit the live production deployment records.
+        if [ -n "$SITE_PATHS" ] && [ "$FORCE" != "true" ]; then
+          live="$(npx --yes vercel@latest list --environment production --json --limit 1 --token="$VERCEL_TOKEN" 2>/dev/null \
+            | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const d=JSON.parse(s.slice(s.indexOf("{"))).deployments?.[0];process.stdout.write(d?.meta?.ensembleCommit??"")}catch{}})')" || live=""
+          if [ -n "$live" ] && git fetch --quiet --no-tags --depth=1 origin "$live" 2>/dev/null; then
+            # shellcheck disable=SC2086 # SITE_PATHS is a list of pathspecs.
+            if git diff --quiet "$live" "$commit" -- $SITE_PATHS; then
+              echo "The live deployment is built from ${live:0:8}, and nothing the site is built from changed since. Nothing to publish."
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Changed since the live deployment (${live:0:8}):"
+            git diff --name-only "$live" "$commit" -- $SITE_PATHS | head -20
+          else
+            echo "The live deployment records no commit to compare with. Publishing."
+          fi
+        fi
         # The Google Fonts fetch can fail transiently, as in the desktop export.
         if ! npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"; then
           echo "::warning::Vercel build failed once; retrying in 20 seconds."
@@ -34,6 +75,8 @@ runs:
         fi
         # Upload only the built output, without git metadata. On the Hobby plan Vercel
         # refuses a deploy whose commit author is not the account owner (a merged PR).
+        # The commit is recorded as meta, for the next publish to compare with.
         rm -rf .git
-        npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" >/dev/null
-        echo "Published."
+        npx --yes vercel@latest deploy --prebuilt --prod --meta ensembleCommit="$commit" --token="$VERCEL_TOKEN" >/dev/null
+        echo "published=true" >> "$GITHUB_OUTPUT"
+        echo "Published ${commit:0:8}."

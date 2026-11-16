@@ -4,7 +4,8 @@ name: deploy
 #   1. moves the `production` branch to that commit (the API server follows it, see
 #      infra/deploy/home/autodeploy.sh, or infra/deploy/autodeploy.sh on a VM),
 #   2. waits until the API reports that commit on /health and is ready,
-#   3. publishes the Hub and the landing page on Vercel.
+#   3. publishes the Hub and the landing page on Vercel, each only when something it is built
+#      from changed since its live deployment (a manual run always publishes).
 # Does nothing until the repository variable DEPLOY_ENABLED is "true".
 #
 # Repository secrets: ENSEMBLE_API_URL, VERCEL_TOKEN, VERCEL_ORG_ID,
@@ -136,6 +137,9 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID_APP }}
+          # What the Hub is built from (the same list as test-web.yml).
+          paths: apps/hub-web packages/block-diagrams packages/brand packages/ide-theme packages/shared-types package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json turbo.json .vercelignore .github/actions/vercel-deploy
+          force: ${{ github.event_name == 'workflow_dispatch' }}
 
   landing:
     name: Publish the landing page (Vercel)
@@ -160,14 +164,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - uses: ./.github/actions/vercel-deploy
+        id: landing
         with:
           token: ${{ secrets.VERCEL_TOKEN }}
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID_LANDING }}
+          # What the landing page is built from.
+          paths: apps/landing packages/brand packages/shared-types package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json turbo.json .vercelignore .github/actions/vercel-deploy
+          force: ${{ github.event_name == 'workflow_dispatch' }}
 
       # Bing (and DuckDuckGo, Yahoo and Ecosia through it), Yandex, Seznam and Naver
       # read IndexNow. Google reads the sitemap instead. A failed ping never fails a deploy.
       - name: Tell search engines the pages changed (IndexNow)
+        if: steps.landing.outputs.published == 'true'
         continue-on-error: true
         timeout-minutes: 2
         run: node apps/landing/scripts/indexnow.mjs
