@@ -54,6 +54,7 @@ Read these guides at [docs.ensemblework.com](https://docs.ensemblework.com). Sea
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
 | [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
 | [37 · Fast pipeline and paused checks](37_PAUSED_CHECKS.md) | What runs on testing, main and release tags; the slower suites paused in `full-checks.yml` and how to bring them back |
+| [42 · Hosting the websites on the home server (plan)](42_HOME_SERVER_WEB_HOSTING.md) | Plan to serve the Hub, landing and test site from the home server behind the Cloudflare tunnel and Caddy instead of Vercel; repository only, not published |
 | [38 · Agents and attached files](38_AGENT_READABLE_FILES.md) | How every attached file, picture, plot and diagram reaches models and agents in chat, Ensemble Node and tasks; retries after a provider's refusal; each subscription agent's input form; extracted text off |
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
