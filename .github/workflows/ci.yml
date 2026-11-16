@@ -19,7 +19,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The fast checks in three parts at once: typechecks, the focused web and API regressions, and the rest.
+  # The fast checks in four parts at once: typechecks, the focused web and API regressions, sessions
+  # (with Node plans and agent apps), and the rest.
   checks:
     name: Fast checks (${{ matrix.part }})
     runs-on: ubuntu-latest
@@ -27,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [types, regressions, rest]
+        part: [types, regressions, sessions, rest]
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/fast-checks
