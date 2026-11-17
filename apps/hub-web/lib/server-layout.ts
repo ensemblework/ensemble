@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
-import { HUB_API, type BoardPayload, type MeetingCue } from "@/lib/api";
+import type { BoardPayload, MeetingCue } from "@/lib/api";
+import { resolveHubApiInternal } from "@/lib/hub-origin";
 import { desktopExport } from "@/lib/desktop-export";
 import type { LayoutDocument, LayoutSurface } from "@ensemble/shared-types/widgets";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
@@ -26,7 +27,12 @@ export type TodayCues = {
 
 async function loadJson<T>(session: string, path: string): Promise<T | null> {
   try {
-    const response = await fetch(`${HUB_API}${path}`, {
+    const origin = resolveHubApiInternal({
+      NEXT_PUBLIC_HUB_API: process.env.NEXT_PUBLIC_HUB_API,
+      NODE_ENV: process.env.NODE_ENV,
+      HUB_API_INTERNAL_URL: process.env.HUB_API_INTERNAL_URL,
+    });
+    const response = await fetch(`${origin}${path}`, {
       headers: { cookie: `${SESSION_COOKIE}=${session}` },
       cache: "no-store",
     });

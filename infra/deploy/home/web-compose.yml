@@ -1,0 +1,36 @@
+# Hub on the same machine as Postgres, Redis and hub-api.
+# Host networking so the process can use 127.0.0.1 for the API (and for Postgres
+# and Redis, which this process does not open). PORT is the port on the host.
+# `docker compose up` replaces the container. infra/deploy/home/web/rollout.sh
+# starts a canary first. See docs/self-hosting.md.
+#
+#   export HUB_WEB_IMAGE=ghcr.io/OWNER/REPO/hub-web:SHA
+#   export HUB_WEB_PORT=3000
+#   export ENSEMBLE_COOKIE_DOMAIN=example.com
+#   docker compose -f infra/deploy/home/web-compose.yml up -d
+name: ensemble-hub-web
+
+services:
+  hub-web:
+    image: ${HUB_WEB_IMAGE:-ensemble-hub-web:live}
+    container_name: ensemble-hub-web
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ENSEMBLE_PUBLIC_HOST: "1"
+      PORT: ${HUB_WEB_PORT:-3000}
+      ENSEMBLE_COOKIE_DOMAIN: ${ENSEMBLE_COOKIE_DOMAIN:-}
+      ENSEMBLE_COOKIE_NAMESPACE: ${ENSEMBLE_COOKIE_NAMESPACE:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s

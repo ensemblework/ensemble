@@ -10,6 +10,7 @@ Read these guides at [docs.ensemblework.com](https://docs.ensemblework.com). Sea
 | --- | --- |
 | [00 · Overview](00_PROJECT_OVERVIEW.md) | Surfaces, what works and what does not, deployment forms, domain model |
 | [01 · Stack and environment](01_TECH_STACK_AND_ENVIRONMENT.md) | Stack, configuration, local setup, models, tests, CI and deploys |
+| [Self-hosting the Hub](self-hosting.md) | Run the Hub on the home server, beside the API, and cut over from Vercel |
 | [02 · Hub](02_MODULE_INTERACTION_HUB_UI.md) | Navigation, Today, Board, pages, Context, settings, accounts, API map |
 | [03 · Context](03_MODULE_CONTEXT_ENGINE.md) | Connectors, explicit acquisition, people and identities, meetings, retrieval |
 | [04 · Personal skills](04_MODULE_SKILL_FORGE.md) | Versioned instructions, routing, morning brief, completed-work learning |

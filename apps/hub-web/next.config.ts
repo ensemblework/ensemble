@@ -1,11 +1,13 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveHubApi } from "./lib/hub-origin";
+import { resolveHubApiInternal } from "./lib/hub-origin";
 
 const desktopExport = process.env.ENSEMBLE_DESKTOP_EXPORT === "1";
 const productionBuild = process.env.NODE_ENV === "production";
-const fixtureStub = path.join(path.dirname(fileURLToPath(import.meta.url)), "lib/graph-fixture.prod.ts");
+const appDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.join(appDir, "../..");
+const fixtureStub = path.join(appDir, "lib/graph-fixture.prod.ts");
 
 type ResolveHookData = { request: string };
 type WebpackCompiler = {
@@ -16,20 +18,30 @@ type WebpackCompiler = {
   };
 };
 
-const API_ORIGIN = resolveHubApi({
+const API_ORIGIN = resolveHubApiInternal({
   NEXT_PUBLIC_HUB_API: process.env.NEXT_PUBLIC_HUB_API,
   NODE_ENV: process.env.NODE_ENV,
+  HUB_API_INTERNAL_URL: process.env.HUB_API_INTERNAL_URL,
 });
 
 const nextConfig: NextConfig = {
   ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
+  // Self-hosted image only. Middleware otherwise redirects to the bind address.
+  // Vercel does not set this. infra/deploy/home/web/trust-host.mjs finishes the pair.
+  ...(process.env.ENSEMBLE_TRUST_HOST === "1" ? { skipMiddlewareUrlNormalize: true } : {}),
+  // Desktop packaging sets ENSEMBLE_DESKTOP_EXPORT and needs a static export.
+  // Every other build also emits .next/standalone for the home-server image.
+  // Vercel's builder ignores that folder and still publishes the site.
   ...(desktopExport
     ? {
         output: "export" as const,
         trailingSlash: true,
         images: { unoptimized: true },
       }
-    : {}),
+    : {
+        output: "standalone" as const,
+        outputFileTracingRoot: repoRoot,
+      }),
   transpilePackages: ["@ensemble/brand", "@ensemble/shared-types", "@ensemble/ide-theme", "@ensemble/block-diagrams"],
   // Every corner of the hub holds a control (Settings, the Ask launcher, the avatar menu, the
   // home link), so the dev badge would cover one. Build and runtime errors still open the overlay.

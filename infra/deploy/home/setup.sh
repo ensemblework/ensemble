@@ -4,7 +4,8 @@
 #   Postgres, Redis, tunnel   Docker containers from compose.yml in this folder
 #   API, agent, timers        systemd user units; they start at boot because lingering is on
 #   watchdog.sh               cron, every 15 minutes and once after boot
-# The website stays on Vercel. The tunnel carries HUB_API_PUBLIC_URL's host to the API, so the
+# The website stays on Vercel until cutover. HUB_WEB_TUNNEL=on adds HUB_WEB_ORIGIN's host
+# to the tunnel (docs/self-hosting.md). The tunnel carries HUB_API_PUBLIC_URL's host to the API, so the
 # machine needs no open port, router rule or fixed IP, and can change networks.
 #
 # Before running:
@@ -80,9 +81,22 @@ main() {
 
 # One ingress rule per host: HUB_API_PUBLIC_URL's, then any in ENSEMBLE_TUNNEL_EXTRA_HOSTS
 # (space-separated, for checking a new machine before the main record moves to it).
+# HUB_WEB_TUNNEL=on adds HUB_WEB_ORIGIN on HUB_WEB_PORT. Unset, the file matches the API-only tunnel.
 write_tunnel_config() {
-  local api_host host config="$ENSEMBLE_HOME_DIR/cloudflared/config.yml"
+  local api_host host config="$ENSEMBLE_HOME_DIR/cloudflared/config.yml" web_host="" web_port=""
   api_host="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ["HUB_API_PUBLIC_URL"]).hostname)')"
+  if [ "${HUB_WEB_TUNNEL:-}" = "on" ]; then
+    if [ -z "${HUB_WEB_ORIGIN:-}" ]; then
+      echo "HUB_WEB_TUNNEL=on needs HUB_WEB_ORIGIN." >&2
+      exit 1
+    fi
+    web_host="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ["HUB_WEB_ORIGIN"]).hostname or "")')"
+    web_port="${HUB_WEB_PORT:-3000}"
+    if [ -z "$web_host" ]; then
+      echo "HUB_WEB_ORIGIN has no host." >&2
+      exit 1
+    fi
+  fi
   {
     printf 'tunnel: %s\n' "$ENSEMBLE_TUNNEL_ID"
     printf 'credentials-file: /etc/cloudflared/%s.json\n' "$ENSEMBLE_TUNNEL_ID"
@@ -90,6 +104,9 @@ write_tunnel_config() {
     for host in $api_host ${ENSEMBLE_TUNNEL_EXTRA_HOSTS:-}; do
       printf '  - hostname: %s\n    service: http://127.0.0.1:%s\n' "$host" "$HUB_API_PORT"
     done
+    if [ -n "$web_host" ]; then
+      printf '  - hostname: %s\n    service: http://127.0.0.1:%s\n' "$web_host" "$web_port"
+    fi
     printf '  - service: http_status:404\n'
   } >"$config.tmp"
   chmod 0600 "$config.tmp"

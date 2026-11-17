@@ -28,7 +28,7 @@ The scheduler runs product jobs (reminders, retention, device leases) and the pe
 
 **Storage and execution.** Public signup, per-account data. The API runs on a home server behind a Cloudflare Tunnel (`infra/deploy/home`); file originals and plot tables are in private Azure Blob storage (`ENSEMBLE_FILE_STORAGE=azure-blob`). Code and the terminal run on the person's paired computer
 
-**Guide.** [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live)
+**Guide.** [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live), [self-hosting the Hub](self-hosting.md)
 
 ### Desktop
 
