@@ -14,7 +14,7 @@ import { SecretUseError } from "../credentials/secret-http.js";
 import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { hookCall, judgeFloor } from "../workspace/engines/judge.js";
-import { isChatTurn } from "../workspace/trust.js";
+import { isChatTurn, isCodeAgentTurn } from "../workspace/trust.js";
 import { CONTEXT_TOOLS, isContextTool, isRunActionTool, isRunAppTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
 import { GraphError } from "../context/graph/neighbors.js";
 
@@ -105,8 +105,10 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     const known = new Set<string>([...CHAT_TOOLS, ...RUN_TOOLS, ...CREDENTIAL_TOOLS, ...CAPTURE_RUN_TOOLS, ...CONTEXT_TOOLS, ...RUN_ACTION_TOOLS]);
     const body = z.object({ name: z.string().refine((name) => known.has(name), "Unknown tool."), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     const chat = isChatTurn(run.ctx.job.context);
+    // A turn of the Code tab's agent: Ensemble's actions and the ranked search, as a task run has them.
+    const codeAgent = isCodeAgentTurn(run.ctx.job.context);
     // The person's records around the task; in Chat, ensemble_search stays the board's own search.
-    if (isContextTool(body.name) && (body.name === "ensemble_context" || !chat)) {
+    if (isContextTool(body.name) && (body.name === "ensemble_context" || !chat || codeAgent)) {
       try {
         const space = await app.prisma.user.findUnique({ where: { id: run.ctx.userId }, select: { moduleSet: true } });
         return { text: await runContextTool({ prisma: app.prisma, userId: run.ctx.userId, taskId: run.ctx.taskId, jobContext: run.ctx.job.context, modules: space?.moduleSet ?? null }, body.name, body.input) };
@@ -116,10 +118,10 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(500).send({ error: "The context tool failed." });
       }
     }
-    // Ensemble actions around the task (bridge/actions.ts): task runs only; Chat has the board's own tools.
+    // Ensemble actions around the task (bridge/actions.ts): task runs and the Code tab's agent; Chat has the board's own tools.
     // The person's connected apps (ensemble_apps, ensemble_app_call): task runs and Chat alike.
     if (isRunActionTool(body.name)) {
-      if (chat && !isRunAppTool(body.name)) return reply.code(403).send({ error: "Ensemble actions are for task runs, not Chat." });
+      if (chat && !codeAgent && !isRunAppTool(body.name)) return reply.code(403).send({ error: "Ensemble actions are for task runs and the Code tab's agent, not Chat." });
       try {
         const space = await app.prisma.user.findUnique({ where: { id: run.ctx.userId }, select: { moduleSet: true } });
         return { text: await runRunAction({ app, userId: run.ctx.userId, jobContext: run.ctx.job.context, modules: space?.moduleSet ?? null }, body.name, body.input) };

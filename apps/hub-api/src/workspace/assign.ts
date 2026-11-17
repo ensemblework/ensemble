@@ -88,6 +88,12 @@ export const Assign = z.object({
    */
   chat: z.boolean().optional(),
   /**
+   * `code`: a chat turn of the Code tab's agent (docs/16 §9). Its run's ensemble MCP server also has
+   * Ensemble's actions (pages, boards, diagrams, plots, tasks) in the job's space, and on a paired
+   * computer `folder` is a path the computer checks against the folders Code may use there.
+   */
+  surface: z.literal("code").optional(),
+  /**
    * An agent session (workspace/sessions.ts) to do the task in: its agent, computer and folder, and
    * the agent's own conversation, continued from the session's latest run.
    */
@@ -114,10 +120,27 @@ function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readon
   return { ...base, secrets: [...new Set(secrets)] } as Prisma.InputJsonValue;
 }
 
+/**
+ * A chat turn as the job keeps it: `surface` for the Code tab's agent, and `codeFolder`, the path a
+ * paired computer checks against its own Code folders (a job for this computer keeps its folder itself).
+ */
+export type ChatTurn = { surface?: "code"; codeFolder?: string };
+
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat: ChatTurn | null = null, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
-  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
+  const turn = chat ? { chat: true, ...(chat.surface ? { surface: chat.surface } : {}), ...(chat.codeFolder ? { codeFolder: chat.codeFolder } : {}) } : {};
+  return { ...base, outsideAccess, ...turn, ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
+}
+
+/** A folder named by its path for a paired computer: never relative, never a name made of `..`. The computer checks the rest. */
+function codeFolderPath(value: string | undefined): string {
+  const path = value?.trim() ?? "";
+  if (!path) throw new GuardError("Open a folder in Code first: the agent works in the folder Code has open.");
+  if (path.length > 1000 || /[\0\n\r]/.test(path) || !(path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path)) || path.split(/[\\/]/).includes("..")) {
+    throw new GuardError("That folder is not one Code can use on that computer.");
+  }
+  return path;
 }
 
 function withNewSession(context: Prisma.InputJsonValue | undefined): Prisma.InputJsonValue {
@@ -340,11 +363,15 @@ async function createDeviceJob(
   // In a space shared with you, the job runs on your computer and counts against you.
   const runner = actorFor(userId);
   const owner = runner ?? userId;
+  // A turn of the Code tab's agent names the folder Code has open there by its path; a later turn continues the first one's.
+  const codeTurn = body.chat === true && body.surface === "code";
+  const codeFolder = codeTurn && (body.folder?.trim() || !body.continueFromJobId) ? codeFolderPath(body.folder) : undefined;
   const assigned = await deviceAssignment(prisma, owner, {
     deviceId: body.deviceId!,
     kind: body.kind,
-    folder: body.folder,
-    folderLabel: body.folderLabel,
+    folder: codeTurn ? undefined : body.folder,
+    folderLabel: codeTurn ? undefined : body.folderLabel,
+    ...(codeTurn ? { codeAgent: true, ...(codeFolder ? { codeFolder } : {}) } : {}),
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,
@@ -384,7 +411,7 @@ async function createDeviceJob(
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -534,6 +561,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
+  if (body.surface === "code" && !body.chat) throw new GuardError("The Code tab's agent works one message at a time: send it as a chat turn.");
   if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
@@ -653,7 +681,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withDecided(withSecrets(options.context, body.secrets), null, project), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withDecided(withSecrets(options.context, body.secrets), null, project), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   // The decision and every candidate's signals, kept to calibrate the weights (session-choice/config.ts).

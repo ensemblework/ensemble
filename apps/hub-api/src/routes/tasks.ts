@@ -10,7 +10,7 @@ import { hidesSignupStarters } from "../marketplace/starters.js";
 import { answerRequestedMove, createTask, updateTask } from "../services/tasks.js";
 import { accountIdOf } from "../lib/auth.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
-import { NODE_TASK } from "../lib/node-tasks.js";
+import { INTERNAL_TASK } from "../lib/node-tasks.js";
 import { guardedSave, lockSave, saveBase, SaveConflictError } from "../lib/save-conflict.js";
 
 export function serializeTask(task: {
@@ -73,7 +73,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
         userId,
         deletedAt: null,
         ...(board ? { OR: [{ page: null }, { page: { boardId: null } }] } : {}),
-        NOT: [NODE_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])],
+        NOT: [INTERNAL_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])],
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
     });

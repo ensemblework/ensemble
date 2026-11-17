@@ -10,7 +10,10 @@
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { PrismaClient } from "@prisma/client";
 import type { Settings } from "@ensemble/shared-types";
+import { env } from "../config.js";
+import { loadSettings } from "./settings.js";
 import { blockedReason, expandHome, GuardError, resolveWorkFolder, within } from "../workspace/guard.js";
 import { requireHostAccess } from "./hosted-access.js";
 
@@ -115,6 +118,20 @@ export async function usableCodeRoots(settings: Pick<Settings, "code">, userId?:
     out.push(real);
   }
   return [...new Set(out)];
+}
+
+/**
+ * Every folder the Code API opens a repository in: the workspace, the folders Code can use
+ * (settings.code.roots, never the terminal's), agent run checkouts, and repositories runs changed
+ * and Ensemble recorded for review. A Code-tab agent turn from the web runs only in one of these.
+ */
+export async function codeRepoRoots(prisma: PrismaClient, userId: string): Promise<string[]> {
+  const settings = await loadSettings(prisma, userId);
+  const [jobs, reviews] = await Promise.all([
+    prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] }),
+    prisma.codeReview.findMany({ where: { userId, expiredAt: null }, select: { repoPath: true }, distinct: ["repoPath"] }),
+  ]);
+  return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath), ...reviews.map((review) => review.repoPath)];
 }
 
 /**

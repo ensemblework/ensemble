@@ -286,6 +286,15 @@ export const JobSpec = z
     related: z.unknown().optional(),
     sessionChoice: z.unknown().optional(),
     newSession: z.boolean().optional(),
+    /**
+     * A turn of the Code tab's agent (`capabilities.codeAgent` 1, docs/16 §9): `instructions` is the
+     * person's message, and with `continueFromJobId` the agent's own session continues. `codeFolder`
+     * is the folder Code has open here, by its path, for the first turn: this computer runs it only
+     * in a folder Code may use here, with "Change code from the web" on. Older servers omit them.
+     */
+    chat: z.boolean().optional(),
+    surface: z.literal("code").nullish(),
+    codeFolder: text(1000).nullish(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;

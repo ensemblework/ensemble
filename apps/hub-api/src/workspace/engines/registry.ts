@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { JobContext } from "../tools.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
+import { isCodeAgentTurn } from "../trust.js";
 
 type Run = { ctx: JobContext; secret: string };
 
@@ -32,9 +33,12 @@ export class SessionBusyError extends SessionGoneError {
   }
 }
 
-/** Environment for the run's ensemble MCP server: chat turns also get the person's board (`ensemble_*` tools). */
-export function mcpEnv(credential: string, chat: boolean): Record<string, string> {
-  return { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, ...(chat ? { ENSEMBLE_CHAT: "1" } : {}) };
+/**
+ * Environment for the run's ensemble MCP server: chat turns also get the person's board (`ensemble_*`
+ * tools), and a turn of the Code tab's agent (`context.surface` "code") Ensemble's actions as well.
+ */
+export function mcpEnv(credential: string, chat: boolean, context?: unknown): Record<string, string> {
+  return { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, ...(chat ? { ENSEMBLE_CHAT: "1" } : {}), ...(chat && isCodeAgentTurn(context) ? { ENSEMBLE_CODE_AGENT: "1" } : {}) };
 }
 /**
  * The engine could not start or carry on for a reason that passes: the system keychain was locked

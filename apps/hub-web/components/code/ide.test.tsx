@@ -331,3 +331,71 @@ test("offline, an edit waits on the page, marked unsaved, and is saved when the 
     fake.restore();
   }
 });
+
+test("Agent shows the folder's thread beside the same explorer; a message continues the thread's session in that folder", async () => {
+  const fake = server();
+  const base = globalThis.fetch;
+  const THREAD = "7b2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  const assigned: Array<Record<string, unknown>> = [];
+  const at = "2026-10-14T07:00:00Z";
+  const turn = {
+    id: "j1", taskId: THREAD, title: "Fix the export", priority: "p1", kind: "code", status: "succeeded", position: null, executionMode: "sandbox", delivery: "push",
+    useCredentials: false, askBeforePublish: false, folder: "/work/app", repoUrl: null, branch: "", provider: "codex", model: "gpt-6-luna", progress: null,
+    summary: "Done: the export keeps dates.", error: null, turns: 1, toolCalls: 3, tokensIn: 0, tokensOut: 0, maxToolCalls: 80, maxMinutes: 30, continueFromJobId: null,
+    instructions: "Fix the export", runId: null, files: [{ path: "src/name.ts", added: 1, removed: 1 }], reviewId: REVIEW, createdAt: at, startedAt: at, finishedAt: "2026-10-14T07:02:05Z",
+  };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const path = url.split("?")[0]!;
+    const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (path.endsWith("/api/agent/threads")) return json({ threads: [{ id: THREAD, title: "Fix the export", createdAt: at, updatedAt: at, turns: 1, last: { id: "j1", status: "succeeded", engine: "codex", model: "gpt-6-luna" } }] });
+    if (path.endsWith(`/api/agent/threads/${THREAD}`)) return json({ thread: { id: THREAD, title: "Fix the export" }, turns: [turn] });
+    if (path.endsWith("/api/subscriptions")) return json({ computers: [{ id: "c1", name: "This Mac", local: true, online: true, agents: [{ id: "codex", via: "cli", version: "1", signedIn: true, models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true }], checkedAt: at }] }] });
+    if (path.endsWith("/api/agent/assign")) {
+      assigned.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return json({ jobId: "j2" });
+    }
+    return base(input, init);
+  }) as typeof fetch;
+  const view = await mount();
+  const switchTo = (name: string) =>
+    act(async () => {
+      [...view.host.querySelectorAll<HTMLButtonElement>('[data-testid="ide-view-switch"] button')].find((button) => button.textContent?.includes(name))!.click();
+    });
+  try {
+    await switchTo("Agent");
+    await settle(12);
+    const agent = view.host.querySelector('[data-testid="agent-view"]')!;
+    assert.match(agent.textContent ?? "", /Fix the export/);
+    assert.match(agent.querySelector('[data-testid="agent-reply"]')?.textContent ?? "", /the export keeps dates/);
+    assert.ok(view.host.textContent?.includes("README.md"), "the explorer stays");
+    const review = agent.querySelector('[data-testid="agent-files"] a')?.getAttribute("href") ?? "";
+    assert.match(review, new RegExp(`review=${REVIEW}`));
+    assert.match(review, /view=editor/);
+
+    const box = agent.querySelector<HTMLTextAreaElement>('[data-testid="agent-composer"] textarea')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      box.focus();
+      setter.call(box, "Now run the tests");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle(6);
+    assert.equal(assigned.length, 1);
+    const sent = assigned[0]!;
+    assert.deepEqual(
+      { taskId: sent.taskId, chat: sent.chat, surface: sent.surface, engine: sent.engine, folder: sent.folder, continueFromJobId: sent.continueFromJobId, markDone: sent.markDone, branchMode: sent.branchMode, instructions: sent.instructions },
+      { taskId: THREAD, chat: true, surface: "code", engine: "codex", folder: "/work/app", continueFromJobId: "j1", markDone: false, branchMode: "as-is", instructions: "Now run the tests" },
+    );
+
+    await switchTo("Editor");
+    assert.ok(view.host.querySelector('[data-testid="agent-view"]')!.parentElement!.classList.contains("hidden"), "the thread stays, hidden");
+    assert.ok(view.host.querySelector('[data-testid="review-editor"]'), "the editor is back");
+  } finally {
+    await view.done();
+    fake.restore();
+  }
+});

@@ -11,7 +11,10 @@ import { appendLedger } from "../lib/ledger.js";
 import { saveFile } from "../files/store.js";
 import { createTask } from "../services/tasks.js";
 import { createJob } from "../workspace/assign.js";
-import { workspaceRoot } from "../workspace/guard.js";
+import { expandHome, workspaceRoot } from "../workspace/guard.js";
+import { codeRepoRoots } from "../lib/code-folders.js";
+import { codeThreadRef } from "../lib/node-tasks.js";
+import { allowedRepo, GitError } from "../lib/git.js";
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { prepareWorktree, type MadeWorktree } from "../workspace/worktrees.js";
 import { webContext } from "./origin.js";
@@ -64,7 +67,8 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
   const userId = env.ENSEMBLE_DEV_USER_ID;
   const plan = planLocalJob(spec, loadSettings(), (hostedId) => loadHeld()[hostedId]?.localJobId ?? null);
   // continueFrom is resolved against the database as well as the held file.
-  const resolved = isRefusal(plan) ? plan : await withContinue(app, spec, plan);
+  const continued = isRefusal(plan) ? plan : await withContinue(app, spec, plan);
+  const resolved = isRefusal(continued) ? continued : await codeFolderHere(app, continued);
   if (isRefusal(resolved)) {
     await refuse(app, client, userId, spec, held, resolved);
     return held;
@@ -80,9 +84,14 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       if (bytes.byteLength !== attachment.byteSize) throw new Error("The attached file was incomplete. Retry this task.");
       downloads.push({ attachment, bytes });
     }
-    const task = await app.prisma.$transaction((tx) =>
-      createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: "remote" }, "system"),
-    );
+    // A Code-tab agent thread keeps one task here, off the board, as on the web: later turns go on it.
+    const codeTurn = resolved.assign.surface === "code";
+    const threadTask = codeTurn && resolved.assign.continueFromJobId
+      ? await app.prisma.workspaceJob.findUnique({ where: { id: resolved.assign.continueFromJobId }, select: { task: { select: { id: true, deletedAt: true } } } }).then((row) => (row?.task.deletedAt ? null : row?.task ?? null))
+      : null;
+    const task = threadTask ?? (await app.prisma.$transaction((tx) =>
+      createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: codeTurn ? codeThreadRef(null, resolved.assign.folder ?? spec.id) : "remote" }, "system"),
+    ));
     const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
     if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
     // A run carrying on one this computer lost when it restarted runs in that run's folder and agent session (agent.ts).
@@ -121,6 +130,21 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     await refuse(app, client, userId, spec, held, { code, message });
   }
   return held;
+}
+
+/**
+ * A Code-tab agent turn's folder from the web, kept only when it is one Code may use here (the same
+ * folders the web's Code tab opens through this computer), as the repository's own top folder.
+ */
+export async function codeFolderHere(app: FastifyInstance, plan: LocalPlan): Promise<LocalPlan | Refusal> {
+  if (plan.assign.surface !== "code" || plan.assign.continueFromJobId || !plan.assign.folder) return plan;
+  try {
+    const folder = await allowedRepo(expandHome(plan.assign.folder), await codeRepoRoots(app.prisma, env.ENSEMBLE_DEV_USER_ID));
+    return { ...plan, assign: { ...plan.assign, folder } };
+  } catch (error) {
+    if (error instanceof GitError) return { code: "UNKNOWN_FOLDER", message: `${error.message} Add the folder under Settings, Folders Code can use, on this computer.` };
+    throw error;
+  }
 }
 
 /**

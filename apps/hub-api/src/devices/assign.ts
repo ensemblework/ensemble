@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
-import { deviceEngines, deviceOpensPullRequests, folderLabels } from "./labels.js";
+import { deviceCodesWithAgent, deviceEngines, deviceOpensPullRequests, folderLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { pairingsOf } from "./earlier.js";
 
@@ -26,6 +26,10 @@ export async function deviceAssignment(
     engine?: string;
     /** The run ends in a pull request Ensemble opens: the computer's runtime must support it. */
     pullRequest?: boolean;
+    /** A turn of the Code tab's agent: the computer's runtime must take one (`capabilities.codeAgent`). */
+    codeAgent?: boolean;
+    /** That turn's folder, by the path Code has open there; the computer checks it against its own Code folders. */
+    codeFolder?: string;
   },
   where: { space: string; runner: string | null } = { space: userId, runner: null },
 ): Promise<{
@@ -41,6 +45,9 @@ export async function deviceAssignment(
   if (!device) throw new GuardError(where.runner ? "Pick one of your own paired computers." : "That computer is not paired.");
   if (input.engine && input.engine !== "ensemble" && !deviceEngines(device.capabilities).includes(input.engine)) {
     throw new GuardError(`Ensemble on ${device.name} is too old to run ${input.engine === "copilot-cli" ? "GitHub Copilot" : input.engine} there. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
+  }
+  if (input.codeAgent && !deviceCodesWithAgent(device.capabilities)) {
+    throw new GuardError(`Ensemble on ${device.name} is too old for the Code tab's agent. Update it on that computer (\`ensemble update\`, or the desktop app's update), then send again.`);
   }
   if (input.pullRequest && !deviceOpensPullRequests(device.capabilities)) {
     throw new GuardError(`Ensemble on ${device.name} is too old to open pull requests into any branch. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
@@ -84,6 +91,8 @@ export async function deviceAssignment(
       parent = (await prisma.workspaceJob.findUnique({ where: { id: parent }, select: { continueFromJobId: true } }))?.continueFromJobId ?? null;
     }
     resourceKeys.push(previous.folderLabel ? `label:${previous.folderLabel}` : `chain:${rootId}`);
+  } else if (input.codeFolder) {
+    resourceKeys.push(`dir:${input.codeFolder}`);
   } else if (folderLabel) {
     resourceKeys.push(`label:${folderLabel}`);
   } else if (repoUrl) {

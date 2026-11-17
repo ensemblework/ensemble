@@ -233,12 +233,15 @@ export function AgentPicker({
   agents,
   auto,
   label,
+  compact = false,
 }: {
   value: AgentChoice | null;
   onChange: (value: AgentChoice | null) => void;
   agents: PickerAgent[];
   auto?: { text: string; choice: AgentChoice | null } | null;
   label: string;
+  /** A small chip (the Code tab agent's composer) instead of a full-width field. */
+  compact?: boolean;
 }) {
   const shownChoice = value ?? auto?.choice ?? null;
   const current = shownChoice ? agents.find((row) => row.id === shownChoice.provider) : undefined;
@@ -277,10 +280,16 @@ export function AgentPicker({
   const isCurrent = (provider: string, model: string) => value !== null && value.provider === provider && (value.model || "") === model;
   return (
     <Popover
-      fill
+      fill={!compact}
       width={440}
       maxHeight={480}
-      trigger={(open, toggle) => (
+      trigger={(open, toggle) => compact ? (
+        <button type="button" className="agent-chip" aria-haspopup="listbox" aria-expanded={open} aria-label={label} title={label} onClick={toggle} data-picker="agent">
+          {shownChoice ? <ProviderLogo id={shownChoice.provider} size={14} /> : null}
+          <span className="max-w-[14rem] truncate">{shownChoice ? (modelOf(agents, shownChoice)?.label ?? (shownChoice.model || agentName(current, shownChoice.provider))) : "Choose an agent"}</span>
+          <ChevronsUpDown size={12} className="shrink-0 text-faint" aria-hidden />
+        </button>
+      ) : (
         <button type="button" className="picker-trigger h-10" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="agent">
           {value === null && auto ? <Sparkles size={15} className="shrink-0 text-accent" aria-hidden /> : shownChoice ? <ProviderLogo id={shownChoice.provider} size={16} /> : null}
           <span className="min-w-0 flex-1 truncate text-left">
@@ -449,7 +458,7 @@ export function AgentPicker({
  * Renders nothing for a model with none of them.
  */
 /** `width`: a fixed width where several pickers stack, so their rows line up whatever each one says. */
-export function TuningPicker({ value, model, onChange, allowFast = true, label, width }: { value: AgentChoice; model: PickerModel | null; onChange: (value: AgentChoice) => void; allowFast?: boolean; label: string; width?: string }) {
+export function TuningPicker({ value, model, onChange, allowFast = true, label, width, compact = false }: { value: AgentChoice; model: PickerModel | null; onChange: (value: AgentChoice) => void; allowFast?: boolean; label: string; width?: string; compact?: boolean }) {
   const levels = model?.levels ?? [];
   const contexts = model?.contexts ?? [];
   const fast = allowFast && Boolean(model?.fast);
@@ -459,8 +468,14 @@ export function TuningPicker({ value, model, onChange, allowFast = true, label, 
     <Popover
       width={300}
       maxHeight={420}
-      align="right"
-      trigger={(open, toggle) => (
+      align={compact ? "left" : "right"}
+      trigger={(open, toggle) => compact ? (
+        <button type="button" className="agent-chip" aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={`${label}: ${text}`} onClick={toggle} data-picker="tuning">
+          {value.fast ? <Zap size={12} className="shrink-0" aria-hidden /> : null}
+          <span className="max-w-[10rem] truncate">{text}</span>
+          <ChevronsUpDown size={12} className="shrink-0 text-faint" aria-hidden />
+        </button>
+      ) : (
         <button type="button" className={cx("picker-trigger h-10 shrink-0", width ?? "w-auto")} aria-haspopup="dialog" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="tuning">
           <span className="text-[11.5px] text-faint">Thinking</span>
           <span className={cx("truncate font-medium", width ? "min-w-0 flex-1" : "max-w-[10rem]")}>{text}</span>

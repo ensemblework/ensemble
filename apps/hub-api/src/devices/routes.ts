@@ -44,7 +44,7 @@ import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { publishRuntimeStream } from "./revoke-notify.js";
 import { revokePairedDevice } from "./revoke.js";
-import { contextTierOf, fastOf, outsideAccessOf, steerOf } from "../workspace/trust.js";
+import { codeTurnOf, contextTierOf, fastOf, outsideAccessOf, steerOf } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
 import { resumeOf } from "../workspace/repeat.js";
 import { reattachJob, resumeJob } from "./recover.js";
@@ -503,6 +503,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       // A run by the person's own agent: the project's brief for its folder on the computer (agent-projects.ts), and
       // what the computer chooses the agent session with (session-choice): the task's facts, the config, the person's choice.
       const runContext = (typeof next.context === "object" && next.context !== null ? next.context : {}) as { chat?: unknown; node?: unknown; newSession?: unknown };
+      const codeTurn = codeTurnOf(next.context);
       const ownAgent = next.kind === "code" && isCodeEngine(next.provider) && runContext.chat !== true && !runContext.node && !missionOf(next.context);
       const runSettings = ownAgent ? await loadSettings(prisma, next.userId) : null;
       // A node's own run (not a plan's) that would get a new folder: the node's project folder (agent-projects.ts nodeProjectBrief).
@@ -580,6 +581,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(related ? { related } : {}),
         ...(choiceConfig && runSettings ? { sessionChoice: { ...choiceConfig, enabled: choiceConfig.enabled && runSettings.orchestration.linkedSessions !== false } } : {}),
         ...(runContext.newSession === true ? { newSession: true } : {}),
+        // A turn of the Code tab's agent (codeAgent 1): the message continues the agent's own session, in the folder Code has open there.
+        ...(codeTurn ? { chat: true, surface: "code", ...(codeTurn.codeFolder ? { codeFolder: codeTurn.codeFolder } : {}) } : {}),
       };
     }
     return reply.code(204).send();

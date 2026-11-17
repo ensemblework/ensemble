@@ -9,6 +9,7 @@ import { z } from "zod";
 import { searchWorkspace } from "../../cowork/service.js";
 import { createTask } from "../../services/tasks.js";
 import { appendToTaskPage } from "../../assistant/tools/pages.js";
+import { ON_BOARD } from "../../lib/node-tasks.js";
 import type { JobContext } from "../tools.js";
 
 export const CHAT_TOOLS = ["ensemble_list_tasks", "ensemble_create_task", "ensemble_search"] as const;
@@ -29,6 +30,7 @@ export async function runChatTool(ctx: Pick<JobContext, "userId" | "taskId" | "e
       where: {
         userId: ctx.userId,
         deletedAt: null,
+        ...ON_BOARD,
         ...(args.include_done ? {} : { status: { in: OPEN } }),
         ...(args.query ? { OR: [{ title: { contains: args.query, mode: "insensitive" } }, { description: { contains: args.query, mode: "insensitive" } }] } : {}),
       },

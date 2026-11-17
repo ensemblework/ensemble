@@ -24,7 +24,7 @@ import { mirrorSettings } from "../spaces/store.js";
 import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/context.js";
 import { ARTIFACT_SUPPRESSION, artifactOrigin, artifactSuppressionKey, NOT_UPLOADED } from "../context/artifacts.js";
 import { ARTIFACT_KINDS } from "../desk/artifacts.js";
-import { NODE_TASK, ON_BOARD } from "../lib/node-tasks.js";
+import { INTERNAL_TASK, ON_BOARD } from "../lib/node-tasks.js";
 import { GraphError, itemNeighbors, relationsOf } from "../context/graph/neighbors.js";
 import { parseItemRef, type GraphKind } from "../context/graph/refs.js";
 import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
@@ -556,7 +556,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/context/board", async (request) => {
     const userId = request.userId;
     const hideStarters = await hidesSignupStarters(prisma, userId);
-    const starterTask = { NOT: [NODE_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])] };
+    const starterTask = { NOT: [INTERNAL_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])] };
     const starterPerson = hideStarters ? { OR: [{ upn: null }, { NOT: { upn: { startsWith: "template:" } } }] } : {};
     const starterDeliverable = hideStarters
       ? { OR: [{ sourceRef: null }, { NOT: { sourceRef: { startsWith: "template:" } } }] }

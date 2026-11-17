@@ -52,6 +52,13 @@ export function deviceOpensPullRequests(capabilities: unknown): boolean {
   return typeof value === "number" && value >= 2;
 }
 
+/** Whether a computer's runtime runs turns of the Code tab's agent in a folder Code may use there (`capabilities.codeAgent` 1 or more). */
+export function deviceCodesWithAgent(capabilities: unknown): boolean {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return false;
+  const value = (capabilities as { codeAgent?: unknown }).codeAgent;
+  return typeof value === "number" && value >= 1;
+}
+
 export function rejectPathLabels(capabilities: unknown): string | null {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
   const record = capabilities as { folders?: unknown; folderLabels?: unknown };

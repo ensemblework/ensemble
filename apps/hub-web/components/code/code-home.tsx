@@ -44,6 +44,7 @@ import { ShareButton } from "@/components/sharing/share-dialog";
 import { InfoTip, MenuItem, Popover, Segmented, SkeletonRows, Spinner, cx } from "@/components/ui";
 import { useSpaceAccess } from "@/lib/access";
 import { api, type AgentJob } from "@/lib/api";
+import { AgentIcon } from "@/components/agent-icon";
 import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeRepo, type HomeReview } from "@/lib/code-home";
 import { remoteLabel, repoName, repoSecond, repoView, usedWithin, viewFor } from "@/lib/code-repos";
 import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
@@ -64,8 +65,8 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
   const viewOnly = access.guest;
   const home = useCodeHome();
   const layout = useIdeLayout();
-  const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
-  const openQuick = (text: string) => setQuick({ text, nonce: Date.now() });
+  const [quick, setQuick] = useState<{ text: string; nonce: number; agent?: boolean } | null>(null);
+  const openQuick = (text: string, agent = false) => setQuick({ text, nonce: Date.now(), agent });
   useIdeKeys(layout, openQuick);
   const label = useKeyLabel();
   const navigate = useLinkNavigate();
@@ -122,6 +123,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
     if (input.mode === "commands") {
       const commands = [
         { id: "open-repo", label: "Open a repository…", keys: "mod+p", run: () => openQuick("") },
+        ...(viewOnly ? [] : [{ id: "agent", label: "Code with an agent…", run: () => openQuick("", true) }]),
         { id: "reviews", label: "Show the changes to review", run: () => openPanel("scm") },
         { id: "explorer", label: "Show the explorer", run: () => openPanel("repos") },
         { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
@@ -139,8 +141,9 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
     const several = home.states.length > 1;
     const repos = home.repos.map((repo) => ({ repo, label: repo.name }));
     const query = input.mode === "files" ? input.query : "";
+    const forAgent = quick?.agent === true;
     return {
-      placeholder: "Open a repository by name. > for commands",
+      placeholder: forAgent ? "Pick the repository the agent works in" : "Open a repository by name. > for commands",
       empty: home.reposLoading ? "Reading the repositories…" : query ? "No repository matches." : "No repositories yet.",
       items: rankByLabel(query, repos).slice(0, 50).map(({ repo, hits }) => ({
         id: `${repo.place.key}:${repo.path}`,
@@ -149,7 +152,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
         detail: [repoSecond(repo, several ? repo.place.name : null)].filter(Boolean).join(" · ") || undefined,
         icon: <FolderGit2 size={14} className="text-muted" />,
         group: repo.kind === "run" ? "agent worktree" : undefined,
-        run: () => navigate.go(repo.href),
+        run: () => navigate.go(forAgent ? `${repo.href}&view=agent` : repo.href),
       })),
     };
   };
@@ -237,6 +240,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
               viewOnly={viewOnly}
               canTerminal={canTerminal}
               onOpenRepos={() => openQuick("")}
+              onAgent={() => openQuick("", true)}
               onReviews={() => openPanel("scm")}
               onTerminal={() => openTerminal()}
               onCommands={() => openQuick(">")}
@@ -518,6 +522,7 @@ function Welcome({
   viewOnly,
   canTerminal,
   onOpenRepos,
+  onAgent,
   onReviews,
   onTerminal,
   onCommands,
@@ -528,6 +533,7 @@ function Welcome({
   viewOnly: boolean;
   canTerminal: boolean;
   onOpenRepos: () => void;
+  onAgent: () => void;
   onReviews: () => void;
   onTerminal: () => void;
   onCommands: () => void;
@@ -569,6 +575,7 @@ function Welcome({
               <Section title="Start">
                 <div className="space-y-0.5">
                   <StartItem icon={FolderOpen} label="Open a repository…" hint={label("mod+p")} onClick={onOpenRepos} />
+                  {viewOnly ? null : <StartItem icon={AgentIcon} label="Code with an agent…" onClick={onAgent} />}
                   <StartItem icon={GitPullRequestArrow} label="Review agent changes" hint={needs.length ? String(needs.length) : undefined} onClick={onReviews} />
                   {viewOnly ? null : <StartItem icon={TerminalSquare} label="Open terminal" hint={label("ctrl+`")} onClick={onTerminal} disabled={!canTerminal} />}
                   <StartItem icon={Command} label="Show all commands" hint={label("mod+shift+p")} onClick={onCommands} />

@@ -46,7 +46,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
 import { dropWhere, readLru, remember } from "../lib/bounded.js";
 import { loadSettings } from "../lib/settings.js";
-import { resolveCodeFolder, usableCodeRoots } from "../lib/code-folders.js";
+import { codeRepoRoots, resolveCodeFolder } from "../lib/code-folders.js";
 import { expandHome, gitHardening, within } from "../workspace/guard.js";
 import { runTrustedGit } from "../workspace/git-gate.js";
 import { pushWithSignIn } from "../workspace/publish.js";
@@ -87,15 +87,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request) => requireHostAccess(request.userId, "Code filesystem"));
   const { prisma } = app;
 
-  /** The workspace, the folders Code can use (settings.code.roots, never the terminal's), agent run checkouts, and repositories runs changed and Ensemble recorded for review. */
-  async function roots(userId: string): Promise<string[]> {
-    const settings = await loadSettings(prisma, userId);
-    const [jobs, reviews] = await Promise.all([
-      prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] }),
-      prisma.codeReview.findMany({ where: { userId, expiredAt: null }, select: { repoPath: true }, distinct: ["repoPath"] }),
-    ]);
-    return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath), ...reviews.map((review) => review.repoPath)];
-  }
+  const roots = (userId: string): Promise<string[]> => codeRepoRoots(prisma, userId);
 
   async function resolveSource(request: FastifyRequest, input: unknown) {
     const source = Source.parse(input);

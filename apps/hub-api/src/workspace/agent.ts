@@ -71,7 +71,7 @@ import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
+import { contextTierOf, fastOf, isChatTurn, isCodeAgentTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, loadGrants, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -334,6 +334,17 @@ export function rulesHash(ctx: JobContext): string {
 }
 
 /**
+ * How a thread of the Code tab's agent starts (docs/16 §9): two layers in one conversation, the code
+ * in this folder and the person's Ensemble through the ensemble MCP server.
+ */
+export function codeAgentIntro(root: string): string {
+  return [
+    `You're the coding agent in the person's Ensemble Code tab, working in ${root}. They watch this folder in an editor beside the chat and accept or reject your changes there, so make the changes in the files rather than pasting code. Keep replies short; no em dashes.`,
+    "The ensemble MCP server is their Ensemble: ensemble_search and ensemble_context read their tasks, pages, boards and meetings; ensemble_actions and ensemble_act make and change them (a page, a board, a diagram, a plot, a task's status or a note on it), at once and with Ensemble's Undo; ensemble_apps and ensemble_app_call use the apps they connected. Make a task card only when they ask for one. Ask real decisions with ask_person.",
+  ].join("\n");
+}
+
+/**
  * One message in Chat with the person's own agent. The first says where it is and how the run
  * works; a resumed session already has that, so a later message is just the message, with the
  * rules again only when the person changed the run's settings since (`rulesChanged`).
@@ -342,7 +353,7 @@ export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | 
   const rules = engineRules(ctx as JobContext);
   if (turn.resumed) return turn.rulesChanged === false ? message : [`(Ensemble: how this run works now, checked on every tool call:`, ...rules, `)`, "", message].join("\n");
   return [
-    `You're chatting with the person in Ensemble's terminal chat, working in ${ctx.root}. Keep replies short and do the work they ask for here. The ensemble MCP server has their board: ensemble_list_tasks, ensemble_create_task (when they ask for a task or todo), ensemble_search (their notes, pages and tasks) and ask_person.`,
+    isCodeAgentTurn(ctx.job.context) ? codeAgentIntro(ctx.root) : `You're chatting with the person in Ensemble's terminal chat, working in ${ctx.root}. Keep replies short and do the work they ask for here. The ensemble MCP server has their board: ensemble_list_tasks, ensemble_create_task (when they ask for a task or todo), ensemble_search (their notes, pages and tasks) and ask_person.`,
     "How this run works (Ensemble checks every tool call; a refusal is the setting, not an error to work around):",
     ...rules,
     turn.earlier ? `\nEarlier in this chat (with another agent): ${turn.earlier}` : "",

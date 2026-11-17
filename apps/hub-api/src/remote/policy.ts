@@ -102,11 +102,27 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.contextTier === "long_context" ? { contextTier: "long_context" as const } : {}),
     ...(spec.fast ? { fast: true } : {}),
   };
+  // A turn of the Code tab's agent: the message continues the agent's own session; it never ends the task.
+  const codeTurn = spec.kind === "code" && spec.chat === true && spec.surface === "code";
+  if (codeTurn) {
+    assign.chat = true;
+    assign.surface = "code";
+    assign.markDone = false;
+    assign.branchMode = "as-is";
+    delete assign.branch;
+    delete assign.pullRequest;
+  }
   const label = (spec.folderLabel ?? spec.folder ?? "").trim();
   if (spec.kind === "code") {
     const previous = spec.continueFromJobId ? continueFrom(spec.continueFromJobId) : null;
     if (previous) {
       assign.continueFromJobId = previous;
+    } else if (codeTurn) {
+      // Checked against the folders Code may use here before the run is made (accept.ts `codeFolderHere`).
+      const folder = spec.codeFolder?.trim() ?? "";
+      if (!folder) return { code: "UNKNOWN_FOLDER", message: "Open a folder in Code first: the agent works in the folder Code has open." };
+      if (!settings.webEdit) return { code: "WEB_EDIT_OFF", message: "Changing code from the web is turned off on this computer. Turn it on there with `ensemble web edit on`." };
+      assign.folder = folder;
     } else if (label) {
       const shared = sharedFolder(settings, label);
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };

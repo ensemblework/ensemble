@@ -57,6 +57,8 @@ import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout, type IdeLayout } from "@/components/code/ide-chrome";
+import { AgentView } from "@/components/code/agent-view";
+import { AgentIcon } from "@/components/agent-icon";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
 import { CommitPanel } from "@/components/code/commit-panel";
@@ -107,6 +109,8 @@ const STATUS_COLOR: Record<string, string> = { A: "text-ok", U: "text-ok", M: "t
 const SAVE_MS = 700;
 
 type Panel = "files" | "search" | "scm";
+/** The window's main area: the editor, or a thread with the person's coding agent in the same folder (docs/16 §9). */
+export type IdeView = "editor" | "agent";
 /** What the command palette asks of the explorer. */
 type ExplorerAsk = "new-file" | "new-folder" | "collapse";
 
@@ -155,6 +159,7 @@ function Ring({ done, total }: { done: number; total: number }) {
 const SHORTCUTS: Array<[string, string]> = [
   ["mod+p", "Go to file (type :12 after the name for a line)"],
   ["mod+shift+p / f1", "Show all commands"],
+  ["ctrl+alt+i", "Editor ↔ agent"],
   ["ctrl+g", "Go to line"],
   ["mod+shift+f", "Find in files (with the selection)"],
   ["mod+shift+e", "Explorer"],
@@ -180,7 +185,7 @@ const SHORTCUTS: Array<[string, string]> = [
   ["?", "These shortcuts (outside the editor)"],
 ];
 
-export function CodeIde({ source }: { source: Source }) {
+export function CodeIde({ source, initialFile = null, initialView = null }: { source: Source; initialFile?: string | null; initialView?: IdeView | null }) {
   const access = useSpaceAccess();
   const client = useQueryClient();
   const toast = useToast();
@@ -199,6 +204,33 @@ export function CodeIde({ source }: { source: Source }) {
   const scm = useQuery({ queryKey: ["scm", key, info.data?.repo], queryFn: () => code.scm(info.data!.repo), enabled: Boolean(info.data?.repo) && !viewOnly, refetchInterval: 15_000, retry: false });
 
   const [panel, setPanel] = usePersistentState<Panel>("ensemble.code.sidebarPanel", "files");
+  const [view, setViewState] = usePersistentState<IdeView>("ensemble.code.view", "editor");
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // The agent's thread mounts the first time it is shown, then stays mounted (its draft and polling) while the editor shows.
+  const [agentMounted, setAgentMounted] = useState(false);
+  const setView = useCallback(
+    (next: IdeView) => {
+      setViewState(next);
+      if (next === "agent") setAgentMounted(true);
+    },
+    [setViewState],
+  );
+  useEffect(() => {
+    if (initialView) setView(initialView);
+  }, [initialView, setView]);
+  useEffect(() => {
+    if (view === "agent") setAgentMounted(true);
+  }, [view]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.code !== "KeyI") return;
+      event.preventDefault();
+      setView(view === "agent" ? "editor" : "agent");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, setView]);
   const layout = useIdeLayout();
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
   const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
@@ -249,13 +281,13 @@ export function CodeIde({ source }: { source: Source }) {
   useEffect(() => {
     if (!info.data || active || autoOpened.current) return;
     autoOpened.current = true;
-    const first = changed[0]?.path;
+    const first = initialFile || changed[0]?.path;
     if (first) {
       setTabs([first]);
       setActive(first);
       setRecent([first]);
     }
-  }, [info.data, changed, active]);
+  }, [info.data, changed, active, initialFile]);
 
   const setState = useCallback((path: string, state: SaveState) => setSaveState((current) => (current[path] === state ? current : { ...current, [path]: state })), []);
 
@@ -328,6 +360,7 @@ export function CodeIde({ source }: { source: Source }) {
 
   const open = useCallback(
     (path: string, line?: number) => {
+      if (viewRef.current !== "editor") setViewState("editor");
       const next = openTab(tabs, path, active, (row) => Boolean(buffers.current.get(row)?.dirty) || saveState[row] === "saving");
       if ("refused" in next) {
         toast(next.refused, { tone: "error" });
@@ -342,7 +375,7 @@ export function CodeIde({ source }: { source: Source }) {
       closeOverlay();
       if (line) setReveal({ path, line, nonce: Date.now() });
     },
-    [active, closeOverlay, release, save, saveState, tabs, toast],
+    [active, closeOverlay, release, save, saveState, setViewState, tabs, toast],
   );
 
   const close = useCallback(
@@ -649,6 +682,7 @@ export function CodeIde({ source }: { source: Source }) {
         ]
       : [];
     return [
+      { id: "agent", label: view === "agent" ? "Show the editor" : "Code with the agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
       { id: "go-file", label: "Go to file", keys: "mod+p", run: () => openQuick("") },
       ...(active ? [{ id: "go-line", label: "Go to line", keys: "ctrl+g", run: () => openQuick(":") }] : []),
       { id: "find", label: "Find in files", keys: "mod+shift+f", run: findInFiles },
@@ -754,6 +788,14 @@ export function CodeIde({ source }: { source: Source }) {
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-2 text-[13px]" data-testid="ide-titlebar">
         <Link href="/code" className="icon-btn" title="Back to Code" aria-label="Back to Code" data-ide-home><ArrowLeft size={15} /></Link>
+        <div role="group" aria-label="Editor or agent" className="ide-view-switch" data-testid="ide-view-switch">
+          <button type="button" aria-pressed={view === "editor"} onClick={() => setView("editor")} title={`Editor (${label("ctrl+alt+i")})`}>
+            <Code2 size={13} aria-hidden /> Editor
+          </button>
+          <button type="button" aria-pressed={view === "agent"} onClick={() => setView("agent")} title={`Agent (${label("ctrl+alt+i")})`}>
+            <AgentIcon size={13} aria-hidden /> Agent
+          </button>
+        </div>
         <span className="truncate font-semibold">{title}</span>
         <span className="truncate text-muted" title={data.repo}>
           {repoLabel === title ? "" : `${repoLabel} · `}
@@ -858,6 +900,20 @@ export function CodeIde({ source }: { source: Source }) {
 
         {/* Editor column */}
         <div className="flex min-w-0 flex-1 flex-col">
+          {agentMounted ? (
+            <div className={cx("flex min-h-0 flex-1 flex-col", view !== "agent" && "hidden")}>
+              <AgentView
+                folder={data.repo}
+                folderName={repoLabel || title}
+                placeName={placeName}
+                deviceId={target.kind === "device" ? target.deviceId : null}
+                online={reachable}
+                viewOnly={viewOnly}
+                onOpenFile={(path) => open(path)}
+              />
+            </div>
+          ) : null}
+          <div className={cx("flex min-h-0 flex-1 flex-col", view === "agent" && "hidden")}>
           <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-sidebar text-[12.5px]">
             <button type="button" className="icon-btn my-auto ml-1 mr-0.5 h-7 w-7 shrink-0" title={`Show or hide the side panel (${label("mod+b")})`} aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
               <PanelLeft size={14} />
@@ -947,6 +1003,8 @@ export function CodeIde({ source }: { source: Source }) {
               ]}
             />
           )}
+
+          </div>
 
           {terminal && !viewOnly ? (
             <BottomPanel layout={layout}>
