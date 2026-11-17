@@ -136,7 +136,6 @@ function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: 
 /** A folder named by its path for a paired computer: never relative, never a name made of `..`. The computer checks the rest. */
 function codeFolderPath(value: string | undefined): string {
   const path = value?.trim() ?? "";
-  if (!path) throw new GuardError("Open a folder in Code first: the agent works in the folder Code has open.");
   if (path.length > 1000 || /[\0\n\r]/.test(path) || !(path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path)) || path.split(/[\\/]/).includes("..")) {
     throw new GuardError("That folder is not one Code can use on that computer.");
   }
@@ -363,15 +362,15 @@ async function createDeviceJob(
   // In a space shared with you, the job runs on your computer and counts against you.
   const runner = actorFor(userId);
   const owner = runner ?? userId;
-  // A turn of the Code tab's agent names the folder Code has open there by its path; a later turn continues the first one's.
+  // A turn of the Code tab's agent names the folder it works in there by its path, or none: a new folder in that computer's workspace.
   const codeTurn = body.chat === true && body.surface === "code";
-  const codeFolder = codeTurn && (body.folder?.trim() || !body.continueFromJobId) ? codeFolderPath(body.folder) : undefined;
+  const codeFolder = codeTurn && body.folder?.trim() ? codeFolderPath(body.folder) : undefined;
   const assigned = await deviceAssignment(prisma, owner, {
     deviceId: body.deviceId!,
     kind: body.kind,
     folder: codeTurn ? undefined : body.folder,
     folderLabel: codeTurn ? undefined : body.folderLabel,
-    ...(codeTurn ? { codeAgent: true, ...(codeFolder ? { codeFolder } : {}) } : {}),
+    ...(codeFolder ? { codeFolder } : {}),
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,

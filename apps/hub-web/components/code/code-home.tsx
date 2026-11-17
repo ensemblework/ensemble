@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { jobTone } from "@/components/agent/job-card";
 import { Fold, InlineError, Lines, RepoList, ReviewItem } from "@/components/code/code-lists";
 import { ComputersCode, matchRepos } from "@/components/code/computers-code";
@@ -45,13 +45,16 @@ import { InfoTip, MenuItem, Popover, Segmented, SkeletonRows, Spinner, cx } from
 import { useSpaceAccess } from "@/lib/access";
 import { api, type AgentJob } from "@/lib/api";
 import { AgentIcon } from "@/components/agent-icon";
+import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
+import { AgentView, type FolderChoice, type PlaceChoice } from "@/components/code/agent-view";
+import { agentHref, type IdeView } from "@/lib/code-agent";
 import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeRepo, type HomeReview } from "@/lib/code-home";
-import { remoteLabel, repoName, repoSecond, repoView, usedWithin, viewFor } from "@/lib/code-repos";
+import { remoteLabel, repoName, repoSecond, repoView, shortBranch, usedWithin, viewFor } from "@/lib/code-repos";
 import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
 import { relative } from "@/lib/format";
 import { usePersistentState } from "@/lib/prefs";
 
-type HomePanel = "repos" | "search" | "scm";
+type HomePanel = "repos" | "search" | "scm" | "agent";
 type Filter = "needs" | "reviewed" | "all";
 
 const REVIEWS_SHOWN = 6;
@@ -60,13 +63,30 @@ const RUNS_SHOWN = 5;
 
 const TONE_DOT: Record<string, string> = { green: "bg-ok", red: "bg-danger", yellow: "bg-warn", orange: "bg-warn", blue: "bg-accent", gray: "bg-faint" };
 
-export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; file: string | null; onCloseRun: () => void }) {
+export function CodeHome({
+  jobId,
+  file,
+  onCloseRun,
+  initialView = null,
+  initialThread = null,
+  initialPlace = null,
+}: {
+  jobId: string | null;
+  file: string | null;
+  onCloseRun: () => void;
+  /** `?view=agent|editor`. */
+  initialView?: IdeView | null;
+  /** `?thread=<id>`, or "new". */
+  initialThread?: string | null;
+  /** `?device=&repo=`: where a new thread starts. */
+  initialPlace?: ThreadPlace | null;
+}) {
   const access = useSpaceAccess();
   const viewOnly = access.guest;
   const home = useCodeHome();
   const layout = useIdeLayout();
-  const [quick, setQuick] = useState<{ text: string; nonce: number; agent?: boolean } | null>(null);
-  const openQuick = (text: string, agent = false) => setQuick({ text, nonce: Date.now(), agent });
+  const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
+  const openQuick = (text: string) => setQuick({ text, nonce: Date.now() });
   useIdeKeys(layout, openQuick);
   const label = useKeyLabel();
   const navigate = useLinkNavigate();
@@ -78,6 +98,38 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
   const [filter, setFilter] = useState("");
   const filterField = useRef<HTMLInputElement>(null);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  // Editor or Agent, as in a repository's window (docs/16 §9). The agent here needs no repository.
+  const [view, setViewState] = usePersistentState<IdeView>("ensemble.code.view", "editor");
+  const [agentMounted, setAgentMounted] = useState(false);
+  const [homeThread, setHomeThread] = usePersistentState<string | null>("ensemble.code.homeThread", null);
+  const [draft, setDraft] = usePersistentState<ThreadPlace | null>("ensemble.code.draftPlace", null);
+  const setView = useCallback(
+    (next: IdeView) => {
+      setViewState(next);
+      if (next === "agent") setAgentMounted(true);
+      setPanel((current) => (next === "agent" ? "agent" : current === "agent" ? "repos" : current));
+    },
+    [setViewState, setPanel],
+  );
+  useEffect(() => {
+    if (initialView) setView(initialView);
+    if (initialThread) setHomeThread(initialThread === "new" ? null : initialThread);
+    if (initialPlace) setDraft(initialPlace);
+    // The address names them once, when Code opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (view === "agent") setAgentMounted(true);
+  }, [view]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.code !== "KeyI") return;
+      event.preventDefault();
+      setView(view === "agent" ? "editor" : "agent");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, setView]);
 
   useEffect(() => setTab(jobId ? "run" : "welcome"), [jobId]);
 
@@ -104,6 +156,13 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
   }, [full]);
 
   const places = home.states.map((state) => state.place);
+  // The agent's choices: every computer, and the folders Code can use on each (not run checkouts).
+  const agentPlaces: PlaceChoice[] = places.map((place) => ({ deviceId: place.target.kind === "device" ? place.target.deviceId : null, name: place.name, online: place.online }));
+  const agentFolders: FolderChoice[] = home.repos
+    .filter((repo) => repo.kind !== "run")
+    .map((repo) => ({ deviceId: repo.place.target.kind === "device" ? repo.place.target.deviceId : null, path: repo.path, name: repoName(repo), branch: shortBranch(repo.branch) }));
+  const firstPlace = agentPlaces.find((place) => place.online) ?? agentPlaces[0] ?? null;
+  const agentDraft: ThreadPlace = draft && agentPlaces.some((place) => (place.deviceId ?? null) === (draft.deviceId ?? null)) ? draft : { deviceId: firstPlace?.deviceId ?? null, folder: null };
   const selected = places.find((place) => place.target.kind === "device" && place.target.deviceId === computerId) ?? places.find((place) => place.usable) ?? places[0] ?? null;
   const canTerminal = !viewOnly && Boolean(selected?.terminal);
   const needs = home.reviews.filter((review) => !review.completedAt);
@@ -122,13 +181,13 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
     const input = parseQuickInput(text);
     if (input.mode === "commands") {
       const commands = [
-        { id: "open-repo", label: "Open a repository…", keys: "mod+p", run: () => openQuick("") },
-        ...(viewOnly ? [] : [{ id: "agent", label: "Code with an agent…", run: () => openQuick("", true) }]),
+        { id: "open-repo", label: "Open a repository", keys: "mod+p", run: () => openQuick("") },
+        { id: "agent", label: view === "agent" ? "Show the editor" : "Code with an agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
         { id: "reviews", label: "Show the changes to review", run: () => openPanel("scm") },
         { id: "explorer", label: "Show the explorer", run: () => openPanel("repos") },
         { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
         ...(canTerminal ? [{ id: "terminal", label: terminal ? "Hide the terminal" : "Show the terminal", keys: "ctrl+`", run: () => setTerminal(!terminal) }] : []),
-        { id: "theme", label: "Color theme…", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
+        { id: "theme", label: "Color theme", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
         { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
         { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
         { id: "reset-size", label: "Reset code text size", keys: "mod+shift+0", run: () => setFontSize(FONT_DEFAULT) },
@@ -141,9 +200,8 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
     const several = home.states.length > 1;
     const repos = home.repos.map((repo) => ({ repo, label: repo.name }));
     const query = input.mode === "files" ? input.query : "";
-    const forAgent = quick?.agent === true;
     return {
-      placeholder: forAgent ? "Pick the repository the agent works in" : "Open a repository by name. > for commands",
+      placeholder: "Open a repository by name. > for commands",
       empty: home.reposLoading ? "Reading the repositories…" : query ? "No repository matches." : "No repositories yet.",
       items: rankByLabel(query, repos).slice(0, 50).map(({ repo, hits }) => ({
         id: `${repo.place.key}:${repo.path}`,
@@ -152,7 +210,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
         detail: [repoSecond(repo, several ? repo.place.name : null)].filter(Boolean).join(" · ") || undefined,
         icon: <FolderGit2 size={14} className="text-muted" />,
         group: repo.kind === "run" ? "agent worktree" : undefined,
-        run: () => navigate.go(forAgent ? `${repo.href}&view=agent` : repo.href),
+        run: () => navigate.go(repo.href),
       })),
     };
   };
@@ -162,7 +220,20 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
       <div className="relative flex min-h-0 min-w-0 flex-1">
         <ActivityBar
           items={[
-            { id: "home", icon: House, label: "Welcome", onClick: () => setTab("welcome") },
+            { id: "home", icon: House, label: "Welcome", onClick: () => { setTab("welcome"); setView("editor"); } },
+            {
+              id: "agent",
+              icon: AgentIcon,
+              label: `Agent (${label("ctrl+alt+i")})`,
+              active: view === "agent" && sideOpen && panel === "agent",
+              onClick: () => {
+                if (view !== "agent") {
+                  setView("agent");
+                  showSide();
+                } else if (sideOpen && panel === "agent") setSideOpen(false);
+                else openPanel("agent");
+              },
+            },
             ...(
               [
                 ["repos", FolderGit2, "Explorer (Ctrl+B)", 0],
@@ -185,7 +256,22 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
         />
 
         <SidePanel layout={layout}>
-          {panel === "repos" ? (
+          {panel === "agent" ? (
+            <AgentSessions
+              selected={homeThread}
+              viewOnly={viewOnly}
+              onSelect={(thread) => {
+                setHomeThread(thread.id);
+                setView("agent");
+              }}
+              onNew={(place) => {
+                setHomeThread(null);
+                if (place) setDraft(place);
+                setView("agent");
+              }}
+              onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
+            />
+          ) : panel === "repos" ? (
             <ExplorerPanel home={home} filter={filter} setFilter={setFilter} field={filterField} selected={selected} onTerminal={(place) => openTerminal(place)} noComputer={noComputer} />
           ) : panel === "search" ? (
             <SearchPanel onOpenRepos={() => openQuick("")} />
@@ -199,10 +285,18 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
             <button type="button" className="icon-btn my-auto ml-1 h-7 w-7 shrink-0" title="Show or hide the side panel (Ctrl+B)" aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
               <PanelLeft size={14} />
             </button>
+            <div role="group" aria-label="Editor or agent" className="ide-view-switch my-auto mr-1.5" data-testid="ide-view-switch">
+              <button type="button" aria-pressed={view === "editor"} onClick={() => setView("editor")} title={`Editor (${label("ctrl+alt+i")})`}>
+                <Code2 size={13} aria-hidden /> Editor
+              </button>
+              <button type="button" aria-pressed={view === "agent"} onClick={() => setView("agent")} title={`Agent (${label("ctrl+alt+i")})`}>
+                <AgentIcon size={13} aria-hidden /> Agent
+              </button>
+            </div>
             <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
-              <EditorTab icon={Code2} label="Welcome" active={tab === "welcome"} onSelect={() => setTab("welcome")} />
+              <EditorTab icon={Code2} label="Welcome" active={view === "editor" && tab === "welcome"} onSelect={() => { setTab("welcome"); setView("editor"); }} />
               {jobId ? (
-                <EditorTab icon={FileCode2} label={job.data?.job.title ?? "Run"} active={tab === "run"} onSelect={() => setTab("run")} onClose={onCloseRun} />
+                <EditorTab icon={FileCode2} label={job.data?.job.title ?? "Run"} active={view === "editor" && tab === "run"} onSelect={() => { setTab("run"); setView("editor"); }} onClose={onCloseRun} />
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-1.5 px-1.5">
@@ -224,7 +318,23 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
             </div>
           </div>
 
-          {tab === "run" && jobId ? (
+          {agentMounted ? (
+            <div className={cx("flex min-h-0 flex-1 flex-col", view !== "agent" && "hidden")}>
+              <AgentView
+                threadId={homeThread}
+                onThread={setHomeThread}
+                draft={agentDraft}
+                onDraft={setDraft}
+                places={agentPlaces}
+                folders={agentFolders}
+                placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
+                viewOnly={viewOnly}
+                onOpenFile={(place, path) => navigate.go(agentHref(place, { view: "editor", file: path }))}
+                onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
+              />
+            </div>
+          ) : null}
+          {view === "agent" ? null : tab === "run" && jobId ? (
             job.isLoading ? (
               <div className="p-8"><Spinner /></div>
             ) : job.error || !job.data ? (
@@ -240,7 +350,10 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
               viewOnly={viewOnly}
               canTerminal={canTerminal}
               onOpenRepos={() => openQuick("")}
-              onAgent={() => openQuick("", true)}
+              onAgent={() => {
+                setHomeThread(null);
+                setView("agent");
+              }}
               onReviews={() => openPanel("scm")}
               onTerminal={() => openTerminal()}
               onCommands={() => openQuick(">")}
@@ -432,7 +545,7 @@ function SearchPanel({ onOpenRepos }: { onOpenRepos: () => void }) {
       <div className="px-3 py-1 text-muted">
         <p>Open a repository to find its files and search inside them.</p>
         <button type="button" className="btn mt-3 w-full justify-center text-[12.5px]" onClick={onOpenRepos}>
-          <FolderOpen size={13} /> Open a repository…
+          <FolderOpen size={13} /> Open a repository
         </button>
       </div>
     </div>
@@ -574,8 +687,8 @@ function Welcome({
             <div className="min-w-0 space-y-10">
               <Section title="Start">
                 <div className="space-y-0.5">
-                  <StartItem icon={FolderOpen} label="Open a repository…" hint={label("mod+p")} onClick={onOpenRepos} />
-                  {viewOnly ? null : <StartItem icon={AgentIcon} label="Code with an agent…" onClick={onAgent} />}
+                  <StartItem icon={FolderOpen} label="Open a repository" hint={label("mod+p")} onClick={onOpenRepos} />
+                  {viewOnly ? null : <StartItem icon={AgentIcon} label="Code with an agent" hint={label("ctrl+alt+i")} onClick={onAgent} />}
                   <StartItem icon={GitPullRequestArrow} label="Review agent changes" hint={needs.length ? String(needs.length) : undefined} onClick={onReviews} />
                   {viewOnly ? null : <StartItem icon={TerminalSquare} label="Open terminal" hint={label("ctrl+`")} onClick={onTerminal} disabled={!canTerminal} />}
                   <StartItem icon={Command} label="Show all commands" hint={label("mod+shift+p")} onClick={onCommands} />
@@ -671,7 +784,7 @@ function RecentRepos({ home, several, onOpenRepos }: { home: Home; several: bool
       action={
         hidden > 0 ? (
           <button type="button" className="text-[12px] font-normal text-muted hover:text-ink" onClick={onOpenRepos}>
-            More…
+            More
           </button>
         ) : null
       }

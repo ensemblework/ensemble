@@ -96,3 +96,60 @@ test("on Ensemble on the web with no paired computer the Welcome says so in one 
     fake.restore();
   }
 });
+
+test("Code with an agent needs no repository: the thread starts with No folder, and the folders are there to pick", async () => {
+  const thread = { id: "6d1c2a7c-5b3c-4f4e-9a21-3d1c2b4a5e6f", title: "Make a page that plans next week", createdAt: "2026-10-28T07:00:00Z", updatedAt: "2026-10-28T07:00:00Z", turns: 0, last: null, place: { deviceId: null, deviceName: null, folder: null, workdir: null } };
+  const fake = server({
+    "/api/shell": { hostCode: true },
+    "/api/code/reviews": { reviews: [], ttlDays: 14 },
+    "/api/code/repos": { repos: ["/home/me/codes/widgets"], roots: ["/home/me/ensemble-workspace"] },
+    "/api/workspace": { root: "/home/me/ensemble-workspace", running: [], waiting: [], queued: [], stopped: [], completed: [] },
+    "/api/agent/threads": { threads: [], thread },
+    [`/api/agent/threads/${thread.id}`]: { thread: { id: thread.id, title: thread.title, place: thread.place }, turns: [] },
+    "/api/agent/assign": { jobId: "j9" },
+    "/api/subscriptions": { computers: [{ id: "c1", name: "This Mac", local: true, online: true, agents: [{ id: "claude-code", via: "cli", version: "1", signedIn: true, models: [{ id: "sonnet", label: "Sonnet", isDefault: true }], checkedAt: "2026-10-28T07:00:00Z" }] }] },
+  });
+  const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const answer = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (init?.method === "POST") sent.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+    return answer(input, init);
+  }) as typeof fetch;
+  const view = await mount();
+  const wait = async () => {
+    for (let i = 0; i < 8; i += 1) await act(async () => void (await new Promise((resolve) => setTimeout(resolve, 10))));
+  };
+  try {
+    await act(async () => {
+      [...view.host.querySelectorAll<HTMLButtonElement>('[data-testid="code-welcome"] button')].find((button) => button.textContent?.includes("Code with an agent"))!.click();
+    });
+    await wait();
+    const agent = view.host.querySelector('[data-testid="agent-view"]')!;
+    assert.ok(agent, "the agent, without opening a repository");
+    assert.match(agent.querySelector('[data-testid="agent-placebar"]')?.textContent ?? "", /No folder/);
+    assert.match(agent.querySelector('[data-testid="agent-empty"]')?.textContent ?? "", /No folder needed/);
+    assert.ok(view.host.querySelector('[data-testid="agent-sessions"]'), "its sessions in the side panel");
+
+    const box = agent.querySelector<HTMLTextAreaElement>('[data-testid="agent-composer"] textarea')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      box.focus();
+      setter.call(box, "Make a page that plans next week");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await wait();
+    const made = sent.find((row) => row.url.endsWith("/api/agent/threads"));
+    assert.equal(made?.body.folder, null, "a thread with no folder");
+    const turn = sent.find((row) => row.url.endsWith("/api/agent/assign"))!.body;
+    assert.equal(turn.folder, undefined, "the agent works in a new workspace folder");
+    assert.deepEqual({ taskId: turn.taskId, chat: turn.chat, surface: turn.surface, engine: turn.engine }, { taskId: thread.id, chat: true, surface: "code", engine: "claude-code" });
+  } finally {
+    globalThis.fetch = answer;
+    await view.done();
+    fake.restore();
+  }
+});

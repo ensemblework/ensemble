@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compactCount, elapsed, relativeIn, threadTitle, toolKind, toolPath, workRows } from "./code-agent";
+import { agentHref, compactCount, elapsed, groupThreads, linkedTasks, relativeIn, shortAgo, splitMentions, threadTitle, toolKind, toolPath, withMentions, workRows } from "./code-agent";
+import type { CodeThread } from "./api";
 import type { TraceEntry } from "./run-trace";
 
 test("tool calls read as the same kinds whichever agent made them", () => {
@@ -54,4 +55,30 @@ test("threads are named by their first line, and counts and times read short", (
   assert.equal(elapsed(42_000), "42s");
   assert.equal(elapsed(185_000), "3m 05s");
   assert.equal(elapsed(3_720_000), "1h 02m");
+});
+
+test("mentions go to the agent as handles its Ensemble tools open, and come back as chips in the thread", () => {
+  const task = { kind: "task" as const, id: "5f1c2a7c-5b3c-4f4e-9a21-3d1c2b4a5e6f", label: "Fix the export" };
+  const diagram = { kind: "diagram" as const, id: "d1", label: "Services" };
+  const sent = withMentions("Do @task:Fix the export, see @diagram:Services", [task, diagram, { kind: "date", id: "2026-11-20", label: "20 Nov" }]);
+  assert.match(sent, /ensemble:\/\/task\/5f1c2a7c-5b3c-4f4e-9a21-3d1c2b4a5e6f/);
+  assert.match(sent, /diagram id d1/);
+  assert.doesNotMatch(sent, /20 Nov/);
+  assert.deepEqual(splitMentions(sent), { text: "Do @task:Fix the export, see @diagram:Services", mentions: [task, diagram] });
+  assert.equal(withMentions("Plain", []), "Plain");
+  assert.deepEqual(linkedTasks([sent, withMentions("Again", [task])]), [{ id: task.id, label: "Fix the export" }]);
+});
+
+test("the sessions list puts pinned threads first, then one group per folder, with No folder for the rest", () => {
+  const thread = (id: string, folder: string | null, updatedAt: string): CodeThread => ({ id, title: id, createdAt: updatedAt, updatedAt, turns: 1, last: null, place: { deviceId: null, deviceName: null, folder, workdir: null } });
+  const groups = groupThreads([thread("a", "/work/relay", "2026-11-01T00:00:00Z"), thread("b", null, "2026-11-03T00:00:00Z"), thread("c", "/work/relay", "2026-11-02T00:00:00Z"), thread("d", "/work/site", "2026-10-01T00:00:00Z")], new Set(["d"]));
+  assert.deepEqual(groups.map((group) => [group.label, group.threads.map((row) => row.id)]), [["Pinned", ["d"]], ["No folder", ["b"]], ["relay", ["c", "a"]]]);
+  assert.equal(shortAgo("2026-11-01T00:00:00Z", Date.parse("2026-11-01T03:10:00Z")), "3h");
+  assert.equal(shortAgo("2026-11-01T00:00:00Z", Date.parse("2026-11-03T00:00:00Z")), "2d");
+});
+
+test("a thread opens where it works: its folder in the editor's window, or Code's home with no folder", () => {
+  assert.equal(agentHref({ deviceId: "dev", folder: "/work/relay" }, { thread: "t1" }), "/code/review?device=dev&repo=%2Fwork%2Frelay&view=agent&thread=t1");
+  assert.equal(agentHref({ deviceId: null, folder: null }, { thread: "new" }), "/code?view=agent&thread=new");
+  assert.equal(agentHref({ deviceId: null, folder: "/work/relay" }, { view: "editor", file: "src/a.ts" }), "/code/review?repo=%2Fwork%2Frelay&view=editor&file=src%2Fa.ts");
 });

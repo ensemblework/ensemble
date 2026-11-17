@@ -332,7 +332,7 @@ test("offline, an edit waits on the page, marked unsaved, and is saved when the 
   }
 });
 
-test("Agent shows the folder's thread beside the same explorer; a message continues the thread's session in that folder", async () => {
+test("Agent shows the folder's thread with every session in the side panel; a message continues the thread's session in that folder", async () => {
   const fake = server();
   const base = globalThis.fetch;
   const THREAD = "7b2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
@@ -348,8 +348,16 @@ test("Agent shows the folder's thread beside the same explorer; a message contin
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const path = url.split("?")[0]!;
     const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
-    if (path.endsWith("/api/agent/threads")) return json({ threads: [{ id: THREAD, title: "Fix the export", createdAt: at, updatedAt: at, turns: 1, last: { id: "j1", status: "succeeded", engine: "codex", model: "gpt-6-luna" } }] });
-    if (path.endsWith(`/api/agent/threads/${THREAD}`)) return json({ thread: { id: THREAD, title: "Fix the export" }, turns: [turn] });
+    const place = { deviceId: null, deviceName: null, folder: "/work/app", workdir: "/work/app" };
+    if (path.endsWith("/api/agent/threads")) {
+      return json({
+        threads: [
+          { id: THREAD, title: "Fix the export", createdAt: at, updatedAt: at, turns: 1, last: { id: "j1", status: "succeeded", engine: "codex", model: "gpt-6-luna" }, place },
+          { id: "8c3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f60", title: "Plan the launch page", createdAt: at, updatedAt: "2026-10-13T07:00:00Z", turns: 1, last: null, place: { ...place, folder: null, workdir: null } },
+        ],
+      });
+    }
+    if (path.endsWith(`/api/agent/threads/${THREAD}`)) return json({ thread: { id: THREAD, title: "Fix the export", place }, turns: [turn] });
     if (path.endsWith("/api/subscriptions")) return json({ computers: [{ id: "c1", name: "This Mac", local: true, online: true, agents: [{ id: "codex", via: "cli", version: "1", signedIn: true, models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true }], checkedAt: at }] }] });
     if (path.endsWith("/api/agent/assign")) {
       assigned.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -368,7 +376,12 @@ test("Agent shows the folder's thread beside the same explorer; a message contin
     const agent = view.host.querySelector('[data-testid="agent-view"]')!;
     assert.match(agent.textContent ?? "", /Fix the export/);
     assert.match(agent.querySelector('[data-testid="agent-reply"]')?.textContent ?? "", /the export keeps dates/);
-    assert.ok(view.host.textContent?.includes("README.md"), "the explorer stays");
+    const sessions = view.host.querySelector('[data-testid="agent-sessions"]')!;
+    assert.ok(sessions, "the agent's sessions take the side panel");
+    assert.match(sessions.textContent ?? "", /app/);
+    assert.match(sessions.textContent ?? "", /No folder/);
+    assert.match(sessions.textContent ?? "", /Plan the launch page/);
+    assert.match(agent.querySelector('[data-testid="agent-placebar"]')?.textContent ?? "", /app/);
     const review = agent.querySelector('[data-testid="agent-files"] a')?.getAttribute("href") ?? "";
     assert.match(review, new RegExp(`review=${REVIEW}`));
     assert.match(review, /view=editor/);
@@ -392,8 +405,10 @@ test("Agent shows the folder's thread beside the same explorer; a message contin
     );
 
     await switchTo("Editor");
+    await settle(4);
     assert.ok(view.host.querySelector('[data-testid="agent-view"]')!.parentElement!.classList.contains("hidden"), "the thread stays, hidden");
     assert.ok(view.host.querySelector('[data-testid="review-editor"]'), "the editor is back");
+    assert.ok(view.host.textContent?.includes("README.md"), "the explorer is back in the side panel");
   } finally {
     await view.done();
     fake.restore();

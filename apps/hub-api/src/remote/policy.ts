@@ -117,12 +117,12 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     const previous = spec.continueFromJobId ? continueFrom(spec.continueFromJobId) : null;
     if (previous) {
       assign.continueFromJobId = previous;
-    } else if (codeTurn) {
+    } else if (codeTurn && spec.codeFolder?.trim()) {
       // Checked against the folders Code may use here before the run is made (accept.ts `codeFolderHere`).
-      const folder = spec.codeFolder?.trim() ?? "";
-      if (!folder) return { code: "UNKNOWN_FOLDER", message: "Open a folder in Code first: the agent works in the folder Code has open." };
       if (!settings.webEdit) return { code: "WEB_EDIT_OFF", message: "Changing code from the web is turned off on this computer. Turn it on there with `ensemble web edit on`." };
-      assign.folder = folder;
+      assign.folder = spec.codeFolder.trim();
+    } else if (codeTurn) {
+      // No folder: a new empty folder in this computer's Ensemble workspace, as for a task with none.
     } else if (label) {
       const shared = sharedFolder(settings, label);
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };

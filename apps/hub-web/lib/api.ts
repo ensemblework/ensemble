@@ -1031,7 +1031,13 @@ export type AssignInput = {
   surface?: "code";
 };
 
-/** A thread of the Code tab's agent for one folder (`GET /api/agent/threads`). */
+/**
+ * Where a thread of the Code tab's agent works: a paired computer (null: this one), the folder it was
+ * started in (null: a new folder in Ensemble's workspace), and the folder the agent works in when known.
+ */
+export type CodeThreadPlace = { deviceId: string | null; deviceName: string | null; folder: string | null; workdir: string | null };
+
+/** A thread of the Code tab's agent (`GET /api/agent/threads`). */
 export type CodeThread = {
   id: string;
   title: string;
@@ -1039,10 +1045,14 @@ export type CodeThread = {
   updatedAt: string;
   turns: number;
   last: { id: string; status: AgentJob["status"]; engine: string | null; model: string } | null;
+  place: CodeThreadPlace;
 };
 
+/** Where a turn's reply was kept (`POST /api/agent/threads/:id/save`). */
+export type KeptPage = { pageId: string; taskId: string | null; title: string };
+
 /** One turn of a thread: the run of one message. */
-export type CodeTurn = AgentJob & { reviewId: string | null };
+export type CodeTurn = AgentJob & { reviewId: string | null; saved?: KeptPage[] };
 
 export type JobEvent = { id: string; kind: string; data: Record<string, unknown>; at: string };
 
@@ -1732,10 +1742,14 @@ export const api = bindClient({
   deleteRun: (id: string) => del(`/api/runs/${id}`),
   workspace: () => get<WorkspaceBoard>("/api/workspace"),
   assign: (data: AssignInput) => post<{ jobId: string }>("/api/agent/assign", data),
-  /** The Code tab agent's threads for a folder on this computer (no `deviceId`) or a paired one. */
-  codeThreads: (folder: string, deviceId?: string) => get<{ threads: CodeThread[] }>(`/api/agent/threads${qs({ folder, deviceId })}`),
-  createCodeThread: (data: { folder: string; deviceId?: string; title: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
-  codeThread: (id: string) => get<{ thread: { id: string; title: string }; turns: CodeTurn[] }>(`/api/agent/threads/${id}`),
+  /** Every thread of the Code tab's agent, newest first (each with its place). */
+  codeThreads: () => get<{ threads: CodeThread[] }>("/api/agent/threads"),
+  /** A thread with no folder works in a new folder in that computer's Ensemble workspace. */
+  createCodeThread: (data: { folder: string | null; deviceId?: string; title: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
+  codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace }; turns: CodeTurn[] }>(`/api/agent/threads/${id}`),
+  /** Keeps a finished turn's reply on a page (a new one, a standalone one or a task's), marked as the agent's. */
+  keepCodeTurn: (threadId: string, data: { jobId: string; pageId?: string; taskId?: string; newPage?: { title: string } }) =>
+    post<{ page: { id: string; taskId: string | null; title: string; href: string } }>(`/api/agent/threads/${threadId}/save`, data),
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),
   job: (id: string) =>
     get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: Partial<SandboxCaps> & { effective: boolean; where?: "device" | "server" } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),

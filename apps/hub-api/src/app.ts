@@ -46,6 +46,7 @@ import { runRoutes } from "./routes/runs.js";
 import { systemRoutes } from "./routes/system.js";
 import { codeRoutes } from "./routes/code.js";
 import { agentRoutes } from "./routes/agents.js";
+import { codeThreadRoutes } from "./routes/code-threads.js";
 import { engineRoutes } from "./routes/engine.js";
 import { handoffRoutes } from "./routes/handoffs.js";
 import { runSecretRoutes } from "./routes/run-secrets.js";
@@ -325,6 +326,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     systemRoutes,
     codeRoutes,
     agentRoutes,
+    codeThreadRoutes,
     engineRoutes,
     handoffRoutes,
     runSecretRoutes,

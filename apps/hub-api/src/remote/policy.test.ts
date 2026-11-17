@@ -84,7 +84,7 @@ test("a code task with no repository and no shared folder works in a new empty f
   assert.equal(plan.assign.repoUrl, undefined);
 });
 
-test("a Code-tab agent turn from the web is a chat turn in the folder Code has open, never a pull request, and only with Change code from the web on", () => {
+test("a Code-tab agent turn from the web is a chat turn in the folder Code has open (only with Change code from the web on) or in a new workspace folder, never a pull request", () => {
   const turn = spec({ chat: true, surface: "code", codeFolder: "/home/mira/relay", instructions: "Fix the export", provider: "codex", branch: "feature", pullRequest: { base: "main", merge: "ask" } });
   const plan = planLocalJob(turn, settings(), () => null);
   assert.equal(isRefusal(plan), false);
@@ -100,8 +100,13 @@ test("a Code-tab agent turn from the web is a chat turn in the folder Code has o
   assert.equal(isRefusal(next) ? null : next.assign.continueFromJobId, "local-0");
   const off = planLocalJob(turn, { ...settings(), webEdit: false }, () => null);
   assert.equal(isRefusal(off) ? off.code : null, "WEB_EDIT_OFF");
-  const none = planLocalJob({ ...turn, codeFolder: null }, settings(), () => null);
-  assert.equal(isRefusal(none) ? none.code : null, "UNKNOWN_FOLDER");
+  // With no folder it works in a new folder of the workspace, whatever the web-edit switch says.
+  const none = planLocalJob({ ...turn, codeFolder: null }, { ...settings(), webEdit: false }, () => null);
+  assert.equal(isRefusal(none), false);
+  if (!isRefusal(none)) {
+    assert.equal(none.assign.chat, true);
+    assert.equal(none.assign.folder, undefined);
+  }
   // Without the surface a chat flag from the web is ignored, as before.
   const plain = planLocalJob(spec({ chat: true, instructions: "Start" }), settings(), () => null);
   assert.equal(isRefusal(plain) ? null : plain.assign.chat, undefined);

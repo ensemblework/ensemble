@@ -294,7 +294,7 @@ function useIdeApi(): IdeApi {
   return controls;
 }
 
-/** Opens the theme picker of the window's Theme button (Code's command palette, "Color theme…"). */
+/** Opens the theme picker of the window's Theme button (Code's command palette, "Color theme"). */
 export const THEME_PICKER_EVENT = "ensemble:code-theme-picker";
 
 export function ThemeControl() {

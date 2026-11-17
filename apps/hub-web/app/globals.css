@@ -750,6 +750,19 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
 .agent-block-edited {
   color: var(--tag-blue-fg);
 }
+.agent-block-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25em;
+  border-radius: 5px;
+  padding: 0 0.45em;
+  color: var(--muted);
+}
+.agent-block-link:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
 .agent-block-body > * + * {
   margin-top: 0.35em;
 }
