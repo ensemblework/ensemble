@@ -207,7 +207,7 @@ export async function runCopilot(
     }
   }
   const credential = registerEngineRun(ctx);
-  const ensembleMcp = mcpEnv(credential, options.chat === true);
+  const ensembleMcp = mcpEnv(credential, options.chat === true, ctx.job.context);
   // The run's ask_person (and Chat's board tools) server. Copilot's ACP takes only http servers
   // from the client, so it comes in as additional config; the file holds the run's ask-only secret.
   // ask_person waits for the person (a Needs me card lasts a day): Copilot's default MCP request

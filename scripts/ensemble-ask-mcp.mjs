@@ -15,6 +15,9 @@
  * In Chat with the person's own agent (ENSEMBLE_CHAT=1) it also offers their
  * Ensemble board: ensemble_list_tasks, ensemble_create_task and
  * ensemble_search, answered by /api/engine/tool for that chat's run only.
+ * A turn of the Code tab's agent (ENSEMBLE_CODE_AGENT=1 as well) also has
+ * Ensemble's actions (ensemble_actions, ensemble_act: tasks, pages, boards,
+ * diagrams, plots…), ensemble_context and the ranked ensemble_search.
  * In a task run it offers report_result (the run's structured result) and
  * attach_evidence (a file the owner should see), answered by the same route
  * (hub-api src/evidence/run-tools.ts, docs/30 §9), ensemble_context and ensemble_search (the
@@ -297,11 +300,19 @@ export function instructionsFor(env = process.env) {
   const never = "You already act in Ensemble through this server: never open Ensemble's web app (app.ensemblework.com, test.ensemblework.com or a board, task or page link) in a browser to sign in or to read the person's work, and never ask the person to sign in to it.";
   if (env.ENSEMBLE_ASSISTANT_TURN) return `This server's tools are the person's Ensemble: their tasks, boards, pages, files and settings, in the space this chat works in. ${never}`;
   const apps = "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack and others) are reached through ensemble_apps and ensemble_app_call with their own connections: use those rather than asking for app keys or signing in to the app.";
+  if (env.ENSEMBLE_CHAT === "1" && env.ENSEMBLE_CODE_AGENT === "1") return `You are the agent in the person's Ensemble Code tab. Their Ensemble is reached through this server: ensemble_actions and ensemble_act change their records (tasks, pages, boards, diagrams, plots, projects, people, meeting notes, comments) at once, with Ensemble's Undo; ensemble_search and ensemble_context read them; ensemble_create_task makes a card only when the person asks for one. ${apps} ${never}`;
   if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search; ensemble_context opens any ensemble:// record and what it links to. ${apps} ${never}`;
   return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. When the task asks you to change Ensemble itself (pages, boards, diagrams, plots, the task's fields), use ensemble_actions and ensemble_act. ${apps} ${never}`;
 }
 
+/** ensemble_act in a Code-tab turn: there is no report_result to send a result through. */
+const CODE_ACT_TOOL = { ...ACT_TOOL, description: ACT_TOOL.description.replace(" Your own result still goes through report_result.", "") };
+
 export function toolsFor(env = process.env) {
+  if (env.ENSEMBLE_CHAT === "1" && env.ENSEMBLE_CODE_AGENT === "1") {
+    const board = CHAT_TOOLS.filter((tool) => tool.name !== "ensemble_search");
+    return [TOOL, ...board, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, CODE_ACT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL];
+  }
   return env.ENSEMBLE_CHAT === "1"
     ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL]
     : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, ACT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL];

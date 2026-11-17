@@ -106,7 +106,7 @@ With the profile's git choice No limits the agent may also push and open or merg
 
 `hub_list_agent_options` lists profiles (default marked) and paired computers (online state, shared folders, which are shared as repositories, the coding agents each runs, and whether it opens pull requests).
 
-The assistant never runs commands. Ensemble Code adds folder-reading tools and `ensemble_start_agent` ([30](30_ENGINES.md)) and does not bypass routing or host security. Settings tools change allowlisted keys only; model choice uses the available catalog and validates effort. Secrets, permissions, folder trust and account controls stay human actions.
+The assistant never runs commands or edits code. Ensemble Code adds folder-reading tools and `ensemble_start_agent` ([30](30_ENGINES.md)) and does not bypass routing or host security. Coding with Ensemble's tools at hand is the Code tab's agent ([16 §9](16_CODE_TAB.md#9-the-agent)): the person's own coding agent, not the assistant. Settings tools change allowlisted keys only; model choice uses the available catalog and validates effort. Secrets, permissions, folder trust and account controls stay human actions.
 
 ## 7. Permissions and sharing
 

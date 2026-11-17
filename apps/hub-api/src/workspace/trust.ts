@@ -155,6 +155,19 @@ export function isChatTurn(context: unknown): boolean {
 }
 
 /**
+ * A chat turn of the Code tab's agent (docs/16 §9): its surface, and on a paired computer the folder
+ * Code has open there, by its path (checked there against its own Code folders). Null for any other run.
+ */
+export function codeTurnOf(context: unknown): { codeFolder: string | null } | null {
+  if (!isChatTurn(context) || (context as { surface?: unknown }).surface !== "code") return null;
+  const folder = (context as { codeFolder?: unknown }).codeFolder;
+  return { codeFolder: typeof folder === "string" && folder ? folder : null };
+}
+
+/** Whether a run is a turn of the Code tab's agent: its MCP server also has Ensemble's actions. */
+export const isCodeAgentTurn = (context: unknown): boolean => codeTurnOf(context) !== null;
+
+/**
  * A run that changes the one it continues, which was interrupted for it (Ensemble Node's steer,
  * node/sessions.ts): the change, kept on the job's context. It goes to the agent on its own.
  */

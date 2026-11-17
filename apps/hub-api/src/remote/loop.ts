@@ -146,6 +146,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
+    // Chat turns of the web's Code tab agent run here, in a folder Code may use here (the claim's `chat`, `surface`, `codeFolder`).
+    codeAgent: 1,
     // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
     runAnswers: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.

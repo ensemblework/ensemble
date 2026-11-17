@@ -132,7 +132,7 @@ export async function runCursor(
   const agent = await cursorAgentBinary();
   if (!agent) throw new Error("Cursor's agent is not on this computer (the `cursor-agent` command). Install it (curl https://cursor.com/install -fsS | bash), run `agent login`, and Run again.");
   const credential = registerEngineRun(ctx);
-  const ensembleMcp = mcpEnv(credential, options.chat === true);
+  const ensembleMcp = mcpEnv(credential, options.chat === true, ctx.job.context);
   const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...ensembleMcp };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;

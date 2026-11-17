@@ -304,7 +304,8 @@ function ObserveCard({ decision }: { decision: AgentDecisionRecord }) {
   );
 }
 
-function DecisionCard({ decision }: { decision: AgentDecisionRecord }) {
+/** One Needs me card; the Code tab agent's thread shows its own run's cards with it, and an answer in either place counts once. */
+export function DecisionCard({ decision }: { decision: AgentDecisionRecord }) {
   if (decision.canAnswer === false) return <ObserveCard decision={decision} />;
   if (decision.source === "ensemble" && decision.detail.deviceId) return <DeviceCard decision={decision} />;
   if (decision.source === "ensemble") return <EnsembleCard decision={decision} />;

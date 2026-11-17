@@ -9,6 +9,7 @@ Find sessions in **Assign → Continue an earlier task**, Ensemble Node's **Sess
 | Session | When it continues | When it is cleaned up |
 | --- | --- | --- |
 | Coding tasks and terminal chats | You continue an earlier task, or Ensemble selects a fitting session | After all its tasks are retired, or when you delete it |
+| Code tab agent thread | Each message in the thread, with the same agent | After the thread is deleted, or when you delete the session |
 | Node's own coding session | The node continues its work | After seven days without a run starting or finishing |
 | Assistant chat on an AI plan | Each message while the agent and conversation still match | With the chat, when replaced, or after 30 unused days |
 | Routine on an AI plan | Each routine run | With the routine, or after twice the gap to its next run, bounded to 30–90 days |
@@ -131,6 +132,8 @@ Sessions are listed by `ensemble sessions` ([26](26_CLI.md)), Assign's *Continue
 ### 1. Coding sessions: implementation reference
 
 A coding session (`workspace/sessions.ts`) is one conversation with a coding agent (Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code), carried across the runs that continue each other (`continueFromJobId`) with the same agent. It is derived from the runs, not stored: its id is its first run's id, its agent session is the newest `engine` event in it, and the chain's resource key keeps it to one turn at a time.
+
+A thread of the Code tab's agent ([16 §9](16_CODE_TAB.md#9-the-agent)) is such a chain of chat runs on one internal task off the board (`sourceRef` `code:<key>`), so the thread is the session: no second store. Its title is the task's; deleting the thread moves the task to Trash, and its session goes with retired work (§6).
 
 - Continuing a task in a session (Assign's "Continue an earlier task", the assistant's `session`, `Assign.session`) resumes the agent's own conversation (`earlierSession` walks back to the nearest recorded session) and sends the new task with a line saying it continues there (`sessionTaskPrompt`); the agent keeps what it learned and its prompt cache. A session that cannot be reopened (`SessionGoneError`) runs as a new one with the full prompt.
 - **A session that no longer exists.** The person may delete a session in the agent's own app, or the agent may expire it (Claude Code after 30 days). Every agent says so when asked to reopen it (Claude Code: "No conversation found", exit 1; Codex: "no rollout found for thread id"; Copilot, Cursor and the ACP agents: `session/load` refused), and the run goes on in a new session in the same folder with the full brief, which has the earlier task's title, outcome and summary ("This continues an earlier task"). Every agent keeps a session's id when it resumes it, so the web tells a resumed run from a restarted one by the ids computers already send (`sessionRestartOf` in `workspace/session-continuity.ts`): the task page says the earlier session no longer existed, the run's `SessionChoice.outcome.resumed` is false, and a node is told in its run note that the agent did not remember the earlier conversation.

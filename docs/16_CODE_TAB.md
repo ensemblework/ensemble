@@ -1,6 +1,6 @@
-# 16 · The Code tab: review, rewrite, commit and a guarded terminal
+# 16 · The Code tab: review, rewrite, commit, code with an agent and a guarded terminal
 
-Open **Code** in the sidebar, then choose **Review agent changes** or a repository from **Welcome**. Review each change, edit files and use Source control to commit or push. The guarded terminal lets you run supported commands on the selected computer.
+Open **Code** in the sidebar, then choose **Review agent changes** or a repository from **Welcome**. Review each change, edit files and use Source control to commit or push. Switch the window to **Agent** to work with your own coding agent in the same folder (§9). The guarded terminal lets you run supported commands on the selected computer.
 
 ## 1. Using it
 
@@ -9,6 +9,8 @@ Open **Code** in the sidebar, then choose **Review agent changes** or a reposito
 `/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area.
 
 An editor theme colours the surfaces, text and status colours, never the accent: icons, the active tab and selections keep the accent picked in Settings › Appearance, adjusted for the theme's light or dark surfaces.
+
+**Editor | Agent.** A repository or review's title bar starts with one switch between the editor and the agent's thread for the same folder and computer (§9). Ctrl+Alt+I, or *Code with the agent* in the command palette, switches too. The activity bar, side panel, terminal and status bar stay as they are in both; opening a file from the explorer, quick open or the thread shows the editor. The choice is kept in this browser (`ensemble.code.view`), and `?view=agent` or `?view=editor` in the address picks one.
 
 #### Activity bar
 
@@ -61,7 +63,7 @@ The strip scrolls sideways with the wheel and keeps the file in view on screen; 
 
 ### The Welcome
 
-- **Start**: *Open a repository…* (quick open, listing every repository by name), *Review agent changes*, *Open terminal*, *Show all commands*, and *Folders Code can use* (on the web, *Your computers*).
+- **Start**: *Open a repository…* (quick open, listing every repository by name), *Code with an agent…* (the same list; the repository opens in the agent's view), *Review agent changes*, *Open terminal*, *Show all commands*, and *Folders Code can use* (on the web, *Your computers*).
 - **Needs review**: agent changes not yet reviewed, newest first: task, repository, branch, files, model, when, lines added and removed. Six show; *View all* lists the rest in place.
 - **Recent repositories**: up to eight, most recently used first, with branch and (on the web) computer.
 - **Recent agent runs**: the last five code runs with their state, repository and computer, opening the run (`/runs?run=<id>`).
@@ -278,11 +280,33 @@ Only the run's files git still sees are staged (on disk, or tracked and so stage
 
 ---
 
+## 9. The agent
+
+Switch a repository or review to **Agent** to code with your own agent in that folder: Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code, signed in on the computer that has the folder ([30](30_ENGINES.md)). Ensemble does not take the provider's sign-in or run the agent on its servers.
+
+| You want to… | Do this |
+|---|---|
+| Start | Type in the box at the foot and press Enter (Shift+Enter for a new line). The first message names the thread |
+| Pick the agent and model | The agent chip: your AI plans signed in on that computer, with each model's cost and context sizes |
+| Set thinking, context window, fast mode | The chip beside it, when the model has them |
+| Decide how much it may do | *Ask*, *Review only* or *Run unattended* (the run modes of [24](24_DESKTOP_SANDBOXING.md)); the rest comes from your default run profile |
+| Watch the work | Each turn shows its work log (commands, edits, reads, searches, Ensemble and app calls, thinking) while it runs, then folds to *Worked for …*. A file in a row opens in the editor, even while the turn runs |
+| Answer a question | Its Needs me card shows in the thread too; an answer in either place counts once |
+| Review what it changed | The turn's *files changed* list opens each file in the editor's review of that turn; accept (Alt+Y) or reject (Alt+N) there |
+| Stop | The square button while a turn works |
+| Go back to an earlier thread | *Threads* lists this folder's threads, newest first; *New* starts one; ⋯ renames or deletes one (to Trash, with Undo) |
+
+**Two layers in one conversation.** The agent does the coding with its own tools in the folder: reads, edits, runs tests, commits and pushes, under the run's permissions. Through Ensemble's tools it also works in your Ensemble, in the space that is open: it reads and searches tasks, pages, boards and meetings, makes and changes pages, boards, diagrams, plots and tasks (at once, with Ensemble's Undo), and uses the apps you connected. It makes a task card only when you ask for one. It never changes settings, sharing, keys or the folders Code can use.
+
+Each message continues the agent's own session, so it remembers the thread. Choosing another agent mid-thread starts a new session with the earlier turn's summary ([41](41_AGENT_SESSIONS.md#1-coding-sessions)). The thread works in the folder as it is, on its current branch; use Source control to commit, push or open a pull request.
+
+On the web the thread runs on the paired computer that has the folder, with the same switches as the editor: *Change code from the web* must be on there, and the folder must be one Code can use there. That computer needs a version of Ensemble with the agent (`capabilities.codeAgent`); an older one is refused with how to update it.
+
 ## 7. In a space shared with you
 
 Code is view only for people a space is shared with ([29](29_SHARING.md)): they read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal stay with the owner. A paired computer's code on the web is only ever its owner's, whichever space is open.
 
-Code's window shows **View only** instead of the terminal and review actions, and the editor is read-only. A single "code" share opens the review list the same way.
+Code's window shows **View only** instead of the terminal and review actions, and the editor is read-only. The agent's view lists the folder's threads and their turns without the box to send. A single "code" share opens the review list the same way.
 
 The **Search and jump** dialog offers **Local repositories** and **Code reviews** as destinations (`/code#local-repositories` opens the Explorer, `/code#reviews` the *Changes to review* panel).
 
@@ -295,6 +319,14 @@ The **Search and jump** dialog offers **Local repositories** and **Code reviews*
 - **On the web, Ensemble's server relays the commands.** While the terminal is unlocked, a compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless turned off). The computer still applies its allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
 
 ## In the code
+
+### 9. The agent: implementation reference
+
+- **View.** `components/code/agent-view.tsx`, shown by `ide.tsx` in place of the tabs and editor (both stay mounted once shown). The thread's data and tool kinds are in `lib/code-agent.ts`. Its layout (a work log per turn, tool rows by kind, the turn's changed files with line counts) follows T3 Code's thread (MIT, Copyright (c) 2026 T3 Tools Inc.), drawn with Ensemble's components: `AgentPicker` and `TuningPicker` in their `compact` form, the Needs me `DecisionCard`, `MarkdownText`.
+- **Threads.** A thread is an internal task off the board (`sourceRef` `code:<key>`, the key a hash of the computer and folder; `codeThreadRef` in `lib/node-tasks.ts`, kept out of board lists by `ON_BOARD`). `GET /api/agent/threads?folder=&deviceId=` lists a folder's threads, `POST /api/agent/threads` makes one, `GET /api/agent/threads/:id` returns its turns in order (`routes/agents.ts`). Rename and delete are the task's own `PATCH`/`DELETE /api/tasks/:id`. The thread last open per folder is kept in this browser (`ensemble.code.threads`); the agent, model and mode in `ensemble.code.agent` and `ensemble.code.agentMode`.
+- **Turns.** Each message is `POST /api/agent/assign` with `chat: true`, `surface: "code"`, the folder, `continueFromJobId` of the turn before, `branchMode: "as-is"`, `markDone: false` and the default run profile's sandbox, internet, git and limits. The job's context keeps `chat` and `surface` (`codeTurnOf` in `workspace/trust.ts`). The work log reads the run's steps (`GET /api/runs/:id`) while the turn runs and when it is unfolded; the reply is the job's summary. A finished turn's files are its evidence; each opens `/code/review?review=<id>&file=<path>&view=editor` (on the web `device=<id>` and the computer's review id).
+- **Tools.** A code turn's MCP server runs with `ENSEMBLE_CODE_AGENT=1` (`mcpEnv` in `workspace/engines/registry.ts`): besides `ask_person`, the board's `ensemble_list_tasks` and `ensemble_create_task`, it has `ensemble_context`, the ranked `ensemble_search`, `ensemble_actions` and `ensemble_act` (the run allowlist of `bridge/actions.ts`) and the connected apps ([30](30_ENGINES.md)). `/api/engine/tool` answers them for a code turn as for a task run (`isCodeAgentTurn`). Its first message says where it is and what the two layers are (`codeAgentIntro` in `workspace/agent.ts`).
+- **On a paired computer.** The web's job keeps the folder's path as `context.codeFolder`; the claim sends `chat`, `surface` and `codeFolder` (`devices/routes.ts`) only to a computer with `capabilities.codeAgent` 1 (`deviceCodesWithAgent`). The computer plans it as a chat turn (`planLocalJob`), refuses it with *Change code from the web* off, and runs it only in a repository the Code API may open there (`codeFolderHere` in `remote/accept.ts`, `codeRepoRoots` in `lib/code-folders.ts`). Later turns of a thread go on its first turn's local task.
 
 ### 6. Speed
 

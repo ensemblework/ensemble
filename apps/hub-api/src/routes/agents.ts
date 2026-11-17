@@ -31,6 +31,7 @@ import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trus
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
 import { jobFileRoutes } from "./job-files.js";
+import { CODE_THREAD_PREFIX, codeThreadRef } from "../lib/node-tasks.js";
 
 const run = promisify(execFile);
 
@@ -325,6 +326,68 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         at: chunk.createdAt.toISOString(),
       })),
     };
+  });
+
+  /**
+   * Threads of the Code tab's agent (docs/16 §9): each is an internal task, off the board, keyed by the
+   * computer and folder it works in (`codeThreadRef`); its turns are the chat runs on that task, each
+   * continuing the one before it in the agent's own session.
+   */
+  const ThreadPlace = z.object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().min(1).max(1000) });
+
+  app.get("/api/agent/threads", async (request) => {
+    const place = ThreadPlace.parse(request.query);
+    const tasks = await prisma.task.findMany({
+      where: { userId: request.userId, deletedAt: null, sourceRef: codeThreadRef(place.deviceId, place.folder) },
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+      select: { id: true, title: true, createdAt: true, updatedAt: true },
+    });
+    const jobs = tasks.length
+      ? await prisma.workspaceJob.findMany({ where: { userId: request.userId, taskId: { in: tasks.map((task) => task.id) } }, orderBy: { createdAt: "desc" }, select: { id: true, taskId: true, status: true, provider: true, model: true, createdAt: true } })
+      : [];
+    const byTask = new Map<string, typeof jobs>();
+    for (const job of jobs) byTask.set(job.taskId, [...(byTask.get(job.taskId) ?? []), job]);
+    return {
+      threads: tasks
+        .map((task) => {
+          const turns = byTask.get(task.id) ?? [];
+          const last = turns[0] ?? null;
+          return {
+            id: task.id,
+            title: task.title,
+            createdAt: task.createdAt.toISOString(),
+            updatedAt: (last && last.createdAt > task.updatedAt ? last.createdAt : task.updatedAt).toISOString(),
+            turns: turns.length,
+            last: last ? { id: last.id, status: last.status, engine: last.provider, model: last.model } : null,
+          };
+        })
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    };
+  });
+
+  app.post("/api/agent/threads", async (request) => {
+    const body = ThreadPlace.extend({ title: z.string().trim().min(1).max(200) }).parse(request.body);
+    const task = await prisma.task.create({
+      data: { userId: request.userId, title: body.title, owner: "agent", status: "todo", sourceKind: "other", sourceRef: codeThreadRef(body.deviceId, body.folder), createdBy: "me" },
+      select: { id: true, title: true, createdAt: true, updatedAt: true },
+    });
+    return { thread: { id: task.id, title: task.title, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString(), turns: 0, last: null } };
+  });
+
+  app.get("/api/agent/threads/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const task = await prisma.task.findFirst({ where: { id, userId: request.userId, deletedAt: null, sourceRef: { startsWith: CODE_THREAD_PREFIX } }, select: { id: true, title: true } });
+    if (!task) return reply.code(404).send({ error: "That thread is gone." });
+    const jobs = await prisma.workspaceJob.findMany({
+      where: { userId: request.userId, taskId: id },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+      include: { task: { select: { id: true, title: true, priority: true, status: true } }, review: { select: { id: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
+    });
+    await onCurrentDevices(prisma, jobs);
+    const host = await canUseHostCredentials(request.userId);
+    return { thread: task, turns: jobs.map((job) => ({ ...card(job, undefined, { paths: host }), reviewId: job.review?.id ?? null })) };
   });
 
   app.get("/api/workspace/checkouts", async (request) => {

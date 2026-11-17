@@ -181,7 +181,7 @@ export async function runCodex(
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
   const credential = registerEngineRun(ctx);
-  const ensembleMcp = mcpEnv(credential, options.chat === true);
+  const ensembleMcp = mcpEnv(credential, options.chat === true, ctx.job.context);
   // The provider key from the login shell when this runtime (the desktop app, a login service) did not inherit it.
   const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...codexProviderKeyEnv(), ...ctx.secretEnv, ...ensembleMcp };
   // A key variable the person's own model provider reads (`env_key` in config.toml) stays: it is their provider, not an API account billed instead of the plan.

@@ -30,7 +30,7 @@ Pairing does not copy local data to the account; a local-only app's one-time mov
 
 When `POST /api/devices/self/claim` claims queued work, `devices/routes.ts` moves the agent-owned task to In progress and publishes both `task` and `workspace` events on the task's space channel. The open board, task details and run queue refresh without a page reload or tab switch. Work waiting for an offline computer or a queue slot stays in To do.
 
-The host's spec carries task context and execution choices (and `steer`, the change for a run that continues one a node interrupted: [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), never shell argv or a raw path on the computer; folder labels resolve against folders the computer shares. Hosted email verification and account quotas apply.
+The host's spec carries task context and execution choices (and `steer`, the change for a run that continues one a node interrupted: [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), never shell argv. A folder is a label the computer shares, resolved there; the one exception is a turn of the Code tab's agent, which names the folder Code has open by its path (`codeFolder`), and the computer runs it only in a repository its own Code API may open (§4.7). Hosted email verification and account quotas apply.
 
 An offline computer leaves its job queued; work never falls back to the server or another device. `remote/client.ts`, `accept.ts`, `policy.ts`, `store.ts` and `devices/routes.ts` implement this boundary.
 
@@ -105,6 +105,8 @@ Runtime 0.6.6 applies file-scoped protection to provenance-backed original reads
 The web terminal needs a **passkey unlock** with user verification for the web's origin, ending after **30 minutes idle** or **8 hours** (`devices/web-unlock.ts`). *Lock now* ends the session and stops its commands. Commands follow `workspace/terminal-exec.ts`: allowed programs, arguments and folders, hardened Git, confirmation for destructive actions, OS confinement, time and output limits.
 
 It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-terminal-for-you-only).
+
+**The agent's turns.** Code's Agent view ([16 §9](16_CODE_TAB.md#9-the-agent)) queues chat runs for the computer like Assign, with `surface: "code"`. The web keeps the folder's path as `context.codeFolder` and offers the turn only to a computer reporting `capabilities.codeAgent` 1. The claim carries `chat`, `surface` and `codeFolder`; `planLocalJob` makes it a chat turn (no pull request, the branch as it is) and refuses it while *Change code from the web* (`webEdit`) is off, and `codeFolderHere` (`remote/accept.ts`) keeps it only in a repository the local Code API may open (`codeRepoRoots`: the workspace, the folders Code can use, run checkouts and reviewed repositories). Later turns continue the run this computer made and keep one local task for the thread, off its board.
 
 ### 4.9 Subscriptions and included models
 

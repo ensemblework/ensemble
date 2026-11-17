@@ -146,6 +146,14 @@ test("the run's ensemble MCP server offers the person's board only in Chat, the 
   assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "ensemble_context", "ensemble_apps", "ensemble_app_call", "secret_http"]);
 });
 
+test("the Code tab's agent has Ensemble's actions and the ranked search as well as the board, and no task-run report", () => {
+  const tools = toolsFor({ ENSEMBLE_CHAT: "1", ENSEMBLE_CODE_AGENT: "1" });
+  assert.deepEqual(tools.map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_context", "ensemble_search", "ensemble_actions", "ensemble_act", "ensemble_apps", "ensemble_app_call", "secret_http"]);
+  assert.doesNotMatch(tools.find((tool) => tool.name === "ensemble_act")!.description, /report_result/);
+  // Outside Chat the flag means nothing: a task run keeps its own tools.
+  assert.deepEqual(toolsFor({ ENSEMBLE_CODE_AGENT: "1" }).map((tool) => tool.name), toolsFor({}).map((tool) => tool.name));
+});
+
 test("a waiting question sends progress only when the agent gave a progress token", async () => {
   const sent: Array<{ params: { progressToken: unknown; progress: number } }> = [];
   assert.equal(typeof heartbeat({ params: {} }, (message: never) => sent.push(message), 5), "function");

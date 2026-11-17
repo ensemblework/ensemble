@@ -260,7 +260,7 @@ export async function runClaudeCode(
     ...(name ? ["--name", name] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
-  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true), MCP_TOOL_TIMEOUT: String(86_400_000) };
+  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true, ctx.job.context), MCP_TOOL_TIMEOUT: String(86_400_000) };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;

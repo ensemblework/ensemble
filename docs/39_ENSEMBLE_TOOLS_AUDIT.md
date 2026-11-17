@@ -11,6 +11,7 @@ Use this guide to understand those boundaries. For specific assistant requests, 
 | Hub assistant | The chat's current space, with your access there |
 | Ensemble Node | Spaces its owner can open, with the owner's role. A room with other people is restricted to its shared space |
 | Assigned agent | Its task brief, allowed run folder and permitted task-space actions. Changes and connected apps require the owner's own space |
+| Code tab agent | The folder Code has open, and the space that is open: an assigned agent's actions and connected apps, plus your board's task list. Changes and connected apps require the owner's own space |
 | MCP-connected editor or agent | The key's space and other spaces its account owns when explicitly selected. Grants control changes and connected apps |
 
 These agents use Ensemble's tools under their existing identity. They do not need to open Ensemble in a browser or ask you to sign in again.
@@ -65,13 +66,14 @@ What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub 
 | Hub assistant | The registry's Hub tools (`assistant/registry.ts`), routed by playbooks ([11 §3](11_HOW_THE_ASSISTANT_WORKS.md#playbook-routing)) | The space the chat is in, with the person's access there |
 | Ensemble Node | The same Hub tools, each with an optional `space` (`node/spaces.ts`), plus the node tools (`node/tools.ts`, `node/device-tools.ts`) | Every space its owner can open, with their current role in each; only the room's shared space where other people read ([35 §5.4](35_ENSEMBLE_NODE.md#54-every-space-its-owner-can-open)) |
 | An agent run | Its brief (the task's title, description, page, files and the context around it) and the run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) | The run's folder on the computer. The MCP server answers on the computer's loopback (`/api/engine/*`); `ensemble_context`, `ensemble_search`, `ensemble_actions`, `ensemble_act`, `ensemble_apps` and `ensemble_app_call` are answered by Ensemble on the web for a task claimed from there, under the job's lease. Actions and connected apps only in its owner's own space |
+| The Code tab's agent ([16 §9](16_CODE_TAB.md#9-the-agent)) | A chat run's `ensemble` MCP server with `ENSEMBLE_CODE_AGENT=1`: an agent run's `ensemble_context`, `ensemble_search`, `ensemble_actions`, `ensemble_act`, `ensemble_apps` and `ensemble_app_call`, Chat's `ensemble_list_tasks` and `ensemble_create_task`, and `ask_person`; no `report_result` or browser tools | The folder Code has open on that computer and the thread's space, answered as for an agent run (on the web, under the job's lease). Actions and connected apps only in its owner's own space |
 | An editor or agent with an MCP key | The Context Bridge (`ensemble mcp` from the CLI, or the hosted `/mcp`), with a key's grants: changes, connected apps ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)) | The key's own space and, when a call names one, every other space its account owns. The assistant's tools on an allowlist (`bridge/actions.ts`): a run's everyday part and the rest marked `keyOnly`, plus the connected apps |
 
 Each one is already signed in as its owner. None of them opens Ensemble's web app in a browser (§4).
 
 ### 2. The matrix: implementation reference
 
-A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)); "MCP" marks what an MCP key has and a run does not.
+A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. The Code tab's agent has the agent-run part of the last column. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)); "MCP" marks what an MCP key has and a run does not.
 
 OAuth clients use the same Context Bridge grants and allowlist through named `ensemble_action_*` and `ensemble_app_*` tools instead of the legacy catch-alls. The core reads, task writes, file uploads and resources remain; enum operations are fixed per tool and inputs use the original action/app schemas. This is a tool profile, not extra authority. Static keys can opt into the catalog with `x-ensemble-tools: catalog` ([Context Bridge §5.4](CONTEXT_BRIDGE.md#54-named-catalog-profile)).
 

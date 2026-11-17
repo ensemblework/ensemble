@@ -1025,7 +1025,24 @@ export type AssignInput = {
    * The server then allows commits, turns the internet on, and uses `branch` (or a name it picks).
    */
   pullRequest?: { base: string; merge: "ask" | "auto" | "never" };
+  /** One message to the person's own coding agent: with `continueFromJobId` its own session continues. */
+  chat?: boolean;
+  /** `code`: a turn of the Code tab's agent, with Ensemble's actions as well (docs/16 §9). */
+  surface?: "code";
 };
+
+/** A thread of the Code tab's agent for one folder (`GET /api/agent/threads`). */
+export type CodeThread = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  turns: number;
+  last: { id: string; status: AgentJob["status"]; engine: string | null; model: string } | null;
+};
+
+/** One turn of a thread: the run of one message. */
+export type CodeTurn = AgentJob & { reviewId: string | null };
 
 export type JobEvent = { id: string; kind: string; data: Record<string, unknown>; at: string };
 
@@ -1715,6 +1732,10 @@ export const api = bindClient({
   deleteRun: (id: string) => del(`/api/runs/${id}`),
   workspace: () => get<WorkspaceBoard>("/api/workspace"),
   assign: (data: AssignInput) => post<{ jobId: string }>("/api/agent/assign", data),
+  /** The Code tab agent's threads for a folder on this computer (no `deviceId`) or a paired one. */
+  codeThreads: (folder: string, deviceId?: string) => get<{ threads: CodeThread[] }>(`/api/agent/threads${qs({ folder, deviceId })}`),
+  createCodeThread: (data: { folder: string; deviceId?: string; title: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
+  codeThread: (id: string) => get<{ thread: { id: string; title: string }; turns: CodeTurn[] }>(`/api/agent/threads/${id}`),
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),
   job: (id: string) =>
     get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: Partial<SandboxCaps> & { effective: boolean; where?: "device" | "server" } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),
