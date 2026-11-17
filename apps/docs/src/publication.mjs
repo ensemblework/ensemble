@@ -2,7 +2,7 @@ import MarkdownIt from 'markdown-it';
 import { pagePath } from './render.mjs';
 
 // These guides describe maintaining Ensemble, not using the public product.
-const INTERNAL_GUIDES = new Set(['01_TECH_STACK_AND_ENVIRONMENT.md', '17_REPOSITORY_STRUCTURE.md', '36_WEB_TESTING.md', '37_PAUSED_CHECKS.md', 'BRAND.md', 'CACHING.md', 'DEMO_DATA.md', 'desktop/MAC_CHECKLIST.md', '22_BLOCK_DIAGRAMS_FOR_AGENTS.md']);
+const INTERNAL_GUIDES = new Set(['01_TECH_STACK_AND_ENVIRONMENT.md', '17_REPOSITORY_STRUCTURE.md', '36_WEB_TESTING.md', '37_PAUSED_CHECKS.md', 'BRAND.md', 'CACHING.md', 'DEMO_DATA.md', 'desktop/MAC_CHECKLIST.md', '22_BLOCK_DIAGRAMS_FOR_AGENTS.md', 'self-hosting.md']);
 const INTERNAL_HEADING = /^(?:\d+[a-z]?[. ·]+)?(?:in the code|source map|code map|api(?: contract)?|routes|tests?(?: and|$)|verification|architecture|pieces|normalized model|storage & performance|how a space is stored|which space a request uses|component ownership|libraries and runtime ownership|how it is built|pipeline|json model|build and hosting|operator settings|data and retention|how a call is metered|what .* says|adding a tool|conventions and logs|how it works$)/i;
 // "How it works" is a reader heading in Imports; keep it there explicitly.
 const SOURCE_PATH = /(?:^|[\s`(])(?:apps|packages|scripts|infra|src|components|lib|routes|workspace|assistant|jobs|included|runtime|remote|connectors|prisma|\.github)\/[\w.*()[\]/-]+|\b[\w-]+\.(?:tsx?|jsx?|mjs|cjs|py|rs)\b/;
