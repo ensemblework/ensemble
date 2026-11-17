@@ -26,9 +26,10 @@ export async function deviceAssignment(
     engine?: string;
     /** The run ends in a pull request Ensemble opens: the computer's runtime must support it. */
     pullRequest?: boolean;
-    /** A turn of the Code tab's agent: the computer's runtime must take one (`capabilities.codeAgent`). */
-    codeAgent?: boolean;
-    /** That turn's folder, by the path Code has open there; the computer checks it against its own Code folders. */
+    /**
+     * A turn of the Code tab's agent in a folder, by its path there: the computer's runtime must take one
+     * (`capabilities.codeAgent`) and checks it against its own Code folders. A turn with no folder needs neither.
+     */
     codeFolder?: string;
   },
   where: { space: string; runner: string | null } = { space: userId, runner: null },
@@ -46,8 +47,9 @@ export async function deviceAssignment(
   if (input.engine && input.engine !== "ensemble" && !deviceEngines(device.capabilities).includes(input.engine)) {
     throw new GuardError(`Ensemble on ${device.name} is too old to run ${input.engine === "copilot-cli" ? "GitHub Copilot" : input.engine} there. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
   }
-  if (input.codeAgent && !deviceCodesWithAgent(device.capabilities)) {
-    throw new GuardError(`Ensemble on ${device.name} is too old for the Code tab's agent. Update it on that computer (\`ensemble update\`, or the desktop app's update), then send again.`);
+  if (input.codeFolder && !deviceCodesWithAgent(device.capabilities)) {
+    const version = /(\d+\.\d+\.\d+)/.exec(device.appVersion ?? "")?.[1];
+    throw new GuardError(`Ensemble${version ? ` ${version}` : ""} on ${device.name} cannot run the agent in a folder of its own yet; a newer Ensemble release adds it. Choose No folder to start now: the agent works in a new folder in its Ensemble workspace.`);
   }
   if (input.pullRequest && !deviceOpensPullRequests(device.capabilities)) {
     throw new GuardError(`Ensemble on ${device.name} is too old to open pull requests into any branch. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);

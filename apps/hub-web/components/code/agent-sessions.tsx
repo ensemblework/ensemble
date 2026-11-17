@@ -1,0 +1,246 @@
+"use client";
+
+/**
+ * The agent's sessions in Code's side panel (docs/16 §9), as Cursor and T3 Code list theirs: New thread,
+ * a search, pinned threads, then one group per folder (and computer, when there are several) with
+ * "No folder" for threads that work in a new workspace folder; each thread with its state, its agent
+ * and how long ago it worked. Right-click a thread or a group for what fits it; double-click or F2
+ * renames a thread.
+ */
+import { useQueryClient } from "@tanstack/react-query";
+import { isCodeEngine } from "@ensemble/shared-types";
+import { ChevronRight, Copy, FolderGit2, FolderOpen, House, Pin, Plus, Search, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { copyText } from "@/components/context-menu/builders";
+import { openContextMenu } from "@/components/context-menu/menu-store";
+import { ProviderLogo } from "@/components/connectors/provider-logo";
+import { SkeletonRows, Spinner, cx } from "@/components/ui";
+import { api, type CodeThread } from "@/lib/api";
+import { groupThreads, isLive, shortAgo, type ThreadGroup } from "@/lib/code-agent";
+import { usePersistentState } from "@/lib/prefs";
+import { PanelHeader } from "./ide-chrome";
+import { refreshThreads, threadMenu, useCodeThreads, useDeleteThread, useRenameThread } from "./agent-actions";
+
+export type ThreadPlace = { deviceId: string | null; folder: string | null };
+
+const SHOWN = 8;
+
+export function AgentSessions({
+  selected,
+  current = null,
+  onSelect,
+  onNew,
+  onOpenFolder,
+  viewOnly,
+}: {
+  selected: string | null;
+  /** The IDE's own folder: its group comes first. */
+  current?: ThreadPlace | null;
+  onSelect: (thread: CodeThread) => void;
+  onNew: (place: ThreadPlace | null) => void;
+  onOpenFolder: (place: { deviceId: string | null; folder: string }) => void;
+  viewOnly: boolean;
+}) {
+  const client = useQueryClient();
+  const threads = useCodeThreads();
+  const [pinned, setPinned] = usePersistentState<string[]>("ensemble.code.pinned", []);
+  const [collapsed, setCollapsed] = usePersistentState<string[]>("ensemble.code.closedGroups", []);
+  const [query, setQuery] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [more, setMore] = useState<string[]>([]);
+  const rename = useRenameThread();
+  const remove = useDeleteThread((id) => {
+    if (id === selected) onNew(current);
+  });
+
+  const all = threads.data?.threads ?? [];
+  const computers = new Set(all.map((row) => row.place.deviceId ?? "local")).size;
+  const needle = query.trim().toLowerCase();
+  const groups = useMemo(() => {
+    const list = groupThreads(needle ? all.filter((row) => row.title.toLowerCase().includes(needle)) : all, new Set(pinned), { computers });
+    if (!current) return list;
+    const here = list.findIndex((group) => !group.pinned && group.deviceId === current.deviceId && group.folder === current.folder);
+    return here > 0 ? [...list.slice(0, here).filter((group) => group.pinned), list[here]!, ...list.filter((group, index) => index !== here && !group.pinned)] : list;
+  }, [all, pinned, needle, computers, current]);
+
+  const togglePin = (id: string) => setPinned((list) => (list.includes(id) ? list.filter((row) => row !== id) : [id, ...list].slice(0, 50)));
+  const toggleGroup = (key: string) => setCollapsed((list) => (list.includes(key) ? list.filter((row) => row !== key) : [...list, key]));
+
+  const rowMenu = (thread: CodeThread) =>
+    threadMenu(thread, {
+      open: () => onSelect(thread),
+      rename: viewOnly ? null : () => setRenaming(thread.id),
+      pinned: pinned.includes(thread.id),
+      togglePin: () => togglePin(thread.id),
+      openFolder: thread.place.folder ? () => onOpenFolder({ deviceId: thread.place.deviceId, folder: thread.place.folder! }) : null,
+      newHere: () => onNew(thread.place),
+      remove: () => remove.mutate(thread.id),
+      stop: thread.last ? () => void api.stopJob(thread.last!.id).finally(() => refreshThreads(client, thread.id)) : null,
+      viewOnly,
+    });
+
+  const groupMenu = (group: ThreadGroup) => ({
+    title: group.label,
+    sections: [
+      {
+        items: [
+          ...(!group.pinned && !viewOnly ? [{ id: "new", label: group.folder ? "New thread in this folder" : "New thread without a folder", icon: Plus, run: () => onNew({ deviceId: group.deviceId, folder: group.folder }) }] : []),
+          ...(group.folder ? [{ id: "open", label: "Open the folder in the editor", icon: FolderOpen, run: () => onOpenFolder({ deviceId: group.deviceId, folder: group.folder! }) }] : []),
+          ...(group.folder ? [{ id: "copy", label: "Copy the folder's path", icon: Copy, run: () => copyText(group.folder!) }] : []),
+        ],
+      },
+      { items: [{ id: "fold", label: collapsed.includes(group.key) ? "Expand" : "Collapse", icon: ChevronRight, run: () => toggleGroup(group.key) }] },
+    ],
+  });
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="agent-sessions">
+      <PanelHeader title="Agent">
+        {viewOnly ? null : (
+          <button type="button" className="icon-btn h-6 w-6" title="New thread" aria-label="New thread" onClick={() => onNew(current)}>
+            <Plus size={14} />
+          </button>
+        )}
+      </PanelHeader>
+      <div className="space-y-1.5 px-2 pb-2">
+        {viewOnly ? null : (
+          <button type="button" className={cx("agent-new-thread", selected === null && "is-selected")} onClick={() => onNew(current)}>
+            <Plus size={14} aria-hidden /> New thread
+          </button>
+        )}
+        <label className="compound-field flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2">
+          <Search size={12} className="shrink-0 text-faint" aria-hidden />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a thread" aria-label="Find a thread" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-faint" />
+          {query ? (
+            <button type="button" className="text-faint hover:text-ink" aria-label="Clear" onClick={() => setQuery("")}>
+              <X size={12} />
+            </button>
+          ) : null}
+        </label>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-3" aria-label="Threads">
+        {threads.isLoading ? <div className="px-2"><SkeletonRows count={4} /></div> : null}
+        {threads.error ? (
+          <div className="px-3 text-[12.5px] text-muted">
+            {(threads.error as Error).message}{" "}
+            <button type="button" className="text-accent hover:underline" onClick={() => void threads.refetch()}>Retry</button>
+          </div>
+        ) : null}
+        {threads.data && !groups.length ? <p className="px-3 py-1 text-[12.5px] text-muted">{needle ? "No thread matches." : "No threads yet."}</p> : null}
+        {groups.map((group) => {
+          const shut = collapsed.includes(group.key) && !needle && !group.threads.some((row) => row.id === selected);
+          const open = more.includes(group.key) || needle;
+          const shown = open ? group.threads : group.threads.slice(0, SHOWN);
+          const Icon = group.pinned ? Pin : group.folder ? FolderGit2 : House;
+          return (
+            <section key={group.key} className="mt-1" aria-label={group.label}>
+              <div className="group flex items-center pr-1.5" onContextMenu={(event) => openContextMenu(event, () => groupMenu(group))}>
+                <button type="button" className="agent-group" aria-expanded={!shut} onClick={() => toggleGroup(group.key)} title={group.folder ?? (group.pinned ? "Pinned threads" : "Threads that work in a new folder in Ensemble's workspace")}>
+                  <ChevronRight size={12} className={cx("shrink-0 transition-transform", !shut && "rotate-90")} aria-hidden />
+                  <Icon size={13} className="shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                </button>
+                {!group.pinned && !viewOnly ? (
+                  <button type="button" className="icon-btn h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" title={group.folder ? "New thread in this folder" : "New thread without a folder"} aria-label={`New thread in ${group.label}`} onClick={() => onNew({ deviceId: group.deviceId, folder: group.folder })}>
+                    <Plus size={13} />
+                  </button>
+                ) : null}
+              </div>
+              {shut ? null : (
+                <ul>
+                  {shown.map((thread) => (
+                    <li key={thread.id}>
+                      {renaming === thread.id ? (
+                        <RenameRow
+                          title={thread.title}
+                          onDone={(title) => {
+                            setRenaming(null);
+                            if (title && title !== thread.title) rename.mutate({ id: thread.id, title });
+                          }}
+                        />
+                      ) : (
+                        <SessionRow
+                          thread={thread}
+                          selected={thread.id === selected}
+                          onOpen={() => onSelect(thread)}
+                          onRename={viewOnly ? null : () => setRenaming(thread.id)}
+                          onMenu={(event) => openContextMenu(event, () => rowMenu(thread))}
+                        />
+                      )}
+                    </li>
+                  ))}
+                  {group.threads.length > SHOWN && !needle ? (
+                    <li>
+                      <button type="button" className="agent-more" onClick={() => setMore((list) => (list.includes(group.key) ? list.filter((row) => row !== group.key) : [...list, group.key]))}>
+                        {open ? "Show fewer" : `Show ${group.threads.length - SHOWN} more`}
+                      </button>
+                    </li>
+                  ) : null}
+                </ul>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SessionRow({ thread, selected, onOpen, onRename, onMenu }: { thread: CodeThread; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
+  const status = thread.last?.status;
+  const live = Boolean(status && isLive(status));
+  const tone = status === "failed" || status === "blocked" || status === "interrupted" ? "bg-danger" : status === "waiting_approval" ? "bg-warn" : "bg-faint";
+  return (
+    <button
+      type="button"
+      className={cx("agent-session", selected && "is-selected")}
+      aria-current={selected ? "true" : undefined}
+      title={thread.title}
+      onClick={onOpen}
+      onDoubleClick={onRename ?? undefined}
+      onContextMenu={onMenu}
+      onKeyDown={(event) => {
+        if (event.key === "F2" && onRename) {
+          event.preventDefault();
+          onRename();
+        }
+      }}
+      data-testid="agent-session"
+    >
+      <span className="flex w-3 shrink-0 justify-center" aria-hidden>
+        {live ? <Spinner size={10} /> : <span className={cx("h-1.5 w-1.5 rounded-full", tone)} />}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+      {thread.last?.engine && isCodeEngine(thread.last.engine) ? <ProviderLogo id={thread.last.engine} size={11} /> : null}
+      <span className="shrink-0 tabular-nums text-[11px] text-faint">{live ? (status === "waiting_approval" ? "asks" : "now") : shortAgo(thread.updatedAt)}</span>
+    </button>
+  );
+}
+
+function RenameRow({ title, onDone }: { title: string; onDone: (title: string | null) => void }) {
+  const [draft, setDraft] = useState(title);
+  const done = useRef(false);
+  const finish = (value: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(value);
+  };
+  return (
+    <div className="px-2 py-0.5">
+      <input
+        autoFocus
+        value={draft}
+        maxLength={200}
+        aria-label="Thread name"
+        className="field h-7 w-full px-2 text-[12.5px]"
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={() => finish(draft.trim() || null)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") finish(draft.trim() || null);
+          else if (event.key === "Escape") finish(null);
+        }}
+      />
+    </div>
+  );
+}

@@ -20,7 +20,7 @@ export default function ReviewPage() {
   const view = params.get("view");
   return (
     <CodeTargetProvider value={target}>
-      <CodeIde key={`${device ?? ""}:${review ?? ""}:${repo ?? ""}`} source={source} initialFile={params.get("file")} initialView={view === "agent" || view === "editor" ? (view as IdeView) : null} />
+      <CodeIde key={`${device ?? ""}:${review ?? ""}:${repo ?? ""}`} source={source} initialFile={params.get("file")} initialView={view === "agent" || view === "editor" ? (view as IdeView) : null} initialThread={params.get("thread")} />
     </CodeTargetProvider>
   );
 }

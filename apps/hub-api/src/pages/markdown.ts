@@ -158,7 +158,7 @@ export interface AgentBlockMeta {
  * Retries on a revision race with the engineer's own save.
  */
 /** Matches the editor's fingerprint of node.textContent (all text, no separators). */
-function fingerprint(nodes: PageNode[]): string {
+export function fingerprint(nodes: PageNode[]): string {
   const flat = (node: PageNode): string => (node.type === "text" ? node.text ?? "" : (node.content ?? []).map(flat).join(""));
   const text = nodes.map(flat).join("");
   let hash = 5381;

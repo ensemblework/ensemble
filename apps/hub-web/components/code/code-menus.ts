@@ -132,7 +132,7 @@ function codeAskItems(ctx: CodeMenuContext, path: string, selection?: Picked): M
       submenu: () => ({
         sections: [
           { items: CODE_ASKS.map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: ask(preset.prompt) })) },
-          { items: [{ id: "ask-own", label: "Ask something else…", icon: MessageSquarePlus, run: ask() }] },
+          { items: [{ id: "ask-own", label: "Ask something else", icon: MessageSquarePlus, run: ask() }] },
         ],
       }),
     },
@@ -169,8 +169,8 @@ export function explorerMenu(ctx: CodeMenuContext, entry: { path: string; dir: b
     if (can && ctx.newEntry) {
       sections.push({
         items: [
-          { id: "new-file", label: "New file…", icon: FilePlus2, run: () => ctx.newEntry!("file", path) },
-          { id: "new-folder", label: "New folder…", icon: FolderPlus, run: () => ctx.newEntry!("folder", path) },
+          { id: "new-file", label: "New file", icon: FilePlus2, run: () => ctx.newEntry!("file", path) },
+          { id: "new-folder", label: "New folder", icon: FolderPlus, run: () => ctx.newEntry!("folder", path) },
         ],
       });
     }
@@ -187,7 +187,7 @@ export function explorerMenu(ctx: CodeMenuContext, entry: { path: string; dir: b
   if (can) {
     sections.push({
       items: [
-        ...(ctx.rename ? [{ id: "rename", label: "Rename…", icon: Pencil, hint: "F2", run: () => ctx.rename!(path) }] : []),
+        ...(ctx.rename ? [{ id: "rename", label: "Rename", icon: Pencil, hint: "F2", run: () => ctx.rename!(path) }] : []),
         {
           id: "delete",
           label: "Delete",
@@ -226,8 +226,8 @@ export function folderMenu(ctx: CodeMenuContext, folder = ""): MenuSpec {
         ? [
             {
               items: [
-                { id: "new-file", label: "New file…", icon: FilePlus2, run: () => ctx.newEntry!("file", folder) },
-                { id: "new-folder", label: "New folder…", icon: FolderPlus, run: () => ctx.newEntry!("folder", folder) },
+                { id: "new-file", label: "New file", icon: FilePlus2, run: () => ctx.newEntry!("file", folder) },
+                { id: "new-folder", label: "New folder", icon: FolderPlus, run: () => ctx.newEntry!("folder", folder) },
               ],
             },
           ]

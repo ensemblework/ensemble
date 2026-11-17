@@ -288,6 +288,21 @@
           },
           "fingerprint": {
             "default": null
+          },
+          "source": {
+            "default": ""
+          },
+          "engine": {
+            "default": ""
+          },
+          "threadId": {
+            "default": null
+          },
+          "folder": {
+            "default": ""
+          },
+          "computer": {
+            "default": ""
           }
         }
       }

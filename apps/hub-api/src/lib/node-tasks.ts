@@ -20,15 +20,17 @@ export const nodeTaskRef = (nodeId: string): string => `${NODE_TASK_PREFIX}${nod
 export const isNodeTask = (task: { sourceRef?: string | null }): boolean => Boolean(task.sourceRef?.startsWith(NODE_TASK_PREFIX));
 
 /**
- * The key of a Code-tab thread's folder: the computer (a paired computer's id, or "local" for this
- * Ensemble) and the folder's path, hashed so the path itself is not stored on the task.
+ * The key of a Code-tab thread's place: the computer (a paired computer's id, or "local" for this
+ * Ensemble) and the folder's path, hashed so the path itself is not stored on the task. A thread with
+ * no folder (it works in a new folder in Ensemble's workspace) has a key of its own per computer.
  */
-export function codeThreadKey(deviceId: string | null | undefined, folder: string): string {
+export function codeThreadKey(deviceId: string | null | undefined, folder: string | null | undefined): string {
   const where = deviceId || "local";
-  return createHash("sha256").update(`${where}\n${folder.trim().replace(/\/+$/, "") || "/"}`).digest("hex").slice(0, 32);
+  const path = folder?.trim() ? folder.trim().replace(/\/+$/, "") || "/" : "\0none";
+  return createHash("sha256").update(`${where}\n${path}`).digest("hex").slice(0, 32);
 }
 
-export const codeThreadRef = (deviceId: string | null | undefined, folder: string): string => `${CODE_THREAD_PREFIX}${codeThreadKey(deviceId, folder)}`;
+export const codeThreadRef = (deviceId: string | null | undefined, folder: string | null | undefined): string => `${CODE_THREAD_PREFIX}${codeThreadKey(deviceId, folder)}`;
 
 export const isCodeThreadTask = (task: { sourceRef?: string | null }): boolean => Boolean(task.sourceRef?.startsWith(CODE_THREAD_PREFIX));
 

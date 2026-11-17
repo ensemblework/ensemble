@@ -58,6 +58,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout, type IdeLayout } from "@/components/code/ide-chrome";
 import { AgentView } from "@/components/code/agent-view";
+import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
+import { agentHref, type IdeView } from "@/lib/code-agent";
 import { AgentIcon } from "@/components/agent-icon";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
@@ -82,7 +84,7 @@ import { copyText } from "@/components/context-menu/builders";
 import { previewOf } from "@/lib/file-kinds";
 import { desktopShell } from "@/lib/desktop-param";
 import { parseQuickInput, rankByLabel, rankFiles } from "@/lib/code-quick-open";
-import { QuickOpen, useKeyLabel, type QuickItem, type QuickList } from "./quick-open";
+import { QuickOpen, useKeyLabel, useLinkNavigate, type QuickItem, type QuickList } from "./quick-open";
 
 type EditorModule = typeof import("@/components/code/review-editor");
 let editorModule: EditorModule | null = null;
@@ -108,9 +110,8 @@ function useReviewEditor(): EditorModule["ReviewEditor"] | null {
 const STATUS_COLOR: Record<string, string> = { A: "text-ok", U: "text-ok", M: "text-warn", D: "text-danger", R: "text-accent" };
 const SAVE_MS = 700;
 
-type Panel = "files" | "search" | "scm";
-/** The window's main area: the editor, or a thread with the person's coding agent in the same folder (docs/16 §9). */
-export type IdeView = "editor" | "agent";
+type Panel = "files" | "search" | "scm" | "agent";
+export type { IdeView };
 /** What the command palette asks of the explorer. */
 type ExplorerAsk = "new-file" | "new-folder" | "collapse";
 
@@ -185,7 +186,7 @@ const SHORTCUTS: Array<[string, string]> = [
   ["?", "These shortcuts (outside the editor)"],
 ];
 
-export function CodeIde({ source, initialFile = null, initialView = null }: { source: Source; initialFile?: string | null; initialView?: IdeView | null }) {
+export function CodeIde({ source, initialFile = null, initialView = null, initialThread = null }: { source: Source; initialFile?: string | null; initialView?: IdeView | null; initialThread?: string | null }) {
   const access = useSpaceAccess();
   const client = useQueryClient();
   const toast = useToast();
@@ -213,8 +214,10 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
     (next: IdeView) => {
       setViewState(next);
       if (next === "agent") setAgentMounted(true);
+      // The agent's sessions take the side panel with the agent, and give it back to the explorer after.
+      setPanel((current) => (next === "agent" ? "agent" : current === "agent" ? "files" : current));
     },
-    [setViewState],
+    [setViewState, setPanel],
   );
   useEffect(() => {
     if (initialView) setView(initialView);
@@ -231,6 +234,16 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [view, setView]);
+  const navigate = useLinkNavigate();
+  // The thread open for each folder, so coming back to a folder shows the thread it had.
+  const [openThreads, setOpenThreads] = usePersistentState<Record<string, string | null>>("ensemble.code.threads", {});
+  const threadList = useQuery({ queryKey: ["code-threads"], queryFn: api.codeThreads, enabled: agentMounted, staleTime: 5_000 });
+  const repoPath = info.data?.repo ?? null;
+  const placeKey = `${target.kind === "device" ? target.deviceId : "local"}:${repoPath ?? ""}`;
+  useEffect(() => {
+    if (!initialThread || !repoPath) return;
+    setOpenThreads((map) => ({ ...map, [placeKey]: initialThread === "new" ? null : initialThread }));
+  }, [initialThread, repoPath, placeKey, setOpenThreads]);
   const layout = useIdeLayout();
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
   const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
@@ -658,6 +671,12 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
     },
   };
   const canDecide = !viewOnly && isReview && Boolean(data.review) && !data.review?.completedAt;
+  // The agent works in this folder on this computer; a thread elsewhere opens where it works.
+  const here: ThreadPlace = { deviceId: target.kind === "device" ? target.deviceId : null, folder: data.repo };
+  const isHere = (place: ThreadPlace) => (place.deviceId ?? null) === here.deviceId && place.folder === here.folder;
+  const chosenThread = openThreads[placeKey];
+  const threadId = chosenThread === undefined ? (threadList.data?.threads.find((row) => isHere(row.place))?.id ?? null) : chosenThread;
+  const setThread = (id: string | null) => setOpenThreads((map) => ({ ...map, [placeKey]: id }));
   const absolute = (path: string) => `${data.repo.replace(/[\\/]+$/, "")}/${path}`;
   const goHome = () => document.querySelector<HTMLAnchorElement>("[data-ide-home]")?.click();
 
@@ -699,20 +718,20 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
       ...(tabs.length > 1 ? [{ id: "close-others", label: "Close the other files", run: () => closeMany(tabs.filter((row) => row !== active)) }] : []),
       ...(tabs.length ? [{ id: "close-all", label: "Close all files", run: () => closeMany(tabs) }] : []),
       ...(viewOnly ? [] : [
-        { id: "new-file", label: "New file…", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-file", nonce: Date.now() }); } },
-        { id: "new-folder", label: "New folder…", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-folder", nonce: Date.now() }); } },
+        { id: "new-file", label: "New file", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-file", nonce: Date.now() }); } },
+        { id: "new-folder", label: "New folder", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-folder", nonce: Date.now() }); } },
       ]),
       { id: "collapse", label: "Collapse folders in the explorer", run: () => setExplorerAsk({ kind: "collapse", nonce: Date.now() }) },
       { id: "refresh", label: "Refresh the explorer", run: () => { for (const query of [["code-tree", key], ["code-files", key], ["code-source", key], ["scm"]]) void client.invalidateQueries({ queryKey: query }); } },
       ...(canDecide ? [
         { id: "accept-all", label: "Accept all agent changes", run: () => accept.mutate() },
-        { id: "discard-all", label: "Discard all agent changes…", run: () => setConfirmDiscard(true) },
+        { id: "discard-all", label: "Discard all agent changes", run: () => setConfirmDiscard(true) },
       ] : []),
       ...(!viewOnly && isReview && !data.review ? [{ id: "mark-reviewed", label: "Mark reviewed", run: () => complete.mutate() }] : []),
       ...(!viewOnly && isReview && data.review?.completedAt && data.review.canPush ? [{ id: "push", label: `Push ${data.branch}`, run: () => push.mutate() }] : []),
       { id: "download-repo", label: "Download the repository as a zip", run: () => void downloadFromCode(code, source, "", toast) },
       { id: "copy-folder", label: "Copy the folder's path", run: () => void copyText(data.repo) },
-      { id: "theme", label: "Color theme…", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
+      { id: "theme", label: "Color theme", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
       { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
       { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
       { id: "full", label: full ? "Leave full screen" : "Full screen", run: () => setFull(!full) },
@@ -846,6 +865,19 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
         <ActivityBar
           items={[
             { id: "home", icon: House, label: "Code home", href: "/code" },
+            {
+              id: "agent",
+              icon: AgentIcon,
+              label: `Agent (${label("ctrl+alt+i")})`,
+              active: view === "agent" && sideOpen && panel === "agent",
+              onClick: () => {
+                if (view !== "agent") {
+                  setView("agent");
+                  layout.showSide();
+                } else if (sideOpen && panel === "agent") setSideOpen(false);
+                else showPanel("agent");
+              },
+            },
             ...(
               [
                 ["files", Files, `Explorer (${label("mod+b")})`],
@@ -867,7 +899,26 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
         />
 
         <SidePanel layout={layout}>
-          {panel === "files" ? (
+          {panel === "agent" ? (
+            <AgentSessions
+              selected={threadId}
+              current={here}
+              viewOnly={viewOnly}
+              onSelect={(thread) => {
+                if (isHere(thread.place)) {
+                  setThread(thread.id);
+                  setView("agent");
+                } else navigate.go(agentHref(thread.place, { thread: thread.id }));
+              }}
+              onNew={(place) => {
+                if (!place || isHere(place)) {
+                  setThread(null);
+                  setView("agent");
+                } else navigate.go(agentHref(place, { thread: "new" }));
+              }}
+              onOpenFolder={(place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
+            />
+          ) : panel === "files" ? (
             <Explorer
               source={source}
               changed={changed}
@@ -903,13 +954,15 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
           {agentMounted ? (
             <div className={cx("flex min-h-0 flex-1 flex-col", view !== "agent" && "hidden")}>
               <AgentView
-                folder={data.repo}
-                folderName={repoLabel || title}
-                placeName={placeName}
-                deviceId={target.kind === "device" ? target.deviceId : null}
-                online={reachable}
+                threadId={threadId}
+                onThread={setThread}
+                draft={here}
+                onDraft={null}
+                places={[{ deviceId: here.deviceId, name: placeName, online: reachable }]}
+                folders={[{ deviceId: here.deviceId, path: data.repo, name: repoLabel || title, branch: shortBranch(scm.data?.branch ?? data.branch) }]}
                 viewOnly={viewOnly}
-                onOpenFile={(path) => open(path)}
+                onOpenFile={(place, path) => (isHere(place) ? open(path) : navigate.go(agentHref(place, { view: "editor", file: path })))}
+                onOpenFolder={(place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
               />
             </div>
           ) : null}
@@ -1049,6 +1102,7 @@ export function CodeIde({ source, initialFile = null, initialView = null }: { so
 
       {quick ? <QuickOpen key={quick.nonce} initial={quick.text} resolve={resolveQuick} onClose={() => setQuick(null)} /> : null}
       {help ? <ShortcutSheet onClose={() => setHelp(false)} /> : null}
+      {navigate.link}
     </IdeSpace>
   );
 }

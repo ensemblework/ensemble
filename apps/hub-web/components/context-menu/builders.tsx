@@ -81,7 +81,7 @@ export function askItems(attachment: AssistantAttachment, extra: Array<{ id: str
       submenu: () => ({
         sections: [
           { items: (only ? extra : [...extra, ...ASK_PRESETS]).map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: () => attachToAssistant({ attachment, prompt: preset.prompt, send: true }) })) },
-          { items: [{ id: "ask-own", label: "Ask something else…", icon: MessageSquarePlus, run: () => attachToAssistant({ attachment }) }] },
+          { items: [{ id: "ask-own", label: "Ask something else", icon: MessageSquarePlus, run: () => attachToAssistant({ attachment }) }] },
         ],
       }),
     },
