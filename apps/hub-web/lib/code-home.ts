@@ -95,7 +95,12 @@ export function codeRuns(board: { [key in (typeof RUN_STATES)[number]]?: AgentJo
     .sort((a, b) => when(b).localeCompare(when(a)));
 }
 
-export function useCodeHome() {
+/**
+ * Code's home for one machine at a time: every computer is listed (to switch between them), and only
+ * the chosen one's reviews, repositories and runs are read and shown. `preferred` is the computer the
+ * person chose last; without it (or when it is gone) the first one that can be read now.
+ */
+export function useCodeHome(preferred: string | null = null) {
   const hostCode = useHostCode();
   const local: CodePlace = { key: "local", target: { kind: "local" }, name: desktopShell() ? "This computer" : "This server", online: true, version: null, usable: true, why: null, terminal: true, viewOnly: false };
   const localReviews = useQuery({ queryKey: reviewsKey(local), queryFn: () => api.reviews("all", false), enabled: hostCode !== false });
@@ -107,11 +112,12 @@ export function useCodeHome() {
   const version = useQuery({ queryKey: ["version"], queryFn: () => api.version(), enabled: mode === "local", staleTime: 300_000, retry: false });
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: mode === "computers", staleTime: 30_000 });
   const computers = mode === "computers" ? (devices.data?.devices ?? []).map(placeOfDevice) : [];
+  const chosen = computers.find((place) => place.target.kind === "device" && place.target.deviceId === preferred) ?? computers.find((place) => place.usable) ?? computers[0] ?? null;
   const deviceReviews = useQueries({
-    queries: computers.map((place) => ({ queryKey: reviewsKey(place), queryFn: () => codeApiFor(place.target).reviews("all", false), enabled: place.usable, retry: false, staleTime: 15_000 })),
+    queries: computers.map((place) => ({ queryKey: reviewsKey(place), queryFn: () => codeApiFor(place.target).reviews("all", false), enabled: place.usable && place.key === chosen?.key, retry: false, staleTime: 15_000 })),
   });
   const deviceRepos = useQueries({
-    queries: computers.map((place) => ({ queryKey: reposKey(place), queryFn: () => codeApiFor(place.target).codeRepos(), enabled: place.usable, retry: false, staleTime: 60_000 })),
+    queries: computers.map((place) => ({ queryKey: reposKey(place), queryFn: () => codeApiFor(place.target).codeRepos(), enabled: place.usable && place.key === chosen?.key, retry: false, staleTime: 60_000 })),
   });
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, refetchInterval: 15_000, enabled: mode !== "loading", retry: false });
 
@@ -121,14 +127,19 @@ export function useCodeHome() {
       : mode === "computers"
         ? computers.map((place, index) => ({ place, reviews: deviceReviews[index]!, repos: deviceRepos[index]!, views: repoViews(deviceRepos[index]!.data) }))
         : [];
-  const reviews: HomeReview[] = states
+  const current = states.find((state) => state.place.key === (mode === "local" ? "local" : chosen?.key)) ?? null;
+  const shown = current ? [current] : [];
+  const reviews: HomeReview[] = shown
     .flatMap((state) => (state.reviews.data?.reviews ?? []).map((review) => ({ ...review, place: state.place, href: reviewHref(state.place, review.id), repo: repoName(viewFor(review.repoPath, state.views)) })))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const repos: HomeRepo[] = states.flatMap((state) => state.views.map((view) => ({ ...view, place: state.place, href: repoHref(state.place, view.path) })));
-  const live = states.filter((state) => state.place.usable);
+  const repos: HomeRepo[] = shown.flatMap((state) => state.views.map((view) => ({ ...view, place: state.place, href: repoHref(state.place, view.path) })));
+  const live = shown.filter((state) => state.place.usable);
+  const deviceId = current?.place.target.kind === "device" ? current.place.target.deviceId : null;
   return {
     mode,
     states,
+    /** The machine shown: this Ensemble, or the chosen paired computer. */
+    current,
     devices,
     reviews,
     repos,
@@ -138,7 +149,7 @@ export function useCodeHome() {
     reviewErrors: live.filter((state) => state.reviews.error),
     repoErrors: live.filter((state) => state.repos.error),
     board,
-    runs: codeRuns(board.data),
+    runs: codeRuns(board.data).filter((job) => (job.deviceId ?? null) === deviceId),
   };
 }
 

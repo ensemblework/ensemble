@@ -7,13 +7,14 @@
  * and how long ago it worked. Right-click a thread or a group for what fits it; double-click or F2
  * renames a thread.
  */
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isCodeEngine } from "@ensemble/shared-types";
-import { ChevronRight, Copy, FolderGit2, FolderOpen, House, Pin, Plus, Search, X } from "lucide-react";
+import { ChevronRight, Copy, FolderGit2, FolderOpen, House, Pin, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { copyText } from "@/components/context-menu/builders";
 import { openContextMenu } from "@/components/context-menu/menu-store";
 import { ProviderLogo } from "@/components/connectors/provider-logo";
+import { useToast } from "@/components/toast";
 import { SkeletonRows, Spinner, cx } from "@/components/ui";
 import { api, type CodeThread } from "@/lib/api";
 import { groupThreads, isLive, shortAgo, type ThreadGroup } from "@/lib/code-agent";
@@ -28,6 +29,7 @@ const SHOWN = 8;
 export function AgentSessions({
   selected,
   current = null,
+  machine = null,
   onSelect,
   onNew,
   onOpenFolder,
@@ -36,6 +38,8 @@ export function AgentSessions({
   selected: string | null;
   /** The IDE's own folder: its group comes first. */
   current?: ThreadPlace | null;
+  /** Only the threads on this machine (Code shows one at a time); null lists every thread. */
+  machine?: { deviceId: string | null } | null;
   onSelect: (thread: CodeThread) => void;
   onNew: (place: ThreadPlace | null) => void;
   onOpenFolder: (place: { deviceId: string | null; folder: string }) => void;
@@ -53,7 +57,7 @@ export function AgentSessions({
     if (id === selected) onNew(current);
   });
 
-  const all = threads.data?.threads ?? [];
+  const all = useMemo(() => (threads.data?.threads ?? []).filter((row) => !machine || (row.place.deviceId ?? null) === (machine.deviceId ?? null)), [threads.data, machine?.deviceId]);
   const computers = new Set(all.map((row) => row.place.deviceId ?? "local")).size;
   const needle = query.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -164,6 +168,7 @@ export function AgentSessions({
                           selected={thread.id === selected}
                           onOpen={() => onSelect(thread)}
                           onRename={viewOnly ? null : () => setRenaming(thread.id)}
+                          onDelete={viewOnly ? null : () => remove.mutate(thread.id)}
                           onMenu={(event) => openContextMenu(event, () => rowMenu(thread))}
                         />
                       )}
@@ -181,12 +186,68 @@ export function AgentSessions({
             </section>
           );
         })}
+        {viewOnly ? null : <ThreadBin machine={machine} />}
       </div>
     </div>
   );
 }
 
-function SessionRow({ thread, selected, onOpen, onRename, onMenu }: { thread: CodeThread; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
+/**
+ * Deleted threads, kept 7 days (hub-api `CODE_THREAD_BIN_DAYS`), then gone for good on their own. Each
+ * can come back as it was, or go now.
+ */
+function ThreadBin({ machine }: { machine: { deviceId: string | null } | null }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = usePersistentState("ensemble.code.binOpen", false);
+  const bin = useQuery({ queryKey: ["code-thread-bin"], queryFn: api.codeThreadBin, staleTime: 30_000 });
+  const rows = (bin.data?.threads ?? []).filter((row) => !machine || (row.place.deviceId ?? null) === (machine.deviceId ?? null));
+  const restore = useMutation({
+    mutationFn: (id: string) => api.restoreCodeThread(id),
+    onSuccess: () => refreshThreads(client),
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const purge = useMutation({
+    mutationFn: (id: string) => api.purgeCodeThread(id),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["code-thread-bin"] }),
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  if (!rows.length) return null;
+  return (
+    <section className="mt-3 border-t border-line pt-1" aria-label="Bin" data-testid="agent-bin">
+      <button type="button" className="agent-group w-full" aria-expanded={open} onClick={() => setOpen(!open)} title="Deleted threads stay here 7 days, then go for good">
+        <ChevronRight size={12} className={cx("shrink-0 transition-transform", open && "rotate-90")} aria-hidden />
+        <Trash2 size={13} className="shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-left">Bin</span>
+        <span className="text-[11px] font-normal tabular-nums text-faint">{rows.length}</span>
+      </button>
+      {open ? (
+        <ul>
+          {rows.map((thread) => (
+            <li key={thread.id} className="group flex items-center gap-1 py-0.5 pl-[33px] pr-1.5 text-[12.5px]">
+              <span className="min-w-0 flex-1 truncate text-muted" title={thread.title}>{thread.title}</span>
+              <span className="shrink-0 text-[11px] text-faint group-hover:hidden">{thread.purgeAt ? daysLeft(thread.purgeAt) : ""}</span>
+              <button type="button" className="icon-btn hidden h-6 w-6 group-hover:inline-flex focus-visible:inline-flex" title="Restore" aria-label={`Restore ${thread.title}`} disabled={restore.isPending} onClick={() => restore.mutate(thread.id)}>
+                <RotateCcw size={12} />
+              </button>
+              <button type="button" className="icon-btn hidden h-6 w-6 group-hover:inline-flex focus-visible:inline-flex" title="Delete for good" aria-label={`Delete ${thread.title} for good`} disabled={purge.isPending} onClick={() => purge.mutate(thread.id)}>
+                <X size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+/** "6d left", "today": how long a thread in the Bin has. */
+export function daysLeft(purgeAt: string, now = Date.now()): string {
+  const days = Math.ceil((Date.parse(purgeAt) - now) / 86_400_000);
+  return days <= 1 ? "today" : `${days}d left`;
+}
+
+function SessionRow({ thread, selected, onOpen, onRename, onDelete, onMenu }: { thread: CodeThread; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onDelete: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
   const status = thread.last?.status;
   const live = Boolean(status && isLive(status));
   const tone = status === "failed" || status === "blocked" || status === "interrupted" ? "bg-danger" : status === "waiting_approval" ? "bg-warn" : "bg-faint";
@@ -203,6 +264,9 @@ function SessionRow({ thread, selected, onOpen, onRename, onMenu }: { thread: Co
         if (event.key === "F2" && onRename) {
           event.preventDefault();
           onRename();
+        } else if ((event.key === "Delete" || (event.key === "Backspace" && (event.metaKey || event.ctrlKey))) && onDelete && !live) {
+          event.preventDefault();
+          onDelete();
         }
       }}
       data-testid="agent-session"

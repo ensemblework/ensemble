@@ -62,6 +62,7 @@ test("viewers read, editors write, runner routes need edit access", () => {
   assert.equal(memberDecision("POST", "/api/agent/assign", "viewer", "Mira").allow, false);
   assert.equal(memberDecision("POST", "/api/agent/assign", "editor", "Mira").allow, true);
   assert.equal(memberDecision("GET", "/api/code/file", "viewer", "Mira").allow, true);
+  assert.equal(memberDecision("GET", "/api/code/browse", "editor", "Mira").allow, false);
   assert.equal(memberDecision("POST", "/api/code/file", "editor", "Mira").allow, false);
   const denied = memberDecision("GET", "/api/connectors", "editor", "Mira");
   assert.equal(denied.allow, false);

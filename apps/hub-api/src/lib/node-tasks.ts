@@ -14,6 +14,8 @@ import type { Prisma } from "@prisma/client";
 
 export const NODE_TASK_PREFIX = "node:";
 export const CODE_THREAD_PREFIX = "code:";
+/** Days a deleted thread of the Code tab's agent stays in its Bin before it is gone for good (jobs/retention.ts). */
+export const CODE_THREAD_BIN_DAYS = 7;
 
 export const nodeTaskRef = (nodeId: string): string => `${NODE_TASK_PREFIX}${nodeId}`;
 

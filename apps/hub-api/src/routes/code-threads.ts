@@ -16,7 +16,7 @@ import { unwatchThread, watchThread } from "../lib/code-watch.js";
 import { publicDecision } from "../lib/decisions.js";
 import { canUseHostCredentials } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
-import { CODE_THREAD_PREFIX, codeThreadRef } from "../lib/node-tasks.js";
+import { CODE_THREAD_BIN_DAYS, CODE_THREAD_PREFIX, codeThreadRef } from "../lib/node-tasks.js";
 import { complete } from "../lib/runtime.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
@@ -25,6 +25,7 @@ import { collabHub } from "../pages/live.js";
 import { createStandalonePage, TaskPageError } from "../pages/store.js";
 import { createTask } from "../services/tasks.js";
 import { Assign, createJob } from "../workspace/assign.js";
+import { MENTIONS_MARK, withMentionedContent, withoutAttached } from "../workspace/mentioned.js";
 import { codeTurnOf, steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { card, onCurrentDevices } from "./agents.js";
@@ -86,10 +87,9 @@ export function keptMarkdown(turn: { instructions: string; summary: string | nul
     .join("\n\n");
 }
 
-const MENTIONS_MARK = "\n\n(Mentioned in Ensemble:";
-
 /** A turn's message in two parts: the person's words and the mentions written after them (`withMentions` on the web). */
-function messageParts(instructions: string): { text: string; mentions: string } {
+function messageParts(message: string): { text: string; mentions: string } {
+  const instructions = withoutAttached(message);
   const at = instructions.indexOf(MENTIONS_MARK);
   if (at < 0) return { text: instructions.trim(), mentions: "" };
   return { text: instructions.slice(0, at).trim(), mentions: instructions.slice(at + MENTIONS_MARK.length).replace(/\)\s*$/, "").trim() };
@@ -142,12 +142,14 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/agent/threads", async (request) => {
     // With a folder: that folder's threads on that computer (the IDE). Without: every thread (the sessions list).
-    const query = z.object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().min(1).max(1000).optional() }).parse(request.query);
+    // `bin=1`: the threads deleted in the last CODE_THREAD_BIN_DAYS, newest first, each with when it goes for good.
+    const query = z.object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().min(1).max(1000).optional(), bin: z.enum(["1"]).optional() }).parse(request.query);
+    const binFrom = new Date(Date.now() - CODE_THREAD_BIN_DAYS * 86_400_000);
     const tasks = await prisma.task.findMany({
-      where: { userId: request.userId, deletedAt: null, sourceRef: query.folder ? codeThreadRef(query.deviceId, query.folder) : { startsWith: CODE_THREAD_PREFIX } },
-      orderBy: { updatedAt: "desc" },
+      where: { userId: request.userId, deletedAt: query.bin ? { gte: binFrom } : null, sourceRef: query.folder ? codeThreadRef(query.deviceId, query.folder) : { startsWith: CODE_THREAD_PREFIX } },
+      orderBy: query.bin ? { deletedAt: "desc" } : { updatedAt: "desc" },
       take: 200,
-      select: { id: true, title: true, createdAt: true, updatedAt: true },
+      select: { id: true, title: true, createdAt: true, updatedAt: true, deletedAt: true },
     });
     const jobs = tasks.length
       ? await prisma.workspaceJob.findMany({
@@ -173,9 +175,10 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
             turns: turns.length,
             last: last ? { id: last.id, status: last.status, engine: last.provider, model: last.model } : null,
             place: threadPlace(turns[0] ?? null, paths),
+            ...(task.deletedAt ? { deletedAt: task.deletedAt.toISOString(), purgeAt: new Date(task.deletedAt.getTime() + CODE_THREAD_BIN_DAYS * 86_400_000).toISOString() } : {}),
           };
         })
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+        .sort((a, b) => (query.bin ? (b.deletedAt ?? "").localeCompare(a.deletedAt ?? "") : b.updatedAt.localeCompare(a.updatedAt))),
     };
   });
 
@@ -230,6 +233,25 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  /** Brings a thread back from the Bin. */
+  app.post("/api/agent/threads/:id/restore", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const restored = await prisma.task.updateMany({ where: { id, userId: request.userId, deletedAt: { not: null }, sourceRef: { startsWith: CODE_THREAD_PREFIX } }, data: { deletedAt: null } });
+    if (!restored.count) return reply.code(404).send({ error: "That thread is not in the Bin." });
+    sseHub.publish(request.userId, { event: "task", data: { id, action: "restore" } });
+    return { ok: true };
+  });
+
+  /** Deletes a thread in the Bin for good, with its turns. A thread not in the Bin goes there first (DELETE /api/tasks/:id). */
+  app.delete("/api/agent/threads/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const gone = await prisma.task.deleteMany({ where: { id, userId: request.userId, deletedAt: { not: null }, sourceRef: { startsWith: CODE_THREAD_PREFIX } } });
+    if (!gone.count) return reply.code(404).send({ error: "That thread is not in the Bin." });
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.thread_purge", payload: { threadId: id } });
+    sseHub.publish(request.userId, { event: "task", data: { id, action: "delete" } });
+    return reply.code(204).send();
+  });
+
   /** The thread is open on a screen now: its requests are answered there, not in Needs me (lib/code-watch.ts). */
   app.post("/api/agent/threads/:id/watch", async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
@@ -257,7 +279,8 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     const active = await prisma.workspaceJob.findFirst({ where: { id: body.jobId, userId: request.userId, taskId: id }, select: { id: true, status: true, instructions: true, cancelRequestedAt: true } });
     if (!active) return reply.code(404).send({ error: "That turn is not in this thread." });
     if (active.status === "queued") {
-      const changed = await prisma.workspaceJob.updateMany({ where: { id: active.id, status: "queued" }, data: { instructions: amendedMessage(active.instructions, input.instructions).slice(0, 16_000) } });
+      const instructions = await withMentionedContent(prisma, request.userId, amendedMessage(active.instructions, input.instructions));
+      const changed = await prisma.workspaceJob.updateMany({ where: { id: active.id, status: "queued" }, data: { instructions } });
       if (changed.count === 1) {
         sseHub.publish(request.userId, { event: "workspace", data: { id: active.id } });
         return { jobId: active.id, delivery: "amended" as const };

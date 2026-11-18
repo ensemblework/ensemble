@@ -99,7 +99,10 @@ import { defaultProfile, profileAgent, quickProfile } from "@/lib/run-profiles";
 import { traceEntries } from "@/lib/run-trace";
 import { KeepPicker, refreshThreads, threadMenu, turnMenu, useCodeThreads, useDeleteThread, useRenameThread } from "./agent-actions";
 import type { ThreadPlace } from "./agent-sessions";
+import { BranchMenu } from "./branch-menu";
 import { FileIcon } from "./file-icon";
+import { FolderPicker } from "./folder-picker";
+import { machineState } from "./machine-switcher";
 import { useLinkNavigate } from "./quick-open";
 
 type Mode = "ask" | "review" | "unattended";
@@ -377,7 +380,7 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
           pinnedToEnd.current = box.scrollHeight - box.scrollTop - box.clientHeight < 96;
         }}
       >
-        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6 px-4 pb-6 pt-5 sm:px-6">
+        <div className="agent-timeline mx-auto flex w-full max-w-[860px] flex-col gap-6 px-4 pb-6 pt-5 sm:px-6">
           {thread.error ? (
             <div className="agent-alert" role="alert">
               <CircleAlert size={14} className="shrink-0 text-danger" />
@@ -1102,106 +1105,136 @@ function DiffStat({ added, removed }: { added: number; removed: number }) {
  * Where a thread works, over the message box: the computer, the folder (or none) and its branch. A new
  * thread on Code's home picks them; a thread that has started keeps its own.
  */
-function PlaceBar({ place, placeInfo, editable, onDraft, places, folders }: { place: ThreadPlace; placeInfo: CodeThreadPlace; editable: boolean; onDraft: ((place: ThreadPlace) => void) | null; places: PlaceChoice[]; folders: FolderChoice[] }) {
+function PlaceBar({ place, placeInfo, editable, onDraft, places, folders, live }: { place: ThreadPlace; placeInfo: CodeThreadPlace; editable: boolean; onDraft: ((place: ThreadPlace) => void) | null; places: PlaceChoice[]; folders: FolderChoice[]; live: boolean }) {
+  const client = useQueryClient();
   const computer = places.find((row) => (row.deviceId ?? null) === (place.deviceId ?? null));
   const computerName = computer?.name ?? placeInfo.deviceName ?? "This computer";
   const here = folders.filter((row) => (row.deviceId ?? null) === (place.deviceId ?? null));
   const folder = place.folder ? (here.find((row) => row.path === place.folder) ?? null) : null;
   const folderLabel = place.folder ? (folder?.name ?? folderName(place.folder)) : "No folder";
-  const [query, setQuery] = useState("");
-  const needle = query.trim().toLowerCase();
-  const shown = here.filter((row) => !needle || row.name.toLowerCase().includes(needle) || row.path.toLowerCase().includes(needle)).slice(0, 60);
+  const [picking, setPicking] = useState(false);
+  const remote = places.some((row) => row.deviceId);
+  const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: remote && editable, staleTime: 30_000 });
+  const seen = new Map((devices.data?.devices ?? []).map((row) => [row.id, row.lastSeenAt]));
+  const target = place.deviceId ? ({ kind: "device", deviceId: place.deviceId } as const) : ({ kind: "local" } as const);
+  const canPickFolder = editable && Boolean(onDraft) && (computer?.online ?? true);
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-0.5 px-1.5 pt-1.5" data-testid="agent-placebar">
-      {editable && onDraft && places.length > 1 ? (
+      {editable && onDraft && places.length > 1 && !place.folder ? (
         <Popover
-          width={240}
+          width={260}
           trigger={(open, toggle) => (
-            <button type="button" className="agent-chip" aria-haspopup="menu" aria-expanded={open} onClick={toggle} title="The computer the agent runs on">
-              <Laptop size={12} aria-hidden /> {computerName} <ChevronDown size={11} aria-hidden />
-            </button>
-          )}
-        >
-          {(close) =>
-            places.map((row) => (
-              <MenuItem
-                key={row.deviceId ?? "local"}
-                active={(row.deviceId ?? null) === (place.deviceId ?? null)}
-                hint={row.online ? "online" : "offline"}
-                onClick={() => {
-                  onDraft({ deviceId: row.deviceId, folder: null });
-                  close();
-                }}
-              >
-                {row.name}
-              </MenuItem>
-            ))
-          }
-        </Popover>
-      ) : (
-        <span className="agent-chip agent-chip-static" title="The computer the agent runs on">
-          <Laptop size={12} aria-hidden /> {computerName}
-        </span>
-      )}
-      {editable && onDraft ? (
-        <Popover
-          width={320}
-          maxHeight={380}
-          trigger={(open, toggle) => (
-            <button type="button" className="agent-chip" aria-haspopup="menu" aria-expanded={open} onClick={toggle} title={place.folder ?? "No folder: a new folder in Ensemble's workspace, when the agent needs one"}>
-              {place.folder ? <FolderGit2 size={12} aria-hidden /> : <House size={12} aria-hidden />} <span className="max-w-[14rem] truncate">{folderLabel}</span> <ChevronDown size={11} aria-hidden />
+            <button
+              type="button"
+              className="agent-chip"
+              aria-haspopup="listbox"
+              aria-expanded={open}
+              onClick={() => {
+                // Each computer as it is now, not as it was when the page loaded.
+                if (!open) void client.invalidateQueries({ queryKey: ["devices"] });
+                toggle();
+              }}
+              title="The computer the agent runs on"
+            >
+              <Laptop size={12} aria-hidden /> {computerName} <OnlineMark online={computer?.online ?? true} /> <ChevronDown size={11} aria-hidden />
             </button>
           )}
         >
           {(close) => (
-            <div className="flex flex-col">
-              {here.length > 6 ? (
-                <label className="compound-field m-1 flex h-8 items-center gap-1.5 rounded-md border border-line px-2">
-                  <Search size={13} className="shrink-0 text-faint" aria-hidden />
-                  <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a folder" aria-label="Find a folder" className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-faint" />
-                </label>
-              ) : null}
-              <MenuItem
-                active={!place.folder}
-                hint="workspace"
-                onClick={() => {
-                  onDraft({ deviceId: place.deviceId, folder: null });
-                  close();
-                }}
-              >
-                <House size={13} /> No folder
-              </MenuItem>
-              {shown.map((row) => (
-                <MenuItem
-                  key={row.path}
-                  active={row.path === place.folder}
-                  hint={row.branch ?? undefined}
-                  onClick={() => {
-                    onDraft({ deviceId: place.deviceId, folder: row.path });
-                    close();
-                  }}
-                >
-                  <FolderGit2 size={13} /> <span className="truncate" title={row.path}>{row.name}</span>
-                </MenuItem>
-              ))}
-              {!here.length ? <p className="px-3 py-1.5 text-[12px] text-muted">No folders Code can use on {inSentence(computerName)}. Add them in Settings.</p> : null}
+            <div className="py-1" role="listbox" aria-label="Computers">
+              <div className="flex items-center gap-2 px-3 pb-1 text-[11.5px] text-faint">
+                <span className="flex-1">Run the agent on</span>
+                {devices.isFetching ? <Spinner size={11} /> : null}
+              </div>
+              {places.map((row) => {
+                const on = (row.deviceId ?? null) === (place.deviceId ?? null);
+                return (
+                  <button
+                    key={row.deviceId ?? "local"}
+                    type="button"
+                    role="option"
+                    aria-selected={on}
+                    className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-hover"
+                    onClick={() => {
+                      onDraft({ deviceId: row.deviceId, folder: null });
+                      close();
+                    }}
+                  >
+                    <Laptop size={14} className="shrink-0 text-muted" aria-hidden />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px]">{row.name}</span>
+                      <span className="flex items-center gap-1.5 text-[11.5px] text-faint">
+                        <OnlineMark online={row.online} /> {machineState(row.online, row.deviceId ? seen.get(row.deviceId) : null)}
+                      </span>
+                    </span>
+                    {on ? <Check size={13} className="shrink-0 text-accent" aria-hidden /> : null}
+                  </button>
+                );
+              })}
             </div>
           )}
         </Popover>
+      ) : (
+        <span className="agent-chip agent-chip-static" title={!editable ? "A thread stays on the computer it started on" : place.folder ? "The folder is on this computer. Work without a folder to pick another" : "The computer the agent runs on"}>
+          <Laptop size={12} aria-hidden /> {computerName}
+        </span>
+      )}
+      {editable && onDraft ? (
+        <span className="inline-flex items-center">
+          <button
+            type="button"
+            className="agent-chip"
+            disabled={!canPickFolder}
+            onClick={() => setPicking(true)}
+            title={!canPickFolder ? `${computerName} is offline: pick a folder when it is back` : place.folder ?? "No folder: a new folder in Ensemble's workspace, when the agent needs one. Click to pick one"}
+            data-testid="agent-folder"
+          >
+            {place.folder ? <FolderGit2 size={12} aria-hidden /> : <House size={12} aria-hidden />} <span className="max-w-[14rem] truncate">{folderLabel}</span>
+          </button>
+          {place.folder ? (
+            <button type="button" className="icon-btn h-6 w-6" aria-label="Work without a folder" title="Work without a folder" onClick={() => onDraft({ deviceId: place.deviceId, folder: null })}>
+              <X size={12} />
+            </button>
+          ) : null}
+          <FolderPicker
+            open={picking}
+            onClose={() => setPicking(false)}
+            target={target}
+            computerName={computerName}
+            title="Pick a folder for the agent"
+            action="Use folder"
+            fallback={here.map((row) => ({ path: row.path, name: row.name }))}
+            onPick={(picked) => {
+              setPicking(false);
+              onDraft({ deviceId: place.deviceId, folder: picked.path });
+            }}
+          />
+        </span>
       ) : (
         <span className="agent-chip agent-chip-static" title={place.folder ?? "A new folder in Ensemble's workspace"}>
           {place.folder ? <FolderGit2 size={12} aria-hidden /> : <House size={12} aria-hidden />} <span className="max-w-[14rem] truncate">{folderLabel}</span>
         </span>
       )}
-      {folder?.branch ? (
-        <span className="agent-chip agent-chip-static" title="The folder's branch: the agent works on it as it is">
-          <GitBranch size={12} aria-hidden /> <span className="max-w-[10rem] truncate">{folder.branch}</span>
-        </span>
+      {place.folder && (computer?.online ?? true) ? (
+        <BranchMenu
+          target={target}
+          repo={place.folder}
+          branch={folder?.branch ?? null}
+          disabled={live ? "The agent is working in this folder. Switch branches when it is done." : null}
+          trigger={(open, toggle, current) => (
+            <button type="button" className="agent-chip" aria-haspopup="dialog" aria-expanded={open} onClick={toggle} title="The folder's branch: switch, or start a new one" data-testid="agent-branch">
+              <GitBranch size={12} aria-hidden /> <span className="max-w-[10rem] truncate">{current ?? "Branch"}</span> <ChevronDown size={11} aria-hidden />
+            </button>
+          )}
+        />
       ) : null}
     </div>
   );
 }
 
+function OnlineMark({ online }: { online: boolean }) {
+  return <span className={cx("inline-block h-1.5 w-1.5 shrink-0 rounded-full", online ? "bg-ok" : "bg-faint")} aria-label={online ? "Online" : "Offline"} />;
+}
 
 function Composer({
   threadId,
@@ -1341,7 +1374,7 @@ function Composer({
           </div>
         ) : null}
         <div className={cx("agent-composer compound-field", blocker && "opacity-80", working && "is-working")}>
-          <PlaceBar place={place} placeInfo={placeInfo} editable={draftable} onDraft={onDraft} places={places} folders={folders} />
+          <PlaceBar place={place} placeInfo={placeInfo} editable={draftable} onDraft={onDraft} places={places} folders={folders} live={Boolean(live)} />
           <MentionTextarea
             menu={menu}
             value={text}
@@ -1361,7 +1394,7 @@ function Composer({
             className="block w-full resize-none bg-transparent px-3 pt-1.5 text-[13.5px] leading-6 outline-none placeholder:text-faint"
           />
           <MentionPopover menu={menu} />
-          <div className="flex items-center gap-1 px-1.5 pb-1.5 pt-1">
+          <div className="flex flex-wrap items-center gap-1 px-1.5 pb-1.5 pt-1">
             <AgentPicker value={choice} onChange={(next) => setSaved(next)} agents={agents} label="Agent and model" compact />
             {choice ? <TuningPicker value={choice} model={pickerModel} onChange={(next) => setSaved(next)} label="Thinking and context" compact /> : null}
             <Popover
@@ -1393,8 +1426,8 @@ function Composer({
             <div className="flex-1" />
             {working && text.trim() ? (
               <>
-                <button type="button" className="agent-chip" onClick={() => void send("replace")} disabled={!canSend} title="Stop what it is doing and send this instead (Ctrl+Enter)">
-                  <Square size={10} className="fill-current" aria-hidden /> Stop and send
+                <button type="button" className="agent-chip" onClick={() => void send("replace")} disabled={!canSend} title="Stop what it is doing and send this instead (Ctrl+Enter)" aria-label="Stop and send">
+                  <Square size={10} className="fill-current" aria-hidden /> <span className="max-sm:hidden">Stop and send</span>
                 </button>
                 <button type="button" className="agent-steer" onClick={() => void send("steer")} disabled={!canSend} title="Change what it is doing now; it keeps its work (Enter)">
                   <CornerDownRight size={13} aria-hidden /> Steer

@@ -7,7 +7,7 @@
  */
 import { Minus, Plus } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
 import { cx } from "@/components/ui";
 import { usePersistentState } from "@/lib/prefs";
 import { LAUNCHER_FLOOR_EVENT } from "@/components/assistant/ask-launcher";
@@ -24,6 +24,14 @@ export const FONT_MIN = 10;
 export const FONT_MAX = 24;
 
 export type IdeLayout = ReturnType<typeof useIdeLayout>;
+
+/**
+ * The text size control's scale for what is not the editor or the terminal (the agent's thread, the
+ * Welcome), as a CSS variable their content zooms by (`code.css`).
+ */
+export function textScale(fontSize: number): CSSProperties {
+  return { "--code-zoom": String(Math.round((fontSize / FONT_DEFAULT) * 100) / 100) } as CSSProperties;
+}
 
 export function useIdeLayout() {
   const [sidebar, setSidebar] = usePersistentState("ensemble.code.panel", true);
@@ -91,8 +99,35 @@ export function useIdeKeys(layout: IdeLayout, onQuickOpen?: (initial: string) =>
   }, [terminal, setTerminal, sideOpen, setSideOpen, fontSize, setFontSize]);
 }
 
+/**
+ * Full screen: the browser's own (as F11), with Code's window over the Hub's bars. Leaving the
+ * browser's full screen (Esc) leaves Code's too. Where the browser has none (an iPhone), only the window.
+ */
+export function useFullscreen(): [boolean, (on: boolean) => void] {
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    const sync = () => {
+      if (!document.fullscreenElement) setFull(false);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+    };
+  }, []);
+  const set = useCallback((on: boolean) => {
+    setFull(on);
+    if (on && !document.fullscreenElement) void document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => undefined);
+    else if (!on && document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+  }, []);
+  return [full, set];
+}
+
+/** How far past its largest size a panel with somewhere bigger to go is dragged before it goes there. */
+const BEYOND_PX = 64;
+
 /** A size shown live while it is dragged and saved when the drag ends. */
-function useLiveSize(saved: number, save: (value: number) => void): [number, (value: number, done: boolean) => void] {
+export function useLiveSize(saved: number, save: (value: number) => void): [number, (value: number, done: boolean) => void] {
   const [live, setLive] = useState<number | null>(null);
   const change = useCallback(
     (value: number, done: boolean) => {
@@ -118,6 +153,8 @@ export function Sash({
   reset,
   onChange,
   label,
+  start = false,
+  onBeyond,
 }: {
   /** `vertical`: a side panel's right edge. `horizontal`: a bottom panel's top edge. */
   orientation: "vertical" | "horizontal";
@@ -127,6 +164,10 @@ export function Sash({
   reset: number;
   onChange: (value: number, done: boolean) => void;
   label: string;
+  /** On a panel's left edge (a panel on the right): dragging left makes it wider. */
+  start?: boolean;
+  /** Dragged well past `max`: what the panel turns into then (the agent's pane becomes the whole window). */
+  onBeyond?: () => void;
 }) {
   const drag = useRef<{ pointer: number; from: number; start: number; last: number } | null>(null);
   const [active, setActive] = useState(false);
@@ -151,6 +192,7 @@ export function Sash({
       tabIndex={0}
       title={`${label} (double-click resets)`}
       data-active={active || undefined}
+      data-edge={start ? "start" : undefined}
       className="ide-sash"
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -163,7 +205,16 @@ export function Sash({
       onPointerMove={(event) => {
         const current = drag.current;
         if (!current || current.pointer !== event.pointerId) return;
-        const delta = vertical ? event.clientX - current.from : current.from - event.clientY;
+        const delta = vertical ? (start ? current.from - event.clientX : event.clientX - current.from) : current.from - event.clientY;
+        if (onBeyond && current.start + delta > max() + BEYOND_PX) {
+          drag.current = null;
+          setActive(false);
+          delete document.documentElement.dataset.ideResizing;
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          onChange(current.last, true);
+          onBeyond();
+          return;
+        }
         const next = clamp(current.start + delta);
         if (next === current.last) return;
         current.last = next;
@@ -175,8 +226,8 @@ export function Sash({
       onDoubleClick={() => onChange(clamp(reset), true)}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 48 : 16;
-        const grow = vertical ? "ArrowRight" : "ArrowUp";
-        const shrink = vertical ? "ArrowLeft" : "ArrowDown";
+        const grow = vertical ? (start ? "ArrowLeft" : "ArrowRight") : "ArrowUp";
+        const shrink = vertical ? (start ? "ArrowRight" : "ArrowLeft") : "ArrowDown";
         if (event.key === grow) onChange(clamp(value + step), true);
         else if (event.key === shrink) onChange(clamp(value - step), true);
         else return;
@@ -240,11 +291,25 @@ function ActivityButton({ item }: { item: ActivityItem }) {
   );
 }
 
-/** The side panel: resizable on a computer, an overlay that closes on a tap outside on a phone. */
-export function SidePanel({ layout, children }: { layout: IdeLayout; children: ReactNode }) {
+/** The share of the window the side panel may take at most, unless a panel asks for less. */
+export const SIDEBAR_MAX_SHARE = 0.4;
+
+/**
+ * The side panel: resizable on a computer, an overlay that closes on a tap outside on a phone. Dragging
+ * never closes it: it stops at `minWidth` (a panel's own, from what it lists) and at `maxShare` of the
+ * window.
+ */
+export function SidePanel({ layout, children, minWidth = SIDEBAR_MIN, maxShare = SIDEBAR_MAX_SHARE }: { layout: IdeLayout; children: ReactNode; minWidth?: number; maxShare?: number }) {
   const [width, change] = useLiveSize(layout.width, layout.setWidth);
+  const [viewport, setViewport] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
+  useEffect(() => {
+    const update = () => setViewport(window.innerWidth);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
   if (!layout.sideOpen) return null;
-  const shown = Math.max(SIDEBAR_MIN, width);
+  const cap = Math.max(minWidth, Math.floor(viewport * maxShare));
+  const shown = Math.min(cap, Math.max(minWidth, width));
   return (
     <>
       {layout.phone ? <button type="button" className="absolute inset-y-0 left-11 right-0 z-10 bg-black/40" aria-label="Close code panel" onClick={layout.closeOverlay} /> : null}
@@ -258,9 +323,9 @@ export function SidePanel({ layout, children }: { layout: IdeLayout; children: R
           <Sash
             orientation="vertical"
             value={shown}
-            min={SIDEBAR_MIN}
-            max={() => Math.max(SIDEBAR_MIN, Math.floor(window.innerWidth / 2))}
-            reset={SIDEBAR_DEFAULT}
+            min={minWidth}
+            max={() => Math.max(minWidth, Math.floor(window.innerWidth * maxShare))}
+            reset={Math.max(minWidth, SIDEBAR_DEFAULT)}
             onChange={change}
             label="Resize the side panel"
           />
@@ -347,14 +412,14 @@ export function StatusItem({ icon: Icon, children, title, onClick, href, classNa
 export function FontSizeControl({ fontSize, setFontSize }: { fontSize: number; setFontSize: (size: number) => void }) {
   const label = useKeyLabel();
   return (
-    <span className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Code text size">
-      <button type="button" className="icon-btn h-5 w-5" title={`Smaller code (${label("mod+shift+-")})`} aria-label="Smaller code" onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}>
+    <span className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Text size">
+      <button type="button" className="icon-btn h-5 w-5" disabled={fontSize <= FONT_MIN} title={`Smaller text (${label("mod+shift+-")})`} aria-label="Smaller text" onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}>
         <Minus size={10} />
       </button>
-      <button type="button" className="tabular-nums hover:text-ink" title={`Reset code size (${label("mod+shift+0")})`} onClick={() => setFontSize(FONT_DEFAULT)}>
+      <button type="button" className="min-w-[2.25rem] tabular-nums hover:text-ink" title={`Text size of the editor, the agent and the terminal. Reset (${label("mod+shift+0")})`} onClick={() => setFontSize(FONT_DEFAULT)}>
         {fontSize}px
       </button>
-      <button type="button" className="icon-btn h-5 w-5" title={`Bigger code (${label("mod+shift+=")})`} aria-label="Bigger code" onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}>
+      <button type="button" className="icon-btn h-5 w-5" disabled={fontSize >= FONT_MAX} title={`Bigger text (${label("mod+shift+=")})`} aria-label="Bigger text" onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}>
         <Plus size={10} />
       </button>
     </span>

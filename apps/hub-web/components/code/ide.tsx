@@ -58,10 +58,12 @@ import {
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout, type IdeLayout } from "@/components/code/ide-chrome";
+import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, Sash, SidePanel, StatusBar, StatusItem, textScale, useIdeKeys, useIdeLayout, useLiveSize, type IdeLayout } from "@/components/code/ide-chrome";
 import { AgentView } from "@/components/code/agent-view";
+import { FolderPicker } from "@/components/code/folder-picker";
+import { BranchMenu } from "@/components/code/branch-menu";
 import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
-import { agentHref, type IdeView } from "@/lib/code-agent";
+import { agentHref, sessionsMinWidth, type IdeView } from "@/lib/code-agent";
 import { AgentIcon } from "@/components/agent-icon";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
@@ -115,6 +117,13 @@ const SAVE_MS = 700;
 const MAX_THREAD_TABS = 8;
 /** The tab of a thread not started yet. */
 const NEW_THREAD = "new";
+
+/** The agent's sessions panel never takes more than this share of the window (docs/16 §9). */
+const SESSIONS_MAX_SHARE = 0.3;
+/** The agent's pane beside the editor: its width when first shown, its narrowest, and the share of the window it may take. */
+const AGENT_SIDE_DEFAULT = 440;
+const AGENT_SIDE_MIN = 340;
+const AGENT_SIDE_MAX_SHARE = 0.48;
 
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((row, index) => row === b[index]);
 
@@ -253,10 +262,13 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   // The threads open as tabs, per folder: their ids, "new" for one not started yet.
   const [threadTabsMap, setThreadTabsMap] = usePersistentState<Record<string, string[]>>("ensemble.code.threadTabs", {});
   // The agent beside the editor rather than in its place.
-  const [split, setSplit] = usePersistentState<boolean>("ensemble.code.agentSplit", false);
+  const [splitChosen, setSplit] = usePersistentState<boolean>("ensemble.code.agentSplit", false);
+  // How wide the agent's pane is beside the editor, at most about half the window.
+  const [sideWidth, setSideWidth] = usePersistentState<number>("ensemble.code.agentSideWidth", AGENT_SIDE_DEFAULT);
+  const [sideLive, changeSide] = useLiveSize(sideWidth, setSideWidth);
   // The files each open thread's turn at work is editing now, for the editor to follow.
   const [agentEditing, setAgentEditing] = useState<Record<string, string[]>>({});
-  const threadList = useQuery({ queryKey: ["code-threads"], queryFn: api.codeThreads, enabled: agentMounted || split, staleTime: 5_000 });
+  const threadList = useQuery({ queryKey: ["code-threads"], queryFn: api.codeThreads, enabled: agentMounted || splitChosen, staleTime: 5_000 });
   const repoPath = info.data?.repo ?? null;
   const placeKey = `${target.kind === "device" ? target.deviceId : "local"}:${repoPath ?? ""}`;
   useEffect(() => {
@@ -267,10 +279,23 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       return list.includes(initialThread) ? map : { ...map, [placeKey]: [...list, initialThread].slice(-MAX_THREAD_TABS) };
     });
   }, [initialThread, repoPath, placeKey, setOpenThreads, setThreadTabsMap]);
+  const [picking, setPicking] = useState(false);
+  // Ctrl/⌘+O opens another folder of this computer, as in an editor.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== "o") return;
+      event.preventDefault();
+      setPicking(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const layout = useIdeLayout();
+  // A phone has room for one: the editor or the agent, never both.
+  const split = splitChosen && !layout.phone;
   useEffect(() => {
     if (split) setAgentMounted(true);
   }, [split]);
-  const layout = useIdeLayout();
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
   const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
   useIdeKeys(layout, openQuick);
@@ -292,7 +317,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
     return () => window.clearTimeout(timer);
   }, [flash]);
   const files = useQuery({ queryKey: ["code-files", key, source], queryFn: () => code.files(source), enabled: quick !== null && !quick.text.startsWith(">"), staleTime: 30_000 });
-  const [full, setFull] = useState(false);
+  const [full, setFull] = useFullscreen();
   const [help, setHelp] = useState(false);
   const [tabs, setTabs] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -747,6 +772,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
     return { key, title: key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread"), live: Boolean(row?.last && ["queued", "claimed", "running", "stopping", "waiting_approval"].includes(row.last.status)) };
   });
   const editingPaths = new Set(Object.values(agentEditing).flat());
+  const agentSide = Math.max(AGENT_SIDE_MIN, Math.min(sideLive, typeof window === "undefined" ? sideLive : Math.floor(window.innerWidth * AGENT_SIDE_MAX_SHARE)));
   const absolute = (path: string) => `${data.repo.replace(/[\\/]+$/, "")}/${path}`;
   const goHome = () => document.querySelector<HTMLAnchorElement>("[data-ide-home]")?.click();
 
@@ -772,7 +798,8 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       : [];
     return [
       { id: "agent", label: view === "agent" ? "Show the editor" : "Code with the agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
-      { id: "agent-side", label: split ? "Show the agent in place of the editor" : "Show the agent beside the editor", run: () => setSplit(!split) },
+      ...(layout.phone ? [] : [{ id: "agent-side", label: split ? "Show the agent in place of the editor" : "Show the agent beside the editor", run: () => setSplit(!split) }]),
+      { id: "open-folder", label: "Open a folder", keys: "mod+o", run: () => setPicking(true) },
       { id: "agent-new", label: "New thread with the agent", run: () => openThread(null) },
       { id: "go-file", label: "Go to file", keys: "mod+p", run: () => openQuick("") },
       ...(active ? [{ id: "go-line", label: "Go to line", keys: "ctrl+g", run: () => openQuick(":") }] : []),
@@ -804,8 +831,8 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       { id: "download-repo", label: "Download the repository as a zip", run: () => void downloadFromCode(code, source, "", toast) },
       { id: "copy-folder", label: "Copy the folder's path", run: () => void copyText(data.repo) },
       { id: "theme", label: "Color theme", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
-      { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
-      { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
+      { id: "bigger", label: "Bigger text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
+      { id: "smaller", label: "Smaller text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
       { id: "full", label: full ? "Leave full screen" : "Full screen", run: () => setFull(!full) },
       { id: "shortcuts", label: "Keyboard shortcuts", keys: "?", run: () => setHelp(true) },
       { id: "home", label: "Back to Code home", run: goHome },
@@ -911,7 +938,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
                   items: [
                     { id: "close", label: "Close", icon: X, run: () => closeThread(key) },
                     ...(threadTabs.length > 1 ? [{ id: "close-others", label: "Close the other threads", icon: X, run: () => { setThreadTabs([key]); setThread(key === NEW_THREAD ? null : key); if (!split) setView("agent"); } }] : []),
-                    { id: "side", label: split ? "Show it in place of the editor" : "Show it beside the editor", icon: split ? PanelLeft : PanelRight, run: () => { setSplit(!split); openThread(key === NEW_THREAD ? null : key); } },
+                    ...(layout.phone ? [] : [{ id: "side", label: split ? "Show it in place of the editor" : "Show it beside the editor", icon: split ? PanelLeft : PanelRight, run: () => { setSplit(!split); openThread(key === NEW_THREAD ? null : key); } }]),
                   ],
                 },
               ],
@@ -934,7 +961,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
             setSplit(!split);
             if (split) setView("agent");
           }}
-          hidden={pane === "editor" && split}
+          hidden={(pane === "editor" && split) || layout.phone}
         >
           {split ? <PanelLeft size={14} /> : <PanelRight size={14} />}
         </button>
@@ -954,9 +981,11 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           <button type="button" aria-pressed={view === "agent" && !split} onClick={() => { setSplit(false); setView("agent"); }} title={`Agent (${label("ctrl+alt+i")})`}>
             <AgentIcon size={13} aria-hidden /> Agent
           </button>
-          <button type="button" aria-pressed={split} onClick={() => setSplit(!split)} title="The agent beside the editor" aria-label="The agent beside the editor">
-            <PanelRight size={13} aria-hidden /> <span className="max-md:hidden">Both</span>
-          </button>
+          {layout.phone ? null : (
+            <button type="button" aria-pressed={split} onClick={() => setSplit(!split)} title="The agent beside the editor" aria-label="The agent beside the editor">
+              <PanelRight size={13} aria-hidden /> Both
+            </button>
+          )}
         </div>
         <span className="truncate font-semibold">{title}</span>
         <span className="truncate text-muted" title={data.repo}>
@@ -1007,7 +1036,6 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       <div className="relative flex min-h-0 min-w-0 flex-1">
         <ActivityBar
           items={[
-            { id: "home", icon: House, label: "Code home", href: "/code" },
             {
               id: "agent",
               icon: AgentIcon,
@@ -1041,11 +1069,12 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           bottom={viewOnly ? [] : [{ id: "terminal", icon: TerminalSquare, label: `Terminal (${label("ctrl+`")})`, active: terminal, onClick: () => setTerminal(!terminal) }]}
         />
 
-        <SidePanel layout={layout}>
+        <SidePanel layout={layout} maxShare={panel === "agent" ? SESSIONS_MAX_SHARE : undefined} minWidth={panel === "agent" ? sessionsMinWidth((threadList.data?.threads ?? []).filter((row) => (row.place.deviceId ?? null) === here.deviceId).map((row) => row.title)) : undefined}>
           {panel === "agent" ? (
             <AgentSessions
               selected={threadId}
               current={here}
+              machine={{ deviceId: here.deviceId }}
               viewOnly={viewOnly}
               onSelect={(thread) => {
                 if (isHere(thread.place)) openThread(thread.id);
@@ -1089,7 +1118,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
         </SidePanel>
 
         {/* Editor column: the files and the agent's threads, as tabs; the agent may sit beside the editor. */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col" style={textScale(fontSize)}>
           <div className="flex min-h-0 min-w-0 flex-1">
           <div className={cx("flex min-h-0 min-w-0 flex-1 flex-col", !split && view === "agent" && "hidden")}>
           {tabRow("editor")}
@@ -1171,7 +1200,24 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
 
           </div>
           {agentMounted ? (
-            <div className={cx("flex min-h-0 min-w-0 flex-col", split ? "ide-agent-side" : "flex-1", !agentShown && "hidden")} data-testid="ide-agent-pane">
+            <div className={cx("flex min-h-0 min-w-0 flex-col", split ? "ide-agent-side" : "flex-1", !agentShown && "hidden")} style={split ? { width: agentSide } : undefined} data-testid="ide-agent-pane">
+              {split ? (
+                <Sash
+                  orientation="vertical"
+                  start
+                  value={agentSide}
+                  min={AGENT_SIDE_MIN}
+                  max={() => Math.max(AGENT_SIDE_MIN, Math.floor(window.innerWidth * AGENT_SIDE_MAX_SHARE))}
+                  reset={AGENT_SIDE_DEFAULT}
+                  onChange={changeSide}
+                  onBeyond={() => {
+                    // Wider than half the window: the agent takes it all, as the Agent view.
+                    setSplit(false);
+                    setView("agent");
+                  }}
+                  label="Resize the agent; drag past half the window for the Agent view"
+                />
+              ) : null}
               {tabRow("agent")}
               {threadTabs.map((key) => {
                 const shown = agentShown && key === activeThreadKey;
@@ -1215,7 +1261,21 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           onTerminal={viewOnly ? null : () => setTerminal(true)}
           onHome={goHome}
         />
-        <StatusItem icon={GitBranch} title={scm.data?.branch ?? data.branch} onClick={viewOnly ? undefined : () => showPanel("scm")}>{shortBranch(scm.data?.branch ?? data.branch)}</StatusItem>
+        {viewOnly || isReview ? (
+          <StatusItem icon={GitBranch} title={scm.data?.branch ?? data.branch} onClick={viewOnly ? undefined : () => showPanel("scm")}>{shortBranch(scm.data?.branch ?? data.branch)}</StatusItem>
+        ) : (
+          <BranchMenu
+            target={target}
+            repo={data.repo}
+            branch={shortBranch(scm.data?.branch ?? data.branch)}
+            align="left"
+            trigger={(open, toggle, current) => (
+              <button type="button" className="flex h-full shrink-0 items-center gap-1 rounded-sm px-1.5 hover:bg-hover hover:text-ink" aria-haspopup="dialog" aria-expanded={open} title="Switch branch, or start a new one" onClick={toggle} data-testid="ide-branch">
+                <GitBranch size={11} className="shrink-0" /> {current ?? shortBranch(scm.data?.branch ?? data.branch)}
+              </button>
+            )}
+          />
+        )}
         {scm.data?.ahead ? <StatusItem icon={ArrowUp} title="Commits to push">{scm.data.ahead}</StatusItem> : null}
         {scm.data?.behind ? <StatusItem icon={ArrowDown} title="Commits to pull">{scm.data.behind}</StatusItem> : null}
         {isReview && totals ? (
@@ -1241,6 +1301,16 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
 
       {quick ? <QuickOpen key={quick.nonce} initial={quick.text} resolve={resolveQuick} onClose={() => setQuick(null)} /> : null}
       {help ? <ShortcutSheet onClose={() => setHelp(false)} /> : null}
+      <FolderPicker
+        open={picking}
+        onClose={() => setPicking(false)}
+        target={target}
+        computerName={placeName}
+        onPick={(folder) => {
+          setPicking(false);
+          navigate.go(agentHref({ deviceId: here.deviceId, folder: folder.path }, { view: "editor" }));
+        }}
+      />
       {navigate.link}
     </IdeSpace>
   );
@@ -2349,7 +2419,8 @@ function FilePane(props: {
           <props.Editor
             ref={props.editorRef}
             path={path}
-            original={opened.current.original ?? ""}
+            // What is compared against follows the server: an accept or reject made elsewhere (Accept all, another tab) clears its highlight here.
+            original={data?.original ?? opened.current.original ?? ""}
             value={buffers.current.get(path)?.text ?? opened.current.current ?? ""}
             start={props.review ? opened.current.start : null}
             agent={props.review ? opened.current.agent : null}

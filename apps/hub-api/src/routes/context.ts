@@ -933,7 +933,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/entities", async (request) => {
     const userId = request.userId;
-    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots, datasets, files] = await Promise.all([
+    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots, datasets, files, pages, meetings] = await Promise.all([
       prisma.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, email: true }, take: 300 }),
       prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, take: 200 }),
       prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true }, take: 200 }),
@@ -957,6 +957,9 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ? prisma.plotDataset.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, format: true }, orderBy: { updatedAt: "desc" }, take: 100 })
         : Promise.resolve([]),
       prisma.document.findMany({ where: { userId, deletedAt: null }, select: { id: true, filename: true, byteSize: true }, orderBy: { updatedAt: "desc" }, take: 200 }),
+      // Pages of their own (a task's page is the task) and meeting notes written in Ensemble.
+      prisma.taskPage.findMany({ where: { userId, deletedAt: null, taskId: null }, select: { id: true, title: true, parentId: true }, orderBy: { updatedAt: "desc" }, take: 300 }),
+      prisma.meetingSession.findMany({ where: { userId, deletedAt: null }, select: { id: true, title: true, startedAt: true }, orderBy: { startedAt: "desc" }, take: 200 }),
     ]);
     return {
       entities: [
@@ -969,6 +972,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ...diagrams.map((row) => ({ kind: "diagram", id: row.id, label: row.title, detail: "" })),
         ...plotMentionEntities(plots, datasets),
         ...files.map((row) => ({ kind: "file", id: row.id, label: row.filename, detail: fileDetail(row.filename, row.byteSize) })),
+        ...pages.map((row) => ({ kind: "page", id: row.id, label: row.title || "Untitled page", detail: row.parentId ? "Inside a page" : "" })),
+        ...meetings.map((row) => ({ kind: "meeting", id: row.id, label: row.title || "Meeting notes", detail: row.startedAt.toISOString().slice(0, 10) })),
       ],
     };
   });

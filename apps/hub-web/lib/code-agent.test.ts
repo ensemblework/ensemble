@@ -112,3 +112,12 @@ test("a reply's links to Ensemble records become cards, once each, with their na
   assert.deepEqual(links.map((row) => [row.kind, row.label]), [["file", "BFS-in-Cpp.docx"], ["page", "the plan"], ["task", null]]);
   assert.equal(links[0]!.href, `/files/${id}`);
 });
+
+test("a message's mentions of pages and meeting notes go as handles, and what the server attached stays out of the thread", () => {
+  const sent = withMentions("Summarize @page:Plan", [{ kind: "page", id: "p1", label: "Plan" }, { kind: "meeting", id: "m1", label: "Standup" }]);
+  assert.match(sent, /ensemble:\/\/page\/p1/);
+  assert.match(sent, /ensemble:\/\/meeting\/m1/);
+  const back = splitMentions(`${sent}\n\n(Attached from Ensemble: the records it mentions.\n### Page: Plan (ensemble://page/p1)\n@Other [task] ensemble://task/zz\n)`);
+  assert.equal(back.text, "Summarize @page:Plan");
+  assert.deepEqual(back.mentions.map((row) => row.id), ["p1", "m1"]);
+});

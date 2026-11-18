@@ -338,9 +338,10 @@ export function ThemeControl() {
       <button
         ref={button}
         type="button"
-        className={cx("btn", open && "bg-hover")}
+        className={cx("icon-btn h-7 w-7", open && "bg-hover text-ink")}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label="Theme"
         title="Choose a theme. Alt+Shift+T switches starred themes."
         onClick={() => {
           if (open) close();
@@ -350,7 +351,7 @@ export function ThemeControl() {
           }
         }}
       >
-        <Palette size={13} /> Theme
+        <Palette size={15} />
       </button>
       {open ? (
         <ThemePicker

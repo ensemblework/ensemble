@@ -13,6 +13,10 @@
   width: 6px;
   cursor: col-resize;
 }
+.ide-sash[aria-orientation="vertical"][data-edge="start"] {
+  right: auto;
+  left: -3px;
+}
 .ide-sash[aria-orientation="horizontal"] {
   left: 0;
   right: 0;
@@ -324,15 +328,9 @@ html[data-ide-resizing="horizontal"] * {
 /* A one-line notice under the tabs (offline): calm, not an alarm. */
 /* The agent beside the editor (ide.tsx): a pane of its own on the right. */
 .ide-agent-side {
-  width: clamp(340px, 42%, 680px);
+  position: relative;
   flex-shrink: 0;
   border-left: 1px solid var(--line);
-}
-@media (max-width: 900px) {
-  .ide-agent-side {
-    width: 100%;
-    border-left: 0;
-  }
 }
 .ide-agent-editing {
   display: inline-flex;
@@ -528,6 +526,11 @@ html[data-ide-resizing="horizontal"] * {
 /* The agent's thread (agent-view.tsx). */
 .agent-view {
   background: var(--bg);
+}
+/* The status bar's text size scales the thread and the Welcome as it scales the editor (ide-chrome.tsx textScale). */
+.agent-timeline,
+.code-welcome-body {
+  zoom: var(--code-zoom, 1);
 }
 .agent-chip {
   display: inline-flex;
@@ -1058,5 +1061,223 @@ html[data-ide-resizing="horizontal"] * {
   }
   .agent-shimmer {
     color: var(--muted);
+  }
+}
+
+/* The machine Code shows (machine-switcher.tsx): one row at the top of the side panel. */
+.machine-switch {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  font-size: 12.5px;
+  color: var(--ink);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.machine-switch:not(.is-static):hover,
+.machine-switch[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+.machine-switch.is-static {
+  border-color: transparent;
+  background: transparent;
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+/* The folder picker (folder-picker.tsx), laid out like a computer's own Open panel. */
+.folder-picker {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  height: min(560px, 74dvh);
+}
+.folder-picker-places {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  padding: 10px 8px;
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+.folder-picker-computer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 8px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.folder-picker-place {
+  display: flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: left;
+}
+.folder-picker-place:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.folder-picker-place.is-on {
+  background: rgb(var(--accent-rgb) / 0.14);
+  color: var(--ink);
+}
+.folder-picker-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.folder-picker-bar {
+  display: flex;
+  min-width: 0;
+  height: 44px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+.folder-picker-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.folder-picker-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+}
+.folder-picker-row:hover {
+  background: var(--hover);
+}
+.folder-picker-row:focus-visible {
+  outline: 1px solid rgb(var(--accent-rgb) / 0.8);
+  outline-offset: -1px;
+}
+.folder-picker-row.is-selected {
+  background: rgb(var(--accent-rgb) / 0.16);
+}
+.folder-picker-row.is-new {
+  background: var(--raised);
+}
+.folder-picker-trust {
+  display: flex;
+  gap: 10px;
+  margin: 0 10px 8px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.45);
+  border-radius: 10px;
+  background: rgb(var(--accent-rgb) / 0.07);
+  font-size: 13px;
+}
+.folder-picker-foot {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 640px) {
+  .folder-picker-dialog {
+    width: 100% !important;
+  }
+  .folder-picker {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 78dvh;
+  }
+  .folder-picker-places {
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .folder-picker-computer {
+    display: none;
+  }
+  .folder-picker-place {
+    flex-shrink: 0;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .folder-picker-row {
+    min-height: 44px;
+  }
+}
+
+/* The Welcome (code-home.tsx): two ways to start, then short lists of one line each. */
+.code-start {
+  display: flex;
+  min-width: 0;
+  height: 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.code-start:hover:not(:disabled) {
+  border-color: rgb(var(--accent-rgb) / 0.5);
+  background: var(--hover);
+}
+.code-start:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.7);
+  outline-offset: 1px;
+}
+.code-start:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.code-recent {
+  display: flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.code-recent:hover,
+.code-recent:focus-visible {
+  background: var(--hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  .code-start,
+  .machine-switch {
+    transition: none;
   }
 }

@@ -8,17 +8,12 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import {
-  Check,
-  ChevronDown,
   Code2,
-  Command,
   FileCode2,
   FolderGit2,
   FolderOpen,
   GitPullRequestArrow,
-  House,
   Laptop,
-  ListTree,
   Lock,
   Maximize2,
   Minimize2,
@@ -32,41 +27,41 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { jobTone } from "@/components/agent/job-card";
-import { Fold, InlineError, Lines, RepoList, ReviewItem } from "@/components/code/code-lists";
-import { ComputersCode, matchRepos } from "@/components/code/computers-code";
-import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
+import { InlineError, RepoList, ReviewItem } from "@/components/code/code-lists";
+import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import { QuickOpen, useKeyLabel, useLinkNavigate, type QuickList } from "@/components/code/quick-open";
 import { RunCode } from "@/components/code/run-code";
 import { Terminal } from "@/components/code/terminal";
 import { ShareButton } from "@/components/sharing/share-dialog";
-import { InfoTip, MenuItem, Popover, Segmented, SkeletonRows, Spinner, cx } from "@/components/ui";
+import { InfoTip, Segmented, SkeletonRows, Spinner, cx } from "@/components/ui";
 import { useSpaceAccess } from "@/lib/access";
-import { api, type AgentJob } from "@/lib/api";
+import { api } from "@/lib/api";
 import { AgentIcon } from "@/components/agent-icon";
 import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
 import { AgentView, type FolderChoice, type PlaceChoice } from "@/components/code/agent-view";
-import { agentHref, isLive, type IdeView } from "@/lib/code-agent";
+import { agentHref, isLive, sessionsMinWidth, type IdeView } from "@/lib/code-agent";
+import { MachineSwitcher } from "@/components/code/machine-switcher";
+import { FolderPicker } from "@/components/code/folder-picker";
 import { useCodeThreads } from "@/components/code/agent-actions";
-import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeRepo, type HomeReview } from "@/lib/code-home";
-import { remoteLabel, repoName, repoSecond, repoView, shortBranch, usedWithin, viewFor } from "@/lib/code-repos";
+import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeReview } from "@/lib/code-home";
+import { matchRepos, repoName, repoSecond, shortBranch, usedWithin, viewFor } from "@/lib/code-repos";
 import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
-import { relative } from "@/lib/format";
 import { usePersistentState } from "@/lib/prefs";
 
 type HomePanel = "repos" | "search" | "scm" | "agent";
+
+/** The agent's sessions panel never takes more than this share of the window (docs/16 §9). */
+const SESSIONS_MAX_SHARE = 0.3;
 type Filter = "needs" | "reviewed" | "all";
 
-const REVIEWS_SHOWN = 6;
-const REPOS_SHOWN = 8;
-const RUNS_SHOWN = 5;
+const REVIEWS_SHOWN = 3;
+const REPOS_SHOWN = 5;
 /** The threads Code's home keeps open as tabs at most; the oldest closes first. */
 const MAX_THREAD_TABS = 8;
 /** The tab of a thread not started yet. */
 const NEW_THREAD = "new";
 
-const TONE_DOT: Record<string, string> = { green: "bg-ok", red: "bg-danger", yellow: "bg-warn", orange: "bg-warn", blue: "bg-accent", gray: "bg-faint" };
 
 export function CodeHome({
   jobId,
@@ -88,7 +83,9 @@ export function CodeHome({
 }) {
   const access = useSpaceAccess();
   const viewOnly = access.guest;
-  const home = useCodeHome();
+  // Code shows one machine at a time (docs/16 §1): the one picked last, else the first that answers.
+  const [computerId, setComputerId] = usePersistentState<string | null>("ensemble.code.computer", null);
+  const home = useCodeHome(computerId);
   const layout = useIdeLayout();
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
   const openQuick = (text: string) => setQuick({ text, nonce: Date.now() });
@@ -97,9 +94,9 @@ export function CodeHome({
   const navigate = useLinkNavigate();
   const { sideOpen, setSideOpen, showSide, terminal, setTerminal, fontSize, setFontSize } = layout;
   const [panel, setPanel] = usePersistentState<HomePanel>("ensemble.code.homePanel", "repos");
-  const [computerId, setComputerId] = usePersistentState<string | null>("ensemble.code.computer", null);
+  const [picking, setPicking] = useState(false);
   const [tab, setTab] = useState<"welcome" | "run">(jobId ? "run" : "welcome");
-  const [full, setFull] = useState(false);
+  const [full, setFull] = useFullscreen();
   const [filter, setFilter] = useState("");
   const filterField = useRef<HTMLInputElement>(null);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
@@ -144,6 +141,16 @@ export function CodeHome({
   }, [view, setView]);
 
   useEffect(() => setTab(jobId ? "run" : "welcome"), [jobId]);
+  // Ctrl/⌘+O opens a folder, as in an editor.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== "o") return;
+      event.preventDefault();
+      setPicking(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const openPanel = (id: HomePanel) => {
     setPanel(id);
@@ -168,13 +175,22 @@ export function CodeHome({
   }, [full]);
 
   const places = home.states.map((state) => state.place);
-  // The agent's choices: every computer, and the folders Code can use on each (not run checkouts).
+  const selected = home.current?.place ?? null;
+  const selectedId = selected?.target.kind === "device" ? selected.target.deviceId : null;
+  const pickMachine = (place: CodePlace) => {
+    if (place.target.kind === "device") setComputerId(place.target.deviceId);
+  };
+  // The agent's choices: every computer, and the folders Code can use on the one shown (not run checkouts).
   const agentPlaces: PlaceChoice[] = places.map((place) => ({ deviceId: place.target.kind === "device" ? place.target.deviceId : null, name: place.name, online: place.online }));
   const agentFolders: FolderChoice[] = home.repos
     .filter((repo) => repo.kind !== "run")
     .map((repo) => ({ deviceId: repo.place.target.kind === "device" ? repo.place.target.deviceId : null, path: repo.path, name: repoName(repo), branch: shortBranch(repo.branch) }));
-  const firstPlace = agentPlaces.find((place) => place.online) ?? agentPlaces[0] ?? null;
-  const agentDraft: ThreadPlace = draft && agentPlaces.some((place) => (place.deviceId ?? null) === (draft.deviceId ?? null)) ? draft : { deviceId: firstPlace?.deviceId ?? null, folder: null };
+  // A new thread starts on the machine shown; picking another one there shows that one.
+  const agentDraft: ThreadPlace = { deviceId: selectedId, folder: draft && (draft.deviceId ?? null) === selectedId ? draft.folder : null };
+  const setAgentDraft = (place: ThreadPlace) => {
+    setDraft(place);
+    if ((place.deviceId ?? null) !== selectedId && place.deviceId) setComputerId(place.deviceId);
+  };
   // Threads as tabs: the one in view always has its tab, and keeps it while the Welcome shows.
   const activeKey = homeThread ?? NEW_THREAD;
   const threadTabs = !homeTabs.includes(activeKey) && (view === "agent" || (agentMounted && !homeTabsClosed)) ? [...homeTabs, activeKey] : homeTabs;
@@ -199,16 +215,12 @@ export function CodeHome({
     }
   };
   const threadTitles = new Map((threadList.data?.threads ?? []).map((row) => [row.id, row]));
-  const selected = places.find((place) => place.target.kind === "device" && place.target.deviceId === computerId) ?? places.find((place) => place.usable) ?? places[0] ?? null;
+  const sessionsMin = sessionsMinWidth((threadList.data?.threads ?? []).filter((row) => (row.place.deviceId ?? null) === selectedId).map((row) => row.title));
   const canTerminal = !viewOnly && Boolean(selected?.terminal);
   const needs = home.reviews.filter((review) => !review.completedAt);
   const running = home.runs.filter((job) => job.status === "running" || job.status === "claimed").length;
   const noComputer = home.mode === "computers" && home.devices.isSuccess && places.length === 0;
 
-  const openTerminal = (place: CodePlace | null = selected) => {
-    if (place?.target.kind === "device") setComputerId(place.target.deviceId);
-    setTerminal(true);
-  };
 
   const job = useQuery({ queryKey: ["job", jobId], queryFn: () => api.job(jobId!), enabled: Boolean(jobId) });
 
@@ -217,7 +229,8 @@ export function CodeHome({
     const input = parseQuickInput(text);
     if (input.mode === "commands") {
       const commands = [
-        { id: "open-repo", label: "Open a repository", keys: "mod+p", run: () => openQuick("") },
+        { id: "open-folder", label: "Open a folder", keys: "mod+o", run: () => setPicking(true) },
+        { id: "open-repo", label: "Find a repository", keys: "mod+p", run: () => openQuick("") },
         { id: "agent", label: view === "agent" ? "Show the editor" : "Code with an agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
         { id: "agent-new", label: "New thread with the agent", run: () => openThread(null) },
         { id: "reviews", label: "Show the changes to review", run: () => openPanel("scm") },
@@ -225,9 +238,9 @@ export function CodeHome({
         { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
         ...(canTerminal ? [{ id: "terminal", label: terminal ? "Hide the terminal" : "Show the terminal", keys: "ctrl+`", run: () => setTerminal(!terminal) }] : []),
         { id: "theme", label: "Color theme", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
-        { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
-        { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
-        { id: "reset-size", label: "Reset code text size", keys: "mod+shift+0", run: () => setFontSize(FONT_DEFAULT) },
+        { id: "bigger", label: "Bigger text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
+        { id: "smaller", label: "Smaller text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
+        { id: "reset-size", label: "Reset text size", keys: "mod+shift+0", run: () => setFontSize(FONT_DEFAULT) },
         { id: "full", label: full ? "Leave full screen" : "Full screen", run: () => setFull(!full) },
         { id: "runs", label: "Show agent runs", run: () => navigate.go("/runs") },
         home.mode === "computers" ? { id: "computers", label: "Your computers", run: () => navigate.go("/settings#devices") } : { id: "folders", label: "Folders Code can use", run: () => navigate.go("/settings#terminal") },
@@ -257,7 +270,6 @@ export function CodeHome({
       <div className="relative flex min-h-0 min-w-0 flex-1">
         <ActivityBar
           items={[
-            { id: "home", icon: House, label: "Welcome", onClick: () => { setTab("welcome"); setView("editor"); } },
             {
               id: "agent",
               icon: AgentIcon,
@@ -274,7 +286,6 @@ export function CodeHome({
             ...(
               [
                 ["repos", FolderGit2, "Explorer (Ctrl+B)", 0],
-                ["search", Search, "Search", 0],
                 ["scm", GitPullRequestArrow, "Changes to review", needs.length],
               ] as const
             ).map(([id, icon, label, badge]) => ({
@@ -292,24 +303,28 @@ export function CodeHome({
           bottom={viewOnly ? [] : [{ id: "terminal", icon: TerminalSquare, label: canTerminal ? "Terminal (Ctrl+`)" : "Terminal (needs a computer that allows it)", active: terminal && canTerminal, onClick: () => (canTerminal ? setTerminal(!terminal) : undefined) }]}
         />
 
-        <SidePanel layout={layout}>
+        <SidePanel layout={layout} maxShare={panel === "agent" ? SESSIONS_MAX_SHARE : undefined} minWidth={panel === "agent" ? sessionsMin : undefined}>
+          {noComputer ? null : (
+            <div className="shrink-0 px-2 pb-1 pt-2">
+              <MachineSwitcher places={places} current={selected} onPick={pickMachine} />
+            </div>
+          )}
           {panel === "agent" ? (
             <AgentSessions
               selected={homeThread}
               viewOnly={viewOnly}
+              machine={{ deviceId: selectedId }}
               onSelect={(thread) => openThread(thread.id)}
               onNew={(place) => {
-                if (place) setDraft(place);
+                if (place) setAgentDraft(place);
                 openThread(null);
               }}
               onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
             />
-          ) : panel === "repos" ? (
-            <ExplorerPanel home={home} filter={filter} setFilter={setFilter} field={filterField} selected={selected} onTerminal={(place) => openTerminal(place)} noComputer={noComputer} />
-          ) : panel === "search" ? (
-            <SearchPanel onOpenRepos={() => openQuick("")} />
-          ) : (
+          ) : panel === "scm" ? (
             <ReviewsPanel home={home} />
+          ) : (
+            <ExplorerPanel home={home} filter={filter} setFilter={setFilter} field={filterField} noComputer={noComputer} onOpenFolder={() => setPicking(true)} />
           )}
         </SidePanel>
 
@@ -383,7 +398,7 @@ export function CodeHome({
                         } else openThread(id);
                       }}
                       draft={agentDraft}
-                      onDraft={setDraft}
+                      onDraft={setAgentDraft}
                       places={agentPlaces}
                       folders={agentFolders}
                       placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
@@ -411,12 +426,10 @@ export function CodeHome({
               needs={needs}
               noComputer={noComputer}
               viewOnly={viewOnly}
-              canTerminal={canTerminal}
-              onOpenRepos={() => openQuick("")}
+              onOpenFolder={() => setPicking(true)}
               onAgent={() => openThread(null)}
+              onRepos={() => openPanel("repos")}
               onReviews={() => openPanel("scm")}
-              onTerminal={() => openTerminal()}
-              onCommands={() => openQuick(">")}
             />
           )}
 
@@ -429,37 +442,10 @@ export function CodeHome({
       </div>
 
       <StatusBar>
-        {home.mode === "computers" && places.length > 1 ? (
-          <Popover
-            align="left"
-            width={260}
-            trigger={(open, toggle) => (
-              <button type="button" onClick={toggle} aria-expanded={open} title="Which computer the terminal and this bar are about" className="ide-status-place" data-offline={selected?.online === false ? "" : undefined}>
-                <PlaceLabel place={selected} />
-                <ChevronDown size={10} />
-              </button>
-            )}
-          >
-            {(close) =>
-              places.map((place) => (
-                <MenuItem
-                  key={place.key}
-                  active={place.key === selected?.key}
-                  hint={place.online ? "online" : "offline"}
-                  onClick={() => {
-                    if (place.target.kind === "device") setComputerId(place.target.deviceId);
-                    close();
-                  }}
-                >
-                  {place.name}
-                </MenuItem>
-              ))
-            }
-          </Popover>
-        ) : selected ? (
-          <span className="ide-status-place" data-offline={selected.online ? undefined : ""} title={selected.online ? "Online" : "Offline"}>
+        {selected ? (
+          <button type="button" className="ide-status-place" data-offline={selected.online ? undefined : ""} title={places.length > 1 ? "Switch the computer in the side panel" : selected.online ? "Online" : "Offline"} onClick={() => openPanel(panel === "agent" ? "agent" : "repos")}>
             <PlaceLabel place={selected} />
-          </span>
+          </button>
         ) : null}
         {selected?.version ? <StatusItem className="max-sm:hidden" title={selected.target.kind === "local" ? "Ensemble's version" : "Ensemble's version on this computer"}>v{selected.version}</StatusItem> : null}
         {home.mode !== "loading" && !noComputer ? (
@@ -476,6 +462,19 @@ export function CodeHome({
         <FontSizeControl fontSize={fontSize} setFontSize={setFontSize} />
       </StatusBar>
       {quick ? <QuickOpen key={quick.nonce} initial={quick.text} resolve={resolveQuick} onClose={() => setQuick(null)} /> : null}
+      {selected ? (
+        <FolderPicker
+          open={picking}
+          onClose={() => setPicking(false)}
+          target={selected.target}
+          computerName={selected.name}
+          fallback={home.repos.filter((repo) => repo.kind !== "run").map((repo) => ({ path: repo.path, name: repo.name }))}
+          onPick={(folder) => {
+            setPicking(false);
+            navigate.go(repoHref(selected, folder.path));
+          }}
+        />
+      ) : null}
       {navigate.link}
     </IdeSpace>
   );
@@ -509,34 +508,39 @@ function EditorTab({ icon: Icon, iconClass, label, active, onSelect, onClose }: 
   );
 }
 
+/** The machine shown's repositories, found by name; Open a folder browses for one that is not listed. */
 function ExplorerPanel({
   home,
   filter,
   setFilter,
   field,
-  selected,
-  onTerminal,
   noComputer,
+  onOpenFolder,
 }: {
   home: Home;
   filter: string;
   setFilter: (value: string) => void;
   field: React.RefObject<HTMLInputElement | null>;
-  selected: CodePlace | null;
-  onTerminal: (place: CodePlace) => void;
   noComputer: boolean;
+  onOpenFolder: () => void;
 }) {
-  const local = home.mode === "local" ? home.states[0] : undefined;
+  const state = home.current;
+  const place = state?.place ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
-      <PanelHeader title={home.mode === "computers" ? "Your computers" : "Explorer"}>
+      <PanelHeader title="Repositories">
+        {place?.usable ? (
+          <button type="button" className="icon-btn h-6 w-6" title="Open a folder" aria-label="Open a folder" onClick={onOpenFolder}>
+            <FolderOpen size={13} />
+          </button>
+        ) : null}
         <button
           type="button"
           className="icon-btn h-6 w-6"
           title="Look again"
           aria-label="Refresh repositories"
           onClick={() => {
-            for (const state of home.states) {
+            if (state) {
               void state.repos.refetch();
               void state.reviews.refetch();
             }
@@ -546,10 +550,14 @@ function ExplorerPanel({
           <RefreshCw size={12} />
         </button>
       </PanelHeader>
-      {noComputer ? null : (
+      {noComputer ? (
+        <div className="px-3 py-1 text-muted">
+          No paired computer yet. <Link href="/settings#devices" className="text-accent hover:underline">Pair a computer</Link>
+        </div>
+      ) : (
         <div className="px-2 pb-2">
-          <div className="tile flex items-center gap-1.5 rounded-md bg-panel px-2 py-1">
-            <Search size={12} className="shrink-0 text-faint" />
+          <div className="compound-field flex h-7 items-center gap-1.5 rounded-md border border-line bg-bg px-2">
+            <Search size={12} className="shrink-0 text-faint" aria-hidden />
             <input
               ref={field}
               value={filter}
@@ -567,47 +575,25 @@ function ExplorerPanel({
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto pb-3" data-repo-list>
-        {home.mode === "loading" ? (
+        {home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading) ? (
           <SkeletonRows count={4} rowClassName="h-6" className="space-y-1.5 px-3" />
-        ) : home.mode === "computers" ? (
-          <ComputersCode selected={selected?.target.kind === "device" ? selected.target.deviceId : null} filter={filter} onTerminal={(id) => onTerminal(home.states.find((state) => state.place.key === `device:${id}`)?.place ?? selected!)} />
-        ) : local ? (
-          <Fold title="Repositories" count={local.views.filter((view) => view.kind !== "run").length}>
-            {local.repos.isLoading ? (
-              <SkeletonRows count={4} rowClassName="h-6" className="space-y-1.5 px-3" />
-            ) : local.repos.error ? (
-              <InlineError error={local.repos.error} retry={() => void local.repos.refetch()} />
-            ) : (
-              <RepoList repos={matchRepos(local.views, filter)} hrefOf={(path) => repoHref(local.place, path)} empty={filter.trim() ? "None match." : "No git checkouts in the workspace or your Code folders."} />
-            )}
-          </Fold>
+        ) : place?.why ? (
+          <p className="px-3 py-1 text-muted [overflow-wrap:anywhere]">{place.why}</p>
+        ) : state?.repos.isLoading ? (
+          <SkeletonRows count={4} rowClassName="h-6" className="space-y-1.5 px-3" />
+        ) : state?.repos.error ? (
+          <InlineError error={state.repos.error} retry={() => void state.repos.refetch()} />
+        ) : state && place ? (
+          <RepoList repos={matchRepos(state.views, filter)} hrefOf={(path) => repoHref(place, path)} empty={filter.trim() ? "None match." : "No repositories yet. Open a folder to add one."} />
         ) : null}
       </div>
-      <div className="shrink-0 border-t border-line px-3 py-2 text-[12px]">
-        {home.mode === "computers" ? (
-          <Link href="/settings#devices" className="flex items-center gap-1.5 text-muted hover:text-ink">
-            <Laptop size={12} /> {noComputer ? "Pair a computer" : "Computers"}
-          </Link>
-        ) : (
+      {place?.target.kind === "local" ? (
+        <div className="shrink-0 border-t border-line px-3 py-2 text-[12px]">
           <Link href="/settings#terminal" className="flex items-center gap-1.5 text-muted hover:text-ink">
             <Settings2 size={12} /> Folders Code can use
           </Link>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SearchPanel({ onOpenRepos }: { onOpenRepos: () => void }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
-      <PanelHeader title="Search" />
-      <div className="px-3 py-1 text-muted">
-        <p>Open a repository to find its files and search inside them.</p>
-        <button type="button" className="btn mt-3 w-full justify-center text-[12.5px]" onClick={onOpenRepos}>
-          <FolderOpen size={13} /> Open a repository
-        </button>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -670,13 +656,11 @@ function ReviewsPanel({ home }: { home: Home }) {
   );
 }
 
-function Section({ title, count, action, children }: { title: string; count?: number; action?: ReactNode; children: ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="min-w-0">
-      <h2 className="mb-2 flex items-center gap-2 px-2 text-[13.5px] font-semibold text-ink">
-        {title}
-        {count ? <span className="rounded bg-raised px-1.5 text-[11px] font-medium tabular-nums text-muted">{count}</span> : null}
-        <span className="flex-1" />
+      <h2 className="mb-1.5 flex items-center gap-2 px-2 text-[12.5px] font-medium text-muted">
+        <span className="flex-1">{title}</span>
         {action}
       </h2>
       {children}
@@ -684,56 +668,53 @@ function Section({ title, count, action, children }: { title: string; count?: nu
   );
 }
 
-function Quiet({ children }: { children: ReactNode }) {
-  return <p className="px-2 py-1 text-[13px] text-muted">{children}</p>;
-}
-
+/**
+ * Code's Welcome (docs/16 §1): the two ways to start and a short list of where you were. The machine
+ * it is about is picked in the side panel; everything longer lives there and in Runs.
+ */
 function Welcome({
   home,
   needs,
   noComputer,
   viewOnly,
-  canTerminal,
-  onOpenRepos,
+  onOpenFolder,
   onAgent,
+  onRepos,
   onReviews,
-  onTerminal,
-  onCommands,
 }: {
   home: Home;
   needs: HomeReview[];
   noComputer: boolean;
   viewOnly: boolean;
-  canTerminal: boolean;
-  onOpenRepos: () => void;
+  onOpenFolder: () => void;
   onAgent: () => void;
+  onRepos: () => void;
   onReviews: () => void;
-  onTerminal: () => void;
-  onCommands: () => void;
 }) {
-  const several = home.states.length > 1;
   const label = useKeyLabel();
+  const place = home.current?.place ?? null;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" data-testid="code-welcome">
-      <div className="mx-auto w-full max-w-[1040px] px-4 pb-16 pt-8 sm:px-10 md:pt-14">
-        <header className="mb-9 flex min-w-0 items-center gap-3.5 px-2 md:mb-12">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <Code2 size={22} />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-[24px] font-semibold leading-tight tracking-tight text-ink md:text-[28px]">Code</h1>
-            <p className="text-[13.5px] text-muted">
-              {noComputer ? "Code works on your own computers. Pair one to review what agents change there." : "Review what agents changed, then commit and push."}{" "}
-              <InfoTip
-                label="About Code"
-                text={
-                  home.mode === "computers"
-                    ? "Agents work in folders on your paired computers, and their changes stay there. Code reads them from each computer when you open them; nothing about your code is kept on Ensemble on the web."
-                    : "Repositories are the checkouts in Ensemble's workspace and the folders in Settings › Folders Code can use. An agent's changes stay in their folder until you accept or discard them; open one to review it hunk by hunk."
-                }
-              />
-            </p>
-          </div>
+      <div className="code-welcome-body mx-auto w-full max-w-[620px] px-5 pb-16 pt-10 md:pt-16">
+        <header className="mb-7 px-2">
+          <h1 className="text-[26px] font-semibold leading-tight tracking-tight text-ink">Code</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted">
+            {noComputer ? (
+              "Code works on your own computers."
+            ) : place ? (
+              <>
+                <OnlineDot online={place.online} /> {place.name}
+              </>
+            ) : null}
+            <InfoTip
+              label="About Code"
+              text={
+                home.mode === "computers"
+                  ? "Code works in folders on your paired computers and reads them from each one when you open them; nothing about your code is kept on Ensemble on the web. Pick the computer in the side panel."
+                  : "Repositories are the checkouts in Ensemble's workspace and the folders in Settings › Folders Code can use. An agent's changes stay in their folder until you accept or discard them."
+              }
+            />
+          </p>
         </header>
 
         {noComputer ? (
@@ -743,28 +724,14 @@ function Welcome({
             </Link>
           </div>
         ) : (
-          <div className="grid min-w-0 gap-x-14 gap-y-10 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
-            <div className="min-w-0 space-y-10">
-              <Section title="Start">
-                <div className="space-y-0.5">
-                  <StartItem icon={FolderOpen} label="Open a repository" hint={label("mod+p")} onClick={onOpenRepos} />
-                  {viewOnly ? null : <StartItem icon={AgentIcon} label="Code with an agent" hint={label("ctrl+alt+i")} onClick={onAgent} />}
-                  <StartItem icon={GitPullRequestArrow} label="Review agent changes" hint={needs.length ? String(needs.length) : undefined} onClick={onReviews} />
-                  {viewOnly ? null : <StartItem icon={TerminalSquare} label="Open terminal" hint={label("ctrl+`")} onClick={onTerminal} disabled={!canTerminal} />}
-                  <StartItem icon={Command} label="Show all commands" hint={label("mod+shift+p")} onClick={onCommands} />
-                  {home.mode === "computers" ? (
-                    <StartItem icon={Laptop} label="Your computers" href="/settings#devices" />
-                  ) : (
-                    <StartItem icon={Settings2} label="Folders Code can use" href="/settings#terminal" small />
-                  )}
-                </div>
-              </Section>
-              <RecentRepos home={home} several={several} onOpenRepos={onOpenRepos} />
+          <div className="space-y-9">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <StartItem icon={FolderOpen} label="Open a folder" hint={label("mod+o")} onClick={onOpenFolder} disabled={!place?.usable} />
+              {viewOnly ? null : <StartItem icon={AgentIcon} label="Code with an agent" hint={label("ctrl+alt+i")} onClick={onAgent} />}
             </div>
-            <div className="min-w-0 space-y-10">
-              <NeedsReview home={home} needs={needs} several={several} />
-              <RecentRuns home={home} />
-            </div>
+            {place?.why ? <p className="px-2 text-[13px] text-muted [overflow-wrap:anywhere]">{place.why}</p> : null}
+            <RecentRepos home={home} onMore={onRepos} />
+            <NeedsReview home={home} needs={needs} onMore={onReviews} />
           </div>
         )}
       </div>
@@ -772,173 +739,86 @@ function Welcome({
   );
 }
 
-function StartItem({ icon: Icon, label, hint, onClick, href, disabled, small }: { icon: ComponentType<{ size?: number; className?: string }>; label: string; hint?: string; onClick?: () => void; href?: string; disabled?: boolean; small?: boolean }) {
-  const className = cx("flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-hover focus-visible:bg-hover disabled:cursor-not-allowed disabled:opacity-50", small ? "text-[12.5px] text-muted hover:text-ink" : "text-[13.5px] text-ink");
-  const body = (
-    <>
-      <Icon size={small ? 14 : 16} className={cx("shrink-0", small ? undefined : "text-accent")} />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {hint ? <span className={cx("shrink-0 font-mono text-[11px] text-faint", /^\d+$/.test(hint) ? "tabular-nums" : "max-md:hidden")}>{hint}</span> : null}
-    </>
-  );
-  if (href) {
-    return (
-      <Link href={href} className={className}>
-        {body}
-      </Link>
-    );
-  }
+function StartItem({ icon: Icon, label, hint, onClick, disabled }: { icon: ComponentType<{ size?: number; className?: string }>; label: string; hint?: string; onClick: () => void; disabled?: boolean }) {
   return (
-    <button type="button" className={className} onClick={onClick} disabled={disabled} title={disabled ? "Pick a computer that allows its terminal from the web" : undefined}>
-      {body}
+    <button type="button" className="code-start" onClick={onClick} disabled={disabled}>
+      <Icon size={17} className="shrink-0 text-accent" />
+      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      {hint ? <kbd className="shrink-0 font-sans text-[11px] text-faint max-md:hidden">{hint}</kbd> : null}
     </button>
   );
 }
 
-function NeedsReview({ home, needs, several }: { home: Home; needs: HomeReview[]; several: boolean }) {
-  const [all, setAll] = useState(false);
-  const shown = all ? needs : needs.slice(0, REVIEWS_SHOWN);
+function NeedsReview({ home, needs, onMore }: { home: Home; needs: HomeReview[]; onMore: () => void }) {
+  if (home.mode === "loading" || home.reviewsLoading) return null;
+  if (home.reviewErrors.length) {
+    return (
+      <Section title="To review">
+        {home.reviewErrors.map((state) => (
+          <InlineError key={state.place.key} error={state.reviews.error} retry={() => void state.reviews.refetch()} />
+        ))}
+      </Section>
+    );
+  }
+  if (!needs.length) return null;
   return (
     <Section
-      title="Needs review"
-      count={needs.length}
+      title={`To review · ${needs.length}`}
       action={
         needs.length > REVIEWS_SHOWN ? (
-          <button type="button" className="text-[12px] font-normal text-muted hover:text-ink" aria-expanded={all} onClick={() => setAll(!all)}>
-            {all ? "Show fewer" : `View all ${needs.length}`}
+          <button type="button" className="text-[12px] font-normal text-muted hover:text-ink" onClick={onMore}>
+            All
           </button>
         ) : null
       }
     >
-      {home.reviewErrors.map((state) => (
-        <InlineError key={state.place.key} error={state.reviews.error} retry={() => void state.reviews.refetch()} where={several ? state.place.name : undefined} />
-      ))}
-      {home.mode === "loading" || home.reviewsLoading ? (
-        <SkeletonRows count={3} rowClassName="h-10" className="space-y-2 px-2" />
-      ) : shown.length ? (
-        <div className="space-y-0.5">
-          {shown.map((review) => (
-            <ReviewItem key={`${review.place.key}:${review.id}`} review={review} repo={review.repo} href={review.href} where={several ? review.place.name : null} />
-          ))}
-        </div>
-      ) : home.reviewErrors.length ? null : (
-        <Quiet>
-          <Check size={13} className="mr-1.5 inline text-ok" />
-          Nothing to review. Agent changes show here when a code run finishes.
-        </Quiet>
-      )}
+      <div className="space-y-px">
+        {needs.slice(0, REVIEWS_SHOWN).map((review) => (
+          <Link key={`${review.place.key}:${review.id}`} href={review.href} className="code-recent" title={review.title}>
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-ink">{review.title}</span>
+            <span className="max-w-[40%] shrink-0 truncate text-[12px] text-faint">{review.repo}</span>
+          </Link>
+        ))}
+      </div>
     </Section>
   );
 }
 
 /** Recent folders and checkouts; run checkouts only while recent and named by their task or origin. */
-function RecentRepos({ home, several, onOpenRepos }: { home: Home; several: boolean; onOpenRepos: () => void }) {
+function RecentRepos({ home, onMore }: { home: Home; onMore: () => void }) {
   const recent = home.repos
     .filter((repo) => repo.kind !== "run" || (usedWithin(repo, home.ttlDays) && Boolean(repo.taskTitle || repo.remote)))
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
   const shown = recent.slice(0, REPOS_SHOWN);
-  const hidden = home.repos.reduce((sum, repo) => sum + 1 + repo.others.length, 0) - shown.length;
   return (
     <Section
-      title="Recent repositories"
+      title="Recent"
       action={
-        hidden > 0 ? (
-          <button type="button" className="text-[12px] font-normal text-muted hover:text-ink" onClick={onOpenRepos}>
-            More
+        recent.length > REPOS_SHOWN ? (
+          <button type="button" className="text-[12px] font-normal text-muted hover:text-ink" onClick={onMore}>
+            All
           </button>
         ) : null
       }
     >
       {home.repoErrors.map((state) => (
-        <InlineError key={state.place.key} error={state.repos.error} retry={() => void state.repos.refetch()} where={several ? state.place.name : undefined} />
+        <InlineError key={state.place.key} error={state.repos.error} retry={() => void state.repos.refetch()} />
       ))}
       {home.mode === "loading" || home.reposLoading ? (
         <SkeletonRows count={4} rowClassName="h-6" className="space-y-1.5 px-2" />
       ) : shown.length ? (
         <div className="space-y-px">
           {shown.map((repo) => (
-            <RecentRepo key={`${repo.place.key}:${repo.path}`} repo={repo} where={several ? repo.place.name : null} />
+            <Link key={`${repo.place.key}:${repo.path}`} href={repo.href} className="code-recent" title={repo.kind === "run" ? repo.name : repo.path}>
+              <FolderGit2 size={14} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate text-ink">{repo.name}</span>
+              {repo.branch ? <span className="max-w-[40%] shrink-0 truncate text-[12px] text-faint">{shortBranch(repo.branch)}</span> : null}
+            </Link>
           ))}
         </div>
       ) : home.repoErrors.length ? null : (
-        <Quiet>{home.mode === "computers" ? "No repositories on your computers yet." : "No repositories yet."}</Quiet>
-      )}
-    </Section>
-  );
-}
-
-function RecentRepo({ repo, where }: { repo: HomeRepo; where: string | null }) {
-  return (
-    <Link href={repo.href} className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-[13px] hover:bg-hover focus-visible:bg-hover" title={repo.kind === "run" ? repo.name : repo.path}>
-      <FolderGit2 size={14} className="shrink-0 text-muted" />
-      <span className="min-w-0 flex-1 truncate">
-        <span className="text-ink">{repo.name}</span>
-        {repoSecond(repo, where) ? <span className="ml-2 text-[12px] text-faint">{repoSecond(repo, where)}</span> : null}
-      </span>
-    </Link>
-  );
-}
-
-function runRepo(job: AgentJob): string | null {
-  if (job.folderLabel) return job.folderLabel;
-  const remote = remoteLabel(job.repoUrl);
-  if (remote) return remote;
-  return job.folder ? repoName(repoView(job.folder)) : null;
-}
-
-/** The last few code runs as a slim timeline: state, task, repository, computer, when. */
-function RecentRuns({ home }: { home: Home }) {
-  const runs = home.runs.slice(0, RUNS_SHOWN);
-  return (
-    <Section
-      title="Recent agent runs"
-      action={
-        <Link href="/runs" className="text-[12px] font-normal text-muted hover:text-ink">
-          All runs
-        </Link>
-      }
-    >
-      {home.board.isLoading || home.mode === "loading" ? (
-        <SkeletonRows count={3} rowClassName="h-8" className="space-y-2 px-2" />
-      ) : home.board.error ? (
-        <InlineError error={home.board.error} retry={() => void home.board.refetch()} />
-      ) : runs.length ? (
-        <ol className="relative ml-[13px] border-l border-line">
-          {runs.map((job) => {
-            const tone = jobTone(job);
-            const busy = job.status === "running" || job.status === "claimed";
-            const repo = runRepo(job);
-            const lines = (job.files ?? []).reduce((sum, row) => ({ added: sum.added + row.added, removed: sum.removed + row.removed }), { added: 0, removed: 0 });
-            const meta = [tone.label, repo, job.deviceId && (home.mode === "local" || home.states.length > 1) ? job.deviceName : null].filter(Boolean).join(" · ");
-            return (
-              <li key={job.id} className="relative pb-1 pl-3">
-                <span className={cx("absolute -left-[4.5px] top-[11px] h-2 w-2 rounded-full ring-[3px] ring-[rgb(var(--bg-rgb))]", TONE_DOT[tone.tone] ?? "bg-faint")} aria-hidden />
-                <div className="group flex min-w-0 items-center gap-1 rounded-md hover:bg-hover">
-                  <Link href={job.runId ? `/runs?run=${encodeURIComponent(job.runId)}` : "/runs"} className="min-w-0 flex-1 px-2 py-1">
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{job.title}</span>
-                      {lines.added || lines.removed ? <Lines added={lines.added} removed={lines.removed} /> : null}
-                      <span className="shrink-0 text-[11.5px] tabular-nums text-faint">{relative(job.finishedAt ?? job.startedAt ?? job.createdAt)}</span>
-                    </span>
-                    <span className="block truncate text-[11.5px] text-muted">{meta}</span>
-                  </Link>
-                  {job.deviceId && job.files?.length ? (
-                    <Link href={`/code?job=${encodeURIComponent(job.id)}`} className="icon-btn mr-1 h-6 w-6 shrink-0" title="Open the files it changed" aria-label={`Open the files ${job.title} changed`}>
-                      <FileCode2 size={12} />
-                    </Link>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <Quiet>
-          No code runs yet.{" "}
-          <Link href="/runs" className="text-accent hover:underline">
-            <ListTree size={12} className="mr-0.5 inline" /> Runs
-          </Link>
-        </Quiet>
+        <p className="px-2 py-1 text-[13px] text-muted">No repositories yet.</p>
       )}
     </Section>
   );

@@ -8,7 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { CheckSquare, Copy, ExternalLink, FilePlus2, FileText, Flag, FolderOpen, Link2, NotebookPen, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { copyText } from "@/components/context-menu/builders";
 import type { MenuSpec } from "@/components/context-menu/menu-store";
 import { useToast } from "@/components/toast";
@@ -29,6 +29,7 @@ export function useCodeThreads() {
 
 export function refreshThreads(client: QueryClient, threadId?: string | null) {
   void client.invalidateQueries({ queryKey: ["code-threads"] });
+  void client.invalidateQueries({ queryKey: ["code-thread-bin"] });
   if (threadId) void client.invalidateQueries({ queryKey: ["code-thread", threadId] });
 }
 
@@ -43,7 +44,7 @@ export function useRenameThread() {
   });
 }
 
-/** Deleting a thread moves its task to Trash, with Undo. */
+/** Deleting a thread is at once, with Undo: it waits 7 days in the Bin at the foot of the sessions list. */
 export function useDeleteThread(onDeleted?: (id: string) => void) {
   const client = useQueryClient();
   const toast = useToast();
@@ -52,7 +53,8 @@ export function useDeleteThread(onDeleted?: (id: string) => void) {
     onSuccess: (result, id) => {
       onDeleted?.(id);
       refreshThreads(client);
-      toast("Thread moved to Trash.", {
+      void client.invalidateQueries({ queryKey: ["code-thread-bin"] });
+      toast("Thread moved to the Bin.", {
         action: result?.undoEntryId ? { label: "Undo", run: () => void api.undo(result.undoEntryId ?? undefined).then(() => refreshThreads(client)).catch((error: Error) => toast(error.message, { tone: "error" })) } : undefined,
       });
     },
@@ -278,7 +280,7 @@ export function threadMenu(thread: CodeThread, deps: ThreadMenuDeps): MenuSpec {
         items: [
           ...(live && deps.stop && !deps.viewOnly ? [{ id: "stop", label: "Stop the agent", icon: Square, run: deps.stop }] : []),
           ...(deps.remove && !deps.viewOnly && !live
-            ? [{ id: "delete", label: "Delete thread", icon: Trash2, danger: true, run: deps.remove, confirm: () => ({ title: "Delete this thread?", body: "It goes to Trash, where you can restore it. The agent's changes stay in the folder.", action: "Delete", danger: true }) }]
+            ? [{ id: "delete", label: "Delete thread", icon: Trash2, danger: true, hint: "Del", run: deps.remove }]
             : []),
         ],
       },

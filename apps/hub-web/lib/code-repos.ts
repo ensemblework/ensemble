@@ -140,3 +140,10 @@ export function remoteLabel(url: string | null | undefined): string | null {
   if (!segments.length) return null;
   return hosted && !/^file:/i.test(clean) ? segments.slice(-2).join("/") : segments.at(-1)!;
 }
+
+/** Rows whose name, note or branch holds the filter text. */
+export function matchRepos(repos: RepoView[], filter: string): RepoView[] {
+  const text = filter.trim().toLowerCase();
+  if (!text) return repos;
+  return repos.filter((repo) => [repo.name, repo.note, repo.branch, repo.remote].some((value) => value?.toLowerCase().includes(text)));
+}

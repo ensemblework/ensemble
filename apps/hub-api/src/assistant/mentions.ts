@@ -77,6 +77,10 @@ async function rowsNamed(db: Prisma.TransactionClient, userId: string, modules: 
       return keyed((await db.plotDataset.findMany({ where: { userId, deletedAt: null, OR: named("name", names) }, select: { id: true, name: true }, take })).map((row) => ({ id: row.id, label: row.name })));
     case "file":
       return keyed((await db.document.findMany({ where: { userId, deletedAt: null, OR: named("filename", names) }, select: { id: true, filename: true }, take })).map((row) => ({ id: row.id, label: row.filename })));
+    case "page":
+      return keyed((await db.taskPage.findMany({ where: { userId, deletedAt: null, taskId: null, OR: named("title", names) }, select: { id: true, title: true }, take })).map((row) => ({ id: row.id, label: row.title })));
+    case "meeting":
+      return keyed((await db.meetingSession.findMany({ where: { userId, deletedAt: null, OR: named("title", names) }, select: { id: true, title: true }, take })).map((row) => ({ id: row.id, label: row.title })));
     case "date":
       return [];
   }

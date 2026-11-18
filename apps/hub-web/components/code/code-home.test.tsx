@@ -56,7 +56,7 @@ async function mount(shell?: unknown) {
   };
 }
 
-test("on this computer the Welcome lists the change to review, repositories by name (never a run's folder id) and recent code runs", async () => {
+test("on this computer the Welcome offers two ways to start, then the change to review and repositories by name (never a run's folder id), one line each", async () => {
   const fake = server({
     "/api/shell": { hostCode: true },
     "/api/version": { version: "0.4.23" },
@@ -72,7 +72,8 @@ test("on this computer the Welcome lists the change to review, repositories by n
     assert.match(review?.textContent ?? "", /Tidy the widgets/);
     assert.match(review?.textContent ?? "", /run checkout/);
     assert.ok(welcome.querySelector(`a[href="/code/review?repo=${encodeURIComponent("/home/me/codes/widgets")}"]`), "a recent repository opens in the editor");
-    assert.ok(view.host.querySelector('a[href="/runs?run=run1"]')?.textContent?.includes("Fix the login form"), "a recent code run");
+    assert.deepEqual([...welcome.querySelectorAll(".code-start > span")].map((node) => node.textContent), ["Open a folder", "Code with an agent"], "two ways to start");
+    assert.equal(welcome.querySelector('a[href="/runs?run=run1"]'), null, "runs stay in Runs");
     assert.doesNotMatch(view.host.textContent ?? "", /082db2b5/, "no folder id anywhere");
     const status = view.host.querySelector('[data-testid="ide-statusbar"]')?.textContent ?? "";
     assert.match(status, /1 to review/);
