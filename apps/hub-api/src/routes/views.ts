@@ -21,6 +21,7 @@ import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { hubApprovalCount } from "../node/routes.js";
 import { hubDecisionsWhere, withoutHiddenNodeRequests } from "../node/needs-me.js";
+import { withoutWatchedThreads } from "../lib/code-watch.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -33,8 +34,8 @@ async function countOrZero(query: Promise<number>): Promise<number> {
 /** Requests the Hub's Needs me lists (`GET /api/decisions?surface=hub`): a node's own requests stay on Node (node/needs-me.ts). */
 async function hubDecisionCount(prisma: FastifyInstance["prisma"], userId: string): Promise<number> {
   // A request past its time is closed on the next sweep: it no longer counts.
-  const rows = await prisma.agentDecision.findMany({ where: { userId, status: "pending", expiresAt: { gt: new Date() }, ...hubDecisionsWhere() }, select: { id: true, sessionId: true }, take: 500 });
-  return (await withoutHiddenNodeRequests(prisma, userId, rows)).length;
+  const rows = await prisma.agentDecision.findMany({ where: { userId, status: "pending", expiresAt: { gt: new Date() }, ...hubDecisionsWhere() }, select: { id: true, sessionId: true, detail: true }, take: 500 });
+  return (await withoutWatchedThreads(userId, await withoutHiddenNodeRequests(prisma, userId, rows))).length;
 }
 
 export async function viewRoutes(app: FastifyInstance): Promise<void> {

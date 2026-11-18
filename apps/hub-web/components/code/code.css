@@ -115,6 +115,13 @@ html[data-ide-resizing="horizontal"] * {
 .code-tab[aria-selected="true"]:focus-visible {
   box-shadow: inset 0 1px 0 rgb(var(--accent-rgb)), inset 0 0 0 1px rgb(var(--accent-rgb) / 0.75);
 }
+/* A thread of the agent as a tab: its name, a mark that moves while it works. */
+.code-tab-agent {
+  max-width: 260px;
+}
+.code-tab-agent[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 rgb(var(--accent-rgb) / 0.8);
+}
 .code-tab-folder {
   flex-shrink: 0;
   max-width: 7rem;
@@ -315,6 +322,29 @@ html[data-ide-resizing="horizontal"] * {
 }
 
 /* A one-line notice under the tabs (offline): calm, not an alarm. */
+/* The agent beside the editor (ide.tsx): a pane of its own on the right. */
+.ide-agent-side {
+  width: clamp(340px, 42%, 680px);
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+}
+@media (max-width: 900px) {
+  .ide-agent-side {
+    width: 100%;
+    border-left: 0;
+  }
+}
+.ide-agent-editing {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgb(var(--accent-rgb) / 0.12);
+  font-size: 11.5px;
+  color: var(--ink);
+}
 .ide-notice {
   display: flex;
   min-width: 0;
@@ -672,6 +702,283 @@ html[data-ide-resizing="horizontal"] * {
   color: var(--ok);
 }
 
+/* Live work: text that is being worked on shimmers; the rest stays still. */
+.agent-shimmer {
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%, var(--muted) 60%, var(--muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agent-shimmer 1.8s linear infinite;
+}
+@keyframes agent-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+.agent-live-mark {
+  color: var(--accent);
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.agent-user-steer {
+  border: 1px dashed rgb(var(--accent-rgb) / 0.45);
+}
+.agent-work-row > button {
+  min-width: 0;
+}
+.agent-work-gutter {
+  display: inline-flex;
+  width: 14px;
+  height: 18px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.agent-dot-quiet {
+  width: 5px;
+  height: 5px;
+  background: var(--line-strong);
+}
+.agent-dot-live {
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.5);
+  animation: agent-ping 1.4s ease-out infinite;
+}
+@keyframes agent-ping {
+  0% { box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.5); }
+  100% { box-shadow: 0 0 0 6px rgb(var(--accent-rgb) / 0); }
+}
+.agent-cmd {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--sidebar);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.agent-exit {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgb(var(--danger-rgb) / 0.12);
+  font-size: 11px;
+  color: var(--danger);
+}
+.agent-work-tabs {
+  display: inline-flex;
+  margin-left: auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.agent-work-tabs button {
+  padding: 1px 8px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.agent-work-tabs button[aria-selected="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+/* A command and its output, as a terminal shows them. */
+.agent-term {
+  max-height: 320px;
+  margin: 2px 0 6px 22px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--sidebar);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+}
+.agent-term-prompt {
+  color: var(--accent);
+  user-select: none;
+}
+.agent-term-exit {
+  color: var(--danger);
+}
+.agent-log {
+  margin-left: 0;
+  max-height: 360px;
+  color: var(--muted);
+}
+.agent-diff-add {
+  background: rgb(var(--ok-rgb) / 0.12);
+  color: var(--ok);
+}
+.agent-diff-del {
+  background: rgb(var(--danger-rgb) / 0.1);
+  color: var(--danger);
+}
+.agent-tool-detail {
+  margin: 2px 0 6px 22px;
+}
+.agent-tool-detail .agent-term {
+  margin-left: 0;
+}
+.agent-tool-input {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.agent-tool-input dt {
+  color: var(--faint);
+}
+.agent-tool-input dd {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: var(--ink);
+}
+.agent-thought-body {
+  margin: 0 0 6px 22px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* The reply while it is still being written: a caret after it. */
+.agent-streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: agent-pulse 1s steps(2, start) infinite;
+}
+.agent-offline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--warn-rgb, 214 160 60) / 0.4);
+  border-radius: 10px;
+  background: rgb(var(--warn-rgb, 214 160 60) / 0.08);
+  font-size: 13px;
+  color: var(--warn);
+}
+/* A question or a permission the turn waits on, answered in place. */
+.agent-ask {
+  padding: 12px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.45);
+  border-radius: 12px;
+  background: rgb(var(--accent-rgb) / 0.06);
+}
+.agent-ask .agent-term {
+  margin: 0;
+}
+.agent-ask-mark {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(var(--accent-rgb) / 0.18);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.agent-ask-option {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12.5px;
+}
+.agent-ask-option:hover:not(:disabled) {
+  border-color: rgb(var(--accent-rgb) / 0.6);
+}
+.agent-ask-option:disabled {
+  opacity: 0.6;
+}
+/* Ensemble records a reply made or names, as cards. */
+.agent-records {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.agent-record {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.agent-record:hover {
+  border-color: rgb(var(--accent-rgb) / 0.5);
+  background: var(--hover);
+}
+.agent-record-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgb(var(--accent-rgb) / 0.12);
+  color: var(--accent);
+}
+.agent-composer.is-working {
+  border-color: rgb(var(--accent-rgb) / 0.45);
+}
+.agent-send.is-stop {
+  background: var(--ink);
+  color: var(--bg);
+}
+.agent-steer {
+  display: inline-flex;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--accent-fg);
+}
+.agent-steer:disabled {
+  opacity: 0.4;
+}
+
 /* The agent's sessions in the side panel (agent-sessions.tsx), like Cursor's and T3 Code's thread list. */
 .agent-new-thread {
   display: flex;
@@ -739,7 +1046,17 @@ html[data-ide-resizing="horizontal"] * {
 @media (prefers-reduced-motion: reduce) {
   .ide-view-switch button,
   .agent-chip,
-  .agent-send {
+  .agent-send,
+  .agent-record {
     transition: none;
+  }
+  .agent-shimmer,
+  .agent-live-mark,
+  .agent-dot-live,
+  .agent-streaming > :last-child::after {
+    animation: none;
+  }
+  .agent-shimmer {
+    color: var(--muted);
   }
 }

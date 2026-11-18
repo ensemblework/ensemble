@@ -11,6 +11,7 @@ import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EFFORT_LABEL, effortList, modelEfforts, type EffortLevel, type ModelMeta } from "@ensemble/shared-types";
 import { Popover, cx } from "../ui";
+import { ThinkingSlider } from "../agent/thinking-slider";
 
 /**
  * "plan": the person's own subscription, found on their computer; "plan-missing": not found or not signed in there.
@@ -318,13 +319,14 @@ export function ThinkingPicker({
   const offered = options.some((option) => option.id === value);
   return (
     <div className="space-y-1" data-thinking={known.source}>
-      <div role="radiogroup" aria-label={label} className="thinking-levels">
-        {options.map((option) => (
-          <button key={option.id} type="button" role="radio" aria-checked={value === option.id} onClick={() => onChange(option.id)} className={cx("thinking-level", value === option.id && "is-on")}>
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <ThinkingSlider
+        label={label}
+        levels={options.slice(1).map((option) => ({ id: option.id, text: option.label }))}
+        value={value}
+        onChange={onChange}
+        auto={options[0]!.label}
+        autoLevel={known.fallback ?? null}
+      />
       {offered ? (
         null
       ) : known.levels.length ? (

@@ -373,15 +373,17 @@ export function AssistantDock() {
   const mod = useModKey();
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
+  // The Code tab has its own agent: the assistant steps aside there and is back as it was on any other tab.
+  const onCode = pathname === "/code" || pathname.startsWith("/code/");
   // While the panel is open the page knows it (html[data-assistant-open]): on a phone, where the panel covers it, the page behind stays still.
   useEffect(() => {
     const root = document.documentElement;
-    if (open) root.dataset.assistantOpen = "true";
+    if (open && !onCode) root.dataset.assistantOpen = "true";
     else delete root.dataset.assistantOpen;
     return () => {
       delete root.dataset.assistantOpen;
     };
-  }, [open]);
+  }, [open, onCode]);
   // On a phone the panel covers the screen: going somewhere (a link in an answer, the navigation) closes it, so the page shows.
   const shownPath = useRef(pathname);
   useEffect(() => {
@@ -811,13 +813,13 @@ export function AssistantDock() {
   // Always mounted and only hidden: mounting again after a task closes would measure from the corner and slide back.
   const launcher = (
     <AskLauncher
-      hidden={open || pathname.startsWith("/start")}
+      hidden={open || onCode || pathname.startsWith("/start")}
       working={pending}
       onOpen={() => setOpen(true)}
       title={`Ask Ensemble (${chord}). Drag to move it.`}
     />
   );
-  if (!open) return launcher;
+  if (!open || onCode) return launcher;
 
   const filesDragged = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
 

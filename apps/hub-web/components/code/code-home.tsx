@@ -47,7 +47,8 @@ import { api, type AgentJob } from "@/lib/api";
 import { AgentIcon } from "@/components/agent-icon";
 import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
 import { AgentView, type FolderChoice, type PlaceChoice } from "@/components/code/agent-view";
-import { agentHref, type IdeView } from "@/lib/code-agent";
+import { agentHref, isLive, type IdeView } from "@/lib/code-agent";
+import { useCodeThreads } from "@/components/code/agent-actions";
 import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeRepo, type HomeReview } from "@/lib/code-home";
 import { remoteLabel, repoName, repoSecond, repoView, shortBranch, usedWithin, viewFor } from "@/lib/code-repos";
 import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
@@ -60,6 +61,10 @@ type Filter = "needs" | "reviewed" | "all";
 const REVIEWS_SHOWN = 6;
 const REPOS_SHOWN = 8;
 const RUNS_SHOWN = 5;
+/** The threads Code's home keeps open as tabs at most; the oldest closes first. */
+const MAX_THREAD_TABS = 8;
+/** The tab of a thread not started yet. */
+const NEW_THREAD = "new";
 
 const TONE_DOT: Record<string, string> = { green: "bg-ok", red: "bg-danger", yellow: "bg-warn", orange: "bg-warn", blue: "bg-accent", gray: "bg-faint" };
 
@@ -102,6 +107,10 @@ export function CodeHome({
   const [view, setViewState] = usePersistentState<IdeView>("ensemble.code.view", "editor");
   const [agentMounted, setAgentMounted] = useState(false);
   const [homeThread, setHomeThread] = usePersistentState<string | null>("ensemble.code.homeThread", null);
+  // The threads open as tabs beside the Welcome: their ids, "new" for one not started yet.
+  const [homeTabs, setHomeTabs] = usePersistentState<string[]>("ensemble.code.homeThreadTabs", []);
+  const [homeTabsClosed, setHomeTabsClosed] = useState(false);
+  const threadList = useCodeThreads();
   const [draft, setDraft] = usePersistentState<ThreadPlace | null>("ensemble.code.draftPlace", null);
   const setView = useCallback(
     (next: IdeView) => {
@@ -119,7 +128,10 @@ export function CodeHome({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (view === "agent") setAgentMounted(true);
+    if (view === "agent") {
+      setAgentMounted(true);
+      setHomeTabsClosed(false);
+    }
   }, [view]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -163,6 +175,30 @@ export function CodeHome({
     .map((repo) => ({ deviceId: repo.place.target.kind === "device" ? repo.place.target.deviceId : null, path: repo.path, name: repoName(repo), branch: shortBranch(repo.branch) }));
   const firstPlace = agentPlaces.find((place) => place.online) ?? agentPlaces[0] ?? null;
   const agentDraft: ThreadPlace = draft && agentPlaces.some((place) => (place.deviceId ?? null) === (draft.deviceId ?? null)) ? draft : { deviceId: firstPlace?.deviceId ?? null, folder: null };
+  // Threads as tabs: the one in view always has its tab, and keeps it while the Welcome shows.
+  const activeKey = homeThread ?? NEW_THREAD;
+  const threadTabs = !homeTabs.includes(activeKey) && (view === "agent" || (agentMounted && !homeTabsClosed)) ? [...homeTabs, activeKey] : homeTabs;
+  const keepTabs = (next: string[]) => setHomeTabs(next.slice(-MAX_THREAD_TABS));
+  const openThread = (id: string | null) => {
+    const key = id ?? NEW_THREAD;
+    setHomeTabsClosed(false);
+    keepTabs(threadTabs.includes(key) ? threadTabs : [...threadTabs, key]);
+    setHomeThread(id);
+    setView("agent");
+  };
+  const closeThread = (key: string) => {
+    const rest = threadTabs.filter((row) => row !== key);
+    keepTabs(rest);
+    if (key !== activeKey) return;
+    const next = rest[Math.max(0, threadTabs.indexOf(key) - 1)];
+    if (next) setHomeThread(next === NEW_THREAD ? null : next);
+    else {
+      setHomeTabsClosed(true);
+      setHomeThread(null);
+      setView("editor");
+    }
+  };
+  const threadTitles = new Map((threadList.data?.threads ?? []).map((row) => [row.id, row]));
   const selected = places.find((place) => place.target.kind === "device" && place.target.deviceId === computerId) ?? places.find((place) => place.usable) ?? places[0] ?? null;
   const canTerminal = !viewOnly && Boolean(selected?.terminal);
   const needs = home.reviews.filter((review) => !review.completedAt);
@@ -183,6 +219,7 @@ export function CodeHome({
       const commands = [
         { id: "open-repo", label: "Open a repository", keys: "mod+p", run: () => openQuick("") },
         { id: "agent", label: view === "agent" ? "Show the editor" : "Code with an agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
+        { id: "agent-new", label: "New thread with the agent", run: () => openThread(null) },
         { id: "reviews", label: "Show the changes to review", run: () => openPanel("scm") },
         { id: "explorer", label: "Show the explorer", run: () => openPanel("repos") },
         { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
@@ -260,14 +297,10 @@ export function CodeHome({
             <AgentSessions
               selected={homeThread}
               viewOnly={viewOnly}
-              onSelect={(thread) => {
-                setHomeThread(thread.id);
-                setView("agent");
-              }}
+              onSelect={(thread) => openThread(thread.id)}
               onNew={(place) => {
-                setHomeThread(null);
                 if (place) setDraft(place);
-                setView("agent");
+                openThread(null);
               }}
               onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
             />
@@ -298,6 +331,24 @@ export function CodeHome({
               {jobId ? (
                 <EditorTab icon={FileCode2} label={job.data?.job.title ?? "Run"} active={view === "editor" && tab === "run"} onSelect={() => { setTab("run"); setView("editor"); }} onClose={onCloseRun} />
               ) : null}
+              {threadTabs.map((key) => {
+                const row = key === NEW_THREAD ? null : threadTitles.get(key);
+                const live = Boolean(row?.last && isLive(row.last.status));
+                return (
+                  <EditorTab
+                    key={key}
+                    icon={AgentIcon}
+                    iconClass={live ? "agent-live-mark" : undefined}
+                    label={key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread")}
+                    active={view === "agent" && key === activeKey}
+                    onSelect={() => openThread(key === NEW_THREAD ? null : key)}
+                    onClose={() => closeThread(key)}
+                  />
+                );
+              })}
+              <button type="button" className="icon-btn my-auto ml-0.5 h-7 w-7 shrink-0" title="New thread with the agent" aria-label="New thread with the agent" onClick={() => openThread(null)}>
+                <Plus size={14} />
+              </button>
             </div>
             <div className="flex shrink-0 items-center gap-1.5 px-1.5">
               {viewOnly ? (
@@ -318,22 +369,34 @@ export function CodeHome({
             </div>
           </div>
 
-          {agentMounted ? (
-            <div className={cx("flex min-h-0 flex-1 flex-col", view !== "agent" && "hidden")}>
-              <AgentView
-                threadId={homeThread}
-                onThread={setHomeThread}
-                draft={agentDraft}
-                onDraft={setDraft}
-                places={agentPlaces}
-                folders={agentFolders}
-                placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
-                viewOnly={viewOnly}
-                onOpenFile={(place, path) => navigate.go(agentHref(place, { view: "editor", file: path }))}
-                onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
-              />
-            </div>
-          ) : null}
+          {agentMounted
+            ? threadTabs.map((key) => {
+                const shown = view === "agent" && key === activeKey;
+                return (
+                  <div key={key} className={cx("flex min-h-0 flex-1 flex-col", !shown && "hidden")}>
+                    <AgentView
+                      threadId={key === NEW_THREAD ? null : key}
+                      onThread={(id) => {
+                        if (id && key === NEW_THREAD) {
+                          keepTabs(threadTabs.map((row) => (row === key ? id : row)));
+                          setHomeThread(id);
+                        } else openThread(id);
+                      }}
+                      draft={agentDraft}
+                      onDraft={setDraft}
+                      places={agentPlaces}
+                      folders={agentFolders}
+                      placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
+                      viewOnly={viewOnly}
+                      visible={shown}
+                      onClose={() => closeThread(key)}
+                      onOpenFile={(place, path) => navigate.go(agentHref(place, { view: "editor", file: path }))}
+                      onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
+                    />
+                  </div>
+                );
+              })
+            : null}
           {view === "agent" ? null : tab === "run" && jobId ? (
             job.isLoading ? (
               <div className="p-8"><Spinner /></div>
@@ -350,10 +413,7 @@ export function CodeHome({
               viewOnly={viewOnly}
               canTerminal={canTerminal}
               onOpenRepos={() => openQuick("")}
-              onAgent={() => {
-                setHomeThread(null);
-                setView("agent");
-              }}
+              onAgent={() => openThread(null)}
               onReviews={() => openPanel("scm")}
               onTerminal={() => openTerminal()}
               onCommands={() => openQuick(">")}
@@ -432,12 +492,12 @@ function PlaceLabel({ place }: { place: CodePlace | null }) {
   );
 }
 
-function EditorTab({ icon: Icon, label, active, onSelect, onClose }: { icon: ComponentType<{ size?: number; className?: string }>; label: string; active: boolean; onSelect: () => void; onClose?: () => void }) {
+function EditorTab({ icon: Icon, iconClass, label, active, onSelect, onClose }: { icon: ComponentType<{ size?: number; className?: string }>; iconClass?: string; label: string; active: boolean; onSelect: () => void; onClose?: () => void }) {
   return (
     <div role="tab" aria-selected={active} className={cx("group relative flex max-w-[260px] shrink-0 items-center gap-1.5 border-r border-line px-3", active ? "bg-bg text-ink" : "text-muted hover:text-ink")}>
       {active ? <span className="absolute inset-x-0 top-0 h-px bg-accent" aria-hidden /> : null}
       <button type="button" className="flex min-w-0 items-center gap-1.5" onClick={onSelect} title={label}>
-        <Icon size={13} className={cx("shrink-0", active ? "text-accent" : undefined)} />
+        <Icon size={13} className={cx("shrink-0", active ? "text-accent" : undefined, iconClass)} />
         <span className="truncate">{label}</span>
       </button>
       {onClose ? (

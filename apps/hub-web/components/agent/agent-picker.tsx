@@ -32,6 +32,7 @@ import { relativeCost } from "@/lib/included";
 import { contextChoice, contextSizes } from "@/lib/engine-models";
 import { ProviderLogo, ModelLogo } from "../connectors/provider-logo";
 import { Popover, Toggle, cx } from "../ui";
+import { ThinkingSlider } from "./thinking-slider";
 
 /** One choice of who does the work. `model` empty: the agent's own default. */
 export type AgentChoice = { provider: string; model: string; effort: string; context?: ContextTier; fast?: boolean };
@@ -488,13 +489,14 @@ export function TuningPicker({ value, model, onChange, allowFast = true, label, 
           {levels.length ? (
             <div>
               <div className="mb-1.5 text-[12px] font-medium text-muted">Thinking</div>
-              <div role="radiogroup" aria-label={`${label}: thinking`} className="thinking-levels">
-                {[{ id: "default", text: `Auto${model?.defaultEffort ? ` (${EFFORT_LABEL[model.defaultEffort]})` : ""}` }, ...levels.map((level) => ({ id: level as string, text: EFFORT_LABEL[level] }))].map((option) => (
-                  <button key={option.id} type="button" role="radio" aria-checked={value.effort === option.id} onClick={() => onChange({ ...value, effort: option.id })} className={cx("thinking-level", value.effort === option.id && "is-on")}>
-                    {option.text}
-                  </button>
-                ))}
-              </div>
+              <ThinkingSlider
+                label={`${label}: thinking`}
+                levels={levels.map((level) => ({ id: level as string, text: EFFORT_LABEL[level] }))}
+                value={value.effort}
+                onChange={(effort) => onChange({ ...value, effort })}
+                auto={model?.defaultEffort || value.effort === "default" ? `Auto${model?.defaultEffort ? ` (${EFFORT_LABEL[model.defaultEffort]})` : ""}` : null}
+                autoLevel={model?.defaultEffort ?? null}
+              />
             </div>
           ) : null}
           {contexts.length ? (

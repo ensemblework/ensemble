@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { agentHref, compactCount, elapsed, groupThreads, linkedTasks, relativeIn, shortAgo, splitMentions, threadTitle, toolKind, toolPath, withMentions, workRows } from "./code-agent";
+import { agentHref, commandOf, compactCount, elapsed, ensembleTool, groupThreads, linkedTasks, recordLinks, relativeIn, shortAgo, splitMentions, thought, threadTitle, toolKind, toolLine, toolOutput, toolPath, withMentions, workRows } from "./code-agent";
 import type { CodeThread } from "./api";
 import type { TraceEntry } from "./run-trace";
 
@@ -49,7 +49,9 @@ test("a turn's work log keeps tools, thinking and what it said on the way, not t
 test("threads are named by their first line, and counts and times read short", () => {
   assert.equal(threadTitle("  Fix the export.\nThen run the tests"), "Fix the export");
   assert.equal(threadTitle("   "), "New thread");
-  assert.equal(threadTitle("x".repeat(120)).length, 80);
+  assert.equal(threadTitle("x".repeat(120)).length, 60);
+  assert.equal(threadTitle("hello can you please write a BFS example in C++ and save it as a Word document"), "Write a BFS example in C++");
+  assert.equal(threadTitle("Hey, I want you to make a page for @task:Launch plan"), "Make a page for Launch plan");
   assert.equal(compactCount(999), "999");
   assert.equal(compactCount(1234), "1.2k");
   assert.equal(elapsed(42_000), "42s");
@@ -81,4 +83,32 @@ test("a thread opens where it works: its folder in the editor's window, or Code'
   assert.equal(agentHref({ deviceId: "dev", folder: "/work/relay" }, { thread: "t1" }), "/code/review?device=dev&repo=%2Fwork%2Frelay&view=agent&thread=t1");
   assert.equal(agentHref({ deviceId: null, folder: null }, { thread: "new" }), "/code?view=agent&thread=new");
   assert.equal(agentHref({ deviceId: null, folder: "/work/relay" }, { view: "editor", file: "src/a.ts" }), "/code/review?repo=%2Fwork%2Frelay&view=editor&file=src%2Fa.ts");
+});
+
+test("tool calls read as what they did: commands with their reason, Ensemble's tools by name, outputs without JSON", () => {
+  const bash = toolLine("bash", JSON.stringify({ command: "git status --short && ls -la", description: "Inspect repository and working tree" }), "bash");
+  assert.deepEqual(bash, { label: "Inspect repository and working tree", detail: "git status --short && ls -la", ensemble: false });
+  assert.equal(commandOf(JSON.stringify({ command: ["bash", "-lc", "npm test"] }))?.command, "bash -lc npm test");
+  assert.equal(commandOf(JSON.stringify({ command: "/bin/bash -lc 'npm test'" }))?.command, "npm test");
+  assert.equal(toolLine("ensemble-report_result", "{}", "").label, "Reported the result");
+  assert.equal(toolLine("mcp__ensemble__ensemble_act", JSON.stringify({ action: "hub_create_page", input: { title: "BFS" } }), "").label, "Made a page");
+  assert.equal(toolLine("ensemble-ensemble_act", JSON.stringify({ action: "hub_create_page", input: { title: "BFS" } }), "").detail, "BFS");
+  assert.equal(toolLine("apply_patch", "{}", "").label, "Edited files");
+  assert.equal(ensembleTool("bash"), null);
+
+  const output = toolOutput(JSON.stringify({ content: "total 12\ndrwx .git\n<shellId: 0 completed with exit code 0>", detailedContent: "same", contents: [{ type: "shell_exit", exitCode: 0 }] }));
+  assert.deepEqual(output, { text: "total 12\ndrwx .git", exitCode: 0 });
+  assert.deepEqual(toolOutput("plain text"), { text: "plain text", exitCode: null });
+  assert.deepEqual(toolOutput(JSON.stringify({ stdout: "", stderr: "boom", exit_code: 2 })), { text: "boom", exitCode: 2 });
+
+  assert.deepEqual(thought("**Checking the tests**\n\nThey run with node."), { title: "Checking the tests", body: "They run with node." });
+  assert.equal(thought("plain line").title, "plain line");
+  assert.equal(thought("**Making a sample&nbsp;json**").title, "Making a sample json");
+});
+
+test("a reply's links to Ensemble records become cards, once each, with their names", () => {
+  const id = "3f0c2a9e-1b2c-4d5e-8f90-123456789abc";
+  const links = recordLinks(`Created [BFS-in-Cpp.docx](https://app.ensemble.work/files/${id}) and saved it. See /files/${id} and [the plan](/pages/${id.replace("3f", "4f")}), ensemble://task/${id.replace("3f", "5f")}. Not [GitHub](https://github.com/a/b/pull/12) or /pages/new.`);
+  assert.deepEqual(links.map((row) => [row.kind, row.label]), [["file", "BFS-in-Cpp.docx"], ["page", "the plan"], ["task", null]]);
+  assert.equal(links[0]!.href, `/files/${id}`);
 });

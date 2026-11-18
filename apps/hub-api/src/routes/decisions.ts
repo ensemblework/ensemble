@@ -21,6 +21,7 @@ import { ownsOpenSpace } from "../lib/auth.js";
 import { takesRunAnswer } from "../remote/policy.js";
 import { ownerAnswering, recoverRunDecisions, settleRunDecisionCards } from "../node/run-decisions.js";
 import { decisionOrigins, hubDecisionsWhere, withoutHiddenNodeRequests } from "../node/needs-me.js";
+import { withoutWatchedThreads } from "../lib/code-watch.js";
 
 // In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
 const HOOK_SCRIPT = hookScriptPath();
@@ -307,7 +308,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
       take: 100,
     });
     // A node's runs' requests stay in the Node chat when the account turned that on (node/needs-me.ts).
-    const shown = hub ? await withoutHiddenNodeRequests(prisma, request.userId, rows) : rows;
+    // A request of a Code tab thread open now is answered in the thread, not in Needs me (lib/code-watch.ts).
+    const shown = hub ? await withoutWatchedThreads(request.userId, await withoutHiddenNodeRequests(prisma, request.userId, rows)) : rows;
     // The Hub names the session that asks: its agent, folder and computer, and the node it works for.
     const origins = hub && ownsOpenSpace(request) ? await decisionOrigins(prisma, request.userId, shown) : null;
     return { decisions: shown.map((row) => ({ ...publicDecision(row), ...(origins ? { origin: origins.get(row.id) ?? null } : {}) })) };

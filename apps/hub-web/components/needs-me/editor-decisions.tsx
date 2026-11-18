@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, Tag } from "@/components/ui";
 import { api, type AgentDecisionRecord, type SessionOrigin } from "@/lib/api";
-import { confirmCopy, deviceDecisionView } from "@/lib/device-copy";
+import { deviceDecisionView } from "@/lib/device-copy";
 import { relative, untilLabel } from "@/lib/format";
 
 const SOURCE: Record<string, { label: string; tone: "blue" | "purple" | "orange" | "gray" }> = {
@@ -177,7 +177,6 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   const toast = useToast();
   const computer = decision.detail.deviceName || "your computer";
   const [typed, setTyped] = useState("");
-  const [confirming, setConfirming] = useState<string | null | undefined>(undefined);
   const view = deviceDecisionView({
     tier: decision.detail.tier,
     event: decision.event,
@@ -198,11 +197,8 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   });
   const busy = decide.isPending;
   const needsConfirm = view.kind !== "approve-on-computer" && view.confirm;
-  // A risky allow: the first press asks, the second sends. `null` is a plain Yes, a string is an option.
-  const allow = (reason?: string) => {
-    if (needsConfirm && confirming === undefined) return setConfirming(reason ?? null);
-    decide.mutate({ decision: "allow", reason, confirmed: needsConfirm || undefined });
-  };
+  // Pressing Allow is the confirmation a risky allow needs: one step, never asked twice.
+  const allow = (reason?: string) => decide.mutate({ decision: "allow", reason, confirmed: needsConfirm || undefined });
   return (
     <div className="tile rounded-lg bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -213,20 +209,7 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
       <SessionLine origin={decision.origin} />
       <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
       {decision.detail.command ? <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-2.5 font-mono text-[12.5px]">{decision.detail.command}</pre> : null}
-      {confirming !== undefined ? (
-        <div className="mt-3 rounded-md border border-warn/40 bg-[var(--tag-yellow-bg)] p-3 text-[13px] text-[var(--tag-yellow-fg)]" role="alertdialog" aria-label="Confirm">
-          <div className="font-medium">{confirmCopy(decision.toolName, decision.detail.deviceName)}</div>
-          {confirming ? <div className="mt-1">Answer: {confirming}</div> : null}
-          <div className="mt-2 flex gap-2">
-            <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: confirming ?? undefined, confirmed: true })}>
-              <Check size={13} /> Yes, allow
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(undefined)}>
-              Back
-            </button>
-          </div>
-        </div>
-      ) : view.kind === "approve-on-computer" ? (
+      {view.kind === "approve-on-computer" ? (
         <div className="mt-3 rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-muted">
           {view.message} {computer} accepts this answer only on itself. Turn on “Accept approvals from the web” there to answer from here.
         </div>
@@ -265,7 +248,7 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
       ) : (
         <div className="mt-3 grid gap-2">
           <button type="button" className="btn-primary min-h-[44px] w-full justify-center" disabled={busy} onClick={() => allow()}>
-            <Check size={15} /> {needsConfirm ? "Allow…" : "Yes"}
+            <Check size={15} /> {needsConfirm ? "Allow" : "Yes"}
           </button>
           <button type="button" className="btn min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
             <X size={15} /> No

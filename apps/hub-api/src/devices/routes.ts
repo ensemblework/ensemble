@@ -14,6 +14,7 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Device, Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
+import { threadAlert } from "../lib/code-watch.js";
 import { isPaused } from "../lib/activity.js";
 import { newApiToken, sha256 } from "../lib/auth.js";
 import { keepsRunFileText, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -811,17 +812,21 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       app.log.warn({ err: error, decisionId: row.id }, "could not put a run's question in its node's chat");
       return null;
     });
-    await prisma.notification.create({
-      data: {
-        userId: device.userId,
-        kind: "decision",
-        title: `Agent needs you: ${title}`.slice(0, 200),
-        body: held.job.task.title,
-        subject: `decision:${row.id}`,
-        urgent: true,
-        url: (card && cardUrl(card)) ?? (held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`),
-      },
-    });
+    // A Code tab thread open now asks in the thread; closed, its alert opens the thread (lib/code-watch.ts).
+    const thread = held.job.userId === device.userId ? await threadAlert(prisma, held.job.userId, held.job.taskId) : null;
+    if (!thread?.quiet) {
+      await prisma.notification.create({
+        data: {
+          userId: device.userId,
+          kind: "decision",
+          title: `Agent needs you: ${title}`.slice(0, 200),
+          body: held.job.task.title,
+          subject: `decision:${row.id}`,
+          urgent: true,
+          url: (card && cardUrl(card)) ?? thread?.url ?? (held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`),
+        },
+      });
+    }
     await prisma.workspaceEvent.create({ data: { jobId: held.job.id, kind: "needs_me", data: { decisionId: row.id, title, tier: body.tier } } });
     sseHub.publish(held.job.userId, { event: "decision", data: { id: row.id, status: "pending", title, source: "ensemble", runnerAccountId: held.job.runnerAccountId } });
     sseHub.publish(held.job.userId, { event: "workspace", data: { id: held.job.id } });
