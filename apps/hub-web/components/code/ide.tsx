@@ -44,6 +44,8 @@ import {
   Maximize2,
   Minimize2,
   PanelLeft,
+  PanelRight,
+  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -109,6 +111,12 @@ function useReviewEditor(): EditorModule["ReviewEditor"] | null {
 
 const STATUS_COLOR: Record<string, string> = { A: "text-ok", U: "text-ok", M: "text-warn", D: "text-danger", R: "text-accent" };
 const SAVE_MS = 700;
+/** The threads a folder keeps open as tabs at most; the oldest closes first. */
+const MAX_THREAD_TABS = 8;
+/** The tab of a thread not started yet. */
+const NEW_THREAD = "new";
+
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((row, index) => row === b[index]);
 
 type Panel = "files" | "search" | "scm" | "agent";
 export type { IdeView };
@@ -222,8 +230,13 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   useEffect(() => {
     if (initialView) setView(initialView);
   }, [initialView, setView]);
+  // Every thread tab closed: none comes back by itself until the agent is shown again.
+  const [threadsClosed, setThreadsClosed] = useState(false);
   useEffect(() => {
-    if (view === "agent") setAgentMounted(true);
+    if (view === "agent") {
+      setAgentMounted(true);
+      setThreadsClosed(false);
+    }
   }, [view]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -237,13 +250,26 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   const navigate = useLinkNavigate();
   // The thread open for each folder, so coming back to a folder shows the thread it had.
   const [openThreads, setOpenThreads] = usePersistentState<Record<string, string | null>>("ensemble.code.threads", {});
-  const threadList = useQuery({ queryKey: ["code-threads"], queryFn: api.codeThreads, enabled: agentMounted, staleTime: 5_000 });
+  // The threads open as tabs, per folder: their ids, "new" for one not started yet.
+  const [threadTabsMap, setThreadTabsMap] = usePersistentState<Record<string, string[]>>("ensemble.code.threadTabs", {});
+  // The agent beside the editor rather than in its place.
+  const [split, setSplit] = usePersistentState<boolean>("ensemble.code.agentSplit", false);
+  // The files each open thread's turn at work is editing now, for the editor to follow.
+  const [agentEditing, setAgentEditing] = useState<Record<string, string[]>>({});
+  const threadList = useQuery({ queryKey: ["code-threads"], queryFn: api.codeThreads, enabled: agentMounted || split, staleTime: 5_000 });
   const repoPath = info.data?.repo ?? null;
   const placeKey = `${target.kind === "device" ? target.deviceId : "local"}:${repoPath ?? ""}`;
   useEffect(() => {
     if (!initialThread || !repoPath) return;
     setOpenThreads((map) => ({ ...map, [placeKey]: initialThread === "new" ? null : initialThread }));
-  }, [initialThread, repoPath, placeKey, setOpenThreads]);
+    setThreadTabsMap((map) => {
+      const list = map[placeKey] ?? [];
+      return list.includes(initialThread) ? map : { ...map, [placeKey]: [...list, initialThread].slice(-MAX_THREAD_TABS) };
+    });
+  }, [initialThread, repoPath, placeKey, setOpenThreads, setThreadTabsMap]);
+  useEffect(() => {
+    if (split) setAgentMounted(true);
+  }, [split]);
   const layout = useIdeLayout();
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
   const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
@@ -677,6 +703,50 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   const chosenThread = openThreads[placeKey];
   const threadId = chosenThread === undefined ? (threadList.data?.threads.find((row) => isHere(row.place))?.id ?? null) : chosenThread;
   const setThread = (id: string | null) => setOpenThreads((map) => ({ ...map, [placeKey]: id }));
+  const activeThreadKey = threadId ?? NEW_THREAD;
+  const agentShown = view === "agent" || split;
+  const savedTabs = threadTabsMap[placeKey] ?? [];
+  // The thread in view always has its tab, and keeps it while the editor shows.
+  const threadTabs = !savedTabs.includes(activeThreadKey) && (agentShown || (agentMounted && !threadsClosed)) ? [...savedTabs, activeThreadKey] : savedTabs;
+  const setThreadTabs = (next: string[]) => setThreadTabsMap((map) => ({ ...map, [placeKey]: next.slice(-MAX_THREAD_TABS) }));
+  /** Opens a thread (null: a new one) in its tab, next to the files, and shows it. */
+  const openThread = (id: string | null) => {
+    const key = id ?? NEW_THREAD;
+    setThreadsClosed(false);
+    if (!threadTabs.includes(key)) setThreadTabs([...threadTabs, key]);
+    else if (threadTabs !== savedTabs) setThreadTabs(threadTabs);
+    setThread(id);
+    if (!split) setView("agent");
+  };
+  /** Closes a thread's tab; the thread itself stays in the sessions list. */
+  const closeThread = (key: string) => {
+    const rest = threadTabs.filter((row) => row !== key);
+    setThreadTabs(rest);
+    setAgentEditing((current) => {
+      const { [key]: _gone, ...others } = current;
+      return others;
+    });
+    if (key !== activeThreadKey) return;
+    const next = rest[Math.max(0, threadTabs.indexOf(key) - 1)];
+    if (next) setThread(next === NEW_THREAD ? null : next);
+    else {
+      setThreadsClosed(true);
+      setThread(null);
+      if (split) setSplit(false);
+      else setView("editor");
+    }
+  };
+  /** A new thread's first message made it: its tab keeps its place under its id. */
+  const threadMade = (key: string, id: string) => {
+    setThreadTabs(threadTabs.map((row) => (row === key ? id : row)));
+    setThread(id);
+  };
+  const threadTitles = new Map((threadList.data?.threads ?? []).map((row) => [row.id, row]));
+  const agentTabs = threadTabs.map((key) => {
+    const row = key === NEW_THREAD ? null : threadTitles.get(key);
+    return { key, title: key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread"), live: Boolean(row?.last && ["queued", "claimed", "running", "stopping", "waiting_approval"].includes(row.last.status)) };
+  });
+  const editingPaths = new Set(Object.values(agentEditing).flat());
   const absolute = (path: string) => `${data.repo.replace(/[\\/]+$/, "")}/${path}`;
   const goHome = () => document.querySelector<HTMLAnchorElement>("[data-ide-home]")?.click();
 
@@ -702,6 +772,8 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       : [];
     return [
       { id: "agent", label: view === "agent" ? "Show the editor" : "Code with the agent", keys: "ctrl+alt+i", run: () => setView(view === "agent" ? "editor" : "agent") },
+      { id: "agent-side", label: split ? "Show the agent in place of the editor" : "Show the agent beside the editor", run: () => setSplit(!split) },
+      { id: "agent-new", label: "New thread with the agent", run: () => openThread(null) },
       { id: "go-file", label: "Go to file", keys: "mod+p", run: () => openQuick("") },
       ...(active ? [{ id: "go-line", label: "Go to line", keys: "ctrl+g", run: () => openQuick(":") }] : []),
       { id: "find", label: "Find in files", keys: "mod+shift+f", run: findInFiles },
@@ -802,17 +874,88 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
     window.setTimeout(tick, 50);
   }
 
+  /**
+   * A row of tabs. Side by side, the editor's row has the files and the agent's its threads; otherwise
+   * one row has both, the threads first, and whichever is in view is selected.
+   */
+  const tabRow = (pane: "editor" | "agent") => {
+    const files = !split || pane === "editor";
+    const threads = !split || pane === "agent";
+    const threadSelected = split ? pane === "agent" : view === "agent";
+    return (
+      <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-sidebar text-[12.5px]" data-testid={`ide-tabs-${pane}`}>
+        {pane === "editor" || !split ? (
+          <button type="button" className="icon-btn my-auto ml-1 mr-0.5 h-7 w-7 shrink-0" title={`Show or hide the side panel (${label("mod+b")})`} aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
+            <PanelLeft size={14} />
+          </button>
+        ) : null}
+        <TabStrip
+          tabs={files ? tabs : []}
+          active={threadSelected && threads ? null : active}
+          saveState={saveState}
+          previews={previews}
+          editing={editingPaths}
+          closeLabel={label("alt+w")}
+          onOpen={(path) => open(path)}
+          onClose={close}
+          onMenu={(event, path) => openContextMenu(event, () => tabMenu(menuBase, path, tabs, closeMany))}
+          threads={threads ? agentTabs : []}
+          activeThread={threadSelected ? activeThreadKey : null}
+          onThread={(key) => openThread(key === NEW_THREAD ? null : key)}
+          onCloseThread={closeThread}
+          onThreadMenu={(event, key) =>
+            openContextMenu(event, () => ({
+              title: agentTabs.find((row) => row.key === key)?.title ?? "Thread",
+              sections: [
+                {
+                  items: [
+                    { id: "close", label: "Close", icon: X, run: () => closeThread(key) },
+                    ...(threadTabs.length > 1 ? [{ id: "close-others", label: "Close the other threads", icon: X, run: () => { setThreadTabs([key]); setThread(key === NEW_THREAD ? null : key); if (!split) setView("agent"); } }] : []),
+                    { id: "side", label: split ? "Show it in place of the editor" : "Show it beside the editor", icon: split ? PanelLeft : PanelRight, run: () => { setSplit(!split); openThread(key === NEW_THREAD ? null : key); } },
+                  ],
+                },
+              ],
+            }))
+          }
+        />
+        {threads ? (
+          <button type="button" className="icon-btn my-auto h-7 w-7 shrink-0" title="New thread with the agent" aria-label="New thread with the agent" onClick={() => openThread(null)}>
+            <Plus size={14} />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="icon-btn my-auto mr-1 h-7 w-7 shrink-0"
+          aria-pressed={split}
+          title={split ? "Show the agent in place of the editor" : "Show the agent beside the editor"}
+          aria-label={split ? "Show the agent in place of the editor" : "Show the agent beside the editor"}
+          onClick={() => {
+            if (!split) setThread(threadId);
+            setSplit(!split);
+            if (split) setView("agent");
+          }}
+          hidden={pane === "editor" && split}
+        >
+          {split ? <PanelLeft size={14} /> : <PanelRight size={14} />}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")} root>
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-2 text-[13px]" data-testid="ide-titlebar">
         <Link href="/code" className="icon-btn" title="Back to Code" aria-label="Back to Code" data-ide-home><ArrowLeft size={15} /></Link>
         <div role="group" aria-label="Editor or agent" className="ide-view-switch" data-testid="ide-view-switch">
-          <button type="button" aria-pressed={view === "editor"} onClick={() => setView("editor")} title={`Editor (${label("ctrl+alt+i")})`}>
+          <button type="button" aria-pressed={view === "editor" && !split} onClick={() => { setSplit(false); setView("editor"); }} title={`Editor (${label("ctrl+alt+i")})`}>
             <Code2 size={13} aria-hidden /> Editor
           </button>
-          <button type="button" aria-pressed={view === "agent"} onClick={() => setView("agent")} title={`Agent (${label("ctrl+alt+i")})`}>
+          <button type="button" aria-pressed={view === "agent" && !split} onClick={() => { setSplit(false); setView("agent"); }} title={`Agent (${label("ctrl+alt+i")})`}>
             <AgentIcon size={13} aria-hidden /> Agent
+          </button>
+          <button type="button" aria-pressed={split} onClick={() => setSplit(!split)} title="The agent beside the editor" aria-label="The agent beside the editor">
+            <PanelRight size={13} aria-hidden /> <span className="max-md:hidden">Both</span>
           </button>
         </div>
         <span className="truncate font-semibold">{title}</span>
@@ -905,16 +1048,12 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
               current={here}
               viewOnly={viewOnly}
               onSelect={(thread) => {
-                if (isHere(thread.place)) {
-                  setThread(thread.id);
-                  setView("agent");
-                } else navigate.go(agentHref(thread.place, { thread: thread.id }));
+                if (isHere(thread.place)) openThread(thread.id);
+                else navigate.go(agentHref(thread.place, { thread: thread.id }));
               }}
               onNew={(place) => {
-                if (!place || isHere(place)) {
-                  setThread(null);
-                  setView("agent");
-                } else navigate.go(agentHref(place, { thread: "new" }));
+                if (!place || isHere(place)) openThread(null);
+                else navigate.go(agentHref(place, { thread: "new" }));
               }}
               onOpenFolder={(place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
             />
@@ -949,39 +1088,11 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           )}
         </SidePanel>
 
-        {/* Editor column */}
+        {/* Editor column: the files and the agent's threads, as tabs; the agent may sit beside the editor. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {agentMounted ? (
-            <div className={cx("flex min-h-0 flex-1 flex-col", view !== "agent" && "hidden")}>
-              <AgentView
-                threadId={threadId}
-                onThread={setThread}
-                draft={here}
-                onDraft={null}
-                places={[{ deviceId: here.deviceId, name: placeName, online: reachable }]}
-                folders={[{ deviceId: here.deviceId, path: data.repo, name: repoLabel || title, branch: shortBranch(scm.data?.branch ?? data.branch) }]}
-                viewOnly={viewOnly}
-                onOpenFile={(place, path) => (isHere(place) ? open(path) : navigate.go(agentHref(place, { view: "editor", file: path })))}
-                onOpenFolder={(place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
-              />
-            </div>
-          ) : null}
-          <div className={cx("flex min-h-0 flex-1 flex-col", view === "agent" && "hidden")}>
-          <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-sidebar text-[12.5px]">
-            <button type="button" className="icon-btn my-auto ml-1 mr-0.5 h-7 w-7 shrink-0" title={`Show or hide the side panel (${label("mod+b")})`} aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
-              <PanelLeft size={14} />
-            </button>
-            <TabStrip
-              tabs={tabs}
-              active={active}
-              saveState={saveState}
-              previews={previews}
-              closeLabel={label("alt+w")}
-              onOpen={(path) => open(path)}
-              onClose={close}
-              onMenu={(event, path) => openContextMenu(event, () => tabMenu(menuBase, path, tabs, closeMany))}
-            />
-          </div>
+          <div className="flex min-h-0 min-w-0 flex-1">
+          <div className={cx("flex min-h-0 min-w-0 flex-1 flex-col", !split && view === "agent" && "hidden")}>
+          {tabRow("editor")}
 
           {!reachable ? (
             <div className="ide-notice" role="status" data-testid="ide-offline">
@@ -1007,6 +1118,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
             <FilePane
               key={`${active}:${reloads[active] ?? 0}`}
               path={active}
+              agentEditing={editingPaths.has(active)}
               source={source}
               review={Boolean(isReview)}
               reviewId={data.review?.id ?? source.review ?? null}
@@ -1057,6 +1169,33 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
             />
           )}
 
+          </div>
+          {agentMounted ? (
+            <div className={cx("flex min-h-0 min-w-0 flex-col", split ? "ide-agent-side" : "flex-1", !agentShown && "hidden")} data-testid="ide-agent-pane">
+              {tabRow("agent")}
+              {threadTabs.map((key) => {
+                const shown = agentShown && key === activeThreadKey;
+                return (
+                  <div key={key} className={cx("flex min-h-0 flex-1 flex-col", !shown && "hidden")}>
+                    <AgentView
+                      threadId={key === NEW_THREAD ? null : key}
+                      onThread={(id) => (id && key === NEW_THREAD ? threadMade(key, id) : openThread(id))}
+                      draft={here}
+                      onDraft={null}
+                      places={[{ deviceId: here.deviceId, name: placeName, online: reachable }]}
+                      folders={[{ deviceId: here.deviceId, path: data.repo, name: repoLabel || title, branch: shortBranch(scm.data?.branch ?? data.branch) }]}
+                      viewOnly={viewOnly}
+                      visible={shown}
+                      onEditing={(paths) => setAgentEditing((current) => (sameList(current[key] ?? [], paths) ? current : { ...current, [key]: paths }))}
+                      onClose={() => closeThread(key)}
+                      onOpenFile={(place, path) => (isHere(place) ? open(path) : navigate.go(agentHref(place, { view: "editor", file: path })))}
+                      onOpenFolder={split ? null : (place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
           </div>
 
           {terminal && !viewOnly ? (
@@ -1118,24 +1257,38 @@ function TabStrip({
   active,
   saveState,
   previews,
+  editing,
   closeLabel,
   onOpen,
   onClose,
   onMenu,
+  threads = [],
+  activeThread = null,
+  onThread,
+  onCloseThread,
+  onThreadMenu,
 }: {
   tabs: string[];
   active: string | null;
   saveState: Record<string, SaveState>;
   previews: Record<string, boolean>;
+  /** Files the agent is editing now. */
+  editing?: ReadonlySet<string>;
   closeLabel: string;
   onOpen: (path: string) => void;
   onClose: (path: string) => void;
   onMenu: (event: React.MouseEvent, path: string) => void;
+  /** The agent's threads open as tabs, before the files. */
+  threads?: Array<{ key: string; title: string; live: boolean }>;
+  activeThread?: string | null;
+  onThread?: (key: string) => void;
+  onCloseThread?: (key: string) => void;
+  onThreadMenu?: (event: React.MouseEvent, key: string) => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [active, tabs.length]);
+  }, [active, tabs.length, activeThread, threads.length]);
   const names = new Map<string, number>();
   for (const path of tabs) names.set(nameOf(path), (names.get(nameOf(path)) ?? 0) + 1);
   const focusTab = (path: string) => window.requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[data-tab-path="${CSS.escape(path)}"]`)?.focus());
@@ -1149,6 +1302,53 @@ function TabStrip({
         if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
       }}
     >
+      {threads.map((thread) => {
+        const selected = thread.key === activeThread;
+        return (
+          <div
+            key={`thread:${thread.key}`}
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            title={thread.live ? `${thread.title} · working` : thread.title}
+            data-thread-tab={thread.key}
+            className="code-tab code-tab-agent"
+            onClick={() => {
+              if (!selected) onThread?.(thread.key);
+            }}
+            onMouseDown={(event) => {
+              if (event.button === 1) {
+                event.preventDefault();
+                onCloseThread?.(thread.key);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onThread?.(thread.key);
+              }
+            }}
+            onContextMenu={(event) => onThreadMenu?.(event, thread.key)}
+          >
+            <AgentIcon size={13} className={cx("shrink-0", thread.live ? "agent-live-mark" : "text-muted")} aria-hidden />
+            <span className="min-w-0 max-w-[14rem] truncate">{thread.title}</span>
+            <button
+              type="button"
+              className="code-tab-close"
+              tabIndex={-1}
+              aria-label={`Close ${thread.title}`}
+              title="Close the thread's tab"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCloseThread?.(thread.key);
+              }}
+            >
+              <span className="code-tab-dot" aria-hidden />
+              <X size={13} className="code-tab-x" />
+            </button>
+          </div>
+        );
+      })}
       {tabs.map((path, index) => {
         const state = saveState[path];
         const dirty = state === "dirty" || state === "saving";
@@ -1190,6 +1390,7 @@ function TabStrip({
             {previews[path] ? <Eye size={14} className="shrink-0 text-muted" /> : <FileIcon name={path} size={14} />}
             <span className="min-w-0 truncate">{previews[path] ? `Preview ${name}` : name}</span>
             {(names.get(name) ?? 0) > 1 && folder ? <span className="code-tab-folder">{folder.split("/").pop()}</span> : null}
+            {editing?.has(path) ? <AgentIcon size={11} className="agent-live-mark shrink-0" aria-label="The agent is editing this file" /> : null}
             <button
               type="button"
               className="code-tab-close"
@@ -1969,6 +2170,8 @@ function SearchPanel({ source, onOpen, ask }: { source: Source; onOpen: (path: s
 
 function FilePane(props: {
   path: string;
+  /** The agent is editing this file now: it is read again often, and the bar says so. */
+  agentEditing?: boolean;
   source: Source;
   review: boolean;
   reviewId: string | null;
@@ -2011,7 +2214,7 @@ function FilePane(props: {
     queryKey: ["code-versions", key, source, path],
     queryFn: () => code.versions(source, path),
     retry: false,
-    refetchInterval: 10_000,
+    refetchInterval: props.agentEditing ? 1_500 : 10_000,
     refetchOnWindowFocus: true,
   });
   const [line, setLine] = useState(1);
@@ -2068,13 +2271,14 @@ function FilePane(props: {
           ))}
         </nav>
         {props.changed ? <span><span className="text-ok">+{props.changed.added}</span> <span className="text-danger">−{props.changed.removed}</span></span> : null}
+        {props.agentEditing ? (
+          <span className="ide-agent-editing" role="status" data-testid="ide-agent-editing" title={dirty ? "Your unsaved typing is kept: saving asks which to keep." : "It updates here as the agent writes."}>
+            <AgentIcon size={12} className="agent-live-mark" aria-hidden /> {dirty ? "The agent is editing this too" : "The agent is editing"}
+          </span>
+        ) : null}
         <div className="flex-1" />
-        {props.review && counts ? (
-          counts.agent === 0 ? (
-            <span className="text-ok" data-testid="ide-file-reviewed">Reviewed. Edit freely</span>
-          ) : (
-            <span className="text-muted">{counts.agent} agent change{counts.agent === 1 ? "" : "s"} to decide{counts.yours ? ` · ${counts.yours} yours` : ""}</span>
-          )
+        {props.review && counts && counts.agent > 0 ? (
+          <span className="text-muted">{counts.agent} agent change{counts.agent === 1 ? "" : "s"} to decide{counts.yours ? ` · ${counts.yours} yours` : ""}</span>
         ) : null}
         <button type="button" className="icon-btn h-6 w-6" title="Previous change (Shift+F7)" onClick={() => props.editorRef.current?.previous()}><ArrowUp size={13} /></button>
         <button type="button" className="icon-btn h-6 w-6" title="Next change (F7)" onClick={() => props.editorRef.current?.next()}><ArrowDown size={13} /></button>

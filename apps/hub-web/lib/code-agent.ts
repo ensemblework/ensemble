@@ -69,12 +69,24 @@ export function toolPath(args: string, folder: string): string | null {
   return null;
 }
 
-/** A thread's title from its first message: the first line, at most 80 characters. */
+/**
+ * A thread's first name, from its first message, until a model names it (hub-api routes/code-threads.ts):
+ * the first sentence without greetings and "can you", at most 7 words, cut at a word.
+ */
 export function threadTitle(message: string): string {
   const line = message.trim().split("\n").find((row) => row.trim())?.trim() ?? "";
-  const plain = line.replace(/\s+/g, " ").replace(/[.:;,]+$/, "");
+  let plain = line.replace(/\s+/g, " ").replace(/@[a-z]+:/g, "");
+  for (let round = 0; round < 4; round += 1) {
+    const next = plain.replace(OPENERS, "");
+    if (next === plain) break;
+    plain = next;
+  }
+  plain = (plain.split(/(?<=[.!?])\s/)[0] ?? plain).replace(/[\s.:;,!?]+$/, "");
   if (!plain) return "New thread";
-  return plain.length > 80 ? `${plain.slice(0, 79).trimEnd()}…` : plain;
+  let title = plain.split(" ").slice(0, 7).join(" ");
+  if (title.length > 60) title = title.slice(0, 60).replace(/\s+\S*$/, "") || title.slice(0, 60);
+  for (let round = 0; round < 3; round += 1) title = title.replace(/\s+(?:and|or|but|then|to|of|in|on|for|with|the|a|an|as|it|so)$/i, "");
+  return title.charAt(0).toUpperCase() + title.slice(1);
 }
 
 /** 1234 → "1.2k". */
@@ -241,4 +253,311 @@ export function agentHref(place: { deviceId: string | null; folder: string | nul
   const view = options.view ?? "agent";
   const params = new URLSearchParams({ ...(place.deviceId ? { device: place.deviceId } : {}), ...(place.folder ? { repo: place.folder } : {}), view, ...(options.thread ? { thread: options.thread } : {}), ...(options.file ? { file: options.file } : {}) });
   return place.folder ? `/code/review?${params.toString()}` : `/code?${params.toString()}`;
+}
+
+/** The Ensemble tool a call used, whatever prefix its agent puts on it (`mcp__ensemble__`, `ensemble-`, `ensemble.`). */
+export function ensembleTool(name: string): string | null {
+  const match = /^(?:mcp__ensemble__|ensemble[-.:/]|ensemble__)(.+)$/i.exec(name);
+  if (match) return match[1]!.toLowerCase();
+  return /^(ensemble_\w+|report_result|attach_evidence|ask_person|secret_http)$/i.test(name) ? name.toLowerCase() : null;
+}
+
+const ENSEMBLE_LABEL: Record<string, string> = {
+  ensemble: "Asked Ensemble",
+  report_result: "Reported the result",
+  attach_evidence: "Attached evidence",
+  ask_person: "Asked you",
+  ensemble_actions: "Looked up what it can do in Ensemble",
+  ensemble_context: "Read from Ensemble",
+  ensemble_search: "Searched Ensemble",
+  ensemble_list_tasks: "Read your tasks",
+  ensemble_create_task: "Made a task",
+  ensemble_apps: "Looked up your connected apps",
+  ensemble_app_call: "Used a connected app",
+  secret_http: "Called an API with a saved key",
+};
+
+const PAST: Record<string, string> = {
+  create: "Made", make: "Made", add: "Added", update: "Updated", edit: "Edited", move: "Moved", delete: "Deleted", remove: "Removed", link: "Linked", unlink: "Unlinked",
+  set: "Set", put: "Put", write: "Wrote", append: "Added to", rename: "Renamed", attach: "Attached", export: "Exported", save: "Saved", draw: "Drew", plot: "Plotted",
+  assign: "Assigned", complete: "Completed", archive: "Archived", share: "Shared", schedule: "Scheduled", comment: "Commented on", mark: "Marked", start: "Started",
+};
+
+function words(text: string): string[] {
+  return text.replace(/^(hub|apps)_/, "").split(/[_\s.-]+/).filter(Boolean).map((word) => word.toLowerCase());
+}
+
+/** An Ensemble action (`hub_create_page`) as what it did: "Made a page". */
+export function ensembleActionLabel(action: string): string {
+  const parts = words(action);
+  if (!parts.length) return "Used Ensemble";
+  const verb = PAST[parts[0]!];
+  const rest = parts.slice(1).join(" ");
+  if (verb) return rest ? `${verb} ${/^[aeiou]/.test(rest) ? "an" : "a"} ${rest}` : verb;
+  const text = parts.join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Built-in tool names as words, for agents that name them tersely. */
+const TOOL_WORDS: Record<string, string> = {
+  apply_patch: "Edited files",
+  str_replace_editor: "Edited a file",
+  str_replace: "Edited a file",
+  report_intent: "Said what it is doing",
+  update_plan: "Updated its plan",
+  todowrite: "Updated its plan",
+  todo_write: "Updated its plan",
+  websearch: "Searched the web",
+  web_search: "Searched the web",
+  webfetch: "Read a web page",
+  web_fetch: "Read a web page",
+  fetch: "Read a web page",
+  glob: "Found files",
+  grep: "Searched the code",
+  rg: "Searched the code",
+  view: "Read",
+  read: "Read",
+  read_file: "Read",
+  ls: "Listed files",
+  list_dir: "Listed files",
+  create: "Created",
+  write: "Wrote",
+  edit: "Edited",
+  multiedit: "Edited",
+  task: "Started a helper agent",
+};
+
+const pickString = (record: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+function inputOf(args: string): Record<string, unknown> | null {
+  const input = parsed(args);
+  return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+}
+
+/** A command a tool call ran, and the agent's own words for why, when its input says. */
+export function commandOf(args: string): { command: string; description: string | null } | null {
+  const input = inputOf(args);
+  if (!input) return null;
+  const raw = input.command ?? input.cmd ?? input.commandLine ?? input.script;
+  const command = Array.isArray(raw) ? raw.filter((part) => typeof part === "string").join(" ") : typeof raw === "string" ? raw : null;
+  if (!command?.trim()) return null;
+  // `bash -lc "…"` as Codex runs commands: the command inside.
+  const inner = /^(?:\/bin\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/.exec(command.trim());
+  return { command: (inner ? inner[2]! : command).trim(), description: pickString(input, ["description", "intent", "reason", "explanation"]) };
+}
+
+/**
+ * A tool call as a person reads it: a short label, the detail beside it (a command, a path, a query),
+ * and whether it is one of Ensemble's tools.
+ */
+export function toolLine(name: string, args: string, summary: string): { label: string; detail: string | null; ensemble: boolean } {
+  const line = toolLineOf(name, args, summary);
+  return { ...line, label: plainEntities(line.label), detail: line.detail === null ? null : plainEntities(line.detail) };
+}
+
+function toolLineOf(name: string, args: string, summary: string): { label: string; detail: string | null; ensemble: boolean } {
+  const ensemble = ensembleTool(name);
+  const input = inputOf(args) ?? {};
+  if (ensemble) {
+    if (ensemble === "ensemble_act") {
+      const action = typeof input.action === "string" ? input.action : "";
+      const inner = input.input && typeof input.input === "object" ? (input.input as Record<string, unknown>) : {};
+      return { label: action ? ensembleActionLabel(action) : "Used Ensemble", detail: pickString(inner, ["title", "name", "label", "query"]), ensemble: true };
+    }
+    if (ensemble === "ensemble_app_call") {
+      const app = pickString(input, ["app", "appId"]);
+      const tool = pickString(input, ["tool", "name"]);
+      return { label: app ? `Used ${app}` : "Used a connected app", detail: tool ? tool.replace(/_/g, " ") : null, ensemble: true };
+    }
+    return { label: ENSEMBLE_LABEL[ensemble] ?? ensembleActionLabel(ensemble), detail: pickString(input, ["query", "title", "handle", "app", "summary"]), ensemble: true };
+  }
+  const command = commandOf(args);
+  if (command) return { label: command.description ?? "Ran a command", detail: command.command, ensemble: false };
+  const key = name.toLowerCase().replace(/^mcp__[^_]+__/, "");
+  const path = pickString(input, PATH_KEYS);
+  const query = pickString(input, ["pattern", "query", "url", "prompt", "description"]);
+  const known = TOOL_WORDS[key];
+  const tidy = summary && summary !== name ? summary : null;
+  if (known) return { label: known, detail: path ?? query ?? tidy, ensemble: false };
+  const label = key.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  return { label: tidy ?? (label ? label.charAt(0).toUpperCase() + label.slice(1) : "Tool"), detail: tidy ? null : path ?? query, ensemble: false };
+}
+
+/** What a tool call answered, as text to show: a command's output and its exit code, or the answer's own text. */
+export function toolOutput(output: string): { text: string; exitCode: number | null } {
+  const trimmed = output.trim();
+  if (!trimmed) return { text: "", exitCode: null };
+  let value: unknown = null;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    value = null;
+  }
+  let text = trimmed;
+  let exitCode: number | null = null;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const contents = Array.isArray(record.contents) ? (record.contents as Array<Record<string, unknown>>) : [];
+    const exit = contents.find((row) => row && typeof row.exitCode === "number");
+    if (exit) exitCode = exit.exitCode as number;
+    if (typeof record.exitCode === "number") exitCode = record.exitCode;
+    if (typeof record.exit_code === "number") exitCode = record.exit_code;
+    const body = [record.content, record.output, record.stdout, record.result, record.text].find((field) => (typeof field === "string" && field.trim()) || Array.isArray(field));
+    const stderr = typeof record.stderr === "string" && record.stderr.trim() ? record.stderr : "";
+    if (typeof body === "string") text = [body, stderr].filter(Boolean).join("\n");
+    else if (Array.isArray(body)) text = body.map((block) => (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string" ? (block as { text: string }).text : JSON.stringify(block))).join("\n");
+    else if (stderr) text = stderr;
+    else if (exitCode !== null) text = "";
+    else text = JSON.stringify(value, null, 2);
+  } else if (typeof value === "string") {
+    text = value;
+  }
+  // Copilot ends a shell's output with `<shellId: 0 completed with exit code 0>`.
+  const marker = /\n?<shellId:[^>]*?exit code (-?\d+)>\s*$/.exec(text);
+  if (marker) {
+    exitCode ??= Number(marker[1]);
+    text = text.slice(0, marker.index);
+  }
+  return { text: text.replace(/\s+$/, ""), exitCode };
+}
+
+const ENTITIES: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'", "#160": " " };
+
+/** Text some agents send with HTML entities in it (`&nbsp;`), as the characters they stand for. */
+export function plainEntities(text: string): string {
+  return text.replace(/&(nbsp|amp|lt|gt|quot|apos|#39|#160);/g, (_match, name: string) => ENTITIES[name] ?? _match);
+}
+
+/** A thought as a title and the rest: agents open a thought with a bold line (`**Checking the tests**`). */
+export function thought(text: string): { title: string; body: string } {
+  const clean = plainEntities(text).replace(/\u00a0/g, " ").trim();
+  const bold = /^\*\*(.+?)\*\*\s*\n*/.exec(clean);
+  if (bold) return { title: bold[1]!.trim(), body: clean.slice(bold[0].length).trim() };
+  const first = clean.split("\n")[0] ?? "";
+  const title = first.replace(/[*_`#>]+/g, "").trim();
+  return { title: title.length > 100 ? `${title.slice(0, 99).trimEnd()}…` : title, body: clean.split("\n").slice(1).join("\n").trim() || (title.length > 100 ? clean : "") };
+}
+
+/** An Ensemble record a reply links to: a file, a page, a task and so on. */
+export type RecordLink = { kind: "file" | "page" | "task" | "diagram" | "plot" | "project" | "meeting" | "dataset"; id: string; label: string | null; href: string };
+
+const RECORD_PATHS: Array<[RegExp, RecordLink["kind"]]> = [
+  [/^\/files\/([\w-]{8,})/, "file"],
+  [/^\/pages\/([\w-]{8,})/, "page"],
+  [/^\/tasks\/([\w-]{8,})/, "task"],
+  [/^\/diagrams\/([\w-]{8,})/, "diagram"],
+  [/^\/plots\/([\w-]{8,})/, "plot"],
+  [/^\/projects\/([\w-]{8,})/, "project"],
+  [/^\/context\/datasets\/([\w-]{8,})/, "dataset"],
+];
+
+const HANDLE_KIND: Record<string, RecordLink["kind"]> = { file: "file", page: "page", task: "task", diagram: "diagram", plot: "plot", project: "project", meeting: "meeting", dataset: "dataset" };
+
+function recordOf(url: string, label: string | null): RecordLink | null {
+  const handle = /^ensemble:\/\/([a-z]+)\/([\w-]+)/.exec(url);
+  if (handle) {
+    const kind = HANDLE_KIND[handle[1]!];
+    if (!kind) return null;
+    const href = kind === "meeting" ? `/meetings?session=${handle[2]}` : kind === "dataset" ? `/context/datasets/${handle[2]}` : `/${kind}s/${handle[2]}`;
+    return { kind, id: handle[2]!, label, href };
+  }
+  let path = url;
+  if (/^https?:\/\//.test(url)) {
+    try {
+      const parsedUrl = new URL(url);
+      path = `${parsedUrl.pathname}${parsedUrl.search}`;
+    } catch {
+      return null;
+    }
+  }
+  if (!path.startsWith("/")) return null;
+  const meeting = /^\/meetings\?session=([\w-]{8,})/.exec(path);
+  if (meeting) return { kind: "meeting", id: meeting[1]!, label, href: path };
+  for (const [pattern, kind] of RECORD_PATHS) {
+    const match = pattern.exec(path);
+    // A record's id has a digit: `/pages/new` and other words are screens, not records.
+    if (match && /\d/.test(match[1]!)) return { kind, id: match[1]!, label, href: path };
+  }
+  return null;
+}
+
+/** The Ensemble records a reply links to, in order, once each: Markdown links, bare paths and `ensemble://` handles. */
+export function recordLinks(text: string): RecordLink[] {
+  const found = new Map<string, RecordLink>();
+  const add = (link: RecordLink | null) => {
+    if (!link) return;
+    const key = `${link.kind}:${link.id}`;
+    const known = found.get(key);
+    if (!known) found.set(key, link);
+    else if (!known.label && link.label) found.set(key, { ...known, label: link.label });
+  };
+  for (const match of text.matchAll(/\[([^\]\n]{1,200})\]\(([^)\s]+)\)/g)) add(recordOf(match[2]!, match[1]!.replace(/[*_`]/g, "").trim() || null));
+  for (const match of text.matchAll(/(?:^|[\s(])((?:https?:\/\/[^\s)]+)?\/(?:files|pages|tasks|diagrams|plots|projects)\/[\w-]{8,}|ensemble:\/\/[a-z]+\/[\w-]+)/g)) add(recordOf(match[1]!, null));
+  return [...found.values()].slice(0, 8);
+}
+
+/** Words a first message often opens with that say nothing about the work. */
+const OPENERS = /^(?:(?:hi|hello|hey|hiya|yo|ok(?:ay)?|so|please|pls|kindly|now|then|also|and|just)\b[\s,!.:-]*|(?:can|could|would|will) you\s+(?:please\s+)?|(?:i\s+(?:want|need|would like)\s+(?:you\s+)?to)\s+|(?:let'?s|lets)\s+|help me\s+(?:to\s+)?)/i;
+
+export type DiffLine = { sign: "+" | "-" | " " | "@"; text: string };
+
+const MAX_DIFF_LINES = 200;
+
+/** An edit's change as diff lines, from whatever its agent sent: a patch, old and new text, or a whole file. */
+export function editLines(args: string): DiffLine[] | null {
+  const input = inputOf(args);
+  if (!input && !args.includes("\n")) return null;
+  const lines: DiffLine[] = [];
+  const push = (sign: DiffLine["sign"], text: string) => {
+    for (const line of text.replace(/\n$/, "").split("\n")) if (lines.length < MAX_DIFF_LINES) lines.push({ sign, text: line });
+  };
+  const patch = input ? pickString(input, ["patch", "input", "diff", "unified_diff"]) : args;
+  if (patch && /^(\*\*\* |@@|[+-])/m.test(patch)) {
+    for (const line of patch.split("\n")) {
+      if (lines.length >= MAX_DIFF_LINES) break;
+      if (/^\*\*\* (Begin|End) Patch/.test(line) || /^(---|\+\+\+) /.test(line)) continue;
+      if (line.startsWith("*** ")) lines.push({ sign: "@", text: line.slice(4) });
+      else if (line.startsWith("@@")) lines.push({ sign: "@", text: line });
+      else if (line.startsWith("+")) lines.push({ sign: "+", text: line.slice(1) });
+      else if (line.startsWith("-")) lines.push({ sign: "-", text: line.slice(1) });
+      else lines.push({ sign: " ", text: line.replace(/^ /, "") });
+    }
+    return lines;
+  }
+  if (!input) return null;
+  const edits = Array.isArray(input.edits) ? (input.edits as Array<Record<string, unknown>>) : [input];
+  for (const edit of edits) {
+    if (!edit || typeof edit !== "object") continue;
+    const before = pickString(edit, ["old_string", "old_str", "oldText", "old_text"]);
+    const after = edit.new_string ?? edit.new_str ?? edit.newText ?? edit.new_text;
+    if (before !== null || typeof after === "string") {
+      if (edits.length > 1 && lines.length) lines.push({ sign: "@", text: "" });
+      if (before) push("-", before);
+      if (typeof after === "string" && after) push("+", after);
+    }
+  }
+  if (lines.length) return lines;
+  const whole = pickString(input, ["content", "file_text", "new_content", "text", "contents"]);
+  if (whole) push("+", whole);
+  return lines.length ? lines : null;
+}
+
+/** A tool call's input as name and value pairs to read, without what its row already shows. */
+export function inputLines(args: string): Array<[string, string]> {
+  const input = inputOf(args);
+  if (!input) return args.trim() && args.trim() !== "{}" ? [["input", args.trim().slice(0, 2000)]] : [];
+  const skip = new Set(["command", "description", "cmd"]);
+  return Object.entries(input)
+    .filter(([key, value]) => !skip.has(key) && value !== null && value !== undefined && value !== "")
+    .slice(0, 12)
+    .map(([key, value]) => {
+      const text = typeof value === "string" ? value : JSON.stringify(value, null, 1);
+      return [key.replace(/_/g, " "), text.length > 600 ? `${text.slice(0, 599)}…` : text];
+    });
 }

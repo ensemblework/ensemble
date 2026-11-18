@@ -29,11 +29,12 @@ export const useLive = () => useContext(LiveContext);
 
 /** Which cached queries each server event makes stale. */
 const INVALIDATES: Record<string, string[][]> = {
-  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"]],
+  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"], ["code-threads"], ["code-thread"]],
   page: [["page"], ["pages"], ["boards"]],
   "settings.changed": [["settings"]],
   board: [["boards"], ["pages"], ["tasks"]],
-  workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"]],
+  // A run moved on: the Code tab's threads show its turn's work at once (components/code/agent-view.tsx).
+  workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"], ["code-thread"], ["code-threads"], ["run"]],
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
   "activity.changed": [["agent-state"]],
@@ -42,7 +43,7 @@ const INVALIDATES: Record<string, string[][]> = {
   meetings: [["meeting-note"], ["meetings-imported"], ["meeting-sessions"], ["meeting-session"], ["meeting-cues"], ["meeting-calendar"], ["graph"]],
   // A request answered or closed anywhere also leaves the bell's Needs me (hub-api notifications/needs.ts).
   approval: [["approvals"], ["node-approvals"], ["shell"], ["notifications"]],
-  decision: [["decisions"], ["shell"], ["notifications"]],
+  decision: [["decisions"], ["shell"], ["notifications"], ["code-thread"]],
   "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
   notification: [["notifications"]],
   diagram: [["diagrams"]],

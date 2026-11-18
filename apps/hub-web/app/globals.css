@@ -440,6 +440,104 @@ select:focus-visible {
   .thinking-level.is-on {
     @apply bg-panel font-medium text-ink shadow-sm;
   }
+  /* Thinking as a slider: the track warms from cool to hot up to the thumb (components/agent/thinking-slider.tsx). */
+  .thinking-slider {
+    --think-lo: var(--tag-blue-fg);
+    --think-mid: var(--tag-purple-fg);
+    --think-hi: var(--tag-orange-fg);
+    --think-heat: linear-gradient(90deg, var(--think-lo), var(--think-mid) 55%, var(--think-hi));
+    @apply grid gap-1.5;
+  }
+  .thinking-head {
+    @apply flex min-h-[26px] items-center justify-between gap-2;
+  }
+  .thinking-auto {
+    @apply rounded-full border border-line bg-raised px-2.5 py-0.5 text-[12px] text-muted transition-colors hover:text-ink;
+  }
+  .thinking-auto.is-on {
+    @apply border-[color:var(--accent)] bg-[var(--accent-soft)] font-medium text-ink;
+  }
+  .thinking-now {
+    @apply ml-auto text-[12.5px] font-semibold;
+    color: color-mix(in srgb, var(--think-lo), var(--think-hi) var(--think-pos));
+  }
+  .thinking-slider.is-auto .thinking-now {
+    @apply text-muted;
+  }
+  .thinking-rail {
+    @apply relative h-5;
+  }
+  .thinking-track {
+    @apply absolute inset-x-0 top-1/2 m-0 h-5 w-full -translate-y-1/2 cursor-pointer appearance-none bg-transparent;
+  }
+  .thinking-track:focus-visible {
+    outline: none;
+  }
+  .thinking-track::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--think-heat) 0 0 / var(--think-pos) 100% no-repeat, var(--line);
+  }
+  .thinking-track::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--think-heat) 0 0 / var(--think-pos) 100% no-repeat, var(--line);
+  }
+  .thinking-slider.is-auto .thinking-track::-webkit-slider-runnable-track {
+    background: var(--line);
+  }
+  .thinking-slider.is-auto .thinking-track::-moz-range-track {
+    background: var(--line);
+  }
+  .thinking-track::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;
+    z-index: 2;
+    width: 16px;
+    height: 16px;
+    margin-top: -5px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 2px solid color-mix(in srgb, var(--think-lo), var(--think-hi) var(--think-pos));
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+    transition: transform 120ms ease;
+  }
+  .thinking-track::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 2px solid color-mix(in srgb, var(--think-lo), var(--think-hi) var(--think-pos));
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  }
+  .thinking-track:hover::-webkit-slider-thumb,
+  .thinking-track:focus-visible::-webkit-slider-thumb {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .thinking-slider.is-auto .thinking-track::-webkit-slider-thumb {
+    border-color: var(--line-strong);
+  }
+  .thinking-stop {
+    @apply pointer-events-none absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--line-strong)];
+    z-index: 1;
+  }
+  .thinking-stop:first-of-type,
+  .thinking-stop:last-of-type {
+    @apply opacity-0;
+  }
+  .thinking-stop.is-past {
+    @apply bg-[var(--panel)] opacity-70;
+  }
+  .thinking-ends {
+    @apply flex justify-between text-[11px] text-faint;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking-track::-webkit-slider-thumb {
+      transition: none;
+    }
+  }
 
   .btn {
     @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-raised px-2.5 py-1 text-[13px] text-ink transition-colors hover:border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;

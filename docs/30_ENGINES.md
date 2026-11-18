@@ -61,7 +61,7 @@ Ten minutes without process output, a running tool or an open question counts as
 
 Choose the computer first so Assign can show the models that its agent reports. **Agent default** uses the agent's own choice. When no model list is available, the field can accept a typed model name.
 
-Thinking, context window and fast mode appear only when supported. Changing the agent or model resets incompatible options. Fast mode uses more of the plan in exchange for faster output. Run profiles, Quick assign, Run again and the CLI's `/model` preserve these choices.
+Thinking, context window and fast mode appear only when supported. Thinking is a slider from the model's lowest level to its highest, its track warming as it goes up; **Auto** beside it leaves the level to the model and shows only where the model has a default level. Each level under the track can also be picked directly. Changing the agent or model resets incompatible options. Fast mode uses more of the plan in exchange for faster output. Run profiles, Quick assign, Run again and the CLI's `/model` preserve these choices.
 
 ### 3.3 Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code and Kimi Code
 

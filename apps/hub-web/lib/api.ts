@@ -1048,11 +1048,24 @@ export type CodeThread = {
   place: CodeThreadPlace;
 };
 
-/** Where a turn's reply was kept (`POST /api/agent/threads/:id/save`). */
-export type KeptPage = { pageId: string; taskId: string | null; title: string };
+/** Where a turn's reply was kept (`POST /api/agent/threads/:id/save`): a page, a task's page, meeting notes or a deliverable. */
+export type KeptPage = { kind: "page" | "task" | "meeting" | "deliverable"; id: string; pageId: string | null; taskId: string | null; title: string; href: string };
 
-/** One turn of a thread: the run of one message. */
-export type CodeTurn = AgentJob & { reviewId: string | null; saved?: KeptPage[] };
+/** Where to keep a reply: one of these. */
+export type KeepTarget =
+  | { pageId: string }
+  | { taskId: string }
+  | { newPage: { title: string } }
+  | { newTask: { title: string; projectId?: string | null } }
+  | { meetingId: string }
+  | { newMeeting: { title: string } }
+  | { deliverableId: string };
+
+/**
+ * One turn of a thread: the run of one message. `steer`: a message sent while the turn before worked,
+ * which carries on that turn's work; `steeredBy`: the turn that stopped this one to carry it on.
+ */
+export type CodeTurn = AgentJob & { reviewId: string | null; saved?: KeptPage[]; steer?: boolean; steeredBy?: string | null };
 
 export type JobEvent = { id: string; kind: string; data: Record<string, unknown>; at: string };
 
@@ -1745,11 +1758,14 @@ export const api = bindClient({
   /** Every thread of the Code tab's agent, newest first (each with its place). */
   codeThreads: () => get<{ threads: CodeThread[] }>("/api/agent/threads"),
   /** A thread with no folder works in a new folder in that computer's Ensemble workspace. */
-  createCodeThread: (data: { folder: string | null; deviceId?: string; title: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
-  codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace }; turns: CodeTurn[] }>(`/api/agent/threads/${id}`),
-  /** Keeps a finished turn's reply on a page (a new one, a standalone one or a task's), marked as the agent's. */
-  keepCodeTurn: (threadId: string, data: { jobId: string; pageId?: string; taskId?: string; newPage?: { title: string } }) =>
-    post<{ page: { id: string; taskId: string | null; title: string; href: string } }>(`/api/agent/threads/${threadId}/save`, data),
+  createCodeThread: (data: { folder: string | null; deviceId?: string; title: string; message?: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
+  codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace }; turns: CodeTurn[]; asks?: AgentDecisionRecord[] }>(`/api/agent/threads/${id}`),
+  /** The thread is open on screen (`open`) or closed: while open its requests are answered in it, not in Needs me. */
+  watchCodeThread: (id: string, open = true) => post<void>(`/api/agent/threads/${id}/watch`, { open }),
+  /** A message while a turn works: taken into a turn not started yet, else it steers the one at work. */
+  steerCodeThread: (id: string, data: { jobId: string; turn: Omit<AssignInput, "taskId"> }) => post<{ jobId: string; delivery: "amended" | "steered" | "queued" }>(`/api/agent/threads/${id}/steer`, data),
+  /** Keeps a finished turn's reply in Ensemble (a page, a task, meeting notes or a deliverable), marked as the agent's. */
+  keepCodeTurn: (threadId: string, data: { jobId: string } & KeepTarget) => post<{ page: KeptPage }>(`/api/agent/threads/${threadId}/save`, data),
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),
   job: (id: string) =>
     get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: Partial<SandboxCaps> & { effective: boolean; where?: "device" | "server" } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),

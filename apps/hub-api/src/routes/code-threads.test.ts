@@ -26,3 +26,28 @@ test("a thread's place comes from its first turn: a paired computer's folder by 
   // On Ensemble on the web this server's own paths stay hidden.
   assert.deepEqual(threadPlace({ deviceId: null, externalRoot: "/srv/x", repoPath: "/srv/x", context: {} }, false), { deviceId: null, deviceName: null, folder: null, workdir: null });
 });
+
+test("a message for a turn not started yet joins its own, mentions together", async () => {
+  const { amendedMessage } = await import("./code-threads.js");
+  const before = "Fix the export\n\n(Mentioned in Ensemble: @Export [task] ensemble://task/a1)";
+  const more = "Also keep the dates\n\n(Mentioned in Ensemble: @Dates [task] ensemble://task/b2)";
+  assert.equal(amendedMessage(before, more), "Fix the export\n\nAlso keep the dates\n\n(Mentioned in Ensemble: @Export [task] ensemble://task/a1; @Dates [task] ensemble://task/b2)");
+  assert.equal(amendedMessage("Fix it", "and test it"), "Fix it\n\nand test it");
+});
+
+test("a model's thread name is kept short and plain, or not at all", async () => {
+  const { cleanThreadName } = await import("./code-threads.js");
+  assert.equal(cleanThreadName('"BFS example in C++."'), "BFS example in C++");
+  assert.equal(cleanThreadName("Title: **fix the export dates**"), "Fix the export dates");
+  assert.equal(cleanThreadName("<think>hm</think>\nPlan next week"), "Plan next week");
+  assert.equal(cleanThreadName("Sure! Here is a title for this conversation that describes the work in detail"), null);
+  assert.equal(cleanThreadName(""), null);
+});
+
+test("where a reply was kept reads the same for events from before and after kinds", async () => {
+  const { keptPlace } = await import("./code-threads.js");
+  assert.deepEqual(keptPlace({ pageId: "p1", taskId: null, title: "Notes" }), { kind: "page", id: "p1", pageId: "p1", taskId: null, title: "Notes", href: "/pages/p1" });
+  assert.deepEqual(keptPlace({ pageId: "p2", taskId: "t2", title: "Fix" }), { kind: "task", id: "t2", pageId: "p2", taskId: "t2", title: "Fix", href: "/tasks/t2" });
+  assert.deepEqual(keptPlace({ kind: "meeting", id: "m1", title: "Standup", href: "/meetings?session=m1" })?.kind, "meeting");
+  assert.equal(keptPlace({ title: "nothing" }), null);
+});

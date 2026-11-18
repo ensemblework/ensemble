@@ -5,6 +5,8 @@ import React, { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ModelPicker, ThinkingPicker, effortFor } from "./model-picker.js";
 
+(globalThis as { React?: typeof React }).React = React;
+
 async function render(node: React.ReactNode) {
   const host = document.createElement("div");
   document.body.appendChild(host);

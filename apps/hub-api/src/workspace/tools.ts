@@ -8,6 +8,7 @@ import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/pro
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
+import { threadAlert } from "../lib/code-watch.js";
 import { decisionBus, waitFor } from "../lib/decisions.js";
 import { sseHub } from "../lib/sse.js";
 import { pageAgentText } from "../pages/agent-context.js";
@@ -290,9 +291,13 @@ export async function askPerson(
   });
   // A node's run on this server asks in its node's chat too (node/run-decisions.ts); elsewhere there is none.
   const card = await postRunDecisionCard({ prisma: ctx.prisma }, row).catch(() => null);
-  await ctx.prisma.notification.create({
-    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, subject: `decision:${row.id}`, urgent: true, url: (card && cardUrl(card)) ?? "/needs-me" },
-  });
+  // A Code tab thread open now asks in the thread; closed, its alert opens the thread (lib/code-watch.ts).
+  const thread = await threadAlert(ctx.prisma, ctx.userId, ctx.taskId);
+  if (!thread?.quiet) {
+    await ctx.prisma.notification.create({
+      data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, subject: `decision:${row.id}`, urgent: true, url: (card && cardUrl(card)) ?? thread?.url ?? "/needs-me" },
+    });
+  }
   sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "pending", title: input.title, source: "ensemble" } });
   await ctx.event("needs_me", { decisionId: row.id, title: input.title });
   const onAbort = () => decisionBus.emit(row.id);
