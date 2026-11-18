@@ -8,6 +8,7 @@
  * records are on the web. Its questions go there under the job's lease
  * (`POST /api/devices/self/jobs/:id/context`), answered for the job's own space only.
  */
+import { recordContent } from "./mentioned.js";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { itemNeighbors, GraphError, type GraphCtx } from "../context/graph/neighbors.js";
@@ -104,9 +105,11 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
   if (!ref) throw new GraphError("item must be an ensemble://<kind>/<id> handle from a result, or a Hub link. Omit it for your task.");
   const rel = asText(args.rel).trim();
   if (!rel) {
+    // A page, task, meeting notes or file named by a handle: what it says in full first (its files and the pages inside it too), then what is around it.
+    const content = raw && ["page", "task", "meeting", "file"].includes(ref.kind) ? await recordContent(ctx.db, ctx.userId, ref, 12_000).catch(() => null) : null;
     const packet = await workContext(ctx, ref, { budget: raw ? 6000 : 8000, moreTool: "ensemble_context" });
-    if (!packet) return "That record is not in this space, or it is in Trash.";
-    return packet.text;
+    if (!packet && !content) return "That record is not in this space, or it is in Trash.";
+    return [content, packet?.text].filter(Boolean).join("\n\n");
   }
   const offset = Math.max(Number(args.offset) || 0, 0);
   const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);

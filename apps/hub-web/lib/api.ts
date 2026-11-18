@@ -1037,6 +1037,15 @@ export type AssignInput = {
  */
 export type CodeThreadPlace = { deviceId: string | null; deviceName: string | null; folder: string | null; workdir: string | null };
 
+/** The folder picker's view of a computer (`GET /api/code/browse`). */
+export type CodeBrowsePlace = { kind: "home" | "desktop" | "documents" | "projects" | "workspace" | "code"; name: string; path: string };
+export type CodeBrowse = {
+  places: CodeBrowsePlace[];
+  folder: { path: string; name: string; parent: string | null; entries: Array<{ name: string; path: string; repo: boolean; trusted: boolean }>; more: number; repo: boolean; trusted: boolean; why: string | null };
+};
+/** A repository's local branches (`GET /api/code/branches`). */
+export type CodeBranches = { current: string; branches: Array<{ name: string; current: boolean; at: string | null; upstream: string | null }> };
+
 /** A thread of the Code tab's agent (`GET /api/agent/threads`). */
 export type CodeThread = {
   id: string;
@@ -1046,6 +1055,9 @@ export type CodeThread = {
   turns: number;
   last: { id: string; status: AgentJob["status"]; engine: string | null; model: string } | null;
   place: CodeThreadPlace;
+  /** In the Bin: when it was deleted and when it goes for good. */
+  deletedAt?: string;
+  purgeAt?: string;
 };
 
 /** Where a turn's reply was kept (`POST /api/agent/threads/:id/save`): a page, a task's page, meeting notes or a deliverable. */
@@ -1757,6 +1769,10 @@ export const api = bindClient({
   assign: (data: AssignInput) => post<{ jobId: string }>("/api/agent/assign", data),
   /** Every thread of the Code tab's agent, newest first (each with its place). */
   codeThreads: () => get<{ threads: CodeThread[] }>("/api/agent/threads"),
+  /** The threads deleted in the last 7 days, the Bin. */
+  codeThreadBin: () => get<{ threads: CodeThread[] }>("/api/agent/threads?bin=1"),
+  restoreCodeThread: (id: string) => post<{ ok: true }>(`/api/agent/threads/${id}/restore`),
+  purgeCodeThread: (id: string) => del<void>(`/api/agent/threads/${id}`),
   /** A thread with no folder works in a new folder in that computer's Ensemble workspace. */
   createCodeThread: (data: { folder: string | null; deviceId?: string; title: string; message?: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
   codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace }; turns: CodeTurn[]; asks?: AgentDecisionRecord[] }>(`/api/agent/threads/${id}`),
@@ -1912,6 +1928,13 @@ export const api = bindClient({
   push: (repo: string) => post<{ output: string }>("/api/code/scm/push", { repo }),
   pull: (repo: string) => post<{ output: string }>("/api/code/scm/pull", { repo }),
   actions: (repo: string) => get<ActionsResult>(`/api/code/actions${qs({ repo })}`),
+  /** The folder picker: the places to start from and one folder's folders (hub-api lib/code-browse.ts). */
+  codeBrowse: (path?: string | null) => get<CodeBrowse>(`/api/code/browse${qs({ path: path || undefined })}`),
+  codeMakeFolder: (parent: string, name: string, repo = true) => post<{ path: string }>("/api/code/browse/folder", { parent, name, repo }),
+  codeTrustFolder: (path: string, repo = false) => post<{ path: string; added: boolean }>("/api/code/folders/trust", { path, repo }),
+  codeBranches: (repo: string) => get<CodeBranches>(`/api/code/branches${qs({ repo })}`),
+  codeCreateBranch: (repo: string, name: string) => post<{ current: string }>("/api/code/branches", { repo, name }),
+  codeSwitchBranch: (repo: string, branch: string) => post<{ current: string }>("/api/code/branches/switch", { repo, branch }),
 
   // metrics
   metrics: (provider = "all", days = 14) => get<MetricsSummary>(`/api/metrics/summary${qs({ provider, days })}`),

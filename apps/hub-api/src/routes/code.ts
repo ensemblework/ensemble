@@ -47,6 +47,7 @@ import { declareModule } from "../lib/module-gate.js";
 import { dropWhere, readLru, remember } from "../lib/bounded.js";
 import { loadSettings } from "../lib/settings.js";
 import { codeRepoRoots, resolveCodeFolder } from "../lib/code-folders.js";
+import { browseFolder, makeFolder, trustFolder } from "../lib/code-browse.js";
 import { expandHome, gitHardening, within } from "../workspace/guard.js";
 import { runTrustedGit } from "../workspace/git-gate.js";
 import { pushWithSignIn } from "../workspace/publish.js";
@@ -635,6 +636,70 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     const packed = await packRepoEntry(source.repo, query.path, (path) => refusedPath(path) !== null);
     await appendLedger({ userId: request.userId, actor: "me", action: "code.download", payload: { repo: source.repo, path: query.path, files: packed.files } });
     return { name: packed.name, kind: packed.kind, size: packed.bytes.length, files: packed.files, data: Buffer.from(packed.bytes).toString("base64") };
+  });
+
+  // ── the folder picker (lib/code-browse.ts) ───────────────────────────────
+
+  app.get("/api/code/browse", async (request) => {
+    const { path } = z.object({ path: z.string().max(4096).optional() }).parse(request.query);
+    return browseFolder(prisma, request.userId, path || null);
+  });
+
+  app.post("/api/code/browse/folder", async (request) => {
+    const body = z.object({ parent: z.string().min(1).max(4096), name: z.string().min(1).max(100), repo: z.boolean().default(true) }).parse(request.body);
+    const path = await makeFolder(prisma, request.userId, body.parent, body.name, body.repo);
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.folder_create", payload: { path } });
+    return { path };
+  });
+
+  /** A folder for Code and agents, from the picker: added to the folders Code can use when it is outside them. */
+  app.post("/api/code/folders/trust", async (request) => {
+    const body = z.object({ path: z.string().min(1).max(4096), repo: z.boolean().default(false) }).parse(request.body);
+    const trusted = await trustFolder(prisma, request.userId, body.path, body.repo);
+    if (trusted.added) await appendLedger({ userId: request.userId, actor: "me", action: "code.folder_trust", payload: { path: trusted.path } });
+    return trusted;
+  });
+
+  // ── branches ────────────────────────────────────────────────────────────
+
+  const BRANCH_NAME = /^(?!-)(?!.*\.\.)(?!.*[\s~^:?*[\\])(?!.*@\{)(?!.*\/\/)(?!.*\.lock$)[^\0]{1,200}(?<![./])$/;
+
+  /** The repository's local branches, newest commit first, and the one checked out. */
+  app.get("/api/code/branches", async (request) => {
+    const { repo: raw } = RepoBody.parse(request.query);
+    const repo = await allowedRepo(raw, await roots(request.userId));
+    const out = await git(repo, ["for-each-ref", "--sort=-committerdate", "--format=%(HEAD)%09%(refname:short)%09%(committerdate:iso-strict)%09%(upstream:short)", "refs/heads"]);
+    const branches = out
+      .split("\n")
+      .filter(Boolean)
+      .slice(0, 300)
+      .map((line) => {
+        const [head, name, at, upstream] = line.split("\t");
+        return { name: name ?? "", current: head === "*", at: at || null, upstream: upstream || null };
+      });
+    const current = branches.find((row) => row.current)?.name ?? (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
+    return { current, branches };
+  });
+
+  /** Makes a branch from what is checked out (or `from`) and checks it out. */
+  app.post("/api/code/branches", async (request) => {
+    const body = z.object({ repo: z.string().min(1), name: z.string().trim().min(1).max(200), from: z.string().max(200).optional() }).parse(request.body);
+    if (!BRANCH_NAME.test(body.name)) throw new GitError("Use a branch name without spaces or ~ ^ : ? * [ \\, not starting with - or ending with . or /.", 400);
+    const repo = await allowedRepo(body.repo, await roots(request.userId));
+    await git(repo, ["switch", "-c", body.name, ...(body.from ? [body.from] : [])]);
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.branch_create", payload: { repo, branch: body.name } });
+    return { ok: true, current: body.name };
+  });
+
+  /** Checks out another local branch. Changes that would be overwritten stop it, as git says. */
+  app.post("/api/code/branches/switch", async (request) => {
+    const body = z.object({ repo: z.string().min(1), branch: z.string().trim().min(1).max(200) }).parse(request.body);
+    const repo = await allowedRepo(body.repo, await roots(request.userId));
+    const known = (await git(repo, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])).split("\n").filter(Boolean);
+    if (!known.includes(body.branch)) throw new GitError("That branch is not in this repository.", 404);
+    await git(repo, ["switch", body.branch]);
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.branch_switch", payload: { repo, branch: body.branch } });
+    return { ok: true, current: body.branch };
   });
 
   // ── source control ──────────────────────────────────────────────────────

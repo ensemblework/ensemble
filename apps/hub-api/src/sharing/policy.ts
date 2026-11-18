@@ -93,6 +93,8 @@ const RULES: Rule[] = [
   ["GET", "/api/agent/*", "shared"],
   ["GET", "/api/approvals", "shared"],
   ["GET", "/api/decisions", "shared"],
+  // The folder picker lists the computer's home folders, not the space's code: its owner only.
+  ["GET", "/api/code/browse", "owner"],
   ["GET", "/api/code/*", "shared"],
   ["POST", "/api/runs/:id/feedback", "runner"],
   ["GET", "/api/runs*", "shared"],

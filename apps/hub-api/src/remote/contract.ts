@@ -534,8 +534,8 @@ export type ResultLink = { kind: "pr" | "commit" | "branch"; url: string; sha?: 
 
 /**
  * The calls the web may make to a computer's own Code API (`routes/code.ts`), method and path. Both the
- * server and the computer check a request against this list; anything else is refused. Settings (the
- * folders Code can use) stay on the computer.
+ * server and the computer check a request against this list; anything else is refused. The folders Code
+ * can use change from the web only by trusting one the folder picker shows, a write like any other.
  */
 export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean; since?: number }> = [
   { method: "GET", path: /^\/api\/code\/node-file$/, write: false, since: 3 },
@@ -556,14 +556,17 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
   { method: "POST", path: /^\/api\/code\/create$/, write: true, since: 4 },
   { method: "POST", path: /^\/api\/code\/(move|delete)$/, write: true, since: 5 },
   { method: "GET", path: /^\/api\/code\/download$/, write: false, slow: true, since: 5 },
+  { method: "GET", path: /^\/api\/code\/(browse|branches)$/, write: false, since: 6 },
+  { method: "POST", path: /^\/api\/code\/(browse\/folder|folders\/trust|branches|branches\/switch)$/, write: true, since: 6 },
 ];
 
 /**
  * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
  * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request), 3 a
- * node's files, 4 making a new file or folder from the explorer, 5 moving, deleting and downloading from it.
+ * node's files, 4 making a new file or folder from the explorer, 5 moving, deleting and downloading from it,
+ * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch).
  */
-export const CODE_API = 5;
+export const CODE_API = 6;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

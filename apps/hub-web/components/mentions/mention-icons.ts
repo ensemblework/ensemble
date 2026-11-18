@@ -17,6 +17,7 @@ import {
   Paperclip,
   Presentation,
   Target,
+  NotebookText,
   User,
   Waypoints,
   type LucideIcon,
@@ -36,6 +37,8 @@ const KIND_ICON: Record<string, LucideIcon> = {
   "plot-space": ChartSpline,
   dataset: ChartSpline,
   file: Paperclip,
+  page: FileText,
+  meeting: NotebookText,
   ensemble: EnsembleIcon,
   date: Calendar,
 };

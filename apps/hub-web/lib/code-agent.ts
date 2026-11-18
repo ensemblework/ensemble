@@ -161,9 +161,11 @@ export function turnMs(turn: Pick<AgentJob, "createdAt" | "startedAt" | "finishe
 }
 
 /** Mention kinds Ensemble's context tools open by an `ensemble://` handle; the rest go by kind and id. */
-const HANDLE_KINDS = new Set(["people", "project", "repo", "task", "deliverable", "file"]);
+const HANDLE_KINDS = new Set(["people", "project", "repo", "task", "deliverable", "file", "page", "meeting"]);
 
 const MENTIONS_MARK = "\n\n(Mentioned in Ensemble:";
+/** What the server adds after the mentions: the mentioned records' content (hub-api workspace/mentioned.ts). */
+const ATTACHED_MARK = "\n\n(Attached from Ensemble:";
 
 /**
  * A message with the records it @mentions written after it for the agent, as handles its Ensemble tools
@@ -177,7 +179,9 @@ export function withMentions(text: string, mentions: readonly PageMention[]): st
 }
 
 /** A turn's message and the records it mentioned, from what was sent (`withMentions`). */
-export function splitMentions(instructions: string): { text: string; mentions: PageMention[] } {
+export function splitMentions(sent: string): { text: string; mentions: PageMention[] } {
+  const attached = sent.indexOf(ATTACHED_MARK);
+  const instructions = attached < 0 ? sent : sent.slice(0, attached);
   const at = instructions.indexOf(MENTIONS_MARK);
   if (at < 0) return { text: instructions, mentions: [] };
   const tail = instructions.slice(at + MENTIONS_MARK.length).replace(/\)\s*$/, "");
@@ -560,4 +564,10 @@ export function inputLines(args: string): Array<[string, string]> {
       const text = typeof value === "string" ? value : JSON.stringify(value, null, 1);
       return [key.replace(/_/g, " "), text.length > 600 ? `${text.slice(0, 599)}…` : text];
     });
+}
+
+/** The narrowest the sessions panel may be dragged: wide enough for its longest names (up to 30 characters) beside the state, agent and time. */
+export function sessionsMinWidth(titles: readonly string[]): number {
+  const longest = titles.reduce((most, title) => Math.max(most, Math.min(title.trim().length, 30)), 0);
+  return Math.max(200, Math.min(320, Math.round(longest * 6.6) + 84));
 }

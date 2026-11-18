@@ -51,3 +51,15 @@ test("where a reply was kept reads the same for events from before and after kin
   assert.deepEqual(keptPlace({ kind: "meeting", id: "m1", title: "Standup", href: "/meetings?session=m1" })?.kind, "meeting");
   assert.equal(keptPlace({ title: "nothing" }), null);
 });
+
+test("a Code tab message carries the meeting notes it mentions, within what a computer accepts, and the thread can tell them apart", async () => {
+  const { mentionsIn, withMentionedContent, withoutAttached } = await import("../workspace/mentioned.js");
+  const message = "Write up the decisions\n\n(Mentioned in Ensemble: @Standup [meeting] ensemble://meeting/5f1c2a7c-5b3c-4f4e-9a21-3d1c2b4a5e6f; @Mira [people] ensemble://people/p1)";
+  assert.deepEqual(mentionsIn(message).map((row) => row.kind), ["meeting", "people"]);
+  const db = { meetingSession: { findFirst: async () => ({ title: "Standup", notes: "We ship on Friday.\n".repeat(2000), recap: "", startedAt: new Date("2026-11-17T09:00:00Z") }) } };
+  const sent = await withMentionedContent(db as never, "u1", message);
+  assert.ok(sent.length <= 8000, "a computer refuses longer messages");
+  assert.match(sent, /\(Attached from Ensemble:[\s\S]*### Meeting notes: Standup \(2026-11-17\)\nWe ship on Friday\./);
+  assert.equal(withoutAttached(sent), message);
+  assert.equal(await withMentionedContent(db as never, "u1", "No mentions here"), "No mentions here");
+});

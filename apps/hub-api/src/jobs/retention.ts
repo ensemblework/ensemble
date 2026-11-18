@@ -1,3 +1,4 @@
+import { CODE_THREAD_BIN_DAYS, CODE_THREAD_PREFIX } from "../lib/node-tasks.js";
 import { applyMinedSkills, prepareSkillMining, type MiningPlan } from "./skill-mining.js";
 /**
  * Trash purge and completed-work skill mining before tasks enter Trash.
@@ -158,6 +159,8 @@ export async function runRetention(
   }
 
   counts.purged += await hardPurge(app.prisma, userId, deletedCutoff);
+  // A deleted thread of the Code tab's agent keeps its own, shorter Bin (docs/16 §9).
+  counts.purged += (await app.prisma.task.deleteMany({ where: { userId, sourceRef: { startsWith: CODE_THREAD_PREFIX }, deletedAt: { lt: new Date(now.getTime() - CODE_THREAD_BIN_DAYS * 86_400_000) } } })).count;
   if (options.historyDays && options.historyDays > 0) {
     const historyCutoff = new Date(now.getTime() - options.historyDays * 86_400_000);
     const [ledger, transitions] = await app.prisma.$transaction([

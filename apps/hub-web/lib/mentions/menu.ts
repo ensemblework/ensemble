@@ -29,6 +29,8 @@ export const MENTION_GROUPS: ReadonlyArray<{ kind: MentionKind; label: string; d
   { kind: "diagram", label: "Diagrams", detail: "Link a block diagram" },
   { kind: "plot", label: "Plots", detail: "Browse plot spaces, tiles, and data files" },
   { kind: "file", label: "Files", detail: "Attach a file you uploaded or imported" },
+  { kind: "page", label: "Pages", detail: "Link a page" },
+  { kind: "meeting", label: "Meeting notes", detail: "Link meeting notes" },
   { kind: "date", label: "Date & time", detail: "Mention a date without changing the due date" },
 ];
 
@@ -43,6 +45,8 @@ const GROUP_WORDS: Record<string, string[]> = {
   diagram: ["diagram", "diagrams"],
   plot: ["plot", "plots", "data", "dataset"],
   file: ["file", "files", "attachment"],
+  page: ["page", "pages", "doc"],
+  meeting: ["meeting", "meetings", "notes"],
   date: ["date"],
 };
 
@@ -57,11 +61,13 @@ export const KIND_LABEL: Record<string, string> = {
   plot: "Plot",
   dataset: "Data file",
   file: "File",
+  page: "Page",
+  meeting: "Meeting notes",
   date: "Date",
 };
 
 /** When two matches are equally good, the kind people reach for most comes first. */
-const KIND_ORDER = ["people", "project", "task", "deliverable", "file", "diagram", "plot", "dataset", "repo", "skill"];
+const KIND_ORDER = ["people", "project", "task", "page", "meeting", "deliverable", "file", "diagram", "plot", "dataset", "repo", "skill"];
 
 const ASK_ENSEMBLE: MentionMenuItem = { type: "action", kind: "ensemble", id: "ask-ensemble", label: "Ask Ensemble", detail: "Ask about this page, or create a diagram or plot" };
 export const NEW_DIAGRAM: MentionMenuItem = { type: "create", kind: "diagram", id: "new-diagram", label: "New diagram", detail: "Start a blank diagram and mention it here" };
