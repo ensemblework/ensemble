@@ -48,7 +48,7 @@ Production uses `ensemble login` and the production website. A code, account or 
 
 Open a PR from a feature branch (or from `testing` after a test round) to `main`. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds, and Cloudflare publishes the docs site from the same push.
 
-A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit, merged to `main` in its own PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform.
+A release sets the new version in root `release.json` and runs `pnpm version:sync` in one commit, merged to `main` in its own PR. After the merge, the tags `cli-v<version>` and `desktop-v<version>` on the merge commit publish the CLI ([26 §7](26_CLI.md#7-releases)) and the desktop app ([DESKTOP §7](DESKTOP.md#7-releases-and-updates)) for every supported platform. A release that changes nothing a paired computer runs (no protocol or Code API change) may tag only `desktop-v<version>`: the CLI channel stays on its last release, which keeps working.
 
 `testing` does not follow `main` by itself: it moves only when a test round fast-forwards it. Do not merge environment secrets, databases or deployment pointer branches.
 
