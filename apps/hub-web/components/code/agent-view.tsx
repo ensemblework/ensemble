@@ -60,6 +60,7 @@ import Link from "next/link";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon, EnsembleIcon } from "@/components/agent-icon";
 import { AgentPicker, TuningPicker, agentOptions, modelOf, type AgentChoice } from "@/components/agent/agent-picker";
+import { ToolsPicker } from "@/components/agent/tools-picker";
 import { ChatText } from "@/components/chat-text";
 import { copyText } from "@/components/context-menu/builders";
 import { openContextMenu } from "@/components/context-menu/menu-store";
@@ -424,6 +425,7 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
       {navigate.link}
       <Composer
         threadId={threadId}
+        threadToolsOff={threadId ? (thread.data?.thread.toolsOff ?? null) : null}
         place={place}
         placeInfo={placeInfo}
         draftable={!threadId && Boolean(onDraft)}
@@ -1238,6 +1240,7 @@ function OnlineMark({ online }: { online: boolean }) {
 
 function Composer({
   threadId,
+  threadToolsOff,
   place,
   placeInfo,
   draftable,
@@ -1254,6 +1257,8 @@ function Composer({
   onStop,
 }: {
   threadId: string | null;
+  /** The thread's switched-off tools, as its latest turn ran (null for a new thread). */
+  threadToolsOff: string[] | null;
   place: ThreadPlace;
   placeInfo: CodeThreadPlace;
   draftable: boolean;
@@ -1293,6 +1298,15 @@ function Composer({
   const pickerModel = choice ? modelOf(agents, choice) : null;
   const mode: Mode = savedMode ?? profile?.mode ?? "review";
   const ModeIcon = MODES.find((row) => row.id === mode)!.icon;
+  // Tools: what was changed here, else the thread's own, else the run profile's (a new thread).
+  const [toolsChoice, setToolsChoice] = useState<string[] | null>(null);
+  const shownThread = useRef(threadId);
+  useEffect(() => {
+    // A different thread starts from its own choices; a new one that just started keeps what was picked.
+    if (shownThread.current && shownThread.current !== threadId) setToolsChoice(null);
+    shownThread.current = threadId;
+  }, [threadId]);
+  const toolsOff = toolsChoice ?? threadToolsOff ?? profile?.toolsOff ?? [];
 
   const [text, setText] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
@@ -1353,6 +1367,7 @@ function Composer({
       ...(profile.maxToolCalls ? { maxToolCalls: profile.maxToolCalls } : {}),
       ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
       ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
+      ...(toolsOff.length ? { toolsOff } : {}),
     };
     setText("");
     const ok = await onSend(shown, input, live ? how : "send");
@@ -1423,6 +1438,7 @@ function Composer({
                 </div>
               )}
             </Popover>
+            <ToolsPicker value={toolsOff} onChange={setToolsChoice} scope="thread" />
             <div className="flex-1" />
             {working && text.trim() ? (
               <>

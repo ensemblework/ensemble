@@ -3,6 +3,7 @@ import { isCodeEngine } from "@ensemble/shared-types";
 import { Assign } from "./assign.js";
 import { contextTierOf, fastOf, outsideAccessOf } from "./trust.js";
 import { pullRequestOf } from "./pull-request.js";
+import { jobToolsOff } from "../assistant/tool-policy.js";
 
 export function repeatAssignment(old: WorkspaceJob) {
   const sameFolder = !old.deviceId && old.kind === "code" && !old.externalRoot && Boolean(old.repoPath);
@@ -36,6 +37,8 @@ export function repeatAssignment(old: WorkspaceJob) {
         maxMinutes: old.maxMinutes,
         maxToolCalls: old.maxToolCalls,
         maxTurns: old.maxTurns,
+        // A resumed, repeated or follow-up run keeps the apps its run had switched off.
+        ...(jobToolsOff(old.context).length ? { toolsOff: jobToolsOff(old.context) } : {}),
       });
 }
 

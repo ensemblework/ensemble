@@ -232,6 +232,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenId = who.tokenId;
       request.tokenCanWrite = who.tokenCanWrite;
       request.tokenCanUseApps = who.tokenCanUseApps;
+      request.tokenToolsOff = who.tokenToolsOff;
       request.tokenSpaceId = who.tokenSpaceId;
       request.tokenAccountId = who.tokenAccountId;
       request.tokenOAuthGrantId = who.tokenOAuthGrantId;

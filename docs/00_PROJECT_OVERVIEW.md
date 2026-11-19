@@ -137,7 +137,7 @@ Built-in playbooks (`apps/hub-api/src/assistant/skills/*.md`) route each request
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, references to earlier results, durable per-step receipts |
-| Connected apps | Each prompt names the space's connected apps; `hub_list_connections` lists them without tokens; naming an app loads its tools. Guests in a shared space see none |
+| Connected apps | Each prompt names the space's connected apps; `hub_list_connections` lists them without tokens; naming an app loads its tools. Guests in a shared space see none. *Tools* switches apps or single tools off per chat, Code thread, run profile, run or AI app, enforced on every path ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)) |
 | Connected items and imports | Search, read, attach, refresh, make tasks, import or merge people, link project containers; preview, start, follow, cancel or undo board imports |
 | Files | Read text, hash-checked original and sheet edits, convert to pages, export pages into Files |
 | Skills, settings, models | Versioned skill edits; allowlisted settings; provider, model and effort choice |

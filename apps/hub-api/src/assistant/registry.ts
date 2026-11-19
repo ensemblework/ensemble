@@ -55,8 +55,9 @@ import { recordActionTools } from "./tools/record-actions.js";
 import { agentAssignTools } from "./tools/agent-assign.js";
 import { connectionTools } from "./tools/connections.js";
 import { setToolCatalog } from "./skills/index.js";
+import { guardSources } from "./source-guard.js";
 
-const ALL: readonly AnyHubTool[] = [
+const UNGUARDED: readonly AnyHubTool[] = [
   ...howToTools,
   ...layoutTools,
   ...pageEditTools,
@@ -95,6 +96,9 @@ const ALL: readonly AnyHubTool[] = [
   ...workspaceTools,
   ...agentAssignTools,
 ];
+
+// Tools that read a connected app by name check the caller's switched-off apps wherever they run (source-guard.ts).
+const ALL: readonly AnyHubTool[] = UNGUARDED.map(guardSources);
 
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
 

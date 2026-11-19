@@ -6,7 +6,8 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { z } from "zod";
 import { assertMcpUrlAllowed, pinnedFetch, type LookupFn } from "../connectors/mcp/url-guard.js";
 import { accountIdOf, newApiToken, readCookie, SESSION_COOKIE } from "../lib/auth.js";
-import { appendLedgerInTransaction } from "../lib/ledger.js";
+import { mergeToolsOff } from "@ensemble/shared-types";
+import { appendLedger, appendLedgerInTransaction } from "../lib/ledger.js";
 import {
   authorizationResponse, authorizationSchema, basicCredentials, clientMetadataSchema, consentCsrf,
   hashMatches, MCP_ACCESS_MS, MCP_CONSENT_MS, MCP_REFRESH_MS, McpOAuthError,
@@ -381,9 +382,24 @@ export class McpOAuthService {
       connections: grants.map(grant => ({
         id: grant.id, name: grant.client.name, space: grant.space.spaceName || grant.space.name || "My space",
         canWrite: grant.scopes.includes("ensemble:write"), canUseApps: grant.scopes.includes("ensemble:apps"),
+        toolsOff: grant.toolsOff ?? [],
         createdAt: grant.createdAt.toISOString(), lastUsedAt: grant.lastUsedAt?.toISOString() ?? null,
       })),
     };
+  }
+
+  /** The connected-app tools this app may not use (assistant/tool-policy.ts); its next call follows them. */
+  async setToolsOff(request: FastifyRequest, id: string, csrf: string, toolsOff: readonly string[]): Promise<string[]> {
+    const browser = browserSession(request);
+    if (!hashMatches(csrf, secretHash(consentCsrf(browser.session, "mcp-connections")))) {
+      throw Object.assign(new Error("Reload your app connections before changing one."), { statusCode: 403 });
+    }
+    const grant = await this.db.mcpOAuthGrant.findFirst({ where: { id, accountId: browser.accountId, revokedAt: null }, include: { client: { select: { name: true } } } });
+    if (!grant) throw Object.assign(new Error("That app connection is not available on your account."), { statusCode: 404 });
+    const next = mergeToolsOff(toolsOff);
+    await this.db.mcpOAuthGrant.update({ where: { id }, data: { toolsOff: next } });
+    await appendLedger({ userId: browser.accountId, actor: "me", action: "mcp.oauth.tools", payload: { app: grant.client.name, off: next.length } });
+    return next;
   }
 
   async disconnect(request: FastifyRequest, id: string, csrf: string): Promise<void> {

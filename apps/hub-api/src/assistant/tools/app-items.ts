@@ -6,10 +6,11 @@
  * connected. Reads run at once; posting an update is an outside write and waits for Apply.
  */
 import { z } from "zod";
-import { APP_ITEM_KIND_LABEL, type AppItemKind, type AppItemSourceInfo } from "@ensemble/shared-types";
-import { connectedItemSources, postUpdate, readItem, searchItems, updateTargetFor } from "../../connectors/items/index.js";
+import { APP_ITEM_KIND_LABEL, toolOn, type AppItemKind, type AppItemSourceInfo } from "@ensemble/shared-types";
+import { connectedItemSources, itemSource, postUpdate, readItem, searchItems, updateTargetFor } from "../../connectors/items/index.js";
 import { clip } from "../../lib/office/text.js";
-import { defineTool, toolOk, type AnyHubTool, type ToolContext } from "../types.js";
+import { appKeyForProvider, offSet } from "../tool-policy.js";
+import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext } from "../types.js";
 import { UNTRUSTED_NOTE, quote } from "./apps-common.js";
 
 export const APP_ITEM_TOOL_PREFIX = "apps_";
@@ -70,7 +71,7 @@ export function appItemTools(sources: readonly AppItemSourceInfo[]): AnyHubTool[
       const scope = input.app ? sources.filter((source) => source.id === input.app) : sources;
       const listing = listingRequest(input.query, scope.flatMap((source) => [source.id, ...source.name.toLowerCase().split(/[^\p{L}\p{N}.]+/u)]));
       const kind = input.kind ?? (listing?.kind && scope.some((source) => source.kinds.includes(listing.kind!)) ? listing.kind : undefined);
-      const result = await searchItems(ctx.userId, { source: input.app, q: listing ? "" : input.query, kind, limit: input.limit });
+      const result = await searchItems(ctx.userId, { source: input.app, q: listing ? "" : input.query, kind, limit: input.limit, only: ids });
       const failed = result.errors.map((row) => `${row.source}: ${row.message}`);
       return toolOk(`Found ${result.items.length} item(s)${failed.length ? `; ${failed.length} app(s) failed` : ""}.`, {
         items: result.items,
@@ -131,11 +132,48 @@ export function appItemTools(sources: readonly AppItemSourceInfo[]): AnyHubTool[
   return tools;
 }
 
-export async function appItemToolsForUser(ctx: Pick<ToolContext, "prisma" | "userId">): Promise<AnyHubTool[]> {
-  return appItemTools(await connectedItemSources(ctx.userId, ctx.prisma));
+const ITEM_TOOL_NAMES = ["apps_search", "apps_read", "apps_post_update"] as const;
+
+/**
+ * The apps_* tools over the apps this caller may use (tool-policy.ts): each tool reaches only the
+ * sources whose app, and that tool in it, are on, so a search across apps never queries a switched-off one.
+ */
+export async function appItemToolsForUser(ctx: Pick<ToolContext, "prisma" | "userId" | "toolsOff">): Promise<AnyHubTool[]> {
+  const sources = await connectedItemSources(ctx.userId, ctx.prisma);
+  const off = offSet(ctx);
+  if (!off) return appItemTools(sources);
+  const key = (source: AppItemSourceInfo) => appKeyForProvider(itemSource(source.id)?.provider ?? source.id);
+  const tools: AnyHubTool[] = [];
+  for (const name of ITEM_TOOL_NAMES) {
+    const allowed = sources.filter((source) => toolOn(off, key(source), name));
+    const tool = appItemTools(allowed).find((row) => row.name === name);
+    if (!tool) continue;
+    if (name !== "apps_post_update") {
+      tools.push(tool);
+      continue;
+    }
+    // The update goes to whichever app the task came from: refuse it when that app is switched off.
+    const ids = new Set(allowed.map((source) => source.id));
+    const guard = async (input: { taskId: string }) => {
+      const target = await updateTargetFor(ctx.userId, input.taskId);
+      if (target && !ids.has(target.source)) throw new ToolBlockedError(`${itemSource(target.source)?.label ?? target.source} is switched off for this session.`);
+    };
+    tools.push({
+      ...tool,
+      preview: async (toolCtx, input) => {
+        await guard(input as { taskId: string });
+        return tool.preview!(toolCtx, input as never);
+      },
+      run: async (toolCtx, input) => {
+        await guard(input as { taskId: string });
+        return tool.run(toolCtx, input as never);
+      },
+    } as AnyHubTool);
+  }
+  return tools;
 }
 
-export async function resolveAppItemTool(ctx: Pick<ToolContext, "prisma" | "userId">, name: string): Promise<AnyHubTool | undefined> {
+export async function resolveAppItemTool(ctx: Pick<ToolContext, "prisma" | "userId" | "toolsOff">, name: string): Promise<AnyHubTool | undefined> {
   if (!name.startsWith(APP_ITEM_TOOL_PREFIX)) return undefined;
   return (await appItemToolsForUser(ctx)).find((tool) => tool.name === name);
 }

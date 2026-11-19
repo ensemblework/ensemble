@@ -11,6 +11,7 @@ import {
 import { withPastScheduleWarning } from "../assistant/schedule.js";
 import { toolAllowedFor, catalog } from "../assistant/registry.js";
 import { resolveTool, writeRefusal } from "../assistant/apps.js";
+import { toolCatalog } from "../assistant/tool-catalog.js";
 import { applyHeldCalls, isOutsideWrite, type AppliedBatch } from "../assistant/apply.js";
 import { ToolBlockedError, type AnyHubTool, type CodeSession } from "../assistant/types.js";
 import { codeTool } from "../assistant/tools/code.js";
@@ -27,7 +28,7 @@ import { replyAfterApply, type ReplyCall } from "../assistant/reply.js";
 import { friendlyModelError, parseRuntimeBody } from "../lib/model-error.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
-import { formatEntityText, INCLUDED_PROVIDER, type AssistantRef } from "@ensemble/shared-types";
+import { formatEntityText, INCLUDED_PROVIDER, mergeToolsOff, ToolsOff, type AssistantRef } from "@ensemble/shared-types";
 import { mergeRefs, MAX_CALL_REFS, refsFromResult } from "../assistant/refs.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
@@ -72,10 +73,15 @@ const TurnBody = z.object({
   page: AssistantPageContext.optional(),
   mentions: z.array(PageMention).optional(),
   referenceContext: z.string().optional(),
+  /** Connected-app tools switched off for this conversation (tool-policy.ts); kept on it for later turns. */
+  toolsOff: ToolsOff.optional(),
 });
 
 export async function assistantRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/assistant/tools", async () => ({ tools: catalog() }));
+
+  /** The Tools picker's catalog: connected apps and servers with their tools and what rules each out (assistant/tool-catalog.ts). */
+  app.get("/api/tools", async (request) => toolCatalog({ prisma: app.prisma, userId: request.userId, settings: await loadSettings(app.prisma, request.userId) }));
 
   app.get("/api/assistant/conversations", async (request) => {
     // `?chats=1`: the dock's chats only. Inline @ensemble answers and comment replies keep conversation rows without messages.
@@ -91,7 +97,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       },
       orderBy: { updatedAt: "desc" },
       take: chats ? 20 : 40,
-      select: { id: true, title: true, updatedAt: true, createdAt: true },
+      select: { id: true, title: true, updatedAt: true, createdAt: true, toolsOff: true },
     });
     return { conversations };
   });
@@ -102,6 +108,16 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.title ?? "", 80) || "New chat" },
     });
     return reply.code(201).send({ conversation });
+  });
+
+  /** A conversation's own choices: the connected-app tools switched off for it (tool-policy.ts). */
+  app.patch("/api/assistant/conversations/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ toolsOff: ToolsOff }).parse(request.body ?? {});
+    const owned = await app.prisma.assistantConversation.findFirst({ where: { id, userId: request.userId, accountId: actorFor(request.userId) }, select: { id: true } });
+    if (!owned) return reply.code(404).send({ error: "Conversation not found." });
+    const conversation = await app.prisma.assistantConversation.update({ where: { id }, data: { toolsOff: mergeToolsOff(body.toolsOff) }, select: { id: true, toolsOff: true } });
+    return { conversation };
   });
 
   app.get("/api/assistant/conversations/:id/messages", async (request, reply) => {
@@ -132,12 +148,14 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       })
       .parse(request.body);
     const code = await codeSession(body.code);
+    let toolsOff: string[] = [];
     if (body.conversationId) {
       const owned = await app.prisma.assistantConversation.findFirst({
         where: { id: body.conversationId, userId: request.userId, accountId: actorFor(request.userId) },
-        select: { id: true },
+        select: { id: true, toolsOff: true },
       });
       if (!owned) return reply.code(404).send({ error: "Conversation not found." });
+      toolsOff = owned.toolsOff ?? [];
     }
     const batch =
       body.calls && body.calls.length > 0
@@ -155,7 +173,8 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       input: unknown;
     }> = [];
     for (const call of batch) {
-      const found = (code ? codeTool(call.name) : undefined) ?? (await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name));
+      // Switched off for this conversation since it was proposed: Apply does not run it either.
+      const found = (code ? codeTool(call.name) : undefined) ?? (await resolveTool({ prisma: app.prisma, userId: request.userId, toolsOff }, call.name));
       const tool = found && spaces ? spaces.wrap([found])[0]! : found;
       if (!tool || !tool.isWrite || !toolAllowedFor(tool, request.modules)) return reply.code(404).send({ error: `There is no write tool called ${call.name}.` });
       const refusal = writeRefusal(tool, settings);
@@ -203,7 +222,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     try {
       batchResult = await applyHeldCalls(
         app,
-        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules, requestHeaders: assistantHeaders(request), ...(code ? { code } : {}) },
+        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules, requestHeaders: assistantHeaders(request), ...(code ? { code } : {}), ...(toolsOff.length ? { toolsOff } : {}) },
         pending,
       );
     } catch (error) {
@@ -357,9 +376,15 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           where: { id: body.conversationId, userId: request.userId, accountId: actorFor(request.userId) },
         })
       : await app.prisma.assistantConversation.create({
-          data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(message, 60) || "New chat" },
+          data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(message, 60) || "New chat", toolsOff: mergeToolsOff(body.toolsOff) },
         });
     if (!conversation) return reply.code(404).send({ error: "Conversation not found." });
+    // A turn that names its switches keeps them on the conversation; one that does not uses what is saved there.
+    let toolsOff = conversation.toolsOff ?? [];
+    if (body.conversationId && body.toolsOff && !isDeepStrictEqual(mergeToolsOff(body.toolsOff), toolsOff)) {
+      toolsOff = mergeToolsOff(body.toolsOff);
+      await app.prisma.assistantConversation.update({ where: { id: conversation.id }, data: { toolsOff } });
+    }
 
     // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
     // Saved on the message, so the dock shows these exact mentions after a reload.
@@ -460,6 +485,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         mentions,
         referenceContext: body.referenceContext,
         ...(code ? { code } : {}),
+        ...(toolsOff.length ? { toolsOff } : {}),
         signal: abort.signal,
         emit(frame) {
           send(frame.type, frame);

@@ -7,7 +7,7 @@ import { withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, PullRequestPlan, pullRequestHeadRefusal, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -109,11 +109,22 @@ export const Assign = z.object({
    * on the computer. Left out: the computer's mode decides (`ensemble secrets mode`, docs/35 §8.7).
    */
   secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(100).optional(),
+  /**
+   * Connected-app tools this run may not use (assistant/tool-policy.ts): its profile's, a one-off choice
+   * in Assign, or a Code thread's. Kept on the job, so a later profile edit leaves this run as it was.
+   */
+  toolsOff: ToolsOff.optional(),
 });
 
 const ENGINE_NAME: Record<"ensemble" | CodeEngine, string> = { ensemble: "Ensemble's agent", ...ENGINE_LABELS, "cursor-agent": "Cursor's agent" };
 
 /** A context naming the saved secrets the run may have; a scope already there (an Ensemble Node run's) wins. */
+function withToolsOff(context: Prisma.InputJsonValue | undefined, toolsOff: readonly string[] | undefined): Prisma.InputJsonValue | undefined {
+  if (!toolsOff?.length) return context;
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return { ...base, toolsOff: mergeToolsOff(toolsOff) } as Prisma.InputJsonValue;
+}
+
 function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readonly string[] | undefined): Prisma.InputJsonValue | undefined {
   if (!secrets?.length) return context;
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
@@ -411,7 +422,7 @@ async function createDeviceJob(
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -683,7 +694,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withDecided(withSecrets(options.context, body.secrets), null, project), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   // The decision and every candidate's signals, kept to calibrate the weights (session-choice/config.ts).

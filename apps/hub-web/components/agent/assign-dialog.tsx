@@ -20,6 +20,7 @@ import { useToast } from "../toast";
 import { BetaTag, Dialog, InfoTip, Spinner, Toggle, cx } from "../ui";
 import { activeComputer } from "../settings/subscriptions";
 import { AgentPicker, TuningPicker, agentOptions, choiceLabel, modelOf, type AgentChoice } from "./agent-picker";
+import { ToolsPicker } from "./tools-picker";
 
 type Place = "fresh" | "continue" | "folder";
 type Mode = "ask" | "review" | "unattended";
@@ -377,6 +378,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const [credentials, setCredentials] = useState(false);
   // The saved secrets the chosen profile names: a run on a computer gets only those (docs/35 §8.7).
   const [profileSecrets, setProfileSecrets] = useState<string[]>([]);
+  // Connected-app tools switched off: the profile's, or a change for this run only (the profile stays as it is).
+  const [toolsOff, setToolsOff] = useState<string[]>([]);
   // The OS sandbox is in beta: off until the run profile (or Settings › Sandbox by default) turns it on.
   const [sandbox, setSandbox] = useState(false);
   const [network, setNetwork] = useState(true);
@@ -521,6 +524,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     instructions,
     pullRequest: prOn ? { base: pullRequest.base.trim(), merge: pullRequest.merge } : null,
     ...(profileSecrets.length ? { secrets: profileSecrets } : {}),
+    ...(toolsOff.length ? { toolsOff } : {}),
   };
 
   const applyProfile = (profile: RunProfile) => {
@@ -544,6 +548,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     setPullRequest(profile.pullRequest ? { base: profile.pullRequest.base, merge: profile.pullRequest.merge } : null);
     setPrBranch("");
     setProfileSecrets(profile.secrets ?? []);
+    setToolsOff(profile.toolsOff ?? []);
   };
 
   // Each time the dialog opens: the task, then the default profile once settings are in.
@@ -682,6 +687,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
         maxToolCalls: limitValue(maxToolCalls, "maxToolCalls"),
         maxTurns: limitValue(maxTurns, "maxTurns"),
         network,
+        ...(toolsOff.length ? { toolsOff } : {}),
       };
       if (kind === "code") {
         Object.assign(input, {
@@ -1029,6 +1035,11 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
             ) : null}
           </div>
         ) : null}
+
+        <div>
+          <Label tip="Which connected apps this run may use. Starts from the run profile; a change here is for this run only. Save it to the profile with Save to.">Connected-app tools</Label>
+          <ToolsPicker scope="run" variant="field" value={toolsOff} onChange={setToolsOff} />
+        </div>
 
         <div className="rounded-lg border border-line">
           <button type="button" onClick={() => setMore(!more)} aria-expanded={more} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[12.5px] font-medium text-muted hover:text-ink">

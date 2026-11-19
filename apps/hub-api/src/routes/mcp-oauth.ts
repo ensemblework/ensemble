@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { ToolsOff } from "@ensemble/shared-types";
 import { z } from "zod";
 import { env } from "../config.js";
 import { McpOAuthService, type McpOAuthOptions } from "../mcp-oauth/service.js";
@@ -98,6 +99,13 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthOpti
   app.get("/api/mcp-oauth/connections", async (request, reply) => {
     uncached(reply);
     return service.connections(request);
+  });
+  app.patch("/api/mcp-oauth/connections/:id", async (request, reply) => {
+    uncached(reply);
+    browserOrigin(request.headers.origin);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const { csrf, toolsOff } = z.object({ csrf: requestId, toolsOff: ToolsOff }).strict().parse(request.body);
+    return { toolsOff: await service.setToolsOff(request, id, csrf, toolsOff) };
   });
   app.delete("/api/mcp-oauth/connections/:id", async (request, reply) => {
     uncached(reply);

@@ -136,6 +136,8 @@ export type Identity = {
   tokenId?: string;
   tokenCanWrite?: boolean;
   tokenCanUseApps?: boolean;
+  /** Connected-app tools the key's app may not use: an OAuth app's grant, else the key's own (assistant/tool-policy.ts). */
+  tokenToolsOff?: string[];
   tokenSpaceId?: string;
   tokenAccountId?: string;
   tokenOAuthGrantId?: string;
@@ -341,7 +343,7 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
       where: { tokenHash: sha256(authorization.slice(7)) },
       include: {
         user: { select: { moduleSet: true, ownerId: true, name: true, spaceName: true } },
-        oauthGrant: { select: { revokedAt: true, resource: true, accountId: true, userId: true, scopes: true } },
+        oauthGrant: { select: { revokedAt: true, resource: true, accountId: true, userId: true, scopes: true, toolsOff: true } },
       },
     });
     if (!row || row.revokedAt || (row.expiresAt && row.expiresAt <= new Date())) return null;
@@ -363,6 +365,7 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
     }).catch((error: unknown) => request.log?.warn({ err: error }, "could not record MCP key use"));
     const base: Identity = {
       userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet,
+      tokenToolsOff: (row.oauthGrantId ? row.oauthGrant?.toolsOff : row.toolsOff) ?? [],
       ...(row.oauthGrantId ? { accountId: row.accountId ?? row.userId, tokenOAuthGrantId: row.oauthGrantId, tokenOAuthScopes: row.oauthScopes } : {}),
     };
     return tokenScope === "bridge" || tokenScope === "full" ? keyIdentity(request, base, row) : base;

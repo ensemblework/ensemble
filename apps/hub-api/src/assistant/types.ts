@@ -52,6 +52,11 @@ export interface ToolContext {
    * Ensemble, which reads a tool's schema only when it wants it), not one turn's: no per-turn tool caps.
    */
   appCatalog?: boolean;
+  /**
+   * Connected-app tools switched off for this caller: a session's choice, a run's profile or an outside
+   * app's restriction (tool-policy.ts). Left out of listing, prompts and resolution alike.
+   */
+  toolsOff?: readonly string[];
 }
 
 /**

@@ -23,6 +23,7 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
     mode: profile.mode, sandbox: profile.sandbox, useCredentials: profile.useCredentials,
     // The saved secrets the profile names: the run gets only those on the computer.
     ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
+    ...(profile.toolsOff?.length ? { toolsOff: profile.toolsOff } : {}),
     // The server makes the rest consistent: commits allowed, the internet on.
     ...(profile.pullRequest ? { pullRequest: { base: profile.pullRequest.base, merge: profile.pullRequest.merge }, delivery: "commit" as const, network: true } : {}),
   };

@@ -2,9 +2,11 @@
 
 import { Copy, Unplug } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { McpOAuthConnections } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { InfoTip, Spinner } from "../ui";
+import { ToolsPicker } from "../agent/tools-picker";
 import { useToast } from "../toast";
 
 export function OAuthConnections({ url }: { url: string }) {
@@ -18,6 +20,18 @@ export function OAuthConnections({ url }: { url: string }) {
     },
     onSuccess: () => { void client.invalidateQueries({ queryKey: ["mcp-oauth-connections"] }); },
     onError: error => toast(error.message, { tone: "error" }),
+  });
+  // What this app may never use among the connected apps, whatever one of its chats asks for (assistant/tool-policy.ts).
+  const restrict = useMutation({
+    mutationFn: ({ id, toolsOff }: { id: string; toolsOff: string[] }) => {
+      if (!connections.data) throw new Error("Reload your app connections before changing one.");
+      return api.setMcpOAuthToolsOff(id, connections.data.csrf, toolsOff);
+    },
+    onMutate: ({ id, toolsOff }) => client.setQueryData<McpOAuthConnections>(["mcp-oauth-connections"], data => data ? { ...data, connections: data.connections.map(row => row.id === id ? { ...row, toolsOff } : row) } : data),
+    onError: error => {
+      toast(error.message, { tone: "error" });
+      void client.invalidateQueries({ queryKey: ["mcp-oauth-connections"] });
+    },
   });
 
   return (
@@ -50,9 +64,12 @@ export function OAuthConnections({ url }: { url: string }) {
                 <div className="text-[12.5px] text-muted">{connection.space} · {connection.canWrite ? "Changes allowed" : "Read only"}{connection.canUseApps ? " · Connected apps" : ""}</div>
                 <div className="text-[12px] text-faint">{connection.lastUsedAt ? `Used ${relative(connection.lastUsedAt)}` : "Not used yet"}</div>
               </div>
-              <button type="button" className="btn min-h-11" disabled={disconnect.isPending} onClick={() => disconnect.mutate(connection.id)}>
-                <Unplug size={14} /> Disconnect
-              </button>
+              <span className="flex flex-wrap items-center gap-2">
+                {connection.canUseApps ? <ToolsPicker scope="app" variant="button" align="right" value={connection.toolsOff ?? []} onChange={toolsOff => restrict.mutate({ id: connection.id, toolsOff })} /> : null}
+                <button type="button" className="btn min-h-11" disabled={disconnect.isPending} onClick={() => disconnect.mutate(connection.id)}>
+                  <Unplug size={14} /> Disconnect
+                </button>
+              </span>
             </li>
           ))}
         </ul>

@@ -6,7 +6,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  */
 import { workContext } from "../context/graph/packet.js";
 import { GraphError } from "../context/graph/neighbors.js";
-import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, isRunAppTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
+import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, isRunAppTool, jobToolsOff, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
 import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 import { randomBytes } from "node:crypto";
@@ -699,7 +699,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: "In a space shared with you, an agent run does not use the space owner's connected apps." });
     }
     const space = await prisma.user.findUnique({ where: { id: held.job.userId }, select: { moduleSet: true } });
-    return { text: await answerRunAction(app, held.job.userId, space?.moduleSet ?? null, body.name as RunActionToolName, body.args) };
+    // The run's own switches (its thread, profile or a one-off choice), from the job on the web.
+    return { text: await answerRunAction(app, held.job.userId, space?.moduleSet ?? null, body.name as RunActionToolName, body.args, jobToolsOff(held.job.context)) };
   });
 
   app.post("/api/devices/self/jobs/:id/progress", async (request, reply) => {

@@ -9,6 +9,7 @@ import { LayerFloor, Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Trash2, Unplug, X } from "lucide-react";
+import { ToolsPicker } from "@/components/agent/tools-picker";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Mark } from "../mark";
@@ -401,6 +402,17 @@ export function AssistantDock() {
     conversationRef.current = conversationId;
   }, [conversationId]);
   const [tierOverride, setTierOverride] = useState<Complexity | null>(null);
+  // Tools switched off for this chat (components/agent/tools-picker.tsx): a change made here, else what the chat keeps.
+  const [toolsDraft, setToolsDraft] = useState<string[] | null>(null);
+  const toolsDraftRef = useRef(toolsDraft);
+  toolsDraftRef.current = toolsDraft;
+  const shownChat = useRef(conversationId);
+  useEffect(() => {
+    // Another chat has its own; a new chat that just got its id keeps what was picked before it started.
+    if (shownChat.current && shownChat.current !== conversationId) setToolsDraft(null);
+    if (!conversationId) setToolsDraft(null);
+    shownChat.current = conversationId;
+  }, [conversationId]);
   /** An included model picked for this chat instead of a tier. */
   const [includedPick, setIncludedPick] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
@@ -584,6 +596,7 @@ export function AssistantDock() {
           message: text,
           ...(mentions.length ? { mentions } : {}),
           ...(context ? { referenceContext: context } : {}),
+          ...(toolsDraftRef.current !== null ? { toolsOff: toolsDraftRef.current } : {}),
           ...(extra?.tier ? { tier: extra.tier } : picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
           page: {
             path: pathname + (() => { const params = new URLSearchParams(); const current = new URLSearchParams(window.location.search); for (const key of ["q", "search", "who", "ids", "status", "owner", "project", "projectId", "view", "tab", "run", "session", "note", "skill", "item", "space"]) { const value = current.get(key); if (value) params.set(key, value.slice(0, 200)); } return params.size ? `?${params}` : ""; })(),
@@ -1020,6 +1033,16 @@ export function AssistantDock() {
                 {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
               </div> : null}</div>}
           </Popover>
+          <ToolsPicker
+            value={toolsDraft ?? messages.data?.conversation?.toolsOff ?? []}
+            scope="chat"
+            variant="button"
+            onChange={(next) => {
+              setToolsDraft(next);
+              const id = conversationRef.current;
+              if (id) void api.setConversationToolsOff(id, next).catch(() => undefined);
+            }}
+          />
           <span className="assistant-key-hint" aria-live="polite">{format.inList ? `Enter for the next item · ⇧ Enter for a line in it · ${mod === "⌘" ? "⌘" : "Ctrl+"}Enter to send` : "Enter to send · ⇧ Enter for a new line"}</span>
         </div>
       </div>

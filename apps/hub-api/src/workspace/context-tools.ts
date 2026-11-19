@@ -15,6 +15,7 @@ import { itemNeighbors, GraphError, type GraphCtx } from "../context/graph/neigh
 import { workContext } from "../context/graph/packet.js";
 import { parseItemRef } from "../context/graph/refs.js";
 import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
+import { jobToolsOff } from "../assistant/tool-policy.js";
 
 export const CONTEXT_TOOLS = ["ensemble_context", "ensemble_search"] as const;
 export type ContextToolName = (typeof CONTEXT_TOOLS)[number];
@@ -142,13 +143,15 @@ export const isRunAppTool = (name: string): boolean => (RUN_APP_TOOLS as readonl
  * What a run may do in its job's space: change Ensemble's records on the allowlist, and use the apps
  * connected there with the person's own connections, as Settings › Assistant allows app changes.
  */
-export const runActionCaller = (userId: string, modules: string | null | undefined) =>
-  ({ userId, modules: modules ?? null, authVia: "token" as const, tokenScope: "bridge" as const, tokenCanWrite: true, tokenCanUseApps: true, tokenId: undefined, run: true });
+export const runActionCaller = (userId: string, modules: string | null | undefined, toolsOff: readonly string[] = []) =>
+  ({ userId, modules: modules ?? null, authVia: "token" as const, tokenScope: "bridge" as const, tokenCanWrite: true, tokenCanUseApps: true, tokenId: undefined, tokenToolsOff: [...toolsOff], run: true });
+
+export { jobToolsOff };
 
 /** The answer to ensemble_actions, ensemble_act, ensemble_apps or ensemble_app_call for a run, as text for the agent. */
-export async function answerRunAction(app: FastifyInstance, userId: string, modules: string | null | undefined, name: RunActionToolName, args: Record<string, unknown>): Promise<string> {
+export async function answerRunAction(app: FastifyInstance, userId: string, modules: string | null | undefined, name: RunActionToolName, args: Record<string, unknown>, toolsOff: readonly string[] = []): Promise<string> {
   const { BridgeActionError, listActions, listApps, runAction } = await import("../bridge/actions.js");
-  const caller = runActionCaller(userId, modules);
+  const caller = runActionCaller(userId, modules, toolsOff);
   const strings = (value: unknown) => (Array.isArray(value) ? value : asText(value).split(",")).map((item) => asText(item).trim()).filter(Boolean);
   if (name === "ensemble_apps") {
     const only = asText(args.app).trim();
@@ -202,7 +205,7 @@ export async function runRunAction(input: { app: FastifyInstance; userId: string
     if (!client.jobAct) return "This Ensemble cannot act on the web's records.";
     return client.jobAct(hosted.hostedId, hosted.leaseToken, { name, args });
   }
-  return answerRunAction(input.app, input.userId, input.modules, name, args);
+  return answerRunAction(input.app, input.userId, input.modules, name, args, jobToolsOff(input.jobContext));
 }
 
 /** The hosted job a local run mirrors, and its lease, when this computer runs work for an account on the web. */
