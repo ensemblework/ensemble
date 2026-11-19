@@ -265,6 +265,7 @@ export const codeTools: readonly AnyHubTool[] = [
         ...(profile.maxToolCalls ? { maxToolCalls: profile.maxToolCalls } : {}),
         ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
         ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
+        ...(profile.toolsOff?.length ? { toolsOff: profile.toolsOff } : {}),
         ...(code.outsideAccess ? { outsideAccess: code.outsideAccess } : {}),
       });
       let created;

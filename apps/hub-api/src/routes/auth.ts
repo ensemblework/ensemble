@@ -17,7 +17,7 @@ import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
 import { revokePairedDevice } from "../devices/revoke.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
-import { avatarId, defaultAvatarId, isAvatarId, parseAvatar, passwordProblem } from "@ensemble/shared-types";
+import { avatarId, defaultAvatarId, isAvatarId, mergeToolsOff, parseAvatar, passwordProblem, ToolsOff } from "@ensemble/shared-types";
 import { randomUUID } from "node:crypto";
 import { forgetPerson } from "../sharing/presence.js";
 import { createMorningRoutine } from "../routines/service.js";
@@ -400,9 +400,25 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const tokens = await prisma.apiToken.findMany({
       where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] }, oauthGrantId: null },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
+      select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, toolsOff: true, lastUsedAt: true, createdAt: true },
     });
     return { tokens };
+  });
+
+  /**
+   * The connected-app tools a key's app may not use (assistant/tool-policy.ts). Only from a signed-in page: a key
+   * never widens its own reach. Only for Context Bridge keys, which reach apps through the bridge alone; a full key reaches everything.
+   */
+  app.patch("/api/tokens/:id", async (request, reply) => {
+    requireBrowserSession(request);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ toolsOff: ToolsOff }).parse(request.body);
+    const token = await prisma.apiToken.findFirst({ where: { id, userId: request.userId, revokedAt: null, oauthGrantId: null, scope: "bridge" }, select: { id: true, name: true } });
+    if (!token) return reply.code(404).send({ error: "That key is not available." });
+    const toolsOff = mergeToolsOff(body.toolsOff);
+    await prisma.apiToken.update({ where: { id }, data: { toolsOff } });
+    await appendLedger({ userId: request.userId, actor: "me", action: "token.tools", payload: { name: token.name, off: toolsOff.length } });
+    return { toolsOff };
   });
 
   app.post("/api/tokens", async (request) => {

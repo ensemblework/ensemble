@@ -38,13 +38,14 @@ const KEYS: Array<keyof ProfileFields> = [
   "maxTurns",
   "instructions",
   "pullRequest",
+  "toolsOff",
 ];
 
 /** True when the form no longer matches the profile it started from. */
 export function differs(profile: RunProfile, fields: ProfileFields): boolean {
   // An unset context window and "default" are the same choice.
   const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) =>
-    key === "context" && row.context === "default" ? null : key === "fast" ? row.fast === true || null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : (row[key] ?? null);
+    key === "context" && row.context === "default" ? null : key === "fast" ? row.fast === true || null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : key === "toolsOff" ? ([...(row.toolsOff ?? [])].sort().join("\n") || null) : (row[key] ?? null);
   return KEYS.some((key) => value(profile, key) !== value(fields, key));
 }
 

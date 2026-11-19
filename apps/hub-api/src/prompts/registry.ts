@@ -56,7 +56,7 @@ export function promptCatalog(): PromptEntry[] {
         timezone: "Europe/London",
         writeMode: writeModeNote(DEFAULT_SETTINGS.assistant.writePolicy),
         persona: personaBlock("engineer", "Mira"),
-        apps: appsPrompt({ connected: [SAMPLE_APP], broken: [] }, DEFAULT_SETTINGS),
+        apps: appsPrompt({ connected: [SAMPLE_APP], broken: [], switchedOff: [] }, DEFAULT_SETTINGS),
         playbooks: playbooksFor(),
       }),
     },

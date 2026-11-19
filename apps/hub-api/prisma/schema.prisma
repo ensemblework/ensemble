@@ -1623,6 +1623,8 @@ model AssistantConversation {
   accountId String?            @map("account_id")
   title     String             @default("New chat")
   startedOn String?            @map("started_on")
+  /// Connected-app tools switched off for this conversation (src/assistant/tool-policy.ts).
+  toolsOff  String[]           @default([]) @map("tools_off")
   createdAt DateTime           @default(now()) @map("created_at")
   updatedAt DateTime           @updatedAt @map("updated_at")
   messages  AssistantMessage[]
@@ -2160,6 +2162,8 @@ model ApiToken {
   canWrite     Boolean        @default(false) @map("can_write")
   /// A `bridge` key may use the connected apps (built-in app tools, app items, remote MCP) through the bridge.
   canUseApps   Boolean        @default(false) @map("can_use_apps")
+  /// Connected-app tools this key's app may not use (src/assistant/tool-policy.ts). An OAuth token follows its grant's instead.
+  toolsOff     String[]       @default([]) @map("tools_off")
   /// The account that made the key: a `bridge` or `full` key may act in that account's other spaces (`x-ensemble-space`, lib/auth.ts `keyAccount`).
   accountId    String?        @map("account_id")
   lastUsedAt   DateTime?      @map("last_used_at")
@@ -2224,6 +2228,8 @@ model McpOAuthGrant {
   clientId      String                 @map("client_id")
   resource      String
   scopes        String[]
+  /// Connected-app tools this app may not use (src/assistant/tool-policy.ts), kept across its rotating tokens.
+  toolsOff      String[]               @default([]) @map("tools_off")
   createdAt     DateTime               @default(now()) @map("created_at")
   lastUsedAt    DateTime?              @map("last_used_at")
   revokedAt     DateTime?              @map("revoked_at")

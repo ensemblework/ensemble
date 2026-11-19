@@ -14,7 +14,9 @@ Choose **Assign task** in Runs, or open Assign from the task you want to run. Ch
 
 Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier, the sandbox as Settings → Agents → Sandbox by default says). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named.
 
-**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox and internet, sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it
+**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
+
+**Connected-app tools** in the dialog start from the profile: which connected apps, or single tools in them, the run may use. A change is for this run only and marks the profile changed until saved with *Save to*; the run keeps its own list, so a later profile edit leaves it as it was ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Opening the name editor selects the name, so typing replaces it
 
 ### Agent
 

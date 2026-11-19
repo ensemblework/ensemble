@@ -25,6 +25,7 @@ import { collabHub } from "../pages/live.js";
 import { createStandalonePage, TaskPageError } from "../pages/store.js";
 import { createTask } from "../services/tasks.js";
 import { Assign, createJob } from "../workspace/assign.js";
+import { jobToolsOff } from "../workspace/context-tools.js";
 import { MENTIONS_MARK, withMentionedContent, withoutAttached } from "../workspace/mentioned.js";
 import { codeTurnOf, steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
@@ -227,7 +228,8 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     // A turn steered by a later message: it stopped for that message, which carries on its work.
     const steeredBy = new Map(jobs.filter((job) => steerOf(job.context) && job.continueFromJobId).map((job) => [job.continueFromJobId!, job.id]));
     return {
-      thread: { ...task, place: threadPlace(jobs[0] ?? null, paths) },
+      // The latest turn's switches carry on to the next: reopening or continuing keeps them (tool-policy.ts).
+      thread: { ...task, place: threadPlace(jobs[0] ?? null, paths), toolsOff: jobToolsOff(jobs.at(-1)?.context) },
       turns: jobs.map((job) => ({ ...card(job, undefined, { paths }), reviewId: job.review?.id ?? null, saved: saved.get(job.id) ?? [], steer: Boolean(steerOf(job.context)), steeredBy: steeredBy.get(job.id) ?? null })),
       asks: asks.map(publicDecision),
     };

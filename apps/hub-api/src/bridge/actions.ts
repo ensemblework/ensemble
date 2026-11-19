@@ -19,7 +19,7 @@ import { sseHub } from "../lib/sse.js";
 import { env } from "../config.js";
 import { describeToolError } from "../assistant/agent.js";
 import { fitList } from "../assistant/agent.js";
-import { appToolsFor, ensureAppAccess, resolveTool, writeRefusal } from "../assistant/apps.js";
+import { appToolsFor, ensureAppAccess, resolveTool, switchedOffForCaller, writeRefusal } from "../assistant/apps.js";
 import { runOutsideWrite } from "../assistant/apply.js";
 import { loadConnections } from "../assistant/connections.js";
 import { getTool, toolAllowedFor, toolJsonSchema } from "../assistant/registry.js";
@@ -284,7 +284,7 @@ export class BridgeActionError extends Error {
  * Who runs an action: a request through the bridge (a key, a signed-in page), or an agent run
  * Ensemble started (`run`, workspace/context-tools.ts), which keeps the everyday list.
  */
-type Caller = Pick<FastifyRequest, "userId" | "modules" | "authVia" | "tokenScope" | "tokenCanWrite" | "tokenCanUseApps" | "tokenId"> & { run?: boolean };
+type Caller = Pick<FastifyRequest, "userId" | "modules" | "authVia" | "tokenScope" | "tokenCanWrite" | "tokenCanUseApps" | "tokenId" | "tokenToolsOff"> & { run?: boolean };
 
 /** The allowlist entry this caller may use: entries for keys only are not an agent run's. */
 function allowedFor(caller: Caller, name: string): Allowed | null {
@@ -293,7 +293,7 @@ function allowedFor(caller: Caller, name: string): Allowed | null {
 }
 
 /** A tool context for the bridge's caller: their own space, and route-backed tools call the API as them. */
-export async function bridgeContext(app: FastifyInstance, caller: Pick<Caller, "userId" | "modules">): Promise<ToolContext> {
+export async function bridgeContext(app: FastifyInstance, caller: Pick<Caller, "userId" | "modules"> & Partial<Pick<Caller, "tokenToolsOff">>): Promise<ToolContext> {
   return {
     app,
     prisma: app.prisma,
@@ -304,6 +304,8 @@ export async function bridgeContext(app: FastifyInstance, caller: Pick<Caller, "
     requestHeaders: { "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN, "x-ensemble-user": caller.userId },
     // An editor or run lists the person's whole app catalog and reads a schema when it wants one.
     appCatalog: true,
+    // The outside app's restriction, or a run's switches (tool-policy.ts).
+    ...(caller.tokenToolsOff?.length ? { toolsOff: caller.tokenToolsOff } : {}),
   };
 }
 
@@ -429,6 +431,7 @@ export async function runAction(app: FastifyInstance, caller: Caller, name: stri
     if (appsRefused) throw new BridgeActionError(appsRefused, 403);
     const found = await resolveTool(ctx, name);
     tool = found?.area === "apps" ? found : undefined;
+    if (!tool && (await switchedOffForCaller(ctx, name))) throw new BridgeActionError(`${name} is switched off for ${caller.run ? "this run" : "this app"}. The person can turn it on in Ensemble.`, 403);
   }
   if (!tool) {
     throw new BridgeActionError(

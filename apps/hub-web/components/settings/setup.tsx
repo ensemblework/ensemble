@@ -6,7 +6,8 @@ import { Check, ChevronDown, Copy, ExternalLink, KeyRound, Plug, RefreshCw, Tras
 import Link from "next/link";
 import { useState } from "react";
 import type { ModelProvider, Settings } from "@ensemble/shared-types";
-import { api, type Connection, type ConnectorApp } from "@/lib/api";
+import { api, type ApiTokenRecord, type Connection, type ConnectorApp } from "@/lib/api";
+import { ToolsPicker } from "@/components/agent/tools-picker";
 import { plural, relative } from "@/lib/format";
 import { FetchGlyph } from "@/components/motion/slot";
 import { confirmAction } from "@/components/ask-dialog";
@@ -592,6 +593,15 @@ export function EditorsSection() {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const revoke = useMutation({ mutationFn: api.revokeToken, onSuccess: () => client.invalidateQueries({ queryKey: ["tokens"] }) });
+  // What an editor or AI app using this key may never use among the connected apps (assistant/tool-policy.ts).
+  const restrict = useMutation({
+    mutationFn: ({ id, toolsOff }: { id: string; toolsOff: string[] }) => api.setTokenToolsOff(id, toolsOff),
+    onMutate: ({ id, toolsOff }) => client.setQueryData<{ tokens: ApiTokenRecord[] }>(["tokens"], (data) => (data ? { tokens: data.tokens.map((row) => (row.id === id ? { ...row, toolsOff } : row)) } : data)),
+    onError: (error) => {
+      toast((error as Error).message, { tone: "error" });
+      void client.invalidateQueries({ queryKey: ["tokens"] });
+    },
+  });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const connect = useMutation({
     mutationFn: ({ target, remove }: { target: string; remove?: boolean }) => api.connectEditor(target, remove),
@@ -670,12 +680,16 @@ export function EditorsSection() {
         </div>
       ) : null}
       {(tokens.data?.tokens ?? []).filter((token) => token.scope !== "device").map((token) => (
-        <div key={token.id} className="flex items-center justify-between py-1 text-[12.5px]">
+        <div key={token.id} className="flex flex-wrap items-center gap-2 py-1 text-[12.5px]">
           <span>
             <span className="font-mono">{token.prefix}…</span> {token.name}{" "}
             {token.scope === "bridge" ? <Tag tone="blue">read-only</Tag> : null}{" "}
             <span className="text-faint">· {token.lastUsedAt ? `used ${relative(token.lastUsedAt)}` : "never used"}</span>
           </span>
+          <span className="flex-1" />
+          {token.scope === "bridge" && token.canUseApps ? (
+            <ToolsPicker scope="app" variant="button" align="right" value={token.toolsOff ?? []} onChange={(toolsOff) => restrict.mutate({ id: token.id, toolsOff })} />
+          ) : null}
           <button
             type="button"
             className="btn-ghost py-0 text-[12px]"

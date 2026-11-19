@@ -14,6 +14,7 @@ import { ConnectorStore } from "@/components/connectors/store-dialog";
 import { DevicesSection } from "./devices";
 import { FetchSection } from "./fetching";
 import { EditorsSection } from "./setup";
+import { ToolCatalogSection } from "../agent/tools-picker";
 import { FailedJobsSection } from "./sections";
 import { navigateSettings, useSettingsLocation } from "./url-state";
 
@@ -31,6 +32,9 @@ export function ConnectionsTab({ settings, patch }: { settings: Settings; patch:
           onImport={() => setImporting({})}
           onCustom={() => navigateSettings({ connector: "custom", store: null })}
         />
+      </div>
+      <div id="tools" className="scroll-mt-6">
+        <ToolCatalogSection />
       </div>
       <div id="calendars" className="scroll-mt-6">
         <CalendarLinksSection />

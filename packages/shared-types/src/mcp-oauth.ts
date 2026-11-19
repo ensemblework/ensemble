@@ -30,6 +30,8 @@ export interface McpOAuthConnections {
     space: string;
     canWrite: boolean;
     canUseApps: boolean;
+    /** Connected-app tools this app may not use (tools-off.ts). */
+    toolsOff: string[];
     createdAt: string;
     lastUsedAt: string | null;
   }>;

@@ -86,7 +86,7 @@ Profile layouts differ from the widgets view ([34 §3](34_ASSISTANT_ACTIONS.md#3
 
 ### 8.2 Connected apps
 
-What is connected comes from the block and `hub_list_connections` (§3). Attach saves a source copy that refresh updates where supported. Source and container IDs are provider-specific; project-link IDs can differ from item-search IDs. Board imports preview and map before Apply starts a background job. Unknown free/busy is never free time.
+What is connected comes from the block and `hub_list_connections` (§3). *Tools* under the message box switches connected apps, or single tools in them, off for that chat; the chat keeps the choice and a new chat starts with everything on. A switched-off app is named in the block as off, without its tools, and cannot be called or applied ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Attach saves a source copy that refresh updates where supported. Source and container IDs are provider-specific; project-link IDs can differ from item-search IDs. Board imports preview and map before Apply starts a background job. Unknown free/busy is never free time.
 
 No tool sends mail, Slack or Teams messages, and a catalog entry does not prove an action exists ([31](31_CONNECTORS_IN_USE.md)).
 

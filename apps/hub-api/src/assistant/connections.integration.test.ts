@@ -199,7 +199,7 @@ test("a guest in a shared space sees none of the owner's connections", async () 
   await server(mira.id, "huggingface", "Hugging Face", { auth: "none" });
   const sam = await h.asUser();
   await runInScope({ spaceId: mira.id, accountId: sam.id, access: { kind: "member", role: "editor", ownerId: mira.id } }, async () => {
-    assert.deepEqual(await loadConnections(context(mira), []), { connected: [], broken: [] });
+    assert.deepEqual(await loadConnections(context(mira), []), { connected: [], broken: [], switchedOff: [] });
     const listed = await run(mira, "hub_list_connections", {});
     assert.deepEqual((listed.data as { connections: unknown[] }).connections, []);
     assert.match(listed.summary, /belong to this space's owner and stay private/);

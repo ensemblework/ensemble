@@ -11,10 +11,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { McpConnection, PrismaClient } from "@prisma/client";
-import { catalogEntry } from "@ensemble/shared-types";
+import { catalogEntry, toolOn } from "@ensemble/shared-types";
 import { callMcpTool } from "../connectors/mcp/manager.js";
 import { providerSafeSchema } from "../connectors/mcp/schema.js";
 import { cachedTools, toolReadOnly, toolTitle, type McpToolSpec } from "../connectors/mcp/store.js";
+import { mcpAppKey } from "./tool-policy.js";
 import { toolOk, ToolBlockedError, type AnyHubTool, type ToolRisk } from "./types.js";
 
 export const MCP_TOOL_PREFIX = "mcp_";
@@ -148,13 +149,15 @@ function makeTool(row: ConnectionRow, slug: string, spec: McpToolSpec, hidden: r
  * enabled tools and all servers share MCP_TOOLS_TOTAL; the first tool of a
  * trimmed server says what was hidden.
  */
-export function buildMcpTools(rows: readonly ConnectionRow[], options: { cap?: boolean } = {}): McpHubTool[] {
+export function buildMcpTools(rows: readonly ConnectionRow[], options: { cap?: boolean; off?: ReadonlySet<string> | null } = {}): McpHubTool[] {
   const cap = options.cap ?? true;
   const servers = rows
-    .filter((row) => row.status === "connected")
+    .filter((row) => row.status === "connected" && toolOn(options.off, mcpAppKey(row)))
     .map((row) => {
       const off = new Set(row.disabledTools);
-      return { row, slug: serverSlug(row), tools: cachedTools(row).filter((tool) => !off.has(tool.name)) };
+      const key = mcpAppKey(row);
+      // A caller's own switches (tool-policy.ts) come off before the caps, so they free room for the rest.
+      return { row, slug: serverSlug(row), tools: cachedTools(row).filter((tool) => !off.has(tool.name) && toolOn(options.off, key, tool.name)) };
     });
   const quotas = cap
     ? fairShare(
@@ -186,14 +189,14 @@ async function connectedRows(prisma: Pick<PrismaClient, "mcpConnection">, userId
 }
 
 /** The tools to offer the model this turn, within the caps; `cap: false` for the whole catalog (the bridge's listing). */
-export async function mcpToolsForUser(prisma: Pick<PrismaClient, "mcpConnection">, userId: string, options: { cap?: boolean } = {}): Promise<McpHubTool[]> {
+export async function mcpToolsForUser(prisma: Pick<PrismaClient, "mcpConnection">, userId: string, options: { cap?: boolean; off?: ReadonlySet<string> | null } = {}): Promise<McpHubTool[]> {
   return buildMcpTools(await connectedRows(prisma, userId), options);
 }
 
 /** Finds one MCP tool by name for dispatch or Apply. Ignores the caps; still only connected servers and enabled tools. */
-export async function resolveMcpTool(prisma: Pick<PrismaClient, "mcpConnection">, userId: string, name: string): Promise<McpHubTool | undefined> {
+export async function resolveMcpTool(prisma: Pick<PrismaClient, "mcpConnection">, userId: string, name: string, off?: ReadonlySet<string> | null): Promise<McpHubTool | undefined> {
   if (!isMcpToolName(name)) return undefined;
-  return buildMcpTools(await connectedRows(prisma, userId), { cap: false }).find((tool) => tool.name === name);
+  return buildMcpTools(await connectedRows(prisma, userId), { cap: false, off }).find((tool) => tool.name === name);
 }
 
 /** The JSON Schema registry.parameters() should send for this tool, when it has its own. */

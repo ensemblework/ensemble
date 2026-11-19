@@ -112,11 +112,14 @@ export function Toggle({
   onChange,
   disabled,
   label,
+  small = false,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
   label?: string;
+  /** For rows inside a list (the Tools picker's tools). */
+  small?: boolean;
 }) {
   return (
     <button
@@ -127,14 +130,16 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "tap-area relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border disabled:opacity-50",
+        "tap-area relative inline-flex shrink-0 items-center rounded-full border disabled:opacity-50",
+        small ? "h-[18px] w-8" : "h-6 w-11",
         checked ? "border-accent bg-accent" : "border-line-strong bg-raised",
       )}
     >
       <span
         className={cx(
-          "inline-block h-4 w-4 rounded-full bg-white shadow",
-          checked ? "translate-x-[22px]" : "translate-x-[3px]",
+          "inline-block rounded-full bg-white shadow",
+          small ? "h-3 w-3" : "h-4 w-4",
+          checked ? (small ? "translate-x-[15px]" : "translate-x-[22px]") : small ? "translate-x-[2px]" : "translate-x-[3px]",
         )}
       />
     </button>

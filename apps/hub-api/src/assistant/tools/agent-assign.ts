@@ -179,6 +179,7 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
           useCredentials: profile.useCredentials,
           // The saved secrets the profile names: the run gets only those on the computer (docs/35 §8.7).
           ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
+          ...(profile.toolsOff?.length ? { toolsOff: profile.toolsOff } : {}),
         }
       : {}),
     ...(where.deviceId ? { deviceId: where.deviceId } : {}),

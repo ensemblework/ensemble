@@ -24,6 +24,8 @@ declare module "fastify" {
     tokenCanWrite?: boolean;
     /** A `bridge` key made with connected apps allowed (`ApiToken.canUseApps`). */
     tokenCanUseApps?: boolean;
+    /** Connected-app tools the key's app may not use (`ApiToken.toolsOff`, or its OAuth grant's). */
+    tokenToolsOff?: string[];
     /** A `bridge` or `full` key: the space it was made in, its default (`userId` differs when `x-ensemble-space` names another). */
     tokenSpaceId?: string;
     /** A `bridge` or `full` key: the account whose own spaces it may act in, when known (lib/auth.ts `keyAccount`). */

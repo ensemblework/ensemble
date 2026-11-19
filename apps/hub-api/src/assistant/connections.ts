@@ -8,13 +8,14 @@
  * In a space shared with you the owner's connections are private, so the list is empty.
  */
 import type { McpConnection, PrismaClient } from "@prisma/client";
-import { APP_ITEM_KIND_LABEL, CONNECTOR_CATALOG, catalogEntry, type AppItemKind, type ConnectorCatalogEntry } from "@ensemble/shared-types";
+import { APP_ITEM_KIND_LABEL, CONNECTOR_CATALOG, catalogEntry, toolOn, type AppItemKind, type ConnectorCatalogEntry } from "@ensemble/shared-types";
 import { connectedItemSources, itemSource } from "../connectors/items/index.js";
 import { isMeetingVendor } from "../connectors/meetings/types.js";
 import { cachedTools, readEnvelope } from "../connectors/mcp/store.js";
 import { isGuestIn } from "../sharing/context.js";
 import { MCP_TOOL_PREFIX, serverSlug, type McpHubTool } from "./mcp-tools.js";
 import { namesApp } from "./skills/index.js";
+import { appKeyForProvider, mcpAppKey, offSet } from "./tool-policy.js";
 import { APP_PROVIDERS, SUITE_LABEL, type AppProvider } from "./tools/apps-common.js";
 import type { AnyHubTool } from "./types.js";
 
@@ -47,9 +48,11 @@ export interface BrokenConnection {
 export interface Connections {
   connected: AppConnection[];
   broken: BrokenConnection[];
+  /** Connected apps switched off for this caller (tool-policy.ts), by name only. */
+  switchedOff: string[];
 }
 
-export const NO_CONNECTIONS: Connections = { connected: [], broken: [] };
+export const NO_CONNECTIONS: Connections = { connected: [], broken: [], switchedOff: [] };
 
 const PRODUCT_ORDER = ["Gmail", "Google Calendar", "Google Drive", "Google Docs", "Google Sheets", "Google Slides", "Outlook mail", "Outlook calendar", "Microsoft Teams", "OneDrive", "Word", "Excel", "PowerPoint"];
 
@@ -112,7 +115,7 @@ const order = (id: string) => {
  * Every app connected in this space. `offered` is the turn's tool list (toolsForTurn or
  * appToolsFor): it names the products switched on and how many of a server's tools are offered.
  */
-export async function loadConnections(ctx: { prisma: PrismaClient; userId: string }, offered: readonly AnyHubTool[]): Promise<Connections> {
+export async function loadConnections(ctx: { prisma: PrismaClient; userId: string; toolsOff?: readonly string[] }, offered: readonly AnyHubTool[]): Promise<Connections> {
   if (isGuestIn(ctx.userId)) return NO_CONNECTIONS;
   const [tokens, servers, searchable] = await Promise.all([
     ctx.prisma.authToken.findMany({ where: { userId: ctx.userId }, select: { provider: true, account: true, scopes: true, meta: true } }),
@@ -127,6 +130,8 @@ export async function loadConnections(ctx: { prisma: PrismaClient; userId: strin
   ]);
   const apps = new Map<string, AppConnection>();
   const broken: BrokenConnection[] = [];
+  const policyOff = offSet(ctx);
+  const switchedOff = new Set<string>();
   const open = new Map<string, boolean>();
   const slot = (id: string, name: string, names: string[]): AppConnection => {
     let row = apps.get(id);
@@ -140,6 +145,10 @@ export async function loadConnections(ctx: { prisma: PrismaClient; userId: strin
   for (const token of tokens ?? []) {
     const entry = CONNECTOR_CATALOG.find((row) => row.provider === token.provider);
     const provider = token.provider as AppProvider;
+    if (!toolOn(policyOff, appKeyForProvider(token.provider))) {
+      switchedOff.add(entry?.name ?? SUITE_LABEL[provider] ?? token.provider);
+      continue;
+    }
     const row = slot(entry?.id ?? token.provider, entry?.name ?? SUITE_LABEL[provider] ?? token.provider, entry ? appNames(entry) : [token.provider.toLowerCase()]);
     const meta = (token.meta ?? {}) as Record<string, unknown>;
     const signedIn = meta.via === "oauth" || (token.scopes ?? []).length > 0 || !entry?.auth.includes("token");
@@ -181,6 +190,10 @@ export async function loadConnections(ctx: { prisma: PrismaClient; userId: strin
   for (const server of servers ?? []) {
     const entry = server.serverId.startsWith("custom-") ? undefined : catalogEntry(server.serverId);
     const name = entry?.name ?? server.name;
+    if (!toolOn(policyOff, mcpAppKey(server))) {
+      switchedOff.add(name);
+      continue;
+    }
     if (server.status !== "connected") {
       broken.push({ name, status: MCP_STATUS[server.status] ?? server.status, message: server.lastError ? server.lastError.slice(0, 200) : null });
       continue;
@@ -210,7 +223,8 @@ export async function loadConnections(ctx: { prisma: PrismaClient; userId: strin
       publicOnly: open.get(row.id) === true,
     }))
     .sort((a, b) => order(a.id) - order(b.id) || a.name.localeCompare(b.name));
-  return { connected, broken };
+  for (const row of connected) switchedOff.delete(row.name);
+  return { connected, broken, switchedOff: [...switchedOff] };
 }
 
 /** One prompt line: `- Vercel (token, as mira): …`. */

@@ -1,5 +1,5 @@
 import type { SecretAnswer, SecretTarget } from "./node-secret";
-import type { McpOAuthConnections, McpOAuthConsent, McpOAuthDecision } from "@ensemble/shared-types";
+import type { McpOAuthConnections, McpOAuthConsent, McpOAuthDecision, ToolCatalog } from "@ensemble/shared-types";
 import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
 import { emptyWorkspace, type AgentApp, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
@@ -1006,6 +1006,8 @@ export type AssignInput = {
   network?: boolean;
   /** The saved secrets the run may have on the computer, by name (from its run profile). */
   secrets?: string[];
+  /** Connected-app tools the run may not use: its profile's, a one-off choice or its Code thread's. */
+  toolsOff?: string[];
   /** In a sandboxed run, outside the work folder. Default: Settings. */
   outsideAccess?: "none" | "read" | "read-write";
   markDone?: boolean;
@@ -1279,7 +1281,7 @@ export type MetricsSummary = {
   governance: { ledgerEntries: number };
 };
 
-export type ConversationRecord = { id: string; title: string; updatedAt: string; createdAt: string };
+export type ConversationRecord = { id: string; title: string; updatedAt: string; createdAt: string; toolsOff?: string[] };
 
 export type AssistantToolCallRecord = {
   id: string;
@@ -1388,6 +1390,9 @@ export type ApiTokenRecord = {
   name: string;
   prefix: string;
   scope?: "full" | "bridge" | "device";
+  canUseApps?: boolean;
+  /** Connected-app tools this key's app may not use. */
+  toolsOff?: string[];
   lastUsedAt: string | null;
   createdAt: string;
 };
@@ -1643,11 +1648,15 @@ export const api = bindClient({
   tokens: () => get<{ tokens: ApiTokenRecord[] }>("/api/tokens"),
   createToken: (name: string) => post<{ id: string; token: string }>("/api/tokens", { name }),
   revokeToken: (id: string) => del<void>(`/api/tokens/${id}`),
+  setTokenToolsOff: (id: string, toolsOff: string[]) => patch<{ toolsOff: string[] }>(`/api/tokens/${id}`, { toolsOff }),
+  /** Connected apps and servers with their tools, for the Tools picker (assistant/tool-catalog.ts). */
+  toolCatalog: () => get<ToolCatalog>("/api/tools"),
   connectBridge: () => get<ConnectBridge>("/api/connect/bridge"),
   mcpOAuthConsent: (id: string) => get<McpOAuthConsent>(`/api/mcp-oauth/consent${qs({ request: id })}`),
   decideMcpOAuth: (body: McpOAuthDecision) => post<{ redirect: string }>("/api/mcp-oauth/consent", body),
   mcpOAuthConnections: () => get<McpOAuthConnections>("/api/mcp-oauth/connections"),
   disconnectMcpOAuth: (id: string, csrf: string) => del<{ ok: true }>(`/api/mcp-oauth/connections/${id}`, { csrf }),
+  setMcpOAuthToolsOff: (id: string, csrf: string, toolsOff: string[]) => patch<{ toolsOff: string[] }>(`/api/mcp-oauth/connections/${id}`, { csrf, toolsOff }),
   /** The desktop app's own MCP command for editors on this computer (local runtime only). */
   desktopMcp: () => get<{ command: string; args: string[] }>("/api/desktop/mcp"),
   createBridgeToken: (name?: string, canWrite = true, canUseApps = true) =>
@@ -1775,7 +1784,7 @@ export const api = bindClient({
   purgeCodeThread: (id: string) => del<void>(`/api/agent/threads/${id}`),
   /** A thread with no folder works in a new folder in that computer's Ensemble workspace. */
   createCodeThread: (data: { folder: string | null; deviceId?: string; title: string; message?: string }) => post<{ thread: CodeThread }>("/api/agent/threads", data),
-  codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace }; turns: CodeTurn[]; asks?: AgentDecisionRecord[] }>(`/api/agent/threads/${id}`),
+  codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace; toolsOff?: string[] }; turns: CodeTurn[]; asks?: AgentDecisionRecord[] }>(`/api/agent/threads/${id}`),
   /** The thread is open on screen (`open`) or closed: while open its requests are answered in it, not in Needs me. */
   watchCodeThread: (id: string, open = true) => post<void>(`/api/agent/threads/${id}/watch`, { open }),
   /** A message while a turn works: taken into a turn not started yet, else it steers the one at work. */
@@ -1975,7 +1984,8 @@ export const api = bindClient({
   conversations: () => get<{ conversations: ConversationRecord[] }>("/api/assistant/conversations"),
   /** The assistant dock's own chats, newest first: conversations that have messages. */
   assistantChats: () => get<{ conversations: ConversationRecord[] }>("/api/assistant/conversations?chats=1"),
-  conversationMessages: (id: string) => get<{ messages: AssistantMessageRecord[] }>(`/api/assistant/conversations/${id}/messages`),
+  conversationMessages: (id: string) => get<{ messages: AssistantMessageRecord[]; conversation?: { id: string; toolsOff?: string[] } }>(`/api/assistant/conversations/${id}/messages`),
+  setConversationToolsOff: (id: string, toolsOff: string[]) => patch<{ conversation: { id: string; toolsOff: string[] } }>(`/api/assistant/conversations/${id}`, { toolsOff }),
   assistantTurn: (body: {
     conversationId?: string;
     message: string;

@@ -52,6 +52,8 @@ Name the connected app, ask to search connected apps, or paste an item link. The
 
 Review **Apply** before any change to an outside app or an app relationship. App content is information for the model, never instructions. Relationship actions do not send email or chat messages.
 
+Connect an app once; the assistant, the Code tab's agent, runs Ensemble starts and AI apps connected to Ensemble all use it. **Tools** in a chat, a Code thread, a run profile, Assign or beside an AI app switches apps, or single tools, off there without disconnecting them; Settings › Connections › *Tools for agents* lists what each connection offers ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)).
+
 ### 2.3 Attach items to a task or project
 
 1. Open **From your apps** on the task or project.

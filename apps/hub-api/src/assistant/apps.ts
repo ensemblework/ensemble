@@ -24,6 +24,7 @@ import { isMcpToolName, mcpToolsForUser, resolveMcpTool } from "./mcp-tools.js";
 import { APP_ITEM_TOOL_PREFIX, appItemToolsForUser, resolveAppItemTool } from "./tools/app-items.js";
 import { currentScope, isGuestIn } from "../sharing/context.js";
 import type { Connections } from "./connections.js";
+import { offSet, toolAllowed } from "./tool-policy.js";
 
 /** Built-in app tools, for every person; gating decides who is offered which. */
 export const BUILTIN_APP_TOOLS: readonly AnyHubTool[] = APP_TOOL_LIST;
@@ -42,7 +43,7 @@ export function getAppTool(name: string): AnyHubTool | undefined {
 export const MAX_APP_TOOLS = 80;
 
 export type AppToolSource = (ctx: ToolContext) => Promise<readonly AnyHubTool[]>;
-export type ToolResolver = (ctx: Pick<ToolContext, "prisma" | "userId">, name: string) => Promise<AnyHubTool | undefined>;
+export type ToolResolver = (ctx: Pick<ToolContext, "prisma" | "userId" | "toolsOff">, name: string) => Promise<AnyHubTool | undefined>;
 
 const sources: AppToolSource[] = [];
 const resolvers: ToolResolver[] = [];
@@ -129,7 +130,8 @@ export function gateAppTools(tools: readonly AnyHubTool[], settings: Settings, o
 /** App tools for this turn: built-in ones for connected suites, then other sources (item tools before MCP). */
 export async function appToolsFor(ctx: ToolContext, grants?: readonly AppGrant[]): Promise<AnyHubTool[]> {
   const loaded = grants ?? (await loadAppGrants(ctx));
-  const own = BUILTIN_APP_TOOLS.filter((tool) => appToolAvailable(tool, loaded, ctx.settings));
+  const off = offSet(ctx);
+  const own = BUILTIN_APP_TOOLS.filter((tool) => appToolAvailable(tool, loaded, ctx.settings) && toolAllowed(off, tool));
   const extra = (
     await Promise.all(
       sources.map((source) =>
@@ -141,7 +143,7 @@ export async function appToolsFor(ctx: ToolContext, grants?: readonly AppGrant[]
     )
   )
     .flat()
-    .filter((tool) => tool.area === "apps" && !getTool(tool.name) && !BUILTIN.has(tool.name))
+    .filter((tool) => tool.area === "apps" && !getTool(tool.name) && !BUILTIN.has(tool.name) && toolAllowed(off, tool))
     .sort((a, b) => Number(isMcpToolName(a.name)) - Number(isMcpToolName(b.name)));
   return gateAppTools([...own, ...extra], ctx.settings, { cap: !ctx.appCatalog });
 }
@@ -152,16 +154,26 @@ export async function toolsForTurn(ctx: ToolContext, grants?: readonly AppGrant[
   return tools.filter((tool) => guestMayUse(tool, ctx.userId));
 }
 
-/** Finds a tool by name for Apply: the Hub catalog, built-in app tools, then registered resolvers. */
-export async function resolveTool(ctx: Pick<ToolContext, "prisma" | "userId">, name: string): Promise<AnyHubTool | undefined> {
+/**
+ * Finds a tool by name for a call or Apply: the Hub catalog, built-in app tools, then registered
+ * resolvers. A tool switched off for this caller (`toolsOff`) is not found.
+ */
+export async function resolveTool(ctx: Pick<ToolContext, "prisma" | "userId" | "toolsOff">, name: string): Promise<AnyHubTool | undefined> {
+  const off = offSet(ctx);
   const known = getTool(name) ?? BUILTIN.get(name);
-  if (known) return guestMayUse(known, ctx.userId) ? known : undefined;
+  if (known) return guestMayUse(known, ctx.userId) && toolAllowed(off, known) ? known : undefined;
   if (isGuestIn(ctx.userId)) return undefined;
   for (const resolver of resolvers) {
     const tool = await resolver(ctx, name);
-    if (tool && tool.name === name) return tool;
+    if (tool && tool.name === name) return toolAllowed(off, tool) ? tool : undefined;
   }
   return undefined;
+}
+
+/** Whether a name the caller cannot reach exists but is switched off for it (for a clearer refusal than "no such tool"). */
+export async function switchedOffForCaller(ctx: Pick<ToolContext, "prisma" | "userId" | "toolsOff">, name: string): Promise<boolean> {
+  if (!offSet(ctx)) return false;
+  return Boolean(await resolveTool({ prisma: ctx.prisma, userId: ctx.userId }, name)) && !(await resolveTool(ctx, name));
 }
 
 /** Why settings refuse this write, or null. App writes have their own switch; Hub writes follow the allowed areas. */
@@ -199,12 +211,15 @@ export function appsPrompt(connections: Connections, settings: Settings): string
   const names = connected.slice(0, MAX_PROMPT_APPS).map((app) => `${app.name}${app.publicOnly ? " (public data only)" : ""}`);
   if (connected.length > MAX_PROMPT_APPS) names.push(`${connected.length - MAX_PROMPT_APPS} more (hub_list_connections)`);
   const reconnect = broken.length ? ` Not working right now, to reconnect in ${SETTINGS_LINK}: ${broken.slice(0, 8).map((row) => row.name).join(", ")}.` : "";
+  // Named only, never with their tools: the person switched them off for this conversation or run.
+  const off = connections.switchedOff.length ? ` Switched off here by the person: ${connections.switchedOff.slice(0, 12).join(", ")}; if one is needed, ask them to turn it on under Tools.` : "";
+  if (!connected.length && connections.switchedOff.length) return `No connected app is on here.${reconnect}${off}`;
   if (!connected.length) return `No apps are connected in this space; they can be connected in ${SETTINGS_LINK}.${reconnect}`;
   const writes = settings.assistant.connectedAppWrites
     ? "A change in one (an event, an invite, a document, a comment) waits for Apply: say what will happen and who gets an email, and share the link it returns."
     : "Changes in them are switched off in their settings, so you can only read them.";
   return [
-    `Connected apps: ${names.join(", ")}.${reconnect}`,
+    `Connected apps: ${names.join(", ")}.${reconnect}${off}`,
     "Search or read them only when asked to (or given a link to an item there), remote MCP tools included; otherwise use what is saved in Ensemble, and ask when the source is unclear.",
     writes,
     `Any other app is not connected; it can be connected in ${SETTINGS_LINK}.`,
@@ -212,8 +227,8 @@ export function appsPrompt(connections: Connections, settings: Settings): string
 }
 
 // Remote MCP servers the person connected (src/connectors/mcp) add their tools to every turn and to Apply.
-registerAppToolSource((ctx) => mcpToolsForUser(ctx.prisma, ctx.userId, { cap: !ctx.appCatalog }));
-registerToolResolver((ctx, name) => (isMcpToolName(name) ? resolveMcpTool(ctx.prisma, ctx.userId, name) : Promise.resolve(undefined)));
+registerAppToolSource((ctx) => mcpToolsForUser(ctx.prisma, ctx.userId, { cap: !ctx.appCatalog, off: offSet(ctx) }));
+registerToolResolver((ctx, name) => (isMcpToolName(name) ? resolveMcpTool(ctx.prisma, ctx.userId, name, offSet(ctx)) : Promise.resolve(undefined)));
 // Apps Ensemble can search itself (src/connectors/items): search, read, and posting an update on a linked issue.
 registerAppToolSource((ctx) => appItemToolsForUser(ctx));
 registerToolResolver((ctx, name) => (name.startsWith(APP_ITEM_TOOL_PREFIX) ? resolveAppItemTool(ctx, name) : Promise.resolve(undefined)));

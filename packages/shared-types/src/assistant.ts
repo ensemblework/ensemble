@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ToolsOff } from "./tools-off.js";
 import { AutonomyLevel } from "./enums.js";
 import { CODE_ENGINES, ContextTier } from "./subscriptions.js";
 
@@ -356,6 +357,8 @@ export const RunProfile = z.object({
    * mode decides (every environment secret in compatibility mode, none in named mode; docs/35 §8.7).
    */
   secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(20).optional(),
+  /** Connected-app tools a run with this profile may not use (tools-off.ts). Empty: every connected one. */
+  toolsOff: ToolsOff.optional(),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;

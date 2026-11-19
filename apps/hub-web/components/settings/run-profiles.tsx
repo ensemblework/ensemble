@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import { agentFields, canAddProfile, defaultProfile, newProfileId, profileAgent, profileSummary, quickProfile, removeProfile } from "@/lib/run-profiles";
 import { useModuleOn } from "@/lib/use-module";
 import { AgentPicker, TuningPicker, agentOptions, modelOf } from "../agent/agent-picker";
+import { ToolsPicker } from "../agent/tools-picker";
 import { BetaTag, SectionCard, Toggle, cx } from "../ui";
 import { activeComputer } from "./subscriptions";
 
@@ -89,6 +90,10 @@ function ProfileEditor({ profile, onChange }: { profile: RunProfile; onChange: (
         <label className="flex items-center gap-2">
           <Toggle checked={profile.markDone} onChange={(markDone) => set({ markDone })} label={`${profile.name}: move to Done`} /> Move the task to Done
         </label>
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted">Connected-app tools</div>
+        <ToolsPicker scope="profile" variant="field" value={profile.toolsOff ?? []} onChange={(toolsOff) => set({ toolsOff: toolsOff.length ? toolsOff : undefined })} />
       </div>
       <SecretNames profile={profile} onChange={(secrets) => set({ secrets: secrets.length ? secrets : undefined })} />
       <p className="text-[11.5px] text-faint">Branches, pull requests, instructions and limits are in Assign to agent → More options; save them there with “Save to”.</p>

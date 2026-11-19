@@ -681,6 +681,21 @@ html[data-ide-resizing="horizontal"] * {
   border-color: rgb(var(--accent-rgb) / 0.5);
   color: var(--ink);
 }
+/* How many apps or tools are switched off for this thread (components/agent/tools-picker.tsx). */
+.tools-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
 .agent-chip-static,
 .agent-chip-static:hover {
   background: transparent;

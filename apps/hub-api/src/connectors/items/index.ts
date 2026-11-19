@@ -94,10 +94,13 @@ export interface SearchResult {
 }
 
 /** Searches one app, or every connected app at once (a few hits from each). */
-export async function searchItems(userId: string, input: { source?: string; q: string; kind?: AppItemKind; limit?: number }): Promise<SearchResult> {
+export async function searchItems(userId: string, input: { source?: string; q: string; kind?: AppItemKind; limit?: number; only?: readonly string[] }): Promise<SearchResult> {
   const q = input.q.trim().slice(0, 300);
   const limit = clampLimit(input.limit);
-  const sources = input.source ? [requireSource(input.source)] : (await connectedItemSources(userId)).map((row) => requireSource(row.id));
+  // `only`: the apps this caller may search (assistant/tool-policy.ts); a search across apps never reaches the others.
+  const allowed = input.only ? new Set(input.only) : null;
+  if (input.source && allowed && !allowed.has(input.source)) throw new ItemError("That app is switched off here.", 403);
+  const sources = input.source ? [requireSource(input.source)] : (await connectedItemSources(userId)).filter((row) => !allowed || allowed.has(row.id)).map((row) => requireSource(row.id));
   const errors: SearchResult["errors"] = [];
   const perSource = input.source ? limit : Math.max(3, Math.ceil(limit / Math.max(1, sources.length)) + 2);
   const results = await Promise.all(

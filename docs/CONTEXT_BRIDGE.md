@@ -34,7 +34,7 @@ Open **Connect your apps** at `/connect` to create a key and get the configurati
    - **Let editors and agents make changes** (`canWrite`, `api_tokens.can_write`): the task writes, file uploads and every write action on the allowlist (§5.1).
    - **Let editors and agents use your connected apps** (`canUseApps`, `api_tokens.can_use_apps`): the apps' tools through Ensemble (§5.2); changing something in an app also needs the first grant.
 
-   The key list shows each key's grants. Keys made before 0.7.1 only read (their task-update grant was narrower and was reset): make a new key, or run `ensemble login` again (the `/link` page asks the same two questions). A key made under Settings → Connections → Editors & agents is a full key: it has both and can drive editor hooks.
+   The key list shows each key's grants. Keys made before 0.7.1 only read (their task-update grant was narrower and was reset): make a new key, or run `ensemble login` again (the `/link` page asks the same two questions). A key made under Settings → Connections → Editors & agents is a full key: it has both and can drive editor hooks. *Tools* beside a key from Connect your apps that may use apps, and beside an AI app connected by OAuth, switches connected apps off for that app (§5.5); a full key reaches everything.
 2. Export it where the editor can see it:
 
 ```bash
@@ -242,7 +242,7 @@ Both tools exist only for a key with apps allowed.
 
 App tools are offered and checked as for the assistant (`assistant/apps.ts`): the suite connected, the product switched on, the scopes granted; app writes are left out when Settings → Assistant turns connected-app writes off. A change in an app also needs changes allowed, runs at once through `runOutsideWrite` (ledgered as `apps.<tool>`), and cannot be undone from Ensemble.
 
-Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys.
+Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys. What an app, a chat or a run is allowed is narrowed as §5.5 says.
 
 ### 5.3 What each way in can do
 
@@ -278,6 +278,27 @@ Inputs are validated against the published schema before dispatch. Tool errors a
 - **Skills.** Only the current body is returned. Older `SkillVersion` bodies are not exposed (`hub_read_skill` lists recent versions without them), and disabled or deleted skills are left out of briefs ([04](04_MODULE_SKILL_FORGE.md)).
 - **Trust labels.** Mail, chat, GitHub text, calendar invites, approval previews and editor tool inputs are labelled `trust: "untrusted"`; skills are `trusted`. The brief repeats that retrieved text is reference material, not instructions.
 - **Resolution.** A branch that matches no task, or several, is reported as such; the bridge never picks a similarly named task.
+
+### 5.5 Choosing which apps an agent may use
+
+A connection is made once in Ensemble; every agent that reaches Ensemble uses it, and each can be narrowed without disconnecting anything. What is connected and switched on is the ceiling: the connection and its grant, its products (Settings › Connections), a server's own tool switches, connected-app writes (Settings › Assistant) and, for a key, apps allowed. Within it, a list of what is off (`toolsOff`, `packages/shared-types/src/tools-off.ts`) can switch off an app (`google_workspace`, `github`, `mcp:<server id>` for a server added by its address) or one tool in it (`google_workspace/gmail_send`, `mcp:<server id>/<its own tool name>`). Everything else stays on, so an app connected later is on.
+
+| Where | Kept on | Starts from |
+|---|---|---|
+| An assistant chat | The conversation (`tools_off`; `PATCH /api/assistant/conversations/:id`, or `toolsOff` with a turn) | Everything on |
+| A Code tab thread | Each turn's job (`context.toolsOff`); the next turn and a reopened thread take the latest (`GET /api/agent/threads/:id` → `thread.toolsOff`) | The run profile's |
+| A run from Assign, quick assign, the CLI or `hub_assign_to_agent` | The job (`toolsOff` on `POST /api/agent/assign`) | The run profile's (`RunProfile.toolsOff`); a change in Assign is for that run only |
+| An AI app or editor | Its OAuth grant (`PATCH /api/mcp-oauth/connections/:id`) or its Context Bridge key (`PATCH /api/tokens/:id`, `bridge` keys only), from a signed-in page | Everything on |
+
+A job keeps its own list, so editing a profile changes later runs only; a run that resumes, runs again or follows feedback keeps it too. A session's list adds to its app's, never widens it. A disconnect, a revoked grant or a product switched off takes effect at the next call, open sessions included.
+
+The same list drives every path (`assistant/tool-policy.ts`), Ensemble's own tools that read an app by name included (imports, saving an item as a page, app relationships, contact sync: `assistant/source-guard.ts`): listing (`appToolsFor`, MCP servers before their per-server caps), the prompt's Connected apps block, which names a switched-off app without its tools so the model can say it is off (`loadConnections` → `switchedOff`), resolution and Apply (`resolveTool`), `ensemble_apps` and `ensemble_app_call` for keys and runs (the bridge caller's `tokenToolsOff`, or the job's), and the hosted named catalog, which lists through `GET /api/bridge/apps`. `apps_search` and `apps_read` reach only the apps that are on (`searchItems` `only`), and `apps_post_update` refuses an item from an app that is off. A call to a tool switched off is refused with that reason (403), not "no such tool".
+
+An outside app gets one list for all its chats: a client cannot pass a per-chat choice through MCP, so the app's restriction is the switch that holds there. Ensemble's own tools and an agent's own shell and file tools are not part of this. In a space shared with you the owner's connected apps are never offered, so there is nothing to choose.
+
+`GET /api/tools` (owner only) is the picker's catalog (`assistant/tool-catalog.ts`): each app or server with its key, logo, source and tools, and why one cannot be on (`blocked`: a product off, writes off, a server's switch, sign-in not finished). MCP tools come from the list saved when the server connected or was refreshed (`McpConnection.tools`); the web reads the catalog again each time a picker opens. Settings › Connections › *Tools for agents* shows the same catalog without choosing.
+
+Remote servers and built-in connections follow the account to every computer and client; nothing is copied to a computer. Local servers that run on one paired computer and tools that are not MCP are not supported.
 
 ## 6. Limits
 

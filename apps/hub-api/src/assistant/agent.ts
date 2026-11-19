@@ -156,6 +156,8 @@ export interface AssistantTurnArgs {
   inlineArtifacts?: boolean;
   /** Ensemble Code in the terminal on the person's own computer: its folder, engine and run profile. */
   code?: CodeSession;
+  /** Connected-app tools the person switched off for this conversation (tool-policy.ts). */
+  toolsOff?: readonly string[];
   /**
    * An Ensemble Node turn (node/brain.ts): the node's own identity, charter and room. Replaces the
    * person's persona for this turn. Not a permission change.
@@ -1155,6 +1157,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     settings: args.settings,
     modules: args.modules,
     ...(args.code ? { code: args.code } : {}),
+    ...(args.toolsOff?.length ? { toolsOff: args.toolsOff } : {}),
     // A node's turn may research at length; the Hub chat's searches are counted (graph.ts, hub_web_search).
     ...(args.agentPersona === undefined ? { turn: { webSearches: 0 } } : {}),
     ...(isSubscriptionProvider(args.provider) ? { ownPlan: true } : {}),
