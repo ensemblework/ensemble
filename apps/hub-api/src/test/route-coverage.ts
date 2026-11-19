@@ -364,6 +364,7 @@ export const fileRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> 
   "GET /api/documents/:id": ["happy-path", "isolation", "unknown-id"],
   "PUT /api/documents/:id/content": ["happy-path", "isolation", "unknown-id", "invalid-input"],
   "POST /api/documents/:id/cells": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/documents/:id/google-drive": ["happy-path", "isolation", "unknown-id"],
   "POST /api/documents/:id/page": ["happy-path", "isolation", "unknown-id", "invalid-input"],
   "GET /api/documents/:id/style": ["happy-path", "isolation", "unknown-id"],
 };

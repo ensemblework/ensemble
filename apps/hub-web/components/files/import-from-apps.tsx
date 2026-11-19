@@ -105,7 +105,7 @@ function SourceRow({ source, onChoose, onClose }: { source: FileImportSource; on
               </button>
             ) : null}
             <button type="button" className={source.picker ? "btn-ghost" : "btn"} onClick={onChoose}>
-              <Search size={13} aria-hidden /> {source.kind === "attachment" ? "Find attachments" : source.picker ? "Search Drive" : "Choose files"}
+              <Search size={13} aria-hidden /> {source.kind === "attachment" ? "Find attachments" : source.picker ? "Search available files" : "Choose files"}
             </button>
           </div>
         ) : null}

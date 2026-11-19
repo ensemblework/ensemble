@@ -386,7 +386,7 @@ test("Add from your apps lists each app's state, with plain steps and a way to f
     const drive = document.querySelector('[data-import-source="google_drive"]')!;
     assert.ok(!drive.querySelector("[data-import-guidance]"), "a ready app needs no steps");
     assert.match(drive.textContent ?? "", /Pick from Google Drive/);
-    await click(button(/^Search Drive$/));
+    await click(button(/^Search available files$/));
     await waitFor(() => Boolean(document.querySelector('[data-testid="app-item-picker"]')), "the app picker");
     assert.match(document.querySelector('[role="dialog"]')?.textContent ?? "", /Add from Google Drive/);
     await waitFor(() => view.calls.some((call) => call.url.pathname === "/api/app-items/search"), "the picker's search");

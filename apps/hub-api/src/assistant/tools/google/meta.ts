@@ -23,6 +23,7 @@ export const GMAIL = meta("Gmail", ["gmail"], SCOPES.gmailRead);
 export const CALENDAR_READ = meta("Google Calendar", ["calendar"], SCOPES.calendarRead);
 export const CALENDAR_WRITE = meta("Google Calendar", ["calendar"], SCOPES.calendarWrite);
 export const DRIVE_READ = meta("Google Drive", ["drive_docs", "drive_search"], SCOPES.driveRead);
+export const DRIVE_WRITE = meta("Google Drive", ["drive_docs"], SCOPES.driveWrite);
 export const DOCS_WRITE = meta("Google Docs", ["drive_docs"], SCOPES.driveWrite);
 export const SHEETS_READ = meta("Google Sheets", ["drive_docs", "drive_search"], SCOPES.driveRead);
 export const SHEETS_WRITE = meta("Google Sheets", ["drive_docs"], SCOPES.driveWrite);

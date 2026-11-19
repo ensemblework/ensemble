@@ -1,13 +1,15 @@
 /** Google Drive (list, read) and Google Docs (create, append, replace). */
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { exportFileToGoogleDrive } from "../../../files/google-drive.js";
+import { FileError } from "../../../files/store.js";
 import { officeKind, officeText } from "../../../lib/office/extract.js";
 import { markdownToHtml } from "../../../lib/office/html.js";
 import { inlineText, outline, parseMarkdown, wordCount, type Inline } from "../../../lib/office/markdown.js";
 import { clip } from "../../../lib/office/text.js";
 import { defineTool, toolOk, type ToolContext } from "../../types.js";
 import { UNTRUSTED_NOTE, AppRequestError, appAccess, appFetch, appToken, multipartRelated, plural, quote, whose } from "../apps-common.js";
-import { DOCS_API, DOCS_WRITE, DRIVE_API, DRIVE_FILE_HINT, DRIVE_READ, DRIVE_UPLOAD, FULL_DRIVE_SCOPES, docLink } from "./meta.js";
+import { DOCS_API, DOCS_WRITE, DRIVE_API, DRIVE_FILE_HINT, DRIVE_READ, DRIVE_UPLOAD, DRIVE_WRITE, FULL_DRIVE_SCOPES, docLink } from "./meta.js";
 
 interface DriveFile {
   id: string;
@@ -378,4 +380,27 @@ export const docsReplaceText = defineTool({
   },
 });
 
-export const googleDocsTools = [driveListFiles, driveReadFile, docsCreate, docsAppend, docsReplaceText];
+const driveExportFile = defineTool({
+  name: "drive_export_file",
+  area: "apps",
+  app: DRIVE_WRITE,
+  description: "Save a new copy of an Ensemble File to My Drive with its original name and bytes. Use the ID from hub_list_files. Never overwrites or shares.",
+  input: z.object({ fileId: z.string().trim().min(1).max(200) }).strict(),
+  isWrite: true,
+  risk: "medium",
+  outsideTransaction: true,
+  async preview(ctx, { fileId }) {
+    const file = await ctx.prisma.document.findFirst({
+      where: { id: fileId, userId: ctx.userId, deletedAt: null },
+      select: { filename: true },
+    });
+    if (!file) throw new FileError("File not found.", 404);
+    return `Save a copy of ${quote(file.filename)} in ${await whose(ctx, "google", "Google Drive")}`;
+  },
+  async run(ctx, { fileId }) {
+    const file = await exportFileToGoogleDrive(ctx.prisma, ctx.userId, fileId);
+    return toolOk(`Saved a copy of ${quote(file.name)} to Google Drive.`, file, { href: file.link });
+  },
+});
+
+export const googleDocsTools = [driveListFiles, driveReadFile, driveExportFile, docsCreate, docsAppend, docsReplaceText];

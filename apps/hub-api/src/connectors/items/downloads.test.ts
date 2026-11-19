@@ -90,6 +90,16 @@ test("Drive: a Google Doc comes in as a Word file, a PDF as itself", async () =>
   assert.equal(media.redirect, "manual");
 });
 
+test("Drive: drive.file can download a picked Shared Drive ZIP without converting it", async () => {
+  const { fetch, calls } = mockFetch([
+    ["GET", /\/files\/1ZipFieldnote01\?fields=/, () => json({ id: "1ZipFieldnote01", name: "Archive.zip", mimeType: "application/zip" })],
+    ["GET", /\/files\/1ZipFieldnote01\?alt=media/, () => bytes("zip bytes")],
+  ]);
+  const archive = await googleItems.download!(context(fetch, [`${G}drive.file`]), { kind: "file", id: "1ZipFieldnote01" });
+  assert.deepEqual([archive.filename, archive.mediaType, textOf(archive.bytes)], ["Archive.zip", "application/zip", "zip bytes"]);
+  assert.ok(calls.every(({ url }) => new URL(url).searchParams.get("supportsAllDrives") === "true"));
+});
+
 test("Drive: Sheets, Slides and Drawings export to xlsx, pptx and pdf; folders and Forms are refused", async () => {
   const kinds: Record<string, [string, string]> = {
     "1SheetFieldnote": ["application/vnd.google-apps.spreadsheet", "Budget"],
