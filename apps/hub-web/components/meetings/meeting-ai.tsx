@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Clock, Quote, RefreshCw, Sparkles, UserPlus } from "lucide-react";
+import { AlertCircle, Clock, Quote, RefreshCw, UserPlus, ScanText } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { connectedApi, type ImportedMeetingNote, type MeetingAiItem } from "@/lib/api-connected";
@@ -98,7 +98,7 @@ export function MeetingAiPanel({ noteId, sessionId, initial }: { noteId: string 
   const reading = status === "queued" || status === "running";
   const button = (
     <button type="button" className="btn" disabled={reading || (!noteId && !sessionId)} onClick={() => suggest.mutate()}>
-      {status === "running" ? <BrandMorph purpose="inline" state="loop" loader /> : status === "queued" ? <Clock size={16} aria-hidden /> : ai ? <RefreshCw size={13} aria-hidden /> : <Sparkles size={13} aria-hidden />}
+      {status === "running" ? <BrandMorph purpose="inline" state="loop" loader /> : status === "queued" ? <Clock size={16} aria-hidden /> : ai ? <RefreshCw size={13} aria-hidden /> : <ScanText size={13} aria-hidden />}
       {status === "running" ? "Reading the meeting…" : status === "queued" ? "Queued" : ai ? "Read again" : "Suggest tasks"}
     </button>
   );
@@ -108,7 +108,7 @@ export function MeetingAiPanel({ noteId, sessionId, initial }: { noteId: string 
   return (
     <section className="note-section" data-meeting-ai={status ?? "none"} aria-busy={reading || undefined}>
       <h3 className="!mb-1">
-        <Sparkles size={13} aria-hidden />
+        <ScanText size={13} aria-hidden />
         Ensemble's read
         <InfoTip label="How tasks are suggested" text="A model reads the transcript and notes and writes the work the meeting asked for, each with the exact words it was asked in. Only items whose words are found in the meeting become proposed tasks; you accept them on Today. Turn this off or pick its model in Settings › Assistant › Automations." />
       </h3>

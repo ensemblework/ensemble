@@ -30,7 +30,7 @@ import { pageAgentText } from "../pages/agent-context.js";
 import { writeAgentBlock } from "../pages/markdown.js";
 import { GITHUB_AUTH_HINT, githubCloneAuth } from "../lib/git-auth.js";
 import { contextForPrompt } from "../connectors/items/index.js";
-import { noticeReadyForReview } from "./review-notice.js";
+import { noticeCodeTurn, noticeReadyForReview } from "./review-notice.js";
 import { workContext } from "../context/graph/packet.js";
 import { copyOriginals, filesOnTask, filesSection, type AttachedFile } from "../files/attached.js";
 import { filesForModel, keepRecentAttachments, withPictures, type ContentPart } from "../files/model-input.js";
@@ -71,7 +71,7 @@ import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { contextTierOf, fastOf, isChatTurn, isCodeAgentTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
+import { codeTurnOf, contextTierOf, fastOf, isChatTurn, isCodeAgentTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, loadGrants, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -1624,8 +1624,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
   // A node's run reports in its chat, where the node goes on (retries, asks): it does not notify here.
   const nodeRun = await prisma.nodeRun.findUnique({ where: { jobId: job.id }, select: { id: true } }).catch(() => null);
-  if (outcome === "success" && !chat && !job.markDone && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
-  if (outcome !== "success" && outcome !== "cancelled" && !nodeRun) await prisma.notification.create({
+  // A Code tab thread's turn notifies only while the person is away from the Code tab, and opens the thread.
+  if (codeTurnOf(job.context) && !nodeRun) {
+    if (outcome !== "cancelled") await noticeCodeTurn(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, failed: outcome === "success" ? null : (error ?? summary) }).catch(() => undefined);
+  } else if (outcome === "success" && !chat && !job.markDone && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
+  if (outcome !== "success" && outcome !== "cancelled" && !nodeRun && !codeTurnOf(job.context)) await prisma.notification.create({
     data: {
       userId,
       kind: "agent",

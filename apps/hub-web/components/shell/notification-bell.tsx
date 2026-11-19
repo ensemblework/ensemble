@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { Bell, CalendarClock, CheckCheck, CircleAlert, ClipboardCheck, Eye, NotebookPen, Repeat, Share2, Sparkles, Sun, Timer, X, type LucideIcon } from "lucide-react";
+import { Bell, CalendarClock, CheckCheck, CircleAlert, ClipboardCheck, Eye, NotebookPen, Repeat, Share2, Sun, Timer, X, type LucideIcon, Lightbulb } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -16,7 +16,7 @@ const KIND: Record<string, { icon: LucideIcon; tone: string }> = {
   agent: { icon: Orbit, tone: "amber" }, decision: { icon: CircleAlert, tone: "amber" },
   morning_brief: { icon: Sun, tone: "teal" }, stale_nudge: { icon: Timer, tone: "blue" },
   reminder: { icon: CalendarClock, tone: "blue" }, share: { icon: Share2, tone: "teal" },
-  watcher: { icon: Eye, tone: "blue" }, skill_mining: { icon: Sparkles, tone: "violet" }, routine: { icon: Repeat, tone: "violet" },
+  watcher: { icon: Eye, tone: "blue" }, skill_mining: { icon: Lightbulb, tone: "violet" }, routine: { icon: Repeat, tone: "violet" },
   review: { icon: ClipboardCheck, tone: "teal" }, meeting_tasks: { icon: NotebookPen, tone: "violet" }, meeting_prep: { icon: NotebookPen, tone: "violet" }, default: { icon: Bell, tone: "blue" },
 };
 

@@ -16,7 +16,7 @@ Up to three saved profiles plus built-in Quick (Review only, Git No limits, the 
 
 **+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
 
-**Connected-app tools** in the dialog start from the profile: which connected apps, or single tools in them, the run may use. A change is for this run only and marks the profile changed until saved with *Save to*; the run keeps its own list, so a later profile edit leaves it as it was ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Opening the name editor selects the name, so typing replaces it
+**Connected-app tools**, under More options in the dialog, start from the profile: which connected apps, or single tools in them, the run may use. A change is for this run only and marks the profile changed until saved with *Save to*; the run keeps its own list, so a later profile edit leaves it as it was ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Opening the name editor selects the name, so typing replaces it
 
 ### Agent
 

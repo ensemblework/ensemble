@@ -20,6 +20,27 @@ export async function watchThread(userId: string, threadId: string): Promise<boo
   return !before;
 }
 
+const presentKey = (userId: string) => `code:present:${userId}`;
+
+/**
+ * The person has the Code tab in front of them (any thread, or its Welcome): the web says so every 20 s while
+ * the tab is visible (`POST /api/agent/code-presence`). While it lasts, a thread's finished turn does not
+ * notify (workspace/review-notice.ts): the thread list shows it.
+ */
+export async function markCodePresent(userId: string, present: boolean): Promise<void> {
+  if (present) await redis.set(presentKey(userId), "1", "EX", WATCH_TTL_SECONDS + 5);
+  else await redis.del(presentKey(userId));
+}
+
+/** Whether the person is on the Code tab now. Never throws: without Redis they are not. */
+export async function onCodeTab(userId: string): Promise<boolean> {
+  try {
+    return Boolean(await redis.get(presentKey(userId)));
+  } catch {
+    return false;
+  }
+}
+
 /** The thread is closed. True when it was open. */
 export async function unwatchThread(userId: string, threadId: string): Promise<boolean> {
   return (await redis.del(key(userId, threadId))) > 0;

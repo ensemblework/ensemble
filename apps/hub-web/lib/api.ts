@@ -1787,6 +1787,8 @@ export const api = bindClient({
   codeThread: (id: string) => get<{ thread: { id: string; title: string; place: CodeThreadPlace; toolsOff?: string[] }; turns: CodeTurn[]; asks?: AgentDecisionRecord[] }>(`/api/agent/threads/${id}`),
   /** The thread is open on screen (`open`) or closed: while open its requests are answered in it, not in Needs me. */
   watchCodeThread: (id: string, open = true) => post<void>(`/api/agent/threads/${id}/watch`, { open }),
+  /** The Code tab is in front of the person, or no longer: a thread's finished turn notifies only while it is not. */
+  codePresence: (present: boolean) => post<void>("/api/agent/code-presence", { present }),
   /** A message while a turn works: taken into a turn not started yet, else it steers the one at work. */
   steerCodeThread: (id: string, data: { jobId: string; turn: Omit<AssignInput, "taskId"> }) => post<{ jobId: string; delivery: "amended" | "steered" | "queued" }>(`/api/agent/threads/${id}/steer`, data),
   /** Keeps a finished turn's reply in Ensemble (a page, a task, meeting notes or a deliverable), marked as the agent's. */

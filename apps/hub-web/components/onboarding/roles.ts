@@ -1,4 +1,4 @@
-import { Briefcase, Code2, GraduationCap, Presentation, Scale, Sparkles, type LucideIcon } from "lucide-react";
+import { Briefcase, Code2, GraduationCap, Presentation, Scale, type LucideIcon, Hammer } from "lucide-react";
 
 export type Role = "student" | "teacher" | "lawyer" | "engineer" | "vibe" | "manager";
 
@@ -7,7 +7,7 @@ export const ROLES: ReadonlyArray<{ id: Role; label: string; line: string; icon:
   { id: "teacher", label: "Teacher", line: "Lessons, marking, and check-ins", icon: Presentation, profession: "Teacher", org: "School" },
   { id: "lawyer", label: "Lawyer", line: "Matters, drafts, and dates", icon: Scale, profession: "Lawyer", org: "Firm or company" },
   { id: "engineer", label: "Engineer", line: "Reviews, releases, and on-call", icon: Code2, profession: "Engineer", org: "Company" },
-  { id: "vibe", label: "Builder", line: "Ship a side project with AI", icon: Sparkles, profession: "Builder", org: "Project or company" },
+  { id: "vibe", label: "Builder", line: "Ship a side project with AI", icon: Hammer, profession: "Builder", org: "Project or company" },
   { id: "manager", label: "Manager", line: "The team, 1:1s, and goals", icon: Briefcase, profession: "Manager", org: "Company" },
 ];
 

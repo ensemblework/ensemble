@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Check, Sparkles } from "lucide-react";
+import { ArrowUpRight, Check, UserPlus } from "lucide-react";
 import { currentLink } from "@/lib/api";
 import { Modal } from "../settings/modal";
 import { BrandMorph } from "../motion/brand-morph";
@@ -27,7 +27,7 @@ export function JoinInvitation() {
       <p className="mx-auto mt-3 max-w-[32ch] text-[14px] leading-6 text-muted">Turn a question into a clear answer, sketch a diagram, and connect the pieces of your work.</p>
     </div>
     <ul className="my-5 space-y-2 text-[13px] text-muted">{["Your own workspace and AI assistant", "Diagrams and pages that grow with your ideas", "Keep editing this shared page without joining"].map(line => <li key={line} className="flex items-center gap-2"><Check size={14} className="text-accent" />{line}</li>)}</ul>
-    <a className="btn-primary flex w-full justify-center py-2.5" href="/signup"><Sparkles size={15} />Create your Ensemble account<ArrowUpRight size={14} /></a>
+    <a className="btn-primary flex w-full justify-center py-2.5" href="/signup"><UserPlus size={15} />Create your Ensemble account<ArrowUpRight size={14} /></a>
     <div className="mt-3 flex items-center justify-center gap-3 text-[12px] text-muted"><a href="/login" className="hover:underline">Already a member? Sign in</a><span>·</span><button type="button" onClick={() => setOpen(false)} className="hover:underline">Keep writing</button></div>
     <p className="mt-4 text-center text-[11px] text-faint">AI is available in your own workspace after sign-in and model setup.</p>
   </Modal>;

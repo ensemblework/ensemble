@@ -15,12 +15,12 @@ import { copyText } from "@/components/context-menu/builders";
 import { openContextMenu } from "@/components/context-menu/menu-store";
 import { ProviderLogo } from "@/components/connectors/provider-logo";
 import { useToast } from "@/components/toast";
-import { SkeletonRows, Spinner, cx } from "@/components/ui";
+import { SkeletonRows, cx } from "@/components/ui";
 import { api, type CodeThread } from "@/lib/api";
-import { groupThreads, isLive, shortAgo, type ThreadGroup } from "@/lib/code-agent";
+import { groupThreads, shortAgo, type ThreadGroup } from "@/lib/code-agent";
 import { usePersistentState } from "@/lib/prefs";
 import { PanelHeader } from "./ide-chrome";
-import { refreshThreads, threadMenu, useCodeThreads, useDeleteThread, useRenameThread } from "./agent-actions";
+import { refreshThreads, threadMenu, threadState, useCodeThreads, useDeleteThread, useRenameThread, useSeenThreads } from "./agent-actions";
 
 export type ThreadPlace = { deviceId: string | null; folder: string | null };
 
@@ -52,6 +52,7 @@ export function AgentSessions({
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [more, setMore] = useState<string[]>([]);
+  const { seen } = useSeenThreads();
   const rename = useRenameThread();
   const remove = useDeleteThread((id) => {
     if (id === selected) onNew(current);
@@ -165,6 +166,7 @@ export function AgentSessions({
                       ) : (
                         <SessionRow
                           thread={thread}
+                          state={threadState(thread, seen)}
                           selected={thread.id === selected}
                           onOpen={() => onSelect(thread)}
                           onRename={viewOnly ? null : () => setRenaming(thread.id)}
@@ -247,10 +249,11 @@ export function daysLeft(purgeAt: string, now = Date.now()): string {
   return days <= 1 ? "today" : `${days}d left`;
 }
 
-function SessionRow({ thread, selected, onOpen, onRename, onDelete, onMenu }: { thread: CodeThread; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onDelete: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
+const STATE_LABEL = { running: "Working", new: "Finished, not read yet", failed: "Stopped on an error, not read yet", read: "Read" } as const;
+
+function SessionRow({ thread, state, selected, onOpen, onRename, onDelete, onMenu }: { thread: CodeThread; state: keyof typeof STATE_LABEL; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onDelete: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
   const status = thread.last?.status;
-  const live = Boolean(status && isLive(status));
-  const tone = status === "failed" || status === "blocked" || status === "interrupted" ? "bg-danger" : status === "waiting_approval" ? "bg-warn" : "bg-faint";
+  const live = state === "running";
   return (
     <button
       type="button"
@@ -271,10 +274,13 @@ function SessionRow({ thread, selected, onOpen, onRename, onDelete, onMenu }: { 
       }}
       data-testid="agent-session"
     >
-      <span className="flex w-3 shrink-0 justify-center" aria-hidden>
-        {live ? <Spinner size={10} /> : <span className={cx("h-1.5 w-1.5 rounded-full", tone)} />}
+      <span className="flex w-3 shrink-0 justify-center" title={STATE_LABEL[state]}>
+        <span className={cx("thread-dot", `is-${state}`)} data-state={state} />
       </span>
-      <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+      <span className={cx("min-w-0 flex-1 truncate", (state === "new" || state === "failed") && "font-medium text-ink")}>
+        {thread.title}
+        <span className="sr-only">, {STATE_LABEL[state]}</span>
+      </span>
       {thread.last?.engine && isCodeEngine(thread.last.engine) ? <ProviderLogo id={thread.last.engine} size={11} /> : null}
       <span className="shrink-0 tabular-nums text-[11px] text-faint">{live ? (status === "waiting_approval" ? "asks" : "now") : shortAgo(thread.updatedAt)}</span>
     </button>

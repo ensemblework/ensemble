@@ -10,15 +10,13 @@
  */
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
+import { ENGINE_LABELS, isCodeEngine, threadTitle } from "@ensemble/shared-types";
 import { MODULE_DENIED, hasModule } from "@ensemble/shared-types/modules";
-import { unwatchThread, watchThread } from "../lib/code-watch.js";
+import { markCodePresent, unwatchThread, watchThread } from "../lib/code-watch.js";
 import { publicDecision } from "../lib/decisions.js";
 import { canUseHostCredentials } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
 import { CODE_THREAD_BIN_DAYS, CODE_THREAD_PREFIX, codeThreadRef } from "../lib/node-tasks.js";
-import { complete } from "../lib/runtime.js";
-import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { keepAgentOutput, keepAgentOutputOnDeliverable, keepAgentOutputOnMeeting, KeepTargetError } from "../pages/agent-output.js";
 import { collabHub } from "../pages/live.js";
@@ -104,34 +102,6 @@ export function amendedMessage(before: string, more: string): string {
   return `${[a.text, b.text].filter(Boolean).join("\n\n")}${mentions ? `${MENTIONS_MARK} ${mentions})` : ""}`;
 }
 
-const TITLE_SYSTEM =
-  "Name a conversation with a coding agent from its first message. Reply with the name only: 2 to 6 words, sentence case, like a short headline of the work. No quotes, no trailing period, no emoji, no \"Help with\" or \"Request to\".";
-
-/** A model's name for a thread, cleaned: one line, no quotes or Markdown, at most 60 characters. Null when unusable. */
-export function cleanThreadName(text: string): string | null {
-  const line = text.replace(/<think>[\s\S]*?<\/think>/g, "").split("\n").map((row) => row.trim()).find(Boolean) ?? "";
-  const plain = line.replace(/^(title|name)\s*:\s*/i, "").replace(/[*_`#>]+/g, "").replace(/^["'“”‘’\s]+|["'“”‘’.\s]+$/g, "").replace(/\s+/g, " ").trim();
-  if (plain.length < 3 || plain.length > 60 || plain.split(" ").length > 9) return null;
-  return plain.charAt(0).toUpperCase() + plain.slice(1);
-}
-
-/**
- * Names a new thread from its first message with the person's Low tier, after it was made with a
- * name from the message itself. A name the person typed meanwhile is kept; a failed call keeps the first.
- */
-async function nameThread(app: FastifyInstance, userId: string, threadId: string, draft: string, message: string): Promise<void> {
-  try {
-    const settings = await loadSettings(app.prisma, userId);
-    if (!settings.models.easy?.model) return;
-    const answer = await complete({ userId, settings, tier: "easy", purpose: "Thread title", system: TITLE_SYSTEM, prompt: message.slice(0, 2000) });
-    const title = cleanThreadName(answer.text);
-    if (!title || title === draft) return;
-    const changed = await app.prisma.task.updateMany({ where: { id: threadId, userId, title: draft, deletedAt: null }, data: { title } });
-    if (changed.count) sseHub.publish(userId, { event: "task", data: { id: threadId, action: "update" } });
-  } catch (error) {
-    app.log.debug({ err: error, threadId }, "could not name a Code tab thread");
-  }
-}
 
 const LIVE_TURN = new Set(["claimed", "running", "waiting_approval", "stopping"]);
 
@@ -185,14 +155,13 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/agent/threads", async (request) => {
     const body = z
-      .object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().max(1000).nullish(), title: z.string().trim().min(1).max(200), message: z.string().trim().max(8000).optional() })
+      .object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().max(1000).nullish(), title: z.string().trim().max(200).optional(), message: z.string().trim().max(8000).optional() })
       .parse(request.body);
     const task = await prisma.task.create({
-      data: { userId: request.userId, title: body.title, owner: "agent", status: "todo", sourceKind: "other", sourceRef: codeThreadRef(body.deviceId, body.folder || null), createdBy: "me" },
+      // Named from the first message by a few of its words, without a model (shared-types thread-title.ts).
+      data: { userId: request.userId, title: body.title || threadTitle(body.message ?? ""), owner: "agent", status: "todo", sourceKind: "other", sourceRef: codeThreadRef(body.deviceId, body.folder || null), createdBy: "me" },
       select: { id: true, title: true, createdAt: true, updatedAt: true },
     });
-    // A better name follows from the first message; the thread is usable at once with the first one.
-    if (body.message) void nameThread(app, request.userId, task.id, task.title, body.message);
     return {
       thread: {
         id: task.id,
@@ -263,6 +232,13 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     const changed = await (open ? watchThread(request.userId, id) : unwatchThread(request.userId, id)).catch(() => false);
     // Needs me reads again when the thread opens or closes: its requests leave it or come back.
     if (changed) sseHub.publish(request.userId, { event: "decision", data: { thread: id, watched: open } });
+    return reply.code(204).send();
+  });
+
+  /** The Code tab is in front of the person (`present`), or no longer: a thread's finished turn then notifies or not (lib/code-watch.ts). */
+  app.post("/api/agent/code-presence", async (request, reply) => {
+    const { present } = z.object({ present: z.boolean().default(true) }).parse(request.body ?? {});
+    await markCodePresent(request.userId, present).catch(() => undefined);
     return reply.code(204).send();
   });
 

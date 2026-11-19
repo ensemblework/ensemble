@@ -6,7 +6,8 @@
  * window and fast mode. Assign to agent, Settings → Models (one per task complexity) and Settings →
  * Run profiles all use it.
  */
-import { Check, ChevronsUpDown, Search, Sparkles, Zap } from "lucide-react";
+import { Check, ChevronsUpDown, Search, Zap } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   claudeCodeModels,
@@ -29,7 +30,7 @@ import {
 } from "@ensemble/shared-types";
 import type { ModelCatalog, SubscriptionComputer } from "@/lib/api";
 import { relativeCost } from "@/lib/included";
-import { contextChoice, contextSizes } from "@/lib/engine-models";
+import { contextChoice, contextChoiceName, contextSizes } from "@/lib/engine-models";
 import { ProviderLogo, ModelLogo } from "../connectors/provider-logo";
 import { Popover, Toggle, cx } from "../ui";
 import { ThinkingSlider } from "./thinking-slider";
@@ -292,7 +293,7 @@ export function AgentPicker({
         </button>
       ) : (
         <button type="button" className="picker-trigger h-10" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="agent">
-          {value === null && auto ? <Sparkles size={15} className="shrink-0 text-accent" aria-hidden /> : shownChoice ? <ProviderLogo id={shownChoice.provider} size={16} /> : null}
+          {value === null && auto ? <AgentIcon size={15} className="shrink-0 text-accent" aria-hidden /> : shownChoice ? <ProviderLogo id={shownChoice.provider} size={16} /> : null}
           <span className="min-w-0 flex-1 truncate text-left">
             {value === null && auto ? (
               <>
@@ -397,7 +398,7 @@ export function AgentPicker({
                 if (row.key === "\0auto" && auto) {
                   return (
                     <button key=":auto" type="button" role="option" aria-selected={value === null} data-index={index} className={cx("picker-option", index === active && "is-active", value === null && "is-current")} onMouseEnter={() => setActive(index)} onClick={() => choose(null)}>
-                      <Sparkles size={14} className="shrink-0 text-accent" aria-hidden />
+                      <AgentIcon size={14} className="shrink-0 text-accent" aria-hidden />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] font-medium">Auto: match the task</span>
                         <span className="block truncate text-[11.5px] text-faint">{auto.text}</span>
@@ -506,13 +507,12 @@ export function TuningPicker({ value, model, onChange, allowFast = true, label, 
                 {contexts.map((row) => {
                   const on = (value.context ?? "default") === row.id;
                   return (
-                    <button key={row.id} type="button" role="radio" aria-checked={on} onClick={() => onChange({ ...value, context: row.id === "long_context" ? "long_context" : undefined })} className={cx("thinking-level", on && "is-on")}>
+                    <button key={row.id} type="button" role="radio" aria-checked={on} aria-label={contextChoiceName(row)} title={contextChoiceName(row)} onClick={() => onChange({ ...value, context: row.id === "long_context" ? "long_context" : undefined })} className={cx("thinking-level", on && "is-on")}>
                       {contextChoice(row)}
                     </button>
                   );
                 })}
               </div>
-              <p className="mt-1 text-[11px] text-faint">Long fits more files and conversation, and may use more of your plan.</p>
             </div>
           ) : null}
           {fast ? (

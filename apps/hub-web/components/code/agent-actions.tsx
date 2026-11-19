@@ -8,7 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { CheckSquare, Copy, ExternalLink, FilePlus2, FileText, Flag, FolderOpen, Link2, NotebookPen, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { copyText } from "@/components/context-menu/builders";
 import type { MenuSpec } from "@/components/context-menu/menu-store";
 import { useToast } from "@/components/toast";
@@ -248,7 +248,7 @@ export type ThreadMenuDeps = {
   viewOnly: boolean;
 };
 
-/** A thread's right-click menu, in the sessions list and the thread's header. */
+/** A thread's right-click menu, in the sessions list and on its tab. */
 export function threadMenu(thread: CodeThread, deps: ThreadMenuDeps): MenuSpec {
   const live = Boolean(thread.last && isLive(thread.last.status));
   const lastReply = thread.last && !live ? thread.last.id : null;
@@ -329,3 +329,124 @@ export function turnMenu(deps: TurnMenuDeps): MenuSpec {
     ],
   };
 }
+
+/**
+ * A thread's tab carries what a bar over the thread would: its name (double-click renames) and its menu
+ * (Rename, Pin, the folder in the editor, Stop, Delete…) after the tab's own items (ide.tsx, code-home.tsx).
+ */
+export function useThreadTabActions(closeThread: (key: string) => void) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [pinned, setPinned] = usePersistentState<string[]>("ensemble.code.pinned", []);
+  const rename = useRenameThread();
+  const remove = useDeleteThread((id) => closeThread(id));
+  const [renaming, setRenaming] = useState<string | null>(null);
+  // The list the window already has; the tab's menu reads it when opened rather than fetching its own.
+  const row = (key: string) => client.getQueryData<{ threads?: CodeThread[] }>(["code-threads"])?.threads?.find((thread) => thread.id === key) ?? null;
+  const menu = (key: string, tab: MenuSpec["sections"], options: { openFolder?: ((place: { deviceId: string | null; folder: string }) => void) | null; viewOnly?: boolean } = {}): MenuSpec => {
+    const thread = row(key);
+    if (!thread) return { title: "New thread", sections: tab };
+    const live = Boolean(thread.last && isLive(thread.last.status));
+    const spec = threadMenu(thread, {
+      open: () => undefined,
+      rename: options.viewOnly ? null : () => setRenaming(key),
+      pinned: pinned.includes(key),
+      togglePin: () => setPinned((rows) => (rows.includes(key) ? rows.filter((id) => id !== key) : [key, ...rows])),
+      openFolder: thread.place.folder && options.openFolder ? () => options.openFolder!({ deviceId: thread.place.deviceId, folder: thread.place.folder! }) : null,
+      newHere: null,
+      remove: () => remove.mutate(key),
+      stop: live && thread.last
+        ? () => {
+            void api
+              .stopJob(thread.last!.id)
+              .catch((error: Error) => toast(error.message, { tone: "error" }))
+              .finally(() => refreshThreads(client, key));
+          }
+        : null,
+      viewOnly: Boolean(options.viewOnly),
+    });
+    const own = spec.sections.map((section) => ({ ...section, items: section.items.filter((item) => item.id !== "open") })).filter((section) => section.items.length);
+    return { ...spec, sections: [...tab, ...own] };
+  };
+  const finishRename = (key: string, title: string | null) => {
+    setRenaming(null);
+    if (title && title !== row(key)?.title) rename.mutate({ id: key, title });
+  };
+  return { menu, renaming, startRename: (key: string) => setRenaming(key), finishRename, pinned };
+}
+
+/** A thread's name being typed in place of its tab's label. Enter or leaving keeps it; Escape keeps the old one. */
+export function ThreadNameField({ title, onDone }: { title: string; onDone: (title: string | null) => void }) {
+  const [draft, setDraft] = useState(title);
+  const done = useRef(false);
+  const finish = (value: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(value);
+  };
+  return (
+    <input
+      autoFocus
+      value={draft}
+      maxLength={200}
+      aria-label="Thread name"
+      className="field h-6 w-[12rem] min-w-0 px-1.5 text-[12.5px]"
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => setDraft(event.target.value)}
+      onFocus={(event) => event.currentTarget.select()}
+      onBlur={() => finish(draft.trim() || null)}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") finish(draft.trim() || null);
+        else if (event.key === "Escape") finish(null);
+      }}
+    />
+  );
+}
+
+const PRESENCE_MS = 20_000;
+
+/**
+ * While the Code tab is visible it says so every 20 s, so a thread's finished turn does not notify:
+ * the thread list shows it instead. Hidden or left, it says so once and notifications come back.
+ */
+export function useCodePresence() {
+  useEffect(() => {
+    const say = (present: boolean) => void api.codePresence(present).catch(() => undefined);
+    const beat = () => {
+      if (document.visibilityState === "visible") say(true);
+    };
+    beat();
+    const timer = window.setInterval(beat, PRESENCE_MS);
+    const onVisibility = () => say(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      say(false);
+    };
+  }, []);
+}
+
+const SEEN_KEEP = 200;
+
+/** The last finished turn read in each thread, in this browser: a finished turn not read yet shows as new. */
+export function useSeenThreads() {
+  const [seen, setSeen] = usePersistentState<Record<string, string>>("ensemble.code.seen", {});
+  const markSeen = (threadId: string, jobId: string) =>
+    setSeen((current) => {
+      if (current[threadId] === jobId) return current;
+      const next = Object.entries({ ...current, [threadId]: jobId }).slice(-SEEN_KEEP);
+      return Object.fromEntries(next);
+    });
+  return { seen, markSeen };
+}
+
+/** A thread's state for its dot: running, finished and not read yet, stopped on an error and not read yet, or read. */
+export function threadState(thread: Pick<CodeThread, "id" | "last">, seen: Record<string, string>): "running" | "new" | "failed" | "read" {
+  const status = thread.last?.status;
+  if (status && isLive(status)) return "running";
+  if (!thread.last || seen[thread.id] === thread.last.id) return "read";
+  return status === "failed" || status === "blocked" || status === "interrupted" ? "failed" : "new";
+}
+

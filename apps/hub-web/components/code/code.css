@@ -85,6 +85,34 @@ html[data-ide-resizing="horizontal"] * {
 
 /* Editor tabs (ide.tsx TabStrip): the whole tab opens its file; the close button shows on hover and on
    the file in view; an unsaved file shows a dot that becomes the close button on hover. */
+/* Tabs that do not fit scroll sideways behind an arrow at each end (ScrollTabs in ide-chrome.tsx). */
+.tab-scroll-strip {
+  scrollbar-width: none;
+}
+.tab-scroll-strip::-webkit-scrollbar {
+  display: none;
+}
+.tab-scroll-arrow {
+  display: inline-flex;
+  width: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+}
+.tab-scroll-arrow + .tab-scroll-strip + .tab-scroll-arrow {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+.tab-scroll-arrow:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.tab-scroll-arrow:disabled {
+  opacity: 0.35;
+}
+
 .code-tab-strip {
   scrollbar-width: none;
 }
@@ -1296,3 +1324,38 @@ html[data-ide-resizing="horizontal"] * {
     transition: none;
   }
 }
+
+/* A thread's dot in the sessions list (agent-actions.tsx threadState): working, finished and not read yet,
+   stopped on an error and not read yet, or read. */
+.thread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--faint);
+  opacity: 0.6;
+}
+.thread-dot.is-running {
+  background: var(--warn);
+  opacity: 1;
+  animation: thread-dot-pulse 1.6s ease-in-out infinite;
+}
+.thread-dot.is-new {
+  background: var(--ok);
+  opacity: 1;
+}
+.thread-dot.is-failed {
+  background: var(--danger);
+  opacity: 1;
+}
+@keyframes thread-dot-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-dot.is-running {
+    animation: none;
+  }
+}
+

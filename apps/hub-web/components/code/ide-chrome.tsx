@@ -5,9 +5,9 @@
  * the resizable side panel and terminal panel, and the status bar. Sizes and which panels are open are
  * remembered in this browser (`ensemble.code.*`), never anything about the code. Styles: `code.css`.
  */
-import { Minus, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { cx } from "@/components/ui";
 import { usePersistentState } from "@/lib/prefs";
 import { LAUNCHER_FLOOR_EVENT } from "@/components/assistant/ask-launcher";
@@ -429,4 +429,70 @@ export function FontSizeControl({ fontSize, setFontSize }: { fontSize: number; s
 /** A small dot for online / offline. */
 export function OnlineDot({ online }: { online: boolean }) {
   return <span className={cx("inline-block h-1.5 w-1.5 shrink-0 rounded-full", online ? "bg-ok" : "bg-faint")} aria-hidden />;
+}
+
+/**
+ * A row of tabs that scrolls sideways, as a browser's does: when the tabs do not fit, an arrow at each end
+ * shows the next hidden tab in full, one per click (and the wheel scrolls). `stripRef` is the scrolling row.
+ */
+export function ScrollTabs({ label, className, stripRef, children }: { label: string; className?: string; stripRef?: RefObject<HTMLDivElement | null>; children: ReactNode }) {
+  const own = useRef<HTMLDivElement>(null);
+  const box = stripRef ?? own;
+  const [edges, setEdges] = useState({ overflow: false, left: false, right: false });
+  const measure = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const overflow = el.scrollWidth > el.clientWidth + 1;
+    const next = { overflow, left: overflow && el.scrollLeft > 1, right: overflow && el.scrollLeft + el.clientWidth < el.scrollWidth - 1 };
+    setEdges((current) => (current.overflow === next.overflow && current.left === next.left && current.right === next.right ? current : next));
+  }, [box]);
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [box, measure]);
+  const step = (direction: 1 | -1) => {
+    const el = box.current;
+    if (!el) return;
+    const tabs = [...el.querySelectorAll<HTMLElement>('[role="tab"]')];
+    const start = el.scrollLeft;
+    const end = start + el.clientWidth;
+    const target =
+      direction > 0
+        ? tabs.find((tab) => tab.offsetLeft + tab.offsetWidth > end + 1)
+        : [...tabs].reverse().find((tab) => tab.offsetLeft < start - 1);
+    if (!target) return;
+    const left = direction > 0 ? target.offsetLeft + target.offsetWidth - el.clientWidth : target.offsetLeft;
+    if (typeof el.scrollTo === "function") el.scrollTo({ left, behavior: "smooth" });
+    else el.scrollLeft = left;
+  };
+  return (
+    <div className="flex min-w-0 flex-1 items-stretch" data-testid="tab-scroll">
+      {edges.overflow ? (
+        <button type="button" className="tab-scroll-arrow" disabled={!edges.left} onClick={() => step(-1)} aria-label="Show the tab before" title="Previous tabs">
+          <ChevronLeft size={14} aria-hidden />
+        </button>
+      ) : null}
+      <div
+        ref={box}
+        role="tablist"
+        aria-label={label}
+        className={cx("tab-scroll-strip relative flex min-w-0 flex-1 items-stretch overflow-x-auto", className)}
+        onScroll={measure}
+        onWheel={(event) => {
+          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
+        }}
+      >
+        {children}
+      </div>
+      {edges.overflow ? (
+        <button type="button" className="tab-scroll-arrow" disabled={!edges.right} onClick={() => step(1)} aria-label="Show the tab after" title="Next tabs">
+          <ChevronRight size={14} aria-hidden />
+        </button>
+      ) : null}
+    </div>
+  );
 }

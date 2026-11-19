@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, Boxes, ChartSpline, ChevronRight, Code2, FolderGit2, Gauge, Plus, Search, Sparkles, TerminalSquare, Workflow, type LucideIcon } from "lucide-react";
+import { Activity, Boxes, ChartSpline, ChevronRight, Code2, FolderGit2, Gauge, Plus, Search, TerminalSquare, Workflow, type LucideIcon, BookOpen } from "lucide-react";
 import type { OptionalModule } from "@ensemble/shared-types/modules";
 import { featureCopy, setFeature } from "@/lib/features";
 
@@ -250,7 +250,7 @@ const ICONS: Record<OptionalModule, LucideIcon> = {
   workspace: Boxes,
   runs: Activity,
   metrics: Gauge,
-  skills: Sparkles,
+  skills: BookOpen,
   diagrams: Workflow,
   plots: ChartSpline,
 };

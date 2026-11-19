@@ -15,7 +15,6 @@ import {
   Briefcase,
   Database,
   FolderKanban,
-  Sparkles,
   FileCode2,
   FileText,
   GitFork,
@@ -29,6 +28,7 @@ import {
   Receipt,
   ScanLine,
   Users,
+  Compass,
 } from "lucide-react";
 import type { DeskId } from "./desks";
 import { DESKS } from "./desks";
@@ -453,7 +453,7 @@ function GetStarted({ items, alone }: { items: Starter[]; alone: boolean }) {
   return (
     <section className="lens-start" data-lens-start aria-label="Get started">
       <div className="lens-start-head">
-        <span className="lens-start-icon" aria-hidden="true"><Sparkles size={14} /></span>
+        <span className="lens-start-icon" aria-hidden="true"><Compass size={14} /></span>
         <div>
           <h2>Get started</h2>
           <p>{alone ? "Your context fills in as you work. Start with one of these." : "Empty sections wait here until they have something in them."}</p>
