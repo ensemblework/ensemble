@@ -254,7 +254,7 @@ test("a GitHub Copilot tier shows the account, each model's cost and size, its o
     });
     const radios = (group: string) => Array.from(document.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] [role="radio"]`)) as HTMLElement[];
     assert.equal(radios("Low model: thinking and context: thinking")[0]?.textContent, "Auto (Medium)", "the model's own default level");
-    assert.deepEqual(radios("Low model: thinking and context: context window").map((node) => node.textContent), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    assert.deepEqual(radios("Low model: thinking and context: context window").map((node) => node.textContent), ["200K", "922K"]);
     await act(async () => {
       radios("Low model: thinking and context: context window")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });

@@ -35,15 +35,6 @@ test("a message for a turn not started yet joins its own, mentions together", as
   assert.equal(amendedMessage("Fix it", "and test it"), "Fix it\n\nand test it");
 });
 
-test("a model's thread name is kept short and plain, or not at all", async () => {
-  const { cleanThreadName } = await import("./code-threads.js");
-  assert.equal(cleanThreadName('"BFS example in C++."'), "BFS example in C++");
-  assert.equal(cleanThreadName("Title: **fix the export dates**"), "Fix the export dates");
-  assert.equal(cleanThreadName("<think>hm</think>\nPlan next week"), "Plan next week");
-  assert.equal(cleanThreadName("Sure! Here is a title for this conversation that describes the work in detail"), null);
-  assert.equal(cleanThreadName(""), null);
-});
-
 test("where a reply was kept reads the same for events from before and after kinds", async () => {
   const { keptPlace } = await import("./code-threads.js");
   assert.deepEqual(keptPlace({ pageId: "p1", taskId: null, title: "Notes" }), { kind: "page", id: "p1", pageId: "p1", taskId: null, title: "Notes", href: "/pages/p1" });

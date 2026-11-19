@@ -58,7 +58,8 @@ import {
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, Sash, SidePanel, StatusBar, StatusItem, textScale, useIdeKeys, useIdeLayout, useLiveSize, type IdeLayout } from "@/components/code/ide-chrome";
+import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, Sash, ScrollTabs, SidePanel, StatusBar, StatusItem, textScale, useIdeKeys, useIdeLayout, useLiveSize, type IdeLayout } from "@/components/code/ide-chrome";
+import { ThreadNameField, useCodePresence, useThreadTabActions } from "@/components/code/agent-actions";
 import { AgentView } from "@/components/code/agent-view";
 import { FolderPicker } from "@/components/code/folder-picker";
 import { BranchMenu } from "@/components/code/branch-menu";
@@ -675,6 +676,10 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
     onSuccess: (result) => toast(`Pushed ${result.branch} (fast-forward).`, { tone: "ok" }),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  // A thread's tab carries its menu and rename; a deleted thread's tab closes (closeThread is set below).
+  const closeThreadRef = useRef<(key: string) => void>(() => undefined);
+  const threadTab = useThreadTabActions((key) => closeThreadRef.current(key));
+  useCodePresence();
 
   if (info.isLoading) return <IdeLoading layout={layout} />;
   if (info.error || !info.data) {
@@ -761,6 +766,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
       else setView("editor");
     }
   };
+  closeThreadRef.current = closeThread;
   /** A new thread's first message made it: its tab keeps its place under its id. */
   const threadMade = (key: string, id: string) => {
     setThreadTabs(threadTabs.map((row) => (row === key ? id : row)));
@@ -931,19 +937,25 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           onThread={(key) => openThread(key === NEW_THREAD ? null : key)}
           onCloseThread={closeThread}
           onThreadMenu={(event, key) =>
-            openContextMenu(event, () => ({
-              title: agentTabs.find((row) => row.key === key)?.title ?? "Thread",
-              sections: [
-                {
-                  items: [
-                    { id: "close", label: "Close", icon: X, run: () => closeThread(key) },
-                    ...(threadTabs.length > 1 ? [{ id: "close-others", label: "Close the other threads", icon: X, run: () => { setThreadTabs([key]); setThread(key === NEW_THREAD ? null : key); if (!split) setView("agent"); } }] : []),
-                    ...(layout.phone ? [] : [{ id: "side", label: split ? "Show it in place of the editor" : "Show it beside the editor", icon: split ? PanelLeft : PanelRight, run: () => { setSplit(!split); openThread(key === NEW_THREAD ? null : key); } }]),
-                  ],
-                },
-              ],
-            }))
+            openContextMenu(event, () =>
+              threadTab.menu(
+                key,
+                [
+                  {
+                    items: [
+                      { id: "close", label: "Close", icon: X, run: () => closeThread(key) },
+                      ...(threadTabs.length > 1 ? [{ id: "close-others", label: "Close the other threads", icon: X, run: () => { setThreadTabs([key]); setThread(key === NEW_THREAD ? null : key); if (!split) setView("agent"); } }] : []),
+                      ...(layout.phone ? [] : [{ id: "side", label: split ? "Show it in place of the editor" : "Show it beside the editor", icon: split ? PanelLeft : PanelRight, run: () => { setSplit(!split); openThread(key === NEW_THREAD ? null : key); } }]),
+                    ],
+                  },
+                ],
+                { viewOnly, openFolder: (place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" }))) },
+              ),
+            )
           }
+          renamingThread={threadTab.renaming}
+          onStartRename={viewOnly ? undefined : threadTab.startRename}
+          onRenameThread={threadTab.finishRename}
         />
         {threads ? (
           <button type="button" className="icon-btn my-auto h-7 w-7 shrink-0" title="New thread with the agent" aria-label="New thread with the agent" onClick={() => openThread(null)}>
@@ -1233,9 +1245,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
                       viewOnly={viewOnly}
                       visible={shown}
                       onEditing={(paths) => setAgentEditing((current) => (sameList(current[key] ?? [], paths) ? current : { ...current, [key]: paths }))}
-                      onClose={() => closeThread(key)}
                       onOpenFile={(place, path) => (isHere(place) ? open(path) : navigate.go(agentHref(place, { view: "editor", file: path })))}
-                      onOpenFolder={split ? null : (place) => (isHere(place) ? setView("editor") : navigate.go(agentHref(place, { view: "editor" })))}
                     />
                   </div>
                 );
@@ -1338,6 +1348,9 @@ function TabStrip({
   onThread,
   onCloseThread,
   onThreadMenu,
+  renamingThread = null,
+  onRenameThread,
+  onStartRename,
 }: {
   tabs: string[];
   active: string | null;
@@ -1355,6 +1368,10 @@ function TabStrip({
   onThread?: (key: string) => void;
   onCloseThread?: (key: string) => void;
   onThreadMenu?: (event: React.MouseEvent, key: string) => void;
+  /** The thread whose name is being typed on its tab, and what to do with it. */
+  renamingThread?: string | null;
+  onRenameThread?: (key: string, title: string | null) => void;
+  onStartRename?: (key: string) => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1364,15 +1381,7 @@ function TabStrip({
   for (const path of tabs) names.set(nameOf(path), (names.get(nameOf(path)) ?? 0) + 1);
   const focusTab = (path: string) => window.requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[data-tab-path="${CSS.escape(path)}"]`)?.focus());
   return (
-    <div
-      ref={strip}
-      className="code-tab-strip flex min-w-0 flex-1 items-stretch overflow-x-auto"
-      role="tablist"
-      aria-label="Open files"
-      onWheel={(event) => {
-        if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
-      }}
-    >
+    <ScrollTabs stripRef={strip} className="code-tab-strip" label="Open files">
       {threads.map((thread) => {
         const selected = thread.key === activeThread;
         return (
@@ -1400,9 +1409,14 @@ function TabStrip({
               }
             }}
             onContextMenu={(event) => onThreadMenu?.(event, thread.key)}
+            onDoubleClick={() => thread.key !== NEW_THREAD && onStartRename?.(thread.key)}
           >
             <AgentIcon size={13} className={cx("shrink-0", thread.live ? "agent-live-mark" : "text-muted")} aria-hidden />
-            <span className="min-w-0 max-w-[14rem] truncate">{thread.title}</span>
+            {renamingThread === thread.key ? (
+              <ThreadNameField title={thread.title} onDone={(title) => onRenameThread?.(thread.key, title)} />
+            ) : (
+              <span className="min-w-0 max-w-[14rem] truncate">{thread.title}</span>
+            )}
             <button
               type="button"
               className="code-tab-close"
@@ -1479,7 +1493,7 @@ function TabStrip({
           </div>
         );
       })}
-    </div>
+    </ScrollTabs>
   );
 }
 

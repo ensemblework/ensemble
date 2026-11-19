@@ -26,9 +26,10 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { openContextMenu } from "@/components/context-menu/menu-store";
 import { InlineError, RepoList, ReviewItem } from "@/components/code/code-lists";
-import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
+import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, ScrollTabs, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import { QuickOpen, useKeyLabel, useLinkNavigate, type QuickList } from "@/components/code/quick-open";
 import { RunCode } from "@/components/code/run-code";
@@ -43,7 +44,7 @@ import { AgentView, type FolderChoice, type PlaceChoice } from "@/components/cod
 import { agentHref, isLive, sessionsMinWidth, type IdeView } from "@/lib/code-agent";
 import { MachineSwitcher } from "@/components/code/machine-switcher";
 import { FolderPicker } from "@/components/code/folder-picker";
-import { useCodeThreads } from "@/components/code/agent-actions";
+import { ThreadNameField, useCodePresence, useCodeThreads, useThreadTabActions } from "@/components/code/agent-actions";
 import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeReview } from "@/lib/code-home";
 import { matchRepos, repoName, repoSecond, shortBranch, usedWithin, viewFor } from "@/lib/code-repos";
 import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
@@ -214,6 +215,10 @@ export function CodeHome({
       setView("editor");
     }
   };
+  // A thread's tab carries its menu and rename (agent-actions.tsx).
+  const threadTab = useThreadTabActions(closeThread);
+  // While Code is in front of the person, a thread's finished turn shows in the list instead of notifying.
+  useCodePresence();
   const threadTitles = new Map((threadList.data?.threads ?? []).map((row) => [row.id, row]));
   const sessionsMin = sessionsMinWidth((threadList.data?.threads ?? []).filter((row) => (row.place.deviceId ?? null) === selectedId).map((row) => row.title));
   const canTerminal = !viewOnly && Boolean(selected?.terminal);
@@ -341,7 +346,7 @@ export function CodeHome({
                 <AgentIcon size={13} aria-hidden /> Agent
               </button>
             </div>
-            <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+            <ScrollTabs label="Open tabs">
               <EditorTab icon={Code2} label="Welcome" active={view === "editor" && tab === "welcome"} onSelect={() => { setTab("welcome"); setView("editor"); }} />
               {jobId ? (
                 <EditorTab icon={FileCode2} label={job.data?.job.title ?? "Run"} active={view === "editor" && tab === "run"} onSelect={() => { setTab("run"); setView("editor"); }} onClose={onCloseRun} />
@@ -358,13 +363,21 @@ export function CodeHome({
                     active={view === "agent" && key === activeKey}
                     onSelect={() => openThread(key === NEW_THREAD ? null : key)}
                     onClose={() => closeThread(key)}
+                    renaming={threadTab.renaming === key}
+                    onRename={(title) => threadTab.finishRename(key, title)}
+                    onDoubleClick={key === NEW_THREAD || viewOnly ? undefined : () => threadTab.startRename(key)}
+                    onMenu={(event) =>
+                      openContextMenu(event, () =>
+                        threadTab.menu(key, [{ items: [{ id: "close", label: "Close", icon: X, run: () => closeThread(key) }] }], { viewOnly, openFolder: (place) => navigate.go(agentHref(place, { view: "editor" })) }),
+                      )
+                    }
                   />
                 );
               })}
-              <button type="button" className="icon-btn my-auto ml-0.5 h-7 w-7 shrink-0" title="New thread with the agent" aria-label="New thread with the agent" onClick={() => openThread(null)}>
-                <Plus size={14} />
-              </button>
-            </div>
+            </ScrollTabs>
+            <button type="button" className="icon-btn my-auto ml-0.5 h-7 w-7 shrink-0" title="New thread with the agent" aria-label="New thread with the agent" onClick={() => openThread(null)}>
+              <Plus size={14} />
+            </button>
             <div className="flex shrink-0 items-center gap-1.5 px-1.5">
               {viewOnly ? (
                 <span className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-muted" title={`Changes and the terminal stay with ${access.owner ?? "the owner"}.`}>
@@ -404,9 +417,7 @@ export function CodeHome({
                       placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
                       viewOnly={viewOnly}
                       visible={shown}
-                      onClose={() => closeThread(key)}
                       onOpenFile={(place, path) => navigate.go(agentHref(place, { view: "editor", file: path }))}
-                      onOpenFolder={(place) => navigate.go(agentHref(place, { view: "editor" }))}
                     />
                   </div>
                 );
@@ -491,14 +502,43 @@ function PlaceLabel({ place }: { place: CodePlace | null }) {
   );
 }
 
-function EditorTab({ icon: Icon, iconClass, label, active, onSelect, onClose }: { icon: ComponentType<{ size?: number; className?: string }>; iconClass?: string; label: string; active: boolean; onSelect: () => void; onClose?: () => void }) {
+function EditorTab({
+  icon: Icon,
+  iconClass,
+  label,
+  active,
+  onSelect,
+  onClose,
+  onMenu,
+  onDoubleClick,
+  renaming = false,
+  onRename,
+}: {
+  icon: ComponentType<{ size?: number; className?: string }>;
+  iconClass?: string;
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+  onClose?: () => void;
+  onMenu?: (event: ReactMouseEvent) => void;
+  onDoubleClick?: () => void;
+  renaming?: boolean;
+  onRename?: (title: string | null) => void;
+}) {
   return (
-    <div role="tab" aria-selected={active} className={cx("group relative flex max-w-[260px] shrink-0 items-center gap-1.5 border-r border-line px-3", active ? "bg-bg text-ink" : "text-muted hover:text-ink")}>
+    <div role="tab" aria-selected={active} className={cx("group relative flex max-w-[260px] shrink-0 items-center gap-1.5 border-r border-line px-3", active ? "bg-bg text-ink" : "text-muted hover:text-ink")} onContextMenu={onMenu} onDoubleClick={onDoubleClick}>
       {active ? <span className="absolute inset-x-0 top-0 h-px bg-accent" aria-hidden /> : null}
-      <button type="button" className="flex min-w-0 items-center gap-1.5" onClick={onSelect} title={label}>
-        <Icon size={13} className={cx("shrink-0", active ? "text-accent" : undefined, iconClass)} />
-        <span className="truncate">{label}</span>
-      </button>
+      {renaming ? (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Icon size={13} className={cx("shrink-0", active ? "text-accent" : undefined, iconClass)} />
+          <ThreadNameField title={label} onDone={(title) => onRename?.(title)} />
+        </span>
+      ) : (
+        <button type="button" className="flex min-w-0 items-center gap-1.5" onClick={onSelect} title={label}>
+          <Icon size={13} className={cx("shrink-0", active ? "text-accent" : undefined, iconClass)} />
+          <span className="truncate">{label}</span>
+        </button>
+      )}
       {onClose ? (
         <button type="button" className="icon-btn h-4 w-4 shrink-0" title="Close" aria-label={`Close ${label}`} onClick={onClose}>
           <X size={11} className="opacity-60 group-hover:opacity-100" />

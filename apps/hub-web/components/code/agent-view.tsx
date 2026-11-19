@@ -29,7 +29,7 @@ import {
   Copy,
   CornerDownRight,
   ExternalLink,
-  Eye,
+  MessageCircleQuestion,
   File,
   FilePen,
   FileText,
@@ -40,16 +40,11 @@ import {
   House,
   Laptop,
   ChartLine,
-  MoreHorizontal,
   NotebookPen,
-  Pencil,
-  Pin,
   Search,
-  Sparkles,
   Square,
   SquareTerminal,
   Table,
-  Trash2,
   Users,
   WifiOff,
   Workflow,
@@ -68,7 +63,7 @@ import { MarkdownText } from "@/components/markdown-text";
 import { MentionTextarea } from "@/components/mentions/mention-field";
 import { MentionPopover, useMentionMenu } from "@/components/mentions/mention-menu";
 import { useToast } from "@/components/toast";
-import { InfoTip, MenuItem, Popover, Spinner, Tag, cx } from "@/components/ui";
+import { InfoTip, Popover, Spinner, Tag, cx } from "@/components/ui";
 import { api, type AgentDecisionRecord, type AssignInput, type CodeThread, type CodeThreadPlace, type CodeTurn, type KeptPage } from "@/lib/api";
 import { useAutoGrow } from "@/lib/auto-grow";
 import {
@@ -98,7 +93,7 @@ import { computerAgent, engineAssign, engineModel } from "@/lib/engine-models";
 import { usePersistentState } from "@/lib/prefs";
 import { defaultProfile, profileAgent, quickProfile } from "@/lib/run-profiles";
 import { traceEntries } from "@/lib/run-trace";
-import { KeepPicker, refreshThreads, threadMenu, turnMenu, useCodeThreads, useDeleteThread, useRenameThread } from "./agent-actions";
+import { KeepPicker, refreshThreads, turnMenu, useCodeThreads, useSeenThreads } from "./agent-actions";
 import type { ThreadPlace } from "./agent-sessions";
 import { BranchMenu } from "./branch-menu";
 import { FileIcon } from "./file-icon";
@@ -109,8 +104,8 @@ import { useLinkNavigate } from "./quick-open";
 type Mode = "ask" | "review" | "unattended";
 
 const MODES: Array<{ id: Mode; title: string; text: string; icon: LucideIcon | typeof AgentIcon }> = [
-  { id: "ask", title: "Ask", text: "Asks before commands and edits. Reading goes ahead.", icon: Hand },
-  { id: "review", title: "Review only", text: "Works freely in its folder. Asks you decisions.", icon: Eye },
+  { id: "ask", title: "Ask", text: "Asks before commands and edits. Reading goes ahead.", icon: MessageCircleQuestion },
+  { id: "review", title: "Review only", text: "Works freely in its folder. Asks you decisions.", icon: Hand },
   { id: "unattended", title: "Run unattended", text: "Never waits for you. Keys, system files and Ensemble's code stay off limits.", icon: AgentIcon },
 ];
 
@@ -184,17 +179,13 @@ export type AgentViewProps = {
   viewOnly: boolean;
   /** Opens a file of a thread's folder in the editor. */
   onOpenFile: (place: ThreadPlace, path: string) => void;
-  /** Opens a thread's folder in the editor; null where the editor already shows it. */
-  onOpenFolder: ((place: { deviceId: string | null; folder: string }) => void) | null;
   /** The thread is on screen (not a hidden tab): it answers its own requests. */
   visible?: boolean;
   /** The files a turn at work is editing now, relative to the thread's folder (the editor follows them). */
   onEditing?: (paths: string[]) => void;
-  /** Closes the thread's tab, where it is one. */
-  onClose?: (() => void) | null;
 };
 
-export function AgentView({ threadId, onThread, draft, onDraft, places, folders, placesLoading = false, viewOnly, onOpenFile, onOpenFolder, visible = true, onEditing, onClose = null }: AgentViewProps) {
+export function AgentView({ threadId, onThread, draft, onDraft, places, folders, placesLoading = false, viewOnly, onOpenFile, visible = true, onEditing }: AgentViewProps) {
   const client = useQueryClient();
   const toast = useToast();
   const navigate = useLinkNavigate();
@@ -211,17 +202,18 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
   const turns = useMemo(() => (threadId ? (thread.data?.turns ?? []) : []), [threadId, thread.data]);
   const live = turns.find((turn) => isLive(turn.status)) ?? null;
   const last = turns[turns.length - 1] ?? null;
+  // A finished turn on screen is read: the thread's dot in the list goes from green to gray.
+  const { markSeen } = useSeenThreads();
+  useEffect(() => {
+    if (threadId && visible && last && !isLive(last.status) && document.visibilityState === "visible") markSeen(threadId, last.id);
+  }, [threadId, visible, last?.id, last?.status]);
   const place: ThreadPlace = threadId ? (thread.data?.thread.place ?? listed?.place ?? draft) : draft;
   const placeInfo: CodeThreadPlace = threadId ? (thread.data?.thread.place ?? listed?.place ?? { ...draft, deviceName: null, workdir: null }) : { ...draft, deviceName: null, workdir: null };
   const computer = places.find((row) => (row.deviceId ?? null) === (place.deviceId ?? null)) ?? null;
   const tasks = useMemo(() => linkedTasks(turns.map((turn) => turn.instructions ?? "")), [turns]);
   const [sending, setSending] = useState<{ text: string; steer: boolean } | null>(null);
   const [inject, setInject] = useState<{ text: string; mentions: PageMention[]; nonce: number } | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const rename = useRenameThread();
   // A deleted thread's tab closes with it.
-  const remove = useDeleteThread(() => (onClose ? onClose() : onThread(null)));
-  const [pinned, setPinned] = usePersistentState<string[]>("ensemble.code.pinned", []);
   const asks = useMemo(() => (threadId ? (thread.data?.asks ?? []) : []), [threadId, thread.data]);
 
   // A finished turn changed the folder: the sessions list, source control and open files read it again.
@@ -242,8 +234,6 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
   }, [contentKey, threadId]);
 
   const title = threadId ? (thread.data?.thread.title ?? listed?.title ?? "Thread") : "New thread";
-  const threadRow: CodeThread | null = threadId ? (listed ?? (thread.data ? { id: threadId, title, createdAt: "", updatedAt: "", turns: turns.length, last: last ? { id: last.id, status: last.status, engine: last.provider, model: last.model } : null, place: placeInfo } : null)) : null;
-  const folderOpen = place.folder && onOpenFolder ? () => onOpenFolder({ deviceId: place.deviceId, folder: place.folder! }) : null;
   const go = navigate.go;
   const stop = async () => {
     if (!live) return;
@@ -298,81 +288,6 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
 
   return (
     <div className="agent-view flex min-h-0 min-w-0 flex-1 flex-col" data-testid="agent-view">
-      <div
-        className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-sidebar px-2 text-[12.5px]"
-        data-testid="agent-threadbar"
-        onContextMenu={(event) => {
-          if (!threadRow) return;
-          openContextMenu(event, () =>
-            threadMenu(threadRow, {
-              open: () => undefined,
-              rename: viewOnly ? null : () => setRenaming(true),
-              pinned: pinned.includes(threadRow.id),
-              togglePin: () => setPinned((rows) => (rows.includes(threadRow.id) ? rows.filter((row) => row !== threadRow.id) : [threadRow.id, ...rows])),
-              openFolder: folderOpen,
-              newHere: () => onThread(null),
-              remove: () => remove.mutate(threadRow.id),
-              stop: live ? () => void stop() : null,
-              viewOnly,
-            }),
-          );
-        }}
-      >
-        <AgentIcon size={14} className={cx("mx-1 shrink-0", live ? "agent-live-mark" : "text-muted")} aria-hidden />
-        {renaming && threadId ? (
-          <TitleField
-            title={title}
-            onDone={(next) => {
-              setRenaming(false);
-              if (next && next !== title) rename.mutate({ id: threadId, title: next });
-            }}
-          />
-        ) : (
-          <button type="button" className="min-w-0 truncate text-left font-medium" title={threadId && !viewOnly ? "Double-click to rename" : title} onDoubleClick={() => threadId && !viewOnly && setRenaming(true)}>
-            {title}
-          </button>
-        )}
-        {pinned.includes(threadId ?? "") ? <Pin size={11} className="shrink-0 text-faint" aria-label="Pinned" /> : null}
-        {live ? <span className="agent-shimmer shrink-0 text-[11.5px]">{live.status === "waiting_approval" ? "Waiting for you" : "Working"}</span> : null}
-        <div className="flex-1" />
-        {folderOpen ? (
-          <button type="button" className="agent-chip" onClick={folderOpen} title="Open this folder in the editor">
-            <ExternalLink size={12} aria-hidden /> Editor
-          </button>
-        ) : null}
-        {threadId && !viewOnly ? (
-          <Popover
-            width={220}
-            align="right"
-            trigger={(open, toggle) => (
-              <button type="button" className="icon-btn h-7 w-7" aria-haspopup="menu" aria-expanded={open} aria-label="Thread actions" title="Thread actions" onClick={toggle}>
-                <MoreHorizontal size={14} />
-              </button>
-            )}
-          >
-            {(close) => (
-              <div className="py-1" role="menu">
-                <MenuItem onClick={() => { close(); setRenaming(true); }}>
-                  <Pencil size={13} /> Rename
-                </MenuItem>
-                <MenuItem onClick={() => { close(); setPinned((rows) => (rows.includes(threadId) ? rows.filter((row) => row !== threadId) : [threadId, ...rows])); }}>
-                  <Pin size={13} /> {pinned.includes(threadId) ? "Unpin" : "Pin to the top"}
-                </MenuItem>
-                {!live ? (
-                  <MenuItem onClick={() => { close(); remove.mutate(threadId); }}>
-                    <Trash2 size={13} /> Delete thread
-                  </MenuItem>
-                ) : null}
-              </div>
-            )}
-          </Popover>
-        ) : null}
-        {onClose ? (
-          <button type="button" className="icon-btn h-7 w-7" aria-label="Close the thread" title="Close" onClick={onClose}>
-            <X size={14} />
-          </button>
-        ) : null}
-      </div>
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-y-auto"
@@ -456,32 +371,6 @@ function followUps(turn: CodeTurn, tasks: Array<{ id: string; label: string }>):
   if (turn.files?.length) rows.push({ text: "Run the tests and fix what fails", mentions: [] });
   if (!tasks.length) rows.push({ text: "Make a task on my board for what is left to do", mentions: [] });
   return rows.slice(0, 3);
-}
-
-function TitleField({ title, onDone }: { title: string; onDone: (title: string | null) => void }) {
-  const [draft, setDraft] = useState(title);
-  const done = useRef(false);
-  const finish = (value: string | null) => {
-    if (done.current) return;
-    done.current = true;
-    onDone(value);
-  };
-  return (
-    <input
-      autoFocus
-      value={draft}
-      maxLength={200}
-      aria-label="Thread name"
-      className="field h-7 min-w-0 max-w-[420px] flex-1 px-2 text-[12.5px]"
-      onChange={(event) => setDraft(event.target.value)}
-      onFocus={(event) => event.currentTarget.select()}
-      onBlur={() => finish(draft.trim() || null)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") finish(draft.trim() || null);
-        else if (event.key === "Escape") finish(null);
-      }}
-    />
-  );
 }
 
 function EmptyThread({ place, placeName }: { place: ThreadPlace; placeName: string }) {
@@ -702,7 +591,7 @@ function Turn({
         <div className="flex flex-wrap gap-1.5" data-testid="agent-followups">
           {suggestions.map((row) => (
             <button key={row.text} type="button" className="agent-suggestion" onClick={() => onSuggest(row.text, row.mentions)} title="Put this in the message box">
-              <Sparkles size={11} className="mr-1 inline-block text-accent" aria-hidden />
+              <CornerDownRight size={11} className="mr-1 inline-block text-accent" aria-hidden />
               {row.text.replace(/@task:/g, "")}
             </button>
           ))}
@@ -1017,9 +906,7 @@ function ReplyActions({ turn, threadId, title, reply, tasks, viewOnly }: { turn:
       </button>
       {viewOnly ? null : (
         <>
-          {keepMenu("Keep on a page", "page", NotebookPen, "Keep this reply on a page, marked as the agent's")}
-          {keepMenu("Add to a task", "task", CheckSquare, "Put this reply on a new task on a board, or on a task you have")}
-          {keepMenu("More", "meeting", MoreHorizontal, "Keep it in meeting notes or a deliverable")}
+          {keepMenu("Keep", "page", NotebookPen, "Keep this reply on a page, a task, meeting notes or a deliverable")}
         </>
       )}
       {!viewOnly
@@ -1404,8 +1291,8 @@ function Composer({
                 void send(working && (event.metaKey || event.ctrlKey) ? "replace" : working ? "steer" : "send");
               }
             }}
-            placeholder={viewOnly ? "View only" : working ? "Steer it: say what to change, Enter sends" : `Ask ${agent?.label ?? "your agent"} to change the code or make a page, board or plot. @ to mention`}
-            aria-label="Message to the agent"
+            placeholder={viewOnly ? "View only" : undefined}
+            aria-label={working ? "Steer the agent: say what to change" : `Message ${agent?.label ?? "your agent"}`}
             className="block w-full resize-none bg-transparent px-3 pt-1.5 text-[13.5px] leading-6 outline-none placeholder:text-faint"
           />
           <MentionPopover menu={menu} />

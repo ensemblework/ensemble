@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 
 /**
  * The left half of sign-in and sign-up. Decorative only: a slow context graph and
@@ -59,7 +59,7 @@ export function AuthBackdrop() {
         </div>
         <div className="auth-card-ui auth-card-ask">
           <div className="auth-card-row">
-            <Sparkles size={13} />
+            <MessageSquareText size={13} />
             <span>
               <b>@ensemble</b> summarize this page
             </span>

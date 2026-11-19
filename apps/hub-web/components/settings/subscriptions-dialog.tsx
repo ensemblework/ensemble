@@ -1,6 +1,7 @@
 "use client";
 
-import { Search, Sparkles, X } from "lucide-react";
+import { Search, X } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { useMemo, useState, type ReactNode } from "react";
 import { appWithoutAgent, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import type { SubscriptionComputer } from "@/lib/api";
@@ -85,7 +86,7 @@ export function SubscriptionsDialog({
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-3.5">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Sparkles size={15} className="text-accent" aria-hidden />
+              <AgentIcon size={15} className="text-accent" aria-hidden />
               <span className="text-[15px] font-semibold">AI subscriptions</span>
               <Tag tone={signedIn ? "green" : "gray"}>{signedIn ? `${signedIn} signed in` : "none signed in"}</Tag>
             </div>

@@ -103,9 +103,14 @@ export function effortName(level: string): string {
 
 const CONTEXT_NAME: Record<ContextTier, string> = { default: "Standard", long_context: "Long context" };
 
-/** "Long context · 922K (long context)" */
+/** "922K": the size alone, as the agent's app names it; "Long context" for one that gives no size. */
 export function contextChoice(context: ModelContext): string {
-  return `${CONTEXT_NAME[context.id]} · ${context.label}`;
+  return context.tokens ? tokenSize(context.tokens) : context.label.replace(/\s*\([^)]*\)\s*$/, "") || CONTEXT_NAME[context.id];
+}
+
+/** For screen readers and the tooltip: "Long context, 922K". */
+export function contextChoiceName(context: ModelContext): string {
+  return `${CONTEXT_NAME[context.id]}, ${contextChoice(context)}`;
 }
 
 function tokenSize(tokens: number): string {

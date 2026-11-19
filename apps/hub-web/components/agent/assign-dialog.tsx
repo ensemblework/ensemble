@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Cloud, Eye, FolderOpen, GitBranch, GitPullRequest, Hand, Lock, Monitor, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Cloud, FolderOpen, GitBranch, GitPullRequest, Hand, Lock, MessageCircleQuestion, Monitor, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ENGINE_LABELS, isCodeEngine, type CodeEngine, type RunProfile } from "@ensemble/shared-types";
@@ -92,8 +92,8 @@ function WithCode({ text }: { text: string }) {
 
 /** The three ways a run treats the person, as tiles. Nothing a mode covers is refused; Ensemble's floor (keys, system files, its own code) always holds. */
 const MODES: Array<{ id: Mode; title: string; text: string; icon: typeof Hand }> = [
-  { id: "ask", title: "Ask", text: "Asks before commands and edits. Reading goes ahead.", icon: Hand },
-  { id: "review", title: "Review only", text: "Works freely in its folder. Asks you decisions, and once before working in another folder.", icon: Eye },
+  { id: "ask", title: "Ask", text: "Asks before commands and edits. Reading goes ahead.", icon: MessageCircleQuestion },
+  { id: "review", title: "Review only", text: "Works freely in its folder. Asks you decisions, and once before working in another folder.", icon: Hand },
   { id: "unattended", title: "Run unattended", text: "Never waits for you. Works across your workspace and folders; keys, system files and Ensemble's code stay off limits.", icon: AgentIcon },
 ];
 
@@ -796,6 +796,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     codeRun && !runSandboxed ? "no sandbox" : null,
     !network && !prOn ? "internet off" : null,
     outside ? `outside: ${outside}` : null,
+    toolsOff.length ? "some apps off" : null,
     appMode ? `opens in ${chosen?.name ?? "its app"}` : null,
   ].filter(Boolean);
 
@@ -1036,11 +1037,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           </div>
         ) : null}
 
-        <div>
-          <Label tip="Which connected apps this run may use. Starts from the run profile; a change here is for this run only. Save it to the profile with Save to.">Connected-app tools</Label>
-          <ToolsPicker scope="run" variant="field" value={toolsOff} onChange={setToolsOff} />
-        </div>
-
         <div className="rounded-lg border border-line">
           <button type="button" onClick={() => setMore(!more)} aria-expanded={more} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[12.5px] font-medium text-muted hover:text-ink">
             <ChevronRight size={13} className={cx("transition-transform", more && "rotate-90")} /> More options
@@ -1048,6 +1044,10 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           </button>
           {more ? (
             <div className="space-y-4 border-t border-line px-3 pb-3 pt-3" data-testid="assign-more">
+              <div>
+                <Label tip="Which connected apps this run may use. Starts from the run profile; a change here is for this run only. Save it to the profile with Save to.">Connected-app tools</Label>
+                <ToolsPicker scope="run" variant="field" value={toolsOff} onChange={setToolsOff} />
+              </div>
               <div>
                 <Label>Instructions for this attempt</Label>
                 <textarea

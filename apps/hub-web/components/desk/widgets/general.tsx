@@ -1,5 +1,6 @@
 "use client";
-import { Sun, CircleCheck, Sunrise, Crosshair, Sparkles, Package, Users, AlarmClock, Video, Coffee, Pin } from "lucide-react";
+import { Sun, CircleCheck, Sunrise, Crosshair, Package, Users, AlarmClock, Video, Coffee, Pin, Lightbulb } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { Tile, Num, Ring, Av, AvStack, Sk, type WP } from "../ui";
 
 const T0 = 9, T1 = 19;
@@ -45,7 +46,7 @@ export function YourDay(p: WP) {
               background: b.k === "focus" ? "linear-gradient(135deg, rgb(var(--accent-rgb) / 0.35), rgb(var(--accent-rgb) / 0.18))" : b.k === "meet" ? "rgba(126,184,201,0.2)" : b.k === "agent" ? "rgba(201,164,224,0.16)" : "transparent",
               border: b.k === "break" ? "1px dashed rgba(243,238,230,0.12)" : "none", color: b.k === "break" ? "var(--faint)" : "var(--ink)",
               opacity: b.e < 11.33 ? 0.5 : 1 }}>
-              {b.k === "meet" ? <Video size={10} style={{ flexShrink: 0 }} /> : b.k === "break" ? <Coffee size={10} style={{ flexShrink: 0 }} /> : b.k === "agent" ? <Sparkles size={10} style={{ flexShrink: 0 }} /> : null}
+              {b.k === "meet" ? <Video size={10} style={{ flexShrink: 0 }} /> : b.k === "break" ? <Coffee size={10} style={{ flexShrink: 0 }} /> : b.k === "agent" ? <AgentIcon size={10} style={{ flexShrink: 0 }} /> : null}
               {b.k === "meet" ? <span style={{ position: "absolute", left: "calc(100% + 6px)", whiteSpace: "nowrap", color: b.e < 11.33 ? "var(--faint)" : "var(--ink-2)", fontWeight: 500 }}>{b.t}</span> : <span className="trunc">{b.t}</span>}
             </div>
           ))}
@@ -113,7 +114,7 @@ const PROPS = [
 ];
 export function Proposals(p: WP) {
   return (
-    <Tile title="Proposals" icon={Sparkles} c={p.c ?? 6} r={p.r ?? 3} meta="4 waiting for a yes" hover={p.hover}>
+    <Tile title="Proposals" icon={Lightbulb} c={p.c ?? 6} r={p.r ?? 3} meta="4 waiting for a yes" hover={p.hover}>
       <div className="col" style={{ gap: 7 }}>
         {PROPS.map((x, i) => (
           <div key={x.t} className="row gap10" style={{ padding: "7px 10px", borderRadius: 10, background: i === 0 ? "rgb(var(--accent-rgb) / 0.08)" : "rgba(243,238,230,0.03)", border: `1px solid ${i === 0 ? "rgb(var(--accent-rgb) / 0.3)" : "rgba(243,238,230,0.06)"}` }}>

@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Bell, CircleUser, Database, Keyboard, Layers, Palette, Plug, Sparkles, Users, type LucideIcon } from "lucide-react";
+import { Bell, CircleUser, Database, Keyboard, Layers, Palette, Plug, Users, type LucideIcon, MessageSquareText } from "lucide-react";
 import { Fragment, useEffect, useRef, type ComponentType } from "react";
 import { AgentIcon } from "../agent-icon";
 import { cx } from "../ui";
@@ -13,7 +13,7 @@ const ICONS: Record<SettingsTab, LucideIcon | ComponentType<{ size?: number; cla
   appearance: Palette,
   notifications: Bell,
   shortcuts: Keyboard,
-  assistant: Sparkles,
+  assistant: MessageSquareText,
   agents: AgentIcon,
   connections: Plug,
   spaces: Layers,

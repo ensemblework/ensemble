@@ -182,7 +182,7 @@ test("one picker: the person's own AI plans on a paired computer, each model wit
     await picker.pick("Claude Sonnet 4.6");
     let tuning = await picker.tuning();
     assert.deepEqual(tuning.levels(), ["Auto (High)", "Low", "Medium", "High", "Max"]);
-    assert.deepEqual(tuning.windows(), ["Standard · 200K", "Long context · 1M"]);
+    assert.deepEqual(tuning.windows(), ["200K", "1M"], "only the sizes this model offers");
     assert.equal(document.querySelector('[data-testid="engine-fast"]'), null, "Sonnet 4.6 has no fast mode");
     await picker.closeTuning();
     await picker.open();
@@ -216,9 +216,9 @@ test("one picker: the person's own AI plans on a paired computer, each model wit
     assert.doesNotMatch(picker.trigger().textContent ?? "", /context|200K/, "context sizes are the thinking button's");
     tuning = await picker.tuning();
     assert.deepEqual(tuning.levels(), ["Auto (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
-    assert.deepEqual(tuning.windows(), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    assert.deepEqual(tuning.windows(), ["200K", "922K"], "another model, its own sizes");
     await tuning.choose("thinking", "Extra high");
-    await tuning.choose("context window", "Long context · 922K (long context)");
+    await tuning.choose("context window", "922K");
     await picker.closeTuning();
 
     await picker.open();
@@ -229,7 +229,7 @@ test("one picker: the person's own AI plans on a paired computer, each model wit
     tuning = await picker.tuning();
     assert.equal(document.querySelector('[aria-label="Thinking and context: thinking"] [aria-checked="true"]')?.textContent?.trim(), "Auto (Medium)", "Haiku dropped the level it lacks");
     await tuning.choose("thinking", "High");
-    await tuning.choose("context window", "Long context · 922K (long context)");
+    await tuning.choose("context window", "922K");
     await picker.closeTuning();
 
     const assign = [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;

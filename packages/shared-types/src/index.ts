@@ -36,5 +36,6 @@ export * from "./seal.js";
 export * from "./takeover.js";
 export * from "./mcp-oauth.js";
 export * from "./tools-off.js";
+export * from "./thread-title.js";
 
 export * from "./version.js";

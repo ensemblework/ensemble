@@ -69,25 +69,8 @@ export function toolPath(args: string, folder: string): string | null {
   return null;
 }
 
-/**
- * A thread's first name, from its first message, until a model names it (hub-api routes/code-threads.ts):
- * the first sentence without greetings and "can you", at most 7 words, cut at a word.
- */
-export function threadTitle(message: string): string {
-  const line = message.trim().split("\n").find((row) => row.trim())?.trim() ?? "";
-  let plain = line.replace(/\s+/g, " ").replace(/@[a-z]+:/g, "");
-  for (let round = 0; round < 4; round += 1) {
-    const next = plain.replace(OPENERS, "");
-    if (next === plain) break;
-    plain = next;
-  }
-  plain = (plain.split(/(?<=[.!?])\s/)[0] ?? plain).replace(/[\s.:;,!?]+$/, "");
-  if (!plain) return "New thread";
-  let title = plain.split(" ").slice(0, 7).join(" ");
-  if (title.length > 60) title = title.slice(0, 60).replace(/\s+\S*$/, "") || title.slice(0, 60);
-  for (let round = 0; round < 3; round += 1) title = title.replace(/\s+(?:and|or|but|then|to|of|in|on|for|with|the|a|an|as|it|so)$/i, "");
-  return title.charAt(0).toUpperCase() + title.slice(1);
-}
+/** A thread's first name, from its first message (@ensemble/shared-types thread-title.ts). */
+export { threadTitle } from "@ensemble/shared-types";
 
 /** 1234 → "1.2k". */
 export function compactCount(value: number): string {
@@ -507,8 +490,6 @@ export function recordLinks(text: string): RecordLink[] {
 }
 
 /** Words a first message often opens with that say nothing about the work. */
-const OPENERS = /^(?:(?:hi|hello|hey|hiya|yo|ok(?:ay)?|so|please|pls|kindly|now|then|also|and|just)\b[\s,!.:-]*|(?:can|could|would|will) you\s+(?:please\s+)?|(?:i\s+(?:want|need|would like)\s+(?:you\s+)?to)\s+|(?:let'?s|lets)\s+|help me\s+(?:to\s+)?)/i;
-
 export type DiffLine = { sign: "+" | "-" | " " | "@"; text: string };
 
 const MAX_DIFF_LINES = 200;

@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, Pause, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Pause, Play, RotateCcw, X, MessageCircleQuestion } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -173,7 +173,7 @@ function Walkthrough({ layer, steps, index, profile, reduced, name, onSkip, onGo
         <div className="walkthrough-navigation"><button type="button" className="walkthrough-back" disabled={index === 0} aria-disabled={transitioning || undefined} onClick={() => go(index - 1)}><ArrowLeft size={15} /><span>Back</span></button><button ref={next} type="button" className="walkthrough-next" data-tour-next aria-disabled={transitioning || undefined} onClick={() => { if (!transitioning) { if (final) onFinish(false); else go(index + 1); } }}>{final ? "Done" : "Next"}{final ? <Check size={15} /> : <ArrowRight size={15} />}</button></div>
       </footer>
       <span className="sr-only" aria-live="polite" aria-atomic="true">Chapter {index + 1} of {steps.length}. {current.title}. {current.body}</span>
-      {final && <button type="button" className="walkthrough-ask" onClick={() => onFinish(true)}><Sparkles size={13} />Try my first question</button>}
+      {final && <button type="button" className="walkthrough-ask" onClick={() => onFinish(true)}><MessageCircleQuestion size={13} />Try my first question</button>}
     </div>
   </div>;
 }

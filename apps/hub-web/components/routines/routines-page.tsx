@@ -6,7 +6,7 @@
  * and opens its conversation in the assistant. New ones start from a blank card or an idea.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarRange, Inbox, MessageSquare, Moon, Pencil, Play, Plus, Repeat, Sparkles, Sunrise, Trash2, type LucideIcon } from "lucide-react";
+import { CalendarRange, Inbox, MessageSquare, Moon, Pencil, Play, Plus, Repeat, Sunrise, Trash2, type LucideIcon, Lightbulb } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -435,7 +435,7 @@ export function RoutinesPage() {
           {enabled && unused.length ? (
             <section className="mt-8">
               <h2 className="mb-2.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-faint">
-                <Sparkles size={12} aria-hidden /> Start from an idea
+                <Lightbulb size={12} aria-hidden /> Start from an idea
               </h2>
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {unused.map(({ icon: Icon, draft, blurb }) => (

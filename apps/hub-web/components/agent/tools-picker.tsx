@@ -72,7 +72,7 @@ export function ToolsPicker({
         if (variant === "chip") {
           return (
             <button {...shared} className="agent-chip" aria-label={`Tools, ${label}`}>
-              <Plug size={12} aria-hidden /> <span className="max-md:hidden">Tools</span>
+              <Plug size={13} aria-hidden />
               {count ? <span className="tools-count">{count}</span> : null}
             </button>
           );
