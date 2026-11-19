@@ -19,5 +19,13 @@ test('release checks tolerate Windows checkout line endings and synchronization 
     assert.match(run('--sync'),/synchronized/);assert.match(run(),/versions match/);
     assert.equal(JSON.parse(await readFile(join(root,'apps/cli/package.json'),'utf8')).version,'1.2.3');
     assert.match(await readFile(join(root,'apps/desktop/src-tauri/Cargo.lock'),'utf8'),/name = "ensemble-desktop"\nversion = "1.2.3"/);
+    assert.match(await readFile(join(root,'packages/shared-types/src/version.ts'),'utf8'),/DESKTOP_VERSION = "1\.2\.3"/);
+    // A CLI-only release keeps the download page on the last desktop release.
+    await writeFile(join(root,'release.json'),JSON.stringify({version:'1.2.4',desktop:'1.2.3'}));
+    assert.match(run('--sync'),/synchronized/);
+    const shared=await readFile(join(root,'packages/shared-types/src/version.ts'),'utf8');
+    assert.match(shared,/ENSEMBLE_VERSION = "1\.2\.4"/);assert.match(shared,/DESKTOP_VERSION = "1\.2\.3"/);
+    await writeFile(join(root,'release.json'),JSON.stringify({version:'1.2.4',desktop:'1.3.0'}));
+    assert.throws(()=>run(),/Command failed/);
   } finally {await rm(root,{recursive:true,force:true});}
 });

@@ -383,7 +383,7 @@ A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `
 
 ### 7. Releases
 
-Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). Jobs:
+Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). A CLI release without a desktop one keeps `desktop` in `release.json` at the last desktop release, so the download page's desktop links stay valid. Jobs:
 
 1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`, `windows-11-arm`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine; on Windows, `ensemble.exe` and the sidecar's `node.exe` must be built for the runner's processor). On Windows, `scripts/smoke-install-ps1.mjs` then runs `install.ps1` against the archive on a local server and runs the installed command; on Arm it also checks the fallback to x64 for a release without an arm64 archive.
 2. **release**: `.deb`/`.rpm` with nfpm, the npm tarball, `SHA256SUMS.txt`, metadata from `packaging/render.mjs` (Homebrew formula, Scoop manifest, winget manifests, nfpm configs, AUR `PKGBUILD` and `.SRCINFO`), and a GitHub release created with `--latest=false` so the desktop updater's `releases/latest` is never a CLI release. Installers find the newest `cli-v*` release through the GitHub API.

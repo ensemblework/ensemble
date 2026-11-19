@@ -17,6 +17,7 @@ import { ArrowLeft, ChevronRight, Folder, FolderGit2, FolderPlus, Home, Laptop, 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, Spinner, cx } from "@/components/ui";
 import type { CodeBrowse, CodeBrowsePlace } from "@/lib/api";
+import { repoViews } from "@/lib/code-repos";
 import { codeApiFor, type CodeTarget } from "@/lib/code-target";
 
 const PLACE_ICON: Record<CodeBrowsePlace["kind"], typeof Folder> = { home: Home, desktop: Monitor, documents: FileText, projects: Folder, workspace: Boxes, code: FolderGit2 };
@@ -82,6 +83,10 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback }:
   const [startRepo, setStartRepo] = useState(true);
   const list = useRef<HTMLDivElement>(null);
   const browse = useQuery({ queryKey: ["code-browse", key, path], queryFn: () => code.browse(path), retry: false, staleTime: 5_000, placeholderData: (previous) => previous });
+  const old = tooOldForPicker(browse.error);
+  // An older computer cannot browse: offer the repositories it already knows instead.
+  const known = useQuery({ queryKey: key === "local" ? ["code-repos"] : ["code-repos", key], queryFn: () => code.codeRepos(), enabled: old && !fallback.length, retry: false, staleTime: 60_000 });
+  const knownRows = fallback.length ? fallback : repoViews(known.data).filter((repo) => repo.kind !== "run").map((repo) => ({ path: repo.path, name: repo.name }));
   const data: CodeBrowse | undefined = browse.data;
   const folder = data?.folder ?? null;
   const entries = useMemo(() => {
@@ -130,13 +135,14 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback }:
     use.mutate();
   };
 
-  if (browse.error && tooOldForPicker(browse.error)) {
+  if (old) {
     return (
-      <div className="p-4 text-[13px]">
+      <div className="p-4 text-[13px]" data-testid="folder-picker-old">
         <p className="text-muted">{(browse.error as Error).message}</p>
-        {fallback.length ? (
+        {known.isLoading ? <div className="flex justify-center py-4"><Spinner size={12} /></div> : null}
+        {knownRows.length ? (
           <div className="mt-3 max-h-[50dvh] overflow-y-auto rounded-lg border border-line">
-            {fallback.map((row) => (
+            {knownRows.map((row) => (
               <button key={row.path} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-hover" onClick={() => onPick({ path: row.path, name: row.name })}>
                 <FolderGit2 size={14} className="shrink-0 text-muted" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{row.name}</span>
@@ -151,7 +157,7 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback }:
 
   const steps = folder && data ? crumbs(folder.path, data.places) : [];
   const placeOn = (place: CodeBrowsePlace) => folder && (folder.path === place.path || steps[0]?.path === place.path);
-  const error = (use.error ?? make.error ?? (browse.error && !tooOldForPicker(browse.error) ? browse.error : null)) as Error | null;
+  const error = (use.error ?? make.error ?? browse.error) as Error | null;
 
   return (
     <div className="folder-picker" data-testid="folder-picker">
