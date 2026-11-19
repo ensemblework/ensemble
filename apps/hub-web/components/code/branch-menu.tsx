@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, GitBranch, Plus, Search } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Popover, Spinner, cx } from "@/components/ui";
+import { tooOldForPicker } from "@/components/code/folder-picker";
 import { codeApiFor, type CodeTarget } from "@/lib/code-target";
 import { relative } from "@/lib/format";
 
@@ -53,7 +54,9 @@ export function BranchMenu({
   });
   const needle = query.trim().toLowerCase();
   const rows = (branches.data?.branches ?? []).filter((row) => !needle || row.name.toLowerCase().includes(needle)).slice(0, 80);
-  const error = (switchTo.error ?? create.error ?? branches.error) as Error | null;
+  // A computer on an older Ensemble lists no branches: say so quietly and offer nothing to change.
+  const old = tooOldForPicker(branches.error) ? (branches.error as Error).message : null;
+  const error = (switchTo.error ?? create.error ?? (old ? null : branches.error)) as Error | null;
   return (
     <Popover
       width={300}
@@ -77,6 +80,7 @@ export function BranchMenu({
             {branches.isFetching || switchTo.isPending || create.isPending ? <Spinner size={11} /> : null}
           </div>
           {error ? <p className="px-3 pb-1.5 text-[12px] text-danger [overflow-wrap:anywhere]">{error.message}</p> : null}
+          {old ? <p className="px-3 pb-1.5 text-[12px] text-muted [overflow-wrap:anywhere]" data-testid="branch-menu-old">{old}</p> : null}
           {disabled ? <p className="px-3 pb-1.5 text-[12px] text-muted">{disabled}</p> : null}
           {(branches.data?.branches.length ?? 0) > 8 ? (
             <label className="compound-field mx-1.5 mb-1 flex h-8 items-center gap-1.5 rounded-md border border-line px-2">
@@ -103,7 +107,7 @@ export function BranchMenu({
             ))}
             {branches.data && !rows.length ? <p className="px-3 py-1.5 text-[12px] text-muted">No branch matches.</p> : null}
           </div>
-          {disabled ? null : (
+          {disabled || old ? null : (
             <div className="mt-1 border-t border-line pt-1">
               {naming ? (
                 <div className="flex items-center gap-1.5 px-1.5 py-1">

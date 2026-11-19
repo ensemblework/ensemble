@@ -1306,6 +1306,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
         onClose={() => setPicking(false)}
         target={target}
         computerName={placeName}
+        fallback={repoViews(knownRepos.data).filter((repo) => repo.kind !== "run").map((repo) => ({ path: repo.path, name: repo.name }))}
         onPick={(folder) => {
           setPicking(false);
           navigate.go(agentHref({ deviceId: here.deviceId, folder: folder.path }, { view: "editor" }));

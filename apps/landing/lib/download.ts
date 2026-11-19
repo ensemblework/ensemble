@@ -8,9 +8,9 @@ export const WINGET_ACCEPTED = false;
 export const NPM_PUBLISHED = false;
 export const AUR_AVAILABLE = false;
 
-/** All installers and the site read the same release number. */
-export { ENSEMBLE_VERSION as DESKTOP_VERSION } from "@ensemble/shared-types/version";
-import { ENSEMBLE_VERSION as DESKTOP_VERSION } from "@ensemble/shared-types/version";
+/** The desktop release the site links: release.json's number, or its `desktop` while only the CLI is newer. */
+export { DESKTOP_VERSION } from "@ensemble/shared-types/version";
+import { DESKTOP_VERSION } from "@ensemble/shared-types/version";
 
 export type DesktopFile = { label: string; file: string; note: string; primary?: boolean };
 
