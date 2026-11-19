@@ -125,6 +125,7 @@ const RULES: Rule[] = [
   ["*", "/api/diagrams*", "shared"],
   ["*", "/api/plots*", "shared"],
   ["*", "/api/skills*", "shared"],
+  ["POST", "/api/documents/:id/google-drive", "owner"],
   ["*", "/api/documents*", "shared"],
   // Repositories are connected with the owner's GitHub key: members read them, only the owner links them.
   ["GET", "/api/repos*", "shared"],

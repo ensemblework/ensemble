@@ -97,6 +97,7 @@ test("every Google tool is an app tool with a short description, and writes are 
     "docs_append",
     "docs_create",
     "docs_replace_text",
+    "drive_export_file",
     "sheets_append_rows",
     "sheets_create",
     "sheets_update_range",

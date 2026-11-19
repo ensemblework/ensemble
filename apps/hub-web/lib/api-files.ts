@@ -64,6 +64,7 @@ export const filesApi = {
     return response.arrayBuffer();
   },
   downloadUrl: (id: string) => `${API}/api/documents/${encode(id)}/original`,
+  exportToGoogleDrive: (id: string) => post<{ file: { id: string; name: string; link: string } }>(`/api/documents/${encode(id)}/google-drive`, {}),
   text: (id: string, offset = 0) => get<{ text: string; offset: number; total: number; nextOffset?: number }>(`/api/documents/${encode(id)}/text?offset=${offset}`),
   /** Replaces the file's bytes: a saved CSV, or an .xls made into an .xlsx (then filename and mediaType change too). */
   replace: (id: string, input: { bytes: Uint8Array; filename?: string; mediaType?: string }) =>

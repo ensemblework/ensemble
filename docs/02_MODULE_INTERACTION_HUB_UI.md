@@ -724,7 +724,7 @@ Pages and task documents keep their live step/rebase protocol (§13); boards, di
 | Connectors | `/api/connectors/catalog`, `/api/connectors/:provider/start`, `/callback`, `/token`, `DELETE /api/connectors/:provider`, `PUT /api/connectors/:id/products`, `/api/connectors/apps`; `routes/connectors.ts`. `/api/connections/:id/sync`, `/api/fetch`; `routes/system.ts` |
 | Vendor MCP | `/api/mcp-connections`, `/api/mcp-connections/:id`, `/api/mcp-connections/callback`, `/api/mcp-connections/:id/refresh-tools`; `routes/mcp-connections.ts` |
 | Connected items | `/api/app-items/*`; operations in [31](31_CONNECTORS_IN_USE.md#6-api) |
-| Files | `/api/documents` (`purpose: "page-image"` for images in pages, [32 §6](32_FILES.md#images-in-pages)), `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts`. `/api/documents/import`; `routes/file-imports.ts` |
+| Files | `/api/documents` (`purpose: "page-image"` for images in pages, [32 §6](32_FILES.md#images-in-pages)), `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`, `/google-drive` (owner only); `routes/files.ts`. `/api/documents/import`; `routes/file-imports.ts` |
 | Imports | `/api/imports/*`; preview/job/undo contract in [27](27_IMPORTS.md#6-api) |
 | Plots and diagrams | `/api/plots/*`, `/api/diagrams/*`; `routes/plots.ts`, `diagrams.ts`, [20](20_PLOTS_DESIGN.md) |
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |

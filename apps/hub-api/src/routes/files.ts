@@ -17,6 +17,7 @@ import { pageFromFile, pageTitle, serverPageFormat } from "../files/page.js";
 import { ORIGINAL_SELECT, originalBytes } from "../files/originals.js";
 import { sendOriginal } from "../files/serve.js";
 import { assertNewPageImages, assertPageImage } from "../files/page-image.js";
+import { exportFileToGoogleDrive } from "../files/google-drive.js";
 import { assertNewFile, FILE_SELECT, FileError, fileRecord, fileStyle, fileTooLarge, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
 
 const TEXT_DEFAULT = 6000;
@@ -169,6 +170,13 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/documents/:id/original", async (request, reply) => {
     const { id } = request.params as { id: string };
     return sendOriginal(prisma, request, reply, request.userId, id, "File not found.");
+  });
+
+  app.post("/api/documents/:id/google-drive", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const file = await exportFileToGoogleDrive(prisma, request.userId, id);
+    await appendLedger({ userId: request.userId, actor: "me", action: "file.export.google_drive", payload: { fileId: id } });
+    return reply.code(201).send({ file });
   });
 
   app.get("/api/documents/:id/text", async (request, reply) => {

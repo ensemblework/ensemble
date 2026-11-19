@@ -115,6 +115,44 @@ test("uploads keep the format's media type, read text right away, and list with 
   }
 });
 
+test("exports an owner's original bytes to their own Drive using drive.file", async (t) => {
+  const { saveAccount } = await import("../connectors/accounts.js");
+  const owner = await person("Google Drive exporter");
+  const contents = Uint8Array.of(0x50, 0x4b, 0x05, 0x06, ...new Uint8Array(18));
+  const file = await uploaded(owner, "archive.zip", contents, "application/zip");
+  const start = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id";
+  const upload = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=test-session";
+  let destination = upload;
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: URL, init: RequestInit) => {
+    calls.push(url.href);
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer drive-test-token");
+    assert.equal(init.redirect, "manual");
+    if (url.href === start) {
+      assert.equal(init.method, "POST");
+      assert.deepEqual(JSON.parse(String(init.body)), { name: "archive.zip" });
+      assert.equal(new Headers(init.headers).get("x-upload-content-type"), "application/zip");
+      return new Response(null, { headers: { location: destination } });
+    }
+    assert.equal(url.href, upload);
+    assert.equal(init.method, "PUT");
+    assert.deepEqual(new Uint8Array(Buffer.from(init.body as Buffer)), contents);
+    return Response.json({ id: "archive_copy" });
+  });
+  const send = (user: HttpUser, id = file.id) => user.inject({ method: "POST", url: `/api/documents/${id}/google-drive` });
+  assert.equal((await send(owner)).statusCode, 409);
+  assert.equal((await send(dev)).statusCode, 404);
+  assert.equal((await send(owner, MISSING_ID)).statusCode, 404);
+  assert.deepEqual(calls, []);
+  await saveAccount(owner.id, "google", { accessToken: "drive-test-token", expiresAt: new Date(Date.now() + 3600000), scopes: ["https://www.googleapis.com/auth/drive.file"], meta: { via: "oauth" } });
+  assert.deepEqual(await ok(send(owner), 201), { file: { id: "archive_copy", name: "archive.zip", link: "https://drive.google.com/open?id=archive_copy" } });
+  assert.deepEqual(calls, [start, upload]);
+  destination = "https://unrelated.example.test/upload/drive/v3/files?upload_id=test-session";
+  assert.equal((await send(owner)).statusCode, 424);
+  assert.deepEqual(calls, [start, upload, start]);
+  claim("POST /api/documents/:id/google-drive", "happy-path", "isolation", "unknown-id");
+});
+
 test("text is read in windows; the agents' copy has secrets redacted", async () => {
   const lines = Array.from({ length: 2000 }, (_, index) => `Line ${index} of the Fieldnote log`).join("\n");
   const log = await uploaded(mira, "field.log", `${lines}\ntoken: abcdefghijklmnop`);

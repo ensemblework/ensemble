@@ -3,6 +3,11 @@
 /** The small part of the Google Picker API Ensemble uses. */
 type PickerDoc = { id: string; name?: string };
 type PickerData = { action: string; docs?: PickerDoc[] };
+type DocsView = {
+  setIncludeFolders: (value: boolean) => DocsView;
+  setSelectFolderEnabled: (value: boolean) => DocsView;
+  setEnableDrives: (value: boolean) => DocsView;
+};
 type PickerBuilder = {
   addView: (view: unknown) => PickerBuilder;
   enableFeature: (feature: unknown) => PickerBuilder;
@@ -15,7 +20,7 @@ type PickerBuilder = {
   build: () => { setVisible: (visible: boolean) => void };
 };
 type PickerNamespace = {
-  DocsView: new (viewId?: unknown) => { setIncludeFolders: (value: boolean) => unknown; setSelectFolderEnabled: (value: boolean) => unknown };
+  DocsView: new (viewId?: unknown) => DocsView;
   PickerBuilder: new () => PickerBuilder;
   ViewId: { DOCS: unknown };
   Feature: { MULTISELECT_ENABLED: unknown };
@@ -67,11 +72,10 @@ export async function pickFromGoogleDrive(config: { apiKey: string; appId: strin
     throw new Error(PICKER_UNAVAILABLE);
   }
   return new Promise((resolve) => {
-    const view = new picker.DocsView(picker.ViewId.DOCS);
-    view.setIncludeFolders(true);
-    view.setSelectFolderEnabled(false);
+    const view = () => new picker.DocsView(picker.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(false);
     new picker.PickerBuilder()
-      .addView(view)
+      .addView(view())
+      .addView(view().setEnableDrives(true))
       .enableFeature(picker.Feature.MULTISELECT_ENABLED)
       .setTitle("Add files from Google Drive")
       .setOAuthToken(config.accessToken)
@@ -79,7 +83,7 @@ export async function pickFromGoogleDrive(config: { apiKey: string; appId: strin
       .setAppId(config.appId)
       .setOrigin(config.origin)
       .setCallback((data) => {
-        if (data.action === picker.Action.PICKED) resolve((data.docs ?? []).map((doc) => doc.id));
+        if (data.action === picker.Action.PICKED) resolve([...new Set((data.docs ?? []).map((doc) => doc.id))]);
         else if (data.action === picker.Action.CANCEL) resolve([]);
       })
       .build()

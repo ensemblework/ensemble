@@ -3,11 +3,12 @@
 /** @jsxImportSource react */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, ExternalLink, FilePlus2, Info, Maximize2, MoreHorizontal, Paperclip, Presentation, Trash2, X } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, FilePlus2, Info, Maximize2, MoreHorizontal, Paperclip, Presentation, Trash2, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { fileFormat, type FileRecord } from "@ensemble/shared-types";
+import { useSpaceAccess } from "@/lib/access";
 import { ApiError } from "@/lib/api";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
 import { pageWay, viewerFor, type ViewerKind } from "@/lib/files/formats";
@@ -40,8 +41,10 @@ export function FileScreen({ id }: { id: string }) {
   const router = useRouter();
   const client = useQueryClient();
   const toast = useToast();
+  const { guest } = useSpaceAccess();
   const record = useFileRecord(id);
   const [converting, setConverting] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
@@ -97,6 +100,18 @@ export function FileScreen({ id }: { id: string }) {
       toast(error instanceof Error ? error.message : "Could not make a page from this file.", { tone: "error" });
     } finally {
       setConverting(null);
+    }
+  };
+
+  const exportToDrive = async () => {
+    setExporting(true);
+    try {
+      const { file: copy } = await filesApi.exportToGoogleDrive(file.id);
+      toast("Saved a copy to Google Drive.", { tone: "ok", action: { label: "Open", run: () => { window.open(copy.link, "_blank", "noopener,noreferrer"); } } });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Could not save a copy to Google Drive.", { tone: "error" });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -189,33 +204,39 @@ export function FileScreen({ id }: { id: string }) {
           <button type="button" className="icon-btn hover:text-danger max-sm:hidden" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
             <Trash2 size={15} />
           </button>
-          {/* A phone keeps the name readable: the file's other actions share one menu. */}
           <Popover
             align="right"
             width={220}
-            className="sm:hidden"
+            className={guest ? "sm:hidden" : undefined}
             trigger={(open, toggle) => (
               <button type="button" className="icon-btn" aria-label="File actions" aria-expanded={open} onClick={toggle}>
-                <MoreHorizontal size={16} aria-hidden />
+                {exporting ? <Spinner size={14} /> : <MoreHorizontal size={16} aria-hidden />}
               </button>
             )}
           >
             {(close) => (
               <>
-                {way ? (
-                  <MenuItem disabled={Boolean(converting)} onClick={() => { close(); void convert(); }}>
-                    <FilePlus2 size={14} aria-hidden /> {keepsFormatting ? "Convert to a page" : "Make a page"}
+                {!guest ? (
+                  <MenuItem disabled={exporting} onClick={() => { close(); void exportToDrive(); }}>
+                    <Upload size={14} aria-hidden /> {exporting ? "Saving to Google Drive" : "Save copy to Google Drive"}
                   </MenuItem>
                 ) : null}
-                <MenuItem onClick={() => { close(); void downloadFile(file).catch((error: unknown) => toast(error instanceof Error ? error.message : "Could not download the file.", { tone: "error" })); }}>
-                  <Download size={14} aria-hidden /> Download
-                </MenuItem>
-                <MenuItem onClick={() => { close(); setAttaching(true); }}>
-                  <Paperclip size={14} aria-hidden /> Attach to a page
-                </MenuItem>
-                <MenuItem onClick={() => { close(); setDeleting(true); }}>
-                  <Trash2 size={14} aria-hidden /> Delete
-                </MenuItem>
+                <div className="sm:hidden">
+                  {way ? (
+                    <MenuItem disabled={Boolean(converting)} onClick={() => { close(); void convert(); }}>
+                      <FilePlus2 size={14} aria-hidden /> {keepsFormatting ? "Convert to a page" : "Make a page"}
+                    </MenuItem>
+                  ) : null}
+                  <MenuItem onClick={() => { close(); void downloadFile(file).catch((error: unknown) => toast(error instanceof Error ? error.message : "Could not download the file.", { tone: "error" })); }}>
+                    <Download size={14} aria-hidden /> Download
+                  </MenuItem>
+                  <MenuItem onClick={() => { close(); setAttaching(true); }}>
+                    <Paperclip size={14} aria-hidden /> Attach to a page
+                  </MenuItem>
+                  <MenuItem onClick={() => { close(); setDeleting(true); }}>
+                    <Trash2 size={14} aria-hidden /> Delete
+                  </MenuItem>
+                </div>
               </>
             )}
           </Popover>

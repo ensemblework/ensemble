@@ -224,7 +224,7 @@ Connecting an app or running Sync people adds no file or artifact. Files arrive 
 
 | Source | Imports | Needs |
 |---|---|---|
-| Google Drive | Any file; Google Docs, Sheets and Slides come as .docx, .xlsx and .pptx, Drawings as PDF. Google's export call stops at 10 MB, so larger ones come through the file's own export link (as Drive's File → Download does); when Google offers none, the message says how to download it from Google and upload it | Google Workspace connected with Drive on. With only "Drive, Docs, Sheets and Slides", Ensemble sees files it created or the person picked, so the dialog offers **Pick from Google Drive** (the Google Picker, when the server has `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER`) or "Search all of Drive" |
+| Google Drive | Ordinary files (including images and ZIPs) are copied as-is, subject to the import limits. Google Docs, Sheets and Slides come as .docx, .xlsx and .pptx, Drawings as PDF. For exports over 10 MB, Ensemble tries the file's own export link when Google supplies one | Turn on Drive under Google Workspace. **Pick from Google Drive** supports selecting multiple files in My Drive and Shared Drives with `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER` configured. With `drive.file`, **Search available files** only finds files picked or created by the app |
 | Gmail | Files attached to emails | Gmail switched on |
 | OneDrive | Any file | OneDrive switched on |
 | Outlook | File attachments | Outlook mail switched on |
@@ -232,6 +232,8 @@ Connecting an app or running Sync people adds no file or artifact. Files arrive 
 | Box | Any file | Box connected |
 
 Each state comes with one plain sentence, short numbered steps and a button to the right place in Settings → Connections: *ready*, *needs permission* (connected, but the product is off or the scope is missing), *not connected*, or *not set up* (whoever runs the server has not registered that app). Importing downloads the file through the person's own connection (25 MB at most; tokens never follow a redirect to another host) and saves it like an upload (`POST /api/documents/import`, `files/import.ts`, `download()` in `connectors/items/sources/*`).
+
+On a file, **File actions → Save copy to Google Drive** uploads its stored original to the owner's My Drive through the active Google connection. It uses `drive.file`, keeps the name and bytes, and never overwrites or shares files. The connected app write tool `drive_export_file` does the same for agents.
 
 Importing the same item again returns the copy already kept.
 
@@ -360,6 +362,7 @@ A coding agent can attach files for its owner to see with the run's result: scre
 | POST | `/api/documents` | `{ filename, mediaType, dataBase64, summarize?, tags?, purpose? }` → 201 `{ file, document }`; 400 empty, 413 over the size limit, 415 a program (§3). `purpose: "page-image"` applies the page-image checks and adds `image: { format, width, height }` ([§6](#images-in-pages)) |
 | GET | `/api/documents/:id` | → `{ file }` |
 | GET | `/api/documents/:id/original` | Bytes; Content-Type from the format table (HTML as text/plain, unknown as octet-stream), `nosniff`, a sandbox CSP, `attachment` with `filename*`, `ETag`/304, ranges |
+| POST | `/api/documents/:id/google-drive` | Owner only; → 201 `{ file: { id, name, link } }` for a new My Drive copy |
 | GET | `/api/documents/:id/text?offset=&limit=` | → `{ text, offset, total, nextOffset? }` (6,000 characters by default, at most 20,000) |
 | PUT | `/api/documents/:id/content` | `{ dataBase64, filename?, mediaType?, expectedSha256? }` → `{ file }` |
 | POST | `/api/documents/:id/cells` | `SheetPatch` (with `expectedSha256?`) → `{ file }` (.xlsx/.xlsm) |

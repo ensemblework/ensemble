@@ -50,10 +50,10 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
     console: "https://console.cloud.google.com/auth/clients",
     steps: [
       "This is once, for the person hosting Ensemble. Everyone else only presses Connect. The sign-in client (AUTH_GOOGLE_CLIENT_ID) works too: add the redirect URI below to it.",
-      "APIs & Services → Library: enable the Gmail API, Google Calendar API, Google Drive API, Google Docs API, Google Sheets API, Google Slides API and Google Picker API.",
-      "Google Auth Platform → Data Access → Add or remove scopes: gmail.readonly, calendar.events, calendar.calendarlist.readonly and drive.file. Add drive.readonly only if you want Search all of Drive.",
+      "Enable Drive, Picker, Docs, Sheets, Slides and Calendar. Enable the Google Meet API only if you offer transcript imports.",
+      "Under Data Access declare only the scopes for products you use: drive.file for picked files and uploads, Calendar scopes for events, and meetings.space.readonly for Meet transcripts.",
       "Clients → Create client → Web application. Paste the redirect URI below into Authorized redirect URIs, then copy the client ID and secret here.",
-      "While the app is in Testing, add every Google account that will connect under Audience → Test users. Public use of gmail.readonly and drive.readonly needs Google's verification and security assessment.",
+      "For Testing, add each account under Audience → Test users. Keep Gmail and Search all of Drive off unless this app is approved for the restricted scopes.",
     ],
   },
   microsoft: {
