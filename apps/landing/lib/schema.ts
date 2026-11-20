@@ -14,6 +14,7 @@ export const organization = {
   url: site.url,
   logo: { "@type": "ImageObject", url: `${site.url}/apple-icon.png`, width: 180, height: 180 },
   sameAs: [site.repoUrl, site.npmUrl],
+  contactPoint: { "@type": "ContactPoint", contactType: "customer support", email: site.email.support },
 };
 
 // Google takes the site name shown in results from this, on the home page.

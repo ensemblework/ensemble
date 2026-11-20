@@ -140,6 +140,7 @@ apps/landing/                 app/ (home, four topic pages, /download, /privacy,
                               (site, topics, download.ts install data), public/ (install.sh, install.ps1, llms.txt,
                               IndexNow key), scripts/indexnow.mjs, vercel.json (script headers, ensemblework.app redirects)
                               Privacy/terms own the hosted Google-data and Limited Use disclosures linked by the Google connector.
+                              lib/site.ts owns the contact addresses used by the footer, legal pages and Organization metadata.
 apps/context-bridge/          src/ (MCP server; exports ./server, ./hub, ./config), clients/ (editor configs), test/, scripts/
 apps/docs/                    scripts/build.mjs (tracked docs → out/), src/ (Markdown renderer, browser UI,
                               shared search.js and its types), test/; exports @ensemble/docs/search for the API lookup

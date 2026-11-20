@@ -8,6 +8,11 @@ export const site = {
   repoUrl: "https://github.com/ensemblework/ensemble",
   npmUrl: "https://www.npmjs.com/package/ensemblework",
   repoPublic: true,
+  email: {
+    support: "support@ensemblework.com",
+    help: "help@ensemblework.com",
+    outreach: "outreach@ensemblework.com",
+  },
   // The <title> of the home page. Keep it under about 60 characters so results do not cut it.
   title: "Ensemble: AI notes app and workspace to work with AI agents",
   // The meta description. Keep it under about 160 characters.
@@ -32,5 +37,5 @@ export const site = {
     "Ensemble Work",
   ],
   // Last content change, for the sitemap. Bump it when the pages change.
-  updated: "2026-11-05",
+  updated: "2026-11-20",
 } as const;

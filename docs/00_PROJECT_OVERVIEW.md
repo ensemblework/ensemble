@@ -92,6 +92,7 @@ Client/plugin distribution assets are in `ensemblework/ensemble-integrations`; v
 
 | Surface | What works | Limits | Guide |
 | --- | --- | --- | --- |
+| Landing site | Product pages, downloads and hosted policies with a support contact | Public, no sign-in | [ensemblework.com](https://ensemblework.com) |
 | Today | Profession desk with a day-at-a-glance header, briefing, focus and triage, reminders; pins visible above every native desk; add, move and resize tiles (including Focus now, Your week, Agents at work) | Profile desk and alternate widget layout are separate systems | [02 §3.1](02_MODULE_INTERACTION_HUB_UI.md#31-today-morning-briefing) |
 | Board | Collapsible Ensemble Kanban with live agent-start status updates; custom page boards with named columns and board-scoped overview tiles, using the Ensemble board's cards, drag motion, hover delete and side peek | 1–20 columns per custom board; at most four overview tiles per board | [02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban) |
 | Tasks and pages | Structured editor, nested notes, board/column assignment, collapsed board groups in Pages, mentions, links, compact comment overlays, AI blocks, embeds, co-editing, downloads (PDF, Word, Markdown, web page, text) with plots, diagrams and images drawn in | One custom board per page; custom columns do not change task execution status; embedded resources keep their own access rules | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |

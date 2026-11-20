@@ -85,7 +85,7 @@ Optional `OPENAI_APPS_CHALLENGE` configures the API's plaintext OpenAI plugin do
 
 ```
 apps/hub-web            Next.js 15 Hub (Today, Board, pages, Files, Code, Plots, Diagrams…)
-apps/landing            static site for ensemblework.com (port 3100)
+apps/landing            static site, support contact and legal pages for ensemblework.com (port 3100)
 apps/docs               static documentation for docs.ensemblework.com, generated from docs/
 apps/hub-api            Fastify + Prisma API: data, assistant, scheduler, workspace queue, SSE
 apps/agent-runtime      Python FastAPI: model adapters and plot export (port 5055)

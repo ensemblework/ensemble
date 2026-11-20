@@ -52,6 +52,7 @@ export function SiteFooter() {
         <a href="/download">Download</a>
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
+        <a href={`mailto:${site.email.support}`}>Contact</a>
         <GitHubLink />
       </nav>
       <nav className="footer-links footer-topics" aria-label="What Ensemble does">
