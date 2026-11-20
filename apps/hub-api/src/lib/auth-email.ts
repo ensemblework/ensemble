@@ -3,6 +3,7 @@ import { nodeWebOrigin } from "./node-origin.js";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { sha256 } from "./auth.js";
+import { sendMail } from "./resend-email.js";
 
 export type EmailKind = "verify" | "reset";
 type Message = { to: string; subject: string; text: string };
@@ -23,31 +24,35 @@ export function authWebOrigin(): string {
   return url.origin;
 }
 
+function accountMailConfig() {
+  const apiKey = process.env.EMAIL_API_KEY?.trim();
+  const from = process.env.EMAIL_FROM?.trim();
+  return process.env.EMAIL_PROVIDER === "resend" && apiKey && from ? { apiKey, from } : null;
+}
+
 export function emailConfigured(): boolean {
-  return Boolean(testSender || (process.env.EMAIL_PROVIDER === "resend" && process.env.EMAIL_API_KEY?.trim() && process.env.EMAIL_FROM?.trim()));
+  return Boolean(testSender || accountMailConfig());
 }
 
 export function requireEmailConfigured(): void {
-  if (!emailConfigured()) {
-    throw Object.assign(new Error("Email delivery is not configured. Contact the operator before creating an email account or resetting a password."), {
-      statusCode: 503,
-      code: "EMAIL_NOT_CONFIGURED",
-    });
-  }
+  if (!emailConfigured()) throw emailNotConfigured();
 }
 
-async function sendMail(message: Message): Promise<void> {
+function emailNotConfigured() {
+  return Object.assign(new Error("Email delivery is not configured. Contact the operator before creating an email account or resetting a password."), {
+    statusCode: 503,
+    code: "EMAIL_NOT_CONFIGURED",
+  });
+}
+
+async function sendAccountMessage(message: Message): Promise<void> {
   if (testSender) return testSender(message);
-  requireEmailConfigured();
-  const from = z.string().trim().min(1).refine((value) => !/[\r\n]/.test(value)).parse(process.env.EMAIL_FROM);
+  const config = accountMailConfig();
+  if (!config) throw emailNotConfigured();
+  const from = z.string().refine((value) => !/[\r\n]/.test(value)).parse(config.from);
   let response: Response;
   try {
-    response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.EMAIL_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [message.to], subject: message.subject, text: message.text }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    response = await sendMail({ ...message, from, to: [message.to] }, config.apiKey);
   } catch (cause) {
     throw Object.assign(new Error("The verification/reset email could not be delivered. Try again shortly.", { cause }), {
       statusCode: 503,
@@ -101,7 +106,7 @@ export async function sendAccountEmail(prisma: PrismaClient, user: { id: string;
     // The fragment is not sent in proxy logs or Referer headers.
     url.hash = new URLSearchParams({ token }).toString();
   }
-  await sendMail({
+  await sendAccountMessage({
     to: user.email,
     subject: kind === "verify" ? `Your Ensemble code: ${token}` : "Reset your Ensemble password",
     text: kind === "verify"
@@ -122,7 +127,7 @@ export function newPasskeyCode(): string {
 
 export async function sendPasskeyCode(user: { email: string }, code: string): Promise<void> {
   requireEmailConfigured();
-  await sendMail({
+  await sendAccountMessage({
     to: user.email,
     subject: `Your Ensemble code to add a passkey: ${code}`,
     text: `Someone signed in as you asked to add a passkey for the terminal in Ensemble's Code tab.\n\nThe code is ${code}. It expires in 10 minutes.\n\nIf this was not you, do not enter it anywhere, and change how you sign in to Ensemble.`,

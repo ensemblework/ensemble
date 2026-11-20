@@ -13,6 +13,7 @@ export type RouteAuth =
   | "connector-oauth-state"
   | "engine-run-secret"
   | "routine-hook-token"
+  | "resend-signature"
   | "internal-token"
   | "identity";
 export type HttpMethod = NonNullable<InjectOptions["method"]>;
@@ -31,6 +32,7 @@ export function routeAuth(method: string, path: string): RouteAuth {
   if ((path === "/api/docs/history" || path === "/api/docs/chats")) return "docs-session";
   if (path === "/api/events") return "event-ticket-or-identity";
   if (path === "/api/devices/register") return "device-registration-proof";
+  if (path === "/api/email/inbound") return "resend-signature";
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";
   // A coding agent's hook in an engine run, or an assistant turn's tools: the run's (turn's) own secret, on loopback, on the desktop only.
   if (path === "/api/engine/ask" || path === "/api/engine/tool" || path === "/api/engine/tools" || path === "/api/engine/assistant/tools" || path === "/api/engine/assistant/tool" || path === "/api/engine/assistant/ask" || path === "/api/engine/git-credential") return "engine-run-secret";

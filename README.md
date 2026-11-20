@@ -54,6 +54,8 @@ Checks for the area you change are listed in [AGENTS.md](AGENTS.md#commands); th
 
 Hosted MCP OAuth and client compatibility checks: `pnpm --filter @ensemble/hub-api test:mcp-oauth`. The shared fast CI also checks named catalog/legacy MCP behavior, consent UI and middleware routes, provider returns and Grok editor setup without real model calls.
 
+Optional Resend support forwarding is configured on the API server, separately from signup email. See [inbound email](docs/02_MODULE_INTERACTION_HUB_UI.md#inbound-support-email).
+
 ## Other apps
 
 ```bash

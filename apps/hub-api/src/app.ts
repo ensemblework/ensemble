@@ -24,6 +24,7 @@ import { prisma } from "./lib/prisma.js";
 import { redis } from "./lib/redis.js";
 import { authRoutes } from "./routes/auth.js";
 import { authOAuthRoutes } from "./routes/auth-oauth.js";
+import { EMAIL_INBOUND_PATH, inboundEmailRoutes } from "./routes/email-inbound.js";
 import { ensureLocalPlaceholder } from "./lib/local-placeholder.js";
 import { connectorRoutes } from "./routes/connectors.js";
 import { decisionRoutes } from "./routes/decisions.js";
@@ -98,7 +99,7 @@ import { remoteRoutes } from "./remote/routes.js";
 import { nodeRoutes } from "./node/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
 
-const PUBLIC_PATHS = new Set(["/api/version", "/health", "/health/ready", "/api/events", "/api/devices/register"]);
+const PUBLIC_PATHS = new Set(["/api/version", "/health", "/health/ready", "/api/events", "/api/devices/register", EMAIL_INBOUND_PATH]);
 const ADDITIONAL_MODEL_STREAM_ROUTES = new Set(["/api/pages/:kind/:id/ensemble", "/api/ensemble/invoke"]);
 
 export function bypassesGlobalAuth(path: string): boolean {
@@ -192,6 +193,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     }
     // Docs routes handle optional browser sessions themselves, without workspace identity or key access.
     if (isDocsPath(path)) return;
+    if (path === EMAIL_INBOUND_PATH) return; // Resend signature only, never workspace identity.
     // MCP discovery and publishing proofs never inherit a browser or key's space; OAuth endpoints authenticate clients themselves.
     if (isMcpPublicPath(path)) {
       const limited = consumeRateLimit(rateLimiter, request, path, rateLimitConfig());
@@ -379,8 +381,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     else await app.register(routes);
   }
 
-  // Ensemble Node runs on the hosted server only: its rooms are shared between accounts.
-  if (!desktop) await app.register(nodeRoutes);
+  if (!desktop) {
+    await app.register(inboundEmailRoutes);
+    // Ensemble Node's rooms are shared between accounts.
+    await app.register(nodeRoutes);
+  }
 
   if (desktop) {
     await app.register(remoteRoutes);
