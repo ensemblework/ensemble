@@ -1,0 +1,131 @@
+name: self-host-web
+
+# Builds the Hub image and deploys it to the home server over Tailscale.
+# Does nothing until the repository variable SELF_HOST_WEB_ENABLED is "true",
+# so a push before the secrets exist does not fail.
+# Vercel publishing stays in deploy.yml. This workflow does not replace it.
+#
+# Repository variable: SELF_HOST_WEB_ENABLED=true
+# Repository secrets: NEXT_PUBLIC_HUB_API, NEXT_PUBLIC_SITE_URL, ENSEMBLE_COOKIE_DOMAIN,
+#   TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, SELF_HOST_SSH_USER, SELF_HOST_TAILSCALE_HOST,
+#   SELF_HOST_SSH_PRIVATE_KEY
+# Optional secrets: ENSEMBLE_COOKIE_NAMESPACE, HUB_API_INTERNAL_URL
+# On the server, not in GitHub: ~/ensemble-host/ghcr.token and GHCR_USERNAME
+# in ~/ensemble-host/ensemble.env. The list and the Tailscale ACL are in
+# docs/self-hosting.md.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - apps/hub-web/**
+      - packages/block-diagrams/**
+      - packages/brand/**
+      - packages/ide-theme/**
+      - packages/shared-types/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .npmrc
+      - tsconfig.base.json
+      - turbo.json
+      - release.json
+      - scripts/release-version.mjs
+      - infra/deploy/home/web/**
+      - infra/deploy/home/web-compose.yml
+      - .github/workflows/self-host-web.yml
+      - .dockerignore
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: self-host-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build the Hub image and deploy it
+    if: vars.SELF_HOST_WEB_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Require the deploy secrets
+        env:
+          NEXT_PUBLIC_HUB_API: ${{ secrets.NEXT_PUBLIC_HUB_API }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+          ENSEMBLE_COOKIE_DOMAIN: ${{ secrets.ENSEMBLE_COOKIE_DOMAIN }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          SELF_HOST_SSH_USER: ${{ secrets.SELF_HOST_SSH_USER }}
+          SELF_HOST_TAILSCALE_HOST: ${{ secrets.SELF_HOST_TAILSCALE_HOST }}
+          SELF_HOST_SSH_PRIVATE_KEY: ${{ secrets.SELF_HOST_SSH_PRIVATE_KEY }}
+          HUB_API_INTERNAL_URL: ${{ secrets.HUB_API_INTERNAL_URL }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in NEXT_PUBLIC_HUB_API NEXT_PUBLIC_SITE_URL ENSEMBLE_COOKIE_DOMAIN TS_OAUTH_CLIENT_ID TS_OAUTH_SECRET SELF_HOST_SSH_USER SELF_HOST_TAILSCALE_HOST SELF_HOST_SSH_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set the $name repository secret. docs/self-hosting.md lists each one."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          if [ -z "$HUB_API_INTERNAL_URL" ]; then
+            echo "::warning::HUB_API_INTERNAL_URL is unset. The image proxies /api to the public API origin."
+          fi
+
+      - name: Image name
+        id: meta
+        run: echo "image=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')/hub-web" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/hub-web/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:current
+          build-args: |
+            NEXT_PUBLIC_HUB_API=${{ secrets.NEXT_PUBLIC_HUB_API }}
+            NEXT_PUBLIC_SITE_URL=${{ secrets.NEXT_PUBLIC_SITE_URL }}
+            ENSEMBLE_COOKIE_DOMAIN=${{ secrets.ENSEMBLE_COOKIE_DOMAIN }}
+            ENSEMBLE_COOKIE_NAMESPACE=${{ secrets.ENSEMBLE_COOKIE_NAMESPACE }}
+            HUB_API_INTERNAL_URL=${{ secrets.HUB_API_INTERNAL_URL }}
+
+      - name: Join the tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ secrets.SELF_HOST_TAILSCALE_HOST }}
+
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.SELF_HOST_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.SELF_HOST_TAILSCALE_HOST }}
+          SSH_USER: ${{ secrets.SELF_HOST_SSH_USER }}
+          IMAGE: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            "$SSH_USER@$HOST" "bash -s -- $(printf '%q' "$IMAGE")" < infra/deploy/home/web/rollout.sh

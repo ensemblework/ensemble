@@ -37,7 +37,7 @@ Find the application or package responsible for a change before editing. Start w
 ```text
 ensemble/
 ├── apps/                  Runnable applications (§2)
-│   ├── hub-web/           Next.js 15 App Router: the Hub UI
+│   ├── hub-web/           Next.js 15 App Router: the Hub UI (Dockerfile: production image; build context is the repo root)
 │   ├── landing/           Static landing page for ensemblework.com (Next.js export, no API calls)
 │   ├── docs/              Static public documentation from docs/ for docs.ensemblework.com (docs/40)
 │   ├── hub-api/           Fastify + Prisma API, scheduler, workspace queue, assistant
@@ -57,14 +57,14 @@ ensemble/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions: vector, pg_trgm, uuid-ossp
 │   └── deploy/            Server installs (docs/01 §8): home/ is the home-server install (Docker,
-│                          Cloudflare Tunnel, user units, cron watchdog, observability/); the files
+│                          Cloudflare Tunnel, user units, cron watchdog, observability/, web-compose.yml and web/rollout.sh for the Hub); the files
 │                          beside it are the alternative Ubuntu VM install (Caddy, system units)
 ├── scripts/               Dev, build, packaging, release and measurement scripts (§3)
 ├── packaging/             CLI release metadata renderer: Homebrew, Scoop, winget, nfpm, AUR (docs/26 §7)
 ├── design/                Generated brand outputs: brand/ (mark, icon, loader, gallery) and icons/
 │                          (app and UI icons), written by scripts/build-ensemble-brand.mjs
 ├── docs/                  Current guides; index in docs/README.md
-├── .github/               workflows/ (ci, deploy, desktop, cli-release), actions/vercel-deploy,
+├── .github/               workflows/ (ci, deploy, self-host-web, desktop, cli-release), actions/vercel-deploy,
 │                          agents/, skills/ (block-diagrams, ensemble-context), copilot-instructions.md
 ├── data/import/           Git-ignored local import drop zone
 ├── eval/, skills/         Empty placeholders (.gitkeep)
@@ -80,6 +80,8 @@ Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bri
 
 ```text
 apps/hub-web/
+├── Dockerfile                Production image. Build context is the repository root (docs/self-hosting.md)
+├── app/healthz/route.ts      Process health for that image. /health still rewrites to hub-api
 ├── app/                      login, signup, forgot, reset, verify, link, p/[token] (public links), shared/[id]
 ├── app/(hub)/                One folder per page: today, board, needs-me, runs, tasks, pages, projects,
 │                             context, meetings, files, skills, workspace, code, plots, diagrams, metrics,

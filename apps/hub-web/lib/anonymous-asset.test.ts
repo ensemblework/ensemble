@@ -61,10 +61,18 @@ test("the middleware matcher skips brand files and still runs for the hub", () =
   assert.equal(pattern.test("/api/plots/datasets"), false);
   assert.equal(pattern.test("/api/context/documents"), false);
   assert.equal(pattern.test("/health"), false);
+  assert.equal(pattern.test("/healthz"), false);
   assert.equal(pattern.test("/today"), true);
   assert.equal(pattern.test("/login"), true);
   const file = readFileSync(new URL("../middleware.ts", import.meta.url), "utf8");
   assert.match(file, /isAnonymousAsset\(pathname\)/);
+});
+
+test("the server build is standalone and the desktop export stays static", () => {
+  const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
+  assert.match(config, /output: "standalone"/);
+  assert.match(config, /outputFileTracingRoot: repoRoot/);
+  assert.match(config, /output: "export"/);
 });
 
 test("scrapers can request /opengraph-image without a session", () => {

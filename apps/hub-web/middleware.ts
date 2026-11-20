@@ -3,16 +3,17 @@ import { BadPathError, normalizePath } from "@ensemble/shared-types/modules";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAnonymousAsset } from "@/lib/anonymous-asset";
 import { isAppRoute } from "@/lib/app-routes";
-import { resolveHubApi } from "./lib/hub-origin";
+import { resolveHubApiInternal } from "./lib/hub-origin";
 import { sessionCookieDelete } from "./lib/session-cookie";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
 
 const SESSION_COOKIE = ensembleCookieName("session", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
 const PUBLIC = new Set(["/login", "/signup", "/forgot", "/reset", "/verify", "/oauth"]);
-const API = resolveHubApi({
+const API = resolveHubApiInternal({
   NEXT_PUBLIC_HUB_API: process.env.NEXT_PUBLIC_HUB_API,
   NODE_ENV: process.env.NODE_ENV,
+  HUB_API_INTERNAL_URL: process.env.HUB_API_INTERNAL_URL,
 });
 
 /** Document loads only. RSC payloads and prefetches must not wait on auth. */
@@ -97,6 +98,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/templates/") ||
     pathname.startsWith("/fonts/") ||
     pathname === "/health" ||
+    pathname === "/healthz" ||
     isAnonymousAsset(pathname)
   ) {
     return NextResponse.next();
@@ -176,6 +178,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api/|health$|pyodide/|_next/static|_next/image|templates/|fonts/|providers/[a-z0-9-]+\\.svg$|doodles/[a-z0-9-]+\\.svg$|spelling/en-(?:us|gb)\\.(?:aff|dic)$|brand/(?:favicon|mark|apple)-[a-f0-9]{12}\\.(?:ico|png|svg)$|icon\\.svg|favicon\\.ico|robots\\.txt|apple-icon(?:\\.png)?|apple-touch-icon\\.png|manifest\\.webmanifest|site\\.webmanifest|icon(?:-maskable)?-\\d+\\.png|brand-icon-\\d+\\.png|og-image\\.png|opengraph-image|twitter-image|offline\\.html|404\\.html|500\\.html).*)",
+    "/((?!api/|healthz?$|pyodide/|_next/static|_next/image|templates/|fonts/|providers/[a-z0-9-]+\\.svg$|doodles/[a-z0-9-]+\\.svg$|spelling/en-(?:us|gb)\\.(?:aff|dic)$|brand/(?:favicon|mark|apple)-[a-f0-9]{12}\\.(?:ico|png|svg)$|icon\\.svg|favicon\\.ico|robots\\.txt|apple-icon(?:\\.png)?|apple-touch-icon\\.png|manifest\\.webmanifest|site\\.webmanifest|icon(?:-maskable)?-\\d+\\.png|brand-icon-\\d+\\.png|og-image\\.png|opengraph-image|twitter-image|offline\\.html|404\\.html|500\\.html).*)",
   ],
 };

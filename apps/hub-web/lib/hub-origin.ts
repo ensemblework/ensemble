@@ -10,3 +10,18 @@ export function resolveHubApi(env: { NEXT_PUBLIC_HUB_API?: string; NODE_ENV?: st
   if (env.NODE_ENV === "production") throw new Error(MISSING_HUB_API);
   return DEV_HUB_API;
 }
+
+/**
+ * Origin for server-side rewrites and server renders.
+ * `HUB_API_INTERNAL_URL` is optional and is never sent to the browser.
+ * Unset, this is the same origin as `resolveHubApi`.
+ */
+export function resolveHubApiInternal(env: {
+  NEXT_PUBLIC_HUB_API?: string;
+  NODE_ENV?: string;
+  HUB_API_INTERNAL_URL?: string;
+}): string {
+  const internal = env.HUB_API_INTERNAL_URL?.trim().replace(/\/$/, "");
+  if (internal) return internal;
+  return resolveHubApi(env);
+}

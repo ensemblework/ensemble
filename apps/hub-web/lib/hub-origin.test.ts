@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MISSING_HUB_API, resolveHubApi } from "./hub-origin";
+import { MISSING_HUB_API, resolveHubApi, resolveHubApiInternal } from "./hub-origin";
 
 test("dev keeps the localhost default when NEXT_PUBLIC_HUB_API is unset", () => {
   assert.equal(resolveHubApi({ NODE_ENV: "development" }), "http://127.0.0.1:4000");
@@ -20,4 +20,11 @@ test("a production build fails clearly when NEXT_PUBLIC_HUB_API is unset", () =>
     return true;
   });
   assert.throws(() => resolveHubApi({ NEXT_PUBLIC_HUB_API: "  ", NODE_ENV: "production" }), /NEXT_PUBLIC_HUB_API/);
+});
+
+test("an internal origin is used only when it is set", () => {
+  const pub = { NEXT_PUBLIC_HUB_API: "https://api.example", NODE_ENV: "production" };
+  assert.equal(resolveHubApiInternal(pub), "https://api.example");
+  assert.equal(resolveHubApiInternal({ ...pub, HUB_API_INTERNAL_URL: "  " }), "https://api.example");
+  assert.equal(resolveHubApiInternal({ ...pub, HUB_API_INTERNAL_URL: "http://127.0.0.1:14000/" }), "http://127.0.0.1:14000");
 });
