@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { pageMetadata } from "@/lib/metadata";
+import { site } from "@/lib/site";
 
 export const metadata = pageMetadata({
   path: "/terms",
@@ -27,6 +28,7 @@ export default function TermsPage() {
       <p>Review generated work before relying on it. Agent actions on a connected computer run with the permissions you grant. You are responsible for your provider accounts and their charges; public accounts do not receive the operator's model keys.</p>
       <h2>Leaving</h2>
       <p>You can export account data from Settings → Account and delete workspace data or your hosted account from Settings → Data. Stop active agent runs before deletion. Disconnecting Google stops its connector access but does not automatically erase content already saved in your workspace; the Privacy policy explains the separate controls and retention. Local files and copies already shared with other services are not deleted by hosted account deletion.</p>
+      <p>Questions about these terms? Email <a href={`mailto:${site.email.support}`}>{site.email.support}</a>.</p>
     </main>
   );
 }

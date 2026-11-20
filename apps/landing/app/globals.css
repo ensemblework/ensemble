@@ -51,6 +51,13 @@ a {
   text-decoration: none;
 }
 
+main a[href^="mailto:"] {
+  color: var(--agent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
 h1,
 h2,
 h3 {
