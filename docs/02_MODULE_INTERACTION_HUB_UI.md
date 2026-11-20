@@ -592,6 +592,12 @@ Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_K
 
 The email links to the Hub's `/verify`, or to Ensemble Node's `/welcome` for a sign-up made there ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)). Turnstile answers are accepted from the Hub's host and from `ENSEMBLE_NODE_WEB_ORIGIN`'s host. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
 
+### Inbound support email
+
+`EMAIL_FROM` stays the no-reply sender for account verification, password reset and passkey codes. The optional Resend forwarding route uses `EMAIL_FROM_SUPPORT`, a sender on the separately verified receiving domain; `EMAIL_FORWARD_TO`, a single inbox on another domain; `EMAIL_INBOUND_WEBHOOK_SECRET`, the webhook's signing secret; and `EMAIL_INBOUND_API_KEY`, a separate Resend full-access key for reading and sending mail. Set these only on the API server. Missing configuration leaves the route disabled without changing account mail.
+
+The route forwards mail for the support sender's domain, including future aliases, except the configured no-reply address. It ignores messages from the forwarding inbox. The forwarded message shows the original sender and receiving alias, preserves Reply-To (falling back to the original sender) and includes the original body and attachments. In Gmail, use the matching **Send mail as** address in the reply's **From** field. Incoming mail, forwards and replies all count toward the same Resend sending and receiving quota as account mail.
+
 ### Choose a profile and take the tour
 
 New accounts pick a profession/profile and a template. The tour (`components/onboarding/guided-tour.tsx`, replayed from the account menu's Take a tour) plays fictional scenes of the app on a preview canvas and never changes real work; Ask opens a draft without sending. Each scene runs on one clock (`tour-playback.ts`) with play/pause, restart, chapter dots and Back/Next.
@@ -702,6 +708,7 @@ Pages and task documents keep their live step/rebase protocol (§13); boards, di
 
 | Area | Routes / implementation |
 | --- | --- |
+| Inbound support email | `POST /api/email/inbound` accepts Resend `email.received` events, verifies the Svix signature over the raw body (five-minute timestamp tolerance), and deduplicates by Resend email ID. Returns 404 when disabled, 400 for invalid webhooks and 502 for retryable forwarding failures. No account session or space access; sharing class `open`. `routes/email-inbound.ts` |
 | Shell and Today | `/api/shell` (account, open space, counts including `nodeApprovals` in the account's own space, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home` (with the merged calendar's `events`, `sync` and `calendarSources`); `routes/views.ts` |
 | Open places | `GET /api/auth/places?surface=hub\|node\|desktop` (default `hub`); `POST /api/auth/places {id, seq, surface, accountId?}`; `POST /api/auth/places/continue {id, seq, surface, replace}` (`replace`: one listed window id or `"oldest"` in this app's pool); `POST /api/auth/places/release {id, seq, surface}`. Browser sessions only, sharing class `self`; `routes/active-places.ts`, §16 |
 | Settings | `GET/PATCH /api/settings`; patches include `_base`, reads include `scope`. Overlapping guarded saves return 409 `SAVE_CONFLICT {current, patch, conflicts}`; `routes/settings.ts`, §3.9 |

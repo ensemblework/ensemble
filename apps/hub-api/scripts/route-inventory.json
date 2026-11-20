@@ -1318,6 +1318,7 @@
   {"method":"POST","path":"/api/editors/connect","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"GET","path":"/api/editors/setup","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/editors/setup","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
+  {"method":"POST","path":"/api/email/inbound","mode":"hosted","auth":"resend-signature","hasId":false,"hasTest":true,"checks":["token-scopes","malformed-json-or-policy-rejection","happy-path","invalid-input"]},
   {"method":"POST","path":"/api/engine/ask","mode":"hosted","auth":"engine-run-secret","hasId":false,"hasTest":false,"checks":["token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"POST","path":"/api/engine/assistant/ask","mode":"hosted","auth":"engine-run-secret","hasId":false,"hasTest":false,"checks":["token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"POST","path":"/api/engine/assistant/tool","mode":"hosted","auth":"engine-run-secret","hasId":false,"hasTest":false,"checks":["token-scopes","malformed-json-or-policy-rejection"]},

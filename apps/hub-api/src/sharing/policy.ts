@@ -43,6 +43,7 @@ const RULES: Rule[] = [
   ["GET", "/api/mcp-client-metadata.json", "open"],
   ["GET", "/.well-known/oauth-*", "open"],
   ["GET", "/.well-known/openai-apps-challenge", "open"],
+  ["POST", "/api/email/inbound", "open"],
   ["*", "/oauth/*", "self"],
   ["*", "/api/mcp-oauth/*", "personal"],
 

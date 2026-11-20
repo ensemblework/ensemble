@@ -1941,6 +1941,13 @@ model EmailToken {
   @@map("email_tokens")
 }
 
+/// Provider IDs of messages accepted for forwarding. No mail content or addresses.
+model InboundEmailReceipt {
+  id String @id @db.Uuid
+
+  @@map("inbound_email_receipts")
+}
+
 /// Short-lived, single-use OAuth state, bound to the initiating browser.
 model AuthFlow {
   id           String   @id

@@ -28,6 +28,7 @@ pnpm dev
 | Database and origins | `DATABASE_URL`, `REDIS_URL`, `HUB_API_HOST`, `HUB_API_PORT`, `HUB_WEB_ORIGIN`, `HUB_API_PUBLIC_URL`, `NEXT_PUBLIC_HUB_API`, `ENSEMBLE_COOKIE_DOMAIN`, `ENSEMBLE_COOKIE_NAMESPACE` (identical on API/web; unset for default cookies), `ENSEMBLE_NODE_WEB_ORIGIN` (the Ensemble Node website, [35](35_ENSEMBLE_NODE.md)) |
 | Ensemble Node | `ENSEMBLE_NODE` (`off` stops node turns and run reports), `ENSEMBLE_NODE_PARALLEL` (node turns at once per API process, default 4) ([35](35_ENSEMBLE_NODE.md)) |
 | Signup and identity | `ENSEMBLE_SIGNUP_MODE`, `ENSEMBLE_SIGNUP_ALLOWLIST`, `AUTH_GOOGLE_*`, `AUTH_GITHUB_*`, `AUTH_MICROSOFT_*`, `EMAIL_PROVIDER` (Resend), Turnstile keys |
+| Inbound support email | Optional server-only `EMAIL_FROM_SUPPORT`, `EMAIL_FORWARD_TO`, `EMAIL_INBOUND_WEBHOOK_SECRET`, `EMAIL_INBOUND_API_KEY`; see [inbound email](02_MODULE_INTERACTION_HUB_UI.md#inbound-support-email) |
 | MCP publishing | `OPENAI_APPS_CHALLENGE` (optional one-line plaintext proof at `/.well-known/openai-apps-challenge`; unset returns 404). Hosted OAuth uses the API origin and existing auth infrastructure ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)) |
 | Host restrictions | `ENSEMBLE_OPERATOR_EMAILS`, `ENSEMBLE_SERVER_RUNNER`, `ENSEMBLE_TERMINAL`; dev bypass and `ENSEMBLE_DEV_TOOLS` for isolated local work only |
 | Secrets | `ENSEMBLE_INTERNAL_TOKEN`, `ENSEMBLE_BRIDGE_TOKEN`, `ENSEMBLE_SECRET_KEY` (or the local secret-key file) |

@@ -38,9 +38,8 @@ for (const route of sortedRoutes(routes)) {
     });
   }
 
-  if (route.auth !== "cors-preflight" && (isMcpPublicPath(sampleRoutePath(route.path)) || route.path.startsWith("/api/docs/"))) {
-    // MCP discovery and the OAuth endpoints never take an Ensemble cookie or key as an identity (app.ts, docs/CONTEXT_BRIDGE.md),
-    // so a scoped key there unlocks nothing and is not refused: an MCP app's access token is a bridge key it may still send while it rediscovers.
+  if (route.auth !== "cors-preflight" && (route.auth === "resend-signature" || isMcpPublicPath(sampleRoutePath(route.path)) || route.path.startsWith("/api/docs/"))) {
+    // These routes do not take a workspace identity, so a scoped key cannot change their response.
     for (const [scope, key] of [["device", device], ["bridge", bridge]] as const) {
       test(`${route.mode}: ${scope} scope changes nothing on ${route.method} ${route.path}`, async () => {
         const request = requestFor(route);
@@ -101,7 +100,8 @@ for (const route of sortedRoutes(routes)) {
             : {}),
         },
       });
-      assert.ok([400, 401, 403, 405].includes(response.statusCode), `${response.statusCode}: ${response.body}`);
+      const expected = route.auth === "resend-signature" ? [400, 404] : [400, 401, 403, 405];
+      assert.ok(expected.includes(response.statusCode), `${response.statusCode}: ${response.body}`);
     });
   }
 }
