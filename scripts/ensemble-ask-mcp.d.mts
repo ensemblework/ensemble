@@ -6,3 +6,5 @@ export function toolsFor(env?: Record<string, string | undefined>): Array<{ name
 export const HEARTBEAT_MS: number;
 /** MCP progress notifications for a waiting call, when it carries a progress token; returns the stop function. */
 export function heartbeat(message: { params?: { _meta?: { progressToken?: unknown } } }, write?: (message: never) => void, every?: number): () => void;
+/** A tool answer as MCP content: its text, and each `ensemble-image:` line (a desktop screenshot) as an image. */
+export function contentOf(text: string): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;

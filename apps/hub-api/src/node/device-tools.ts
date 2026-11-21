@@ -40,6 +40,7 @@ import { requestPark } from "./queue.js";
 import { askSudo } from "./sudo.js";
 import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
 import { liveTools } from "./live-views.js";
+import { desktopTools } from "../desktop/control/node-tools.js";
 import type { NodeScope } from "./tools.js";
 import { postMessage } from "./store.js";
 
@@ -133,6 +134,7 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
   if (call.tool === "run" || call.tool === "terminal" || call.tool === "sudo") return { folder: call.folder ?? null, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "", ...(call.tool === "sudo" ? { sudo: "yes" } : {}) };
   if (call.tool === "git") return { folder: call.folder ?? null, op: call.op };
   if (call.tool === "run_stop") return { run: call.runId };
+  if (call.tool === "desktop") return { name: call.name };
   return { folder: call.folder ?? null, action: call.action };
 }
 
@@ -702,6 +704,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
     ...liveTools(scope),
+    ...desktopTools(scope),
   ];
   return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
 }
@@ -784,7 +787,7 @@ const DOCUMENTS = new Set(["browser_fetch", "browser_download"]);
  * to share) comes with the node's reply by itself.
  */
 /** `expects`: what the call was meant to bring back (a screenshot, a file), so the node hears plainly when nothing will show. */
-async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
+export async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
   const { prisma, node } = scope;
   const parsed = NodeCaptureAnswer.safeParse(done.body);
   if (!parsed.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);

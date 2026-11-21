@@ -38,8 +38,8 @@ export type Verdict = { kind: "allow"; grantsUsed: string[] } | { kind: "ask"; a
 
 type Db = Pick<PrismaClient, "decisionRule">;
 
-/** The decision rule's tool name for a scope: one answer covers every tool in a folder, or every call to an address. */
-const ruleTool = (scope: NodeToolAsk["scope"]) => (scope === "origin" ? "origin" : "folder");
+/** The decision rule's tool name for a scope: one answer covers every tool in a folder, every call to an address, or a sensitive app on the screen. */
+const ruleTool = (scope: NodeToolAsk["scope"]) => (scope === "origin" ? "origin" : scope === "app" ? "app" : "folder");
 
 export async function decide(prisma: Db, userId: string, input: PolicyInput, options: { weak: boolean; acceptWeb: boolean; askBeforeBrowsing?: boolean }): Promise<Verdict> {
   // An answer the owner gave before nothing asked any more is still marked used, so the web stops sending it.
@@ -69,7 +69,7 @@ export async function decide(prisma: Db, userId: string, input: PolicyInput, opt
     return {
       kind: "refuse",
       status: 409,
-      reason: "This computer takes approvals only on itself (approvals from the web are off), so a node's first use of a folder cannot be approved. Turn them on there with `ensemble approvals on`.",
+      reason: `This computer takes approvals only on itself (approvals from the web are off), so a node's first use of ${input.scope === "app" ? "a sensitive app" : "a folder"} cannot be approved. Turn them on there with \`ensemble approvals on\`.`,
     };
   }
   return { kind: "ask", ask: { capability: input.capability, target: input.target, label: input.label, scope: input.scope, weak: options.weak && input.capability === "run" }, grantsUsed };

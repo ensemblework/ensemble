@@ -29,6 +29,7 @@ import { runNodeShare } from "./share.js";
 import { runNodeLive } from "./terminal-sessions.js";
 import { fileWatchFailure, trackFileChanges } from "./file-changes.js";
 import { reportChangedPaths } from "../remote/node-files.js";
+import { runNodeDesktop } from "../desktop/control/device.js";
 
 type App = Pick<FastifyInstance, "prisma"> & Partial<Pick<FastifyInstance, "log">>;
 
@@ -53,7 +54,7 @@ function floorHit(request: NodeToolRequest): DangerousHit | null {
  * Where the call acts, for the policy: a folder's real path, or a web address's origin (`input` null
  * when the policy has nothing to judge); null for a call on the operation's own tabs, apps and files.
  */
-async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" | "run_stop" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> | null } | null> {
+async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" | "run_stop" | "desktop" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> | null } | null> {
   if (request.tool === "browser" || request.tool === "capture") return captureScope(request);
   // A live terminal is judged once, when it opens, like a command in its folder; its lines are judged as they are typed.
   if (request.tool === "live" && request.action !== "terminal_open") return null;
@@ -99,6 +100,12 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     // A saved secret used by reference: its allowed destinations are the owner's answer (credentials/node-tool.ts).
     if (request.tool === "secret_http") {
       const done = await nodeSecretHttp(app, request);
+      return reply(done.status, done.body);
+    }
+    // Desktop control judges each step as it runs: its own floor, and sensitive apps by the policy (desktop/control/device.ts).
+    if (request.tool === "desktop") {
+      const done = await runNodeDesktop(app, client, request);
+      grantsUsed = done.grantsUsed;
       return reply(done.status, done.body);
     }
     // The hard floor's dangerous commands: refused before anything else, whatever anyone answered.

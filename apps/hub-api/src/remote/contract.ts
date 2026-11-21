@@ -805,6 +805,33 @@ const LiveCall = {
 };
 
 /**
+ * `capabilities.desktop`: this computer answers a node's desktop control tools (`node.tool.request` with
+ * `tool: "desktop"`, docs/25 §11): a private agent screen (a headless GNOME Shell of the agent's own) and
+ * its owner's real screen, keyboard and pointer through the desktop portal (Linux), one conversation at a
+ * time on each. `capabilities.desktopReadiness` says whether the owner's screen can start now, and its
+ * `agentScreen` whether the agent screen can.
+ */
+export const DESKTOP_API = 1;
+
+/**
+ * A node's desktop control call (`desktop_status`, `desktop_observe`, `desktop_act`…), judged and run by
+ * this computer's desktop service for the node's mission. A sensitive app asks once per app and mission
+ * (`NodeToolAsk` scope `app`); the hard floor (Ensemble's own windows, secrets typed as text, the
+ * desktop's password prompts) is refused whatever the mode. Answered as a `NodeDesktopAnswer`.
+ */
+const DesktopCall = {
+  tool: z.literal("desktop"),
+  name: text(60).regex(/^desktop_[a-z_]+$/),
+  input: z.record(z.string().max(100), z.unknown()).default({}),
+  /** The node's tool operation (`node:<nodeId>:own`): its evidence folder. */
+  operation: CaptureCall.operation,
+  /** Where a saved recording goes (`ROUTES.evidenceUpload`). */
+  uploadId: text(100).min(1).optional(),
+  /** The answer carries the screenshot itself (a model on Ensemble's API reads it from there). */
+  inlineImage: z.boolean().default(false),
+};
+
+/**
  * `node.tool.request` on the event stream: one tool call of a node, run and judged here (docs/25 §4.10).
  * The answer is a `CodeAnswer`: 200 with the result, 202 for a command still running (its output follows
  * on `ROUTES.toolOutput` and its end wakes the node), 428 when the owner must answer once in Needs me
@@ -929,6 +956,7 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   NodeToolBase.extend({ tool: z.literal("browser"), ...CaptureCall }),
   NodeToolBase.extend({ tool: z.literal("capture"), ...CaptureCall }),
   NodeToolBase.extend(LiveCall),
+  NodeToolBase.extend(DesktopCall),
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 
@@ -941,7 +969,7 @@ export const BROWSER_API = 2;
 /** The browser tools a computer has from `capabilities.browser` 2 on. */
 export const WEB_TOOLS: readonly string[] = ["browser_view", "browser_fetch", "browser_extract", "browser_set_location", "browser_shop"];
 
-/** What a node's browser or capture tool call answers: the tool's summary and result, and the files it kept as evidence. */
+/** What a node's browser, capture or desktop tool call answers: the tool's summary and result, and the files it kept as evidence. */
 export const NodeCaptureAnswer = z.object({
   ok: z.boolean(),
   summary: z.string().max(200_000).optional(),
@@ -957,6 +985,20 @@ export const NodeCaptureAnswer = z.object({
   login: z.lazy(() => LoginRequired).optional(),
 });
 export type NodeCaptureAnswer = z.infer<typeof NodeCaptureAnswer>;
+
+/** A desktop call's answer: a capture answer and the screenshot the model looks at (inline when asked for). */
+export const NodeDesktopAnswer = NodeCaptureAnswer.extend({
+  image: z
+    .object({
+      captureId: z.string().regex(/^cap_[0-9a-f]{12}$/),
+      mime: z.enum(["image/jpeg", "image/png"]),
+      width: z.number().int().min(1).max(20_000),
+      height: z.number().int().min(1).max(20_000),
+      base64: z.string().max(4_000_000).optional(),
+    })
+    .optional(),
+});
+export type NodeDesktopAnswer = z.infer<typeof NodeDesktopAnswer>;
 
 /**
  * `evidence.request` on the event stream (protocol 7): the owner previews, releases or discards a file
@@ -1245,13 +1287,14 @@ export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: t
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({
-  /** `browse`: a page opened in the browser, or captured (protocol 7). `read`: a file shared into the chat (nodeTools 2). */
-  capability: z.enum(["run", "git", "http", "files", "browse", "read"]),
-  /** What the answer covers: the folder's real path, or the address's origin. */
+  /** `browse`: a page opened in the browser, or captured (protocol 7). `read`: a file shared into the chat (nodeTools 2). `desktop`: a sensitive app, or the owner's own pointer and keyboard (`screen:owner`), used by a node (desktop 1). */
+  capability: z.enum(["run", "git", "http", "files", "browse", "read", "desktop"]),
+  /** What the answer covers: the folder's real path, the address's origin, or the app's id. */
   target: text(4096).min(1),
-  /** How the card names it: the folder's label or path, or the origin. */
+  /** How the card names it: the folder's label or path, the origin, or the app's name. */
   label: text(300).min(1),
-  scope: z.enum(["folder", "origin"]),
+  /** `app`: one app on the owner's screen, answered for this mission only. */
+  scope: z.enum(["folder", "origin", "app"]),
   /** The sandbox here is weak: "Always" is not offered for commands, and asks once per mission instead. */
   weak: z.boolean().default(false),
 });
