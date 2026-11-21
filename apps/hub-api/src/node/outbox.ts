@@ -15,7 +15,7 @@
 import type { FastifyInstance } from "fastify";
 import type { NodeOutbox } from "@prisma/client";
 import { enqueueTurn, inBackground, type TurnRequest } from "./queue.js";
-import { afterReport, endPlan, finishStep, loadPlan, missionEnded, onMissionEffects, PLAN_DECISION_CARD, replanNote, reportNote, stepNote, type PlanData, type PlanStep } from "./plans.js";
+import { endPlan, finishStep, loadPlan, missionEnded, onMissionEffects, PLAN_DECISION_CARD, replanNote, replanSkipped, reportNote, stepNote, type PlanData, type PlanStep } from "./plans.js";
 import { postMessage, updateMessageData } from "./store.js";
 import { loginCardClosed } from "./logins.js";
 import { closeComputerQuestion } from "./device-tool-decisions.js";
@@ -173,7 +173,7 @@ async function deliverReplan(app: FastifyInstance, row: NodeOutbox, data: PlanDa
     private: data.originPrivate,
     operationId: row.operationId,
   });
-  if (!queued) await afterReport(app, data.missionId);
+  if (!queued) await replanSkipped(app, data.missionId);
 }
 
 /** What the owner's card for a stuck step asks, and what each answer does. */

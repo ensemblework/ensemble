@@ -3,9 +3,11 @@
  * scripted: task packets are versioned, hashed and stored, and a later version names what changed; an
  * artifact that changes after a step used it holds that step's acceptance until its lead resolves it;
  * reports carry partial results and what is left; a child's result enters its lead exactly once; an
- * independent review's rejection repairs the build in its own session, then reviews again; a plan whose
- * must-pass criteria no check judges is refused; a stuck step gets one re-plan turn, then its owner's
- * one-press card; the watchdog's stall rules act once.
+ * independent review's rejection repairs the build in its own session, then reviews again (a screenshot
+ * the picture check confirms is strong evidence; an older computer gets the first report format); a
+ * review is never the builder's, and one with nothing to review makes nothing; a plan whose must-pass
+ * criteria no check judges is refused; a stuck step gets one re-plan turn, then its owner's one-press
+ * card; only the lead's turn that began as a report or re-plan ends it; the watchdog's stall rules act once.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -25,8 +27,8 @@ const { checkWork } = await import("./watchdog.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
-/** `holdAfter`: the turn stays in flight after its tool calls until the test lets it go. */
-type Step = { calls?: Call[]; text?: string; then?: string; holdAfter?: Promise<void> };
+/** `hold`: the turn stays in flight before it answers; `holdAfter`: after its tool calls; until the test lets it go. */
+type Step = { calls?: Call[]; text?: string; then?: string; hold?: Promise<void>; holdAfter?: Promise<void> };
 type Seen = { slug: string; transcript: string };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
@@ -43,7 +45,8 @@ setAskRuntimeStreamForTests(async (args) => {
   if (!second) seen.push(current);
   else toolResults.push(String(messages.at(-1)?.content ?? ""));
   const step = script(current);
-  if (second && step.holdAfter) await Promise.race([step.holdAfter, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
+  const gate = second ? step.holdAfter : step.hold;
+  if (gate) await Promise.race([gate, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
@@ -88,11 +91,11 @@ async function crew(user: HttpUser, templates: string[]) {
   return { ids, room: json(made).room as { id: string } };
 }
 
-async function laptopFor(user: HttpUser) {
+/** A paired laptop sharing "live-test". `reports: 2`: its runtime takes the current report format (strength, remaining, ...). */
+async function laptopFor(user: HttpUser, options: { reports?: number } = {}) {
   const key = await h.asToken(user, "device");
-  const laptop = await h.prisma.device.create({
-    data: { userId: user.id, name: "Laptop", platform: "linux", tokenId: key.id, capabilities: { folders: ["live-test"], engines: ["claude-code", "codex"] }, lastSeenAt: new Date() },
-  });
+  const capabilities = { folders: ["live-test"], engines: ["claude-code", "codex"], ...(options.reports ? { reports: options.reports } : {}) };
+  const laptop = await h.prisma.device.create({ data: { userId: user.id, name: "Laptop", platform: "linux", tokenId: key.id, capabilities, lastSeenAt: new Date() } });
   await saveSettings(h.prisma, user.id, { runProfiles: [RunProfile.parse({ id: "careful", name: "Careful", engine: "claude-code", mode: "ask", delivery: "local", deviceId: laptop.id })], defaultRunProfileId: "careful" });
   return laptop;
 }
@@ -140,7 +143,7 @@ async function pressCard(user: HttpUser, roomId: string, decision: "approve" | "
 
 test("a packet is versioned, hashed and stored; a new version of an artifact holds what used the old one until the lead resolves it, and the redo names what changed", async () => {
   const mira = await person("Mira");
-  await laptopFor(mira);
+  await laptopFor(mira, { reports: 2 });
   const { room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
   const plan = {
     goal: "Record titles render safely in tables",
@@ -171,6 +174,7 @@ test("a packet is versioned, hashed and stored; a new version of an artifact hol
   buildId = build.step.id;
   const first = packetOf(build.step);
   assert.equal(build.step.packetVersion, 1);
+  assert.equal(first.header.reportVersion, 2, "the laptop takes the current report format");
   assert.equal(first.header.format, "ensemble.task/2");
   assert.equal(first.header.taskId, `${planId}/${buildId}`);
   assert.equal(first.header.parentTaskId, planId);
@@ -329,7 +333,7 @@ test("a child's result enters its lead once: a second report adds nothing, and o
 
 test("an independent review's rejection repairs the build in its own session; the reviewer then reviews the new candidate", async () => {
   const mira = await person("Mira");
-  await laptopFor(mira);
+  await laptopFor(mira, { reports: 2 });
   const { room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
   const plan = {
     goal: "An onboarding screen people can follow",
@@ -477,4 +481,264 @@ test("the watchdog: a working step that stopped moving is asked once to report; 
   assert.equal(seen.filter((turn) => turn.slug === "manager" && turn.transcript.includes("nothing left to run")).length, 1);
   assert.equal((await loadPlan(h.prisma, planId))!.data.status, "succeeded");
   assert.deepEqual(await checkWork(h.app), []);
+});
+
+const REVIEW_PLAN = (evidence: string[] = []) => ({
+  goal: "An onboarding screen people can follow",
+  requirements: [{ id: "R1", text: "The onboarding screen", acceptance: [{ id: "A1", text: "The steps show in order in a browser", proof: "browser" }], ...(evidence.length ? { evidence } : {}) }],
+  constraints: { folder: "~/ensemble-workspace/live-test", branch: "live-testing", publish: "push", agent: "codex" },
+  steps: [
+    { id: "build", to: "builder", kind: "build", requirementIds: ["R1"], brief: "Build the onboarding screen." },
+    { id: "review", to: "tester", kind: "review", requirementIds: ["R1"], brief: "Review the onboarding screen.", after: ["build"], verifies: "build" },
+  ],
+});
+
+test("a review whose screenshot the picture check confirms passes: the confirmation is evidence of strength A", async () => {
+  const before = { ...process.env };
+  Object.assign(process.env, { AZURE_FOUNDRY_RESOURCE: "ensemble-ai", AZURE_FOUNDRY_API_KEY: "test-key", ENSEMBLE_INCLUDED_MODELS: "gpt-6-luna,gpt-6.1-sol" });
+  try {
+    const mira = await person("Mira");
+    await laptopFor(mira, { reports: 2 });
+    const { room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
+    const judged: string[] = [];
+    script = (turn) => {
+      if (turn.slug === "manager" && turn.transcript.includes("onboarding screen")) return { calls: [{ name: "node_plan", arguments: REVIEW_PLAN(["screenshot"]) }], then: "Planned." };
+      if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Built and reviewed." };
+      if (turn.transcript.includes("What was asked:")) {
+        judged.push(turn.transcript);
+        const id = /Picture id ([0-9a-f-]{36})/.exec(turn.transcript)![1];
+        return { text: JSON.stringify({ pictures: [{ id, verdict: "pass", reason: "The three steps show in order." }] }) };
+      }
+      return { text: "(no reply)" };
+    };
+    await post(mira, room.id, "Please build the onboarding screen and have someone review it.");
+    const planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } })).id;
+    const build = await runOf(planId, "build");
+    await finishJob(build.job.id, { outcome: "done", summary: "Built it.", subject: { branch: "live-testing", commit: "abc1234" } });
+    const review = await runOf(planId, "review");
+    const shot = await h.prisma.jobEvidence.create({ data: { userId: mira.id, jobId: review.job.id, kind: "screenshot", name: "steps.png", mime: "image/png", size: 4, sha256: randomBytes(8).toString("hex"), storageKey: "k-steps", bytes: Buffer.from("data") } });
+    await finishJob(review.job.id, { outcome: "pass", summary: "The steps show in order.", subject: { commit: "abc1234" }, checks: [{ id: "A1", name: "steps in order", verdict: "pass", strength: "A", evidence: [shot.id] }] });
+    assert.equal(judged.length, 1, "the picture was judged");
+    const reviewed = await stepOf(planId, "review");
+    const vision = ((reviewed.attempts as any[])[0].checks as Array<{ name: string; strength?: string }>).find((row) => row.name.startsWith("Vision:"));
+    assert.equal(vision?.strength, "A");
+    assert.deepEqual([reviewed.status, reviewed.outcome], ["done", "pass"]);
+    assert.equal((await loadPlan(h.prisma, planId))!.data.status, "succeeded");
+  } finally {
+    for (const key of ["AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY", "ENSEMBLE_INCLUDED_MODELS"]) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
+
+test("a review handed to an older computer gets the first report format, and its checks need no strength to pass", async () => {
+  const mira = await person("Mira");
+  await laptopFor(mira);
+  const { room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("onboarding screen")) return { calls: [{ name: "node_plan", arguments: REVIEW_PLAN() }], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Built and reviewed." };
+    return { text: "(no reply)" };
+  };
+  await post(mira, room.id, "Please build the onboarding screen and have someone review it.");
+  const planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } })).id;
+  const build = await runOf(planId, "build");
+  assert.doesNotMatch(build.job.instructions, /remaining|ownerDecision|provenance|strength|\bpartial\b|\buncertain\b/, "nothing the computer would refuse");
+  await finishJob(build.job.id, { outcome: "done", summary: "Built it.", subject: { branch: "live-testing", commit: "abc1234" } });
+  const review = await runOf(planId, "review");
+  assert.equal(packetOf(review.step).header.reportVersion, 1);
+  assert.doesNotMatch(review.job.instructions, /strength/);
+  assert.match(review.job.instructions, /Report one check for every acceptance criterion listed, named with its id/);
+  // As the older computer's report_result takes it: no strength on any check.
+  await finishJob(review.job.id, { outcome: "pass", summary: "The steps show in order.", subject: { commit: "abc1234" }, checks: [{ id: "A1", name: "steps in order", verdict: "pass" }] });
+  const reviewed = await stepOf(planId, "review");
+  assert.deepEqual([reviewed.status, reviewed.outcome], ["done", "pass"]);
+  assert.equal((await loadPlan(h.prisma, planId))!.data.status, "succeeded");
+});
+
+test("a review given to the builder is refused, also when node_delegate finds the work it checks from after", async () => {
+  const mira = await person("Mira");
+  const { room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("build the page")) {
+      return {
+        calls: [
+          { name: "node_delegate", arguments: { to: "builder", brief: "Build the page.", kind: "build" } },
+          { name: "node_delegate", arguments: { to: "builder", brief: "Review the page.", kind: "review", after: ["builder"] } },
+        ],
+        then: "Planned.",
+      };
+    }
+    return { text: "(no reply)" };
+  };
+  await post(mira, room.id, "@manager build the page and have it reviewed");
+  assert.match(toolResults.join("\n"), /A review is independent/);
+  const planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } })).id;
+  assert.deepEqual((await h.prisma.nodeStep.findMany({ where: { missionId: planId } })).map((row) => row.kind), ["build"]);
+});
+
+test("node_helper reviews only a step of this turn's plan: without one it is refused before a helper or a plan is made", async () => {
+  const mira = await person("Mira");
+  const { ids, room } = await crew(mira, ["manager", "feature-engineer", "tester"]);
+  script = (turn) => (turn.slug === "manager" && turn.transcript.includes("review the build") ? { calls: [{ name: "node_helper", arguments: { task: "Review the onboarding screen.", reviews: "@builder" } }], then: "(no reply)" } : { text: "(no reply)" });
+  await post(mira, room.id, "@manager have a helper review the build");
+  assert.match(toolResults.join("\n"), /no build or writing step of @builder in this turn's plan/);
+  assert.equal(await h.prisma.nodeAgent.count({ where: { parentNodeId: ids[0] } }), 0, "no helper");
+  assert.equal(await h.prisma.nodeMission.count({ where: { userId: mira.id } }), 0, "no plan");
+  assert.equal((await read(mira, room.id)).filter((row) => row.kind === "plan").length, 0, "no plan card");
+});
+
+test("only a report turn ends a plan and only a re-plan turn ends a re-plan: a step added in the report turn that gets stuck has its re-plan turn", async () => {
+  const kofi = await person("Kofi");
+  const { room } = await crew(kofi, ["manager", "researcher", "researcher"]);
+  let planId = "";
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("find the sources")) return { calls: [{ name: "node_delegate", arguments: { to: "researcher", brief: "Find the sources.", kind: "research" } }], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run") && !turn.transcript.includes("@researcher-2")) {
+      return { calls: [{ name: "node_plan_revise", arguments: { plan: planId, add: [{ id: "more", to: "researcher-2", kind: "research", brief: "Search the archive too.", requirementIds: [] }] } }], then: "Asked for the archive.", holdAfter: gate };
+    }
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "One finding; the archive was out of reach." };
+    if (turn.slug === "researcher") return { calls: [reportCall({ outcome: "done", summary: "First finding." })], then: "(no reply)" };
+    if (turn.slug === "researcher-2") return { calls: [reportCall({ outcome: "blocked", summary: "No access to the archive.", blockedBy: "missing_access" })], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager find the sources" } })).statusCode, 201);
+  for (let i = 0; i < 200 && !planId; i += 1) {
+    planId = (await h.prisma.nodeMission.findFirst({ where: { originRoomId: room.id } }))?.id ?? "";
+    if (!planId) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  // While the report turn is still in flight, the step it added gets stuck: the plan is re-planning.
+  for (let i = 0; i < 300 && (await h.prisma.nodeMission.findUnique({ where: { id: planId } }))?.status !== "replanning"; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: planId } })).status, "replanning");
+  release();
+  await settleTurns();
+  assert.equal(seen.filter((turn) => turn.slug === "manager" && turn.transcript.includes("one re-plan turn")).length, 1, "the report turn's end did not take the lead's re-plan turn away");
+  assert.equal((await read(kofi, room.id)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").length, 1);
+  await pressCard(kofi, room.id, "discard");
+  const plan = (await loadPlan(h.prisma, planId))!.data;
+  assert.equal(plan.status, "partially_completed");
+  assert.ok((await read(kofi, room.id)).some((row) => row.body === "One finding; the archive was out of reach."));
+});
+
+test("a card answered during a re-plan turn: the plan waits for its report turn and ends after it", async () => {
+  const { resetHeuristicsCache } = await import("./heuristics.js");
+  process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = JSON.stringify({ stall: { sameError: 1 } });
+  resetHeuristicsCache();
+  try {
+    const kofi = await person("Kofi");
+    const { room } = await crew(kofi, ["manager", "researcher"]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    script = (turn) => {
+      if (turn.slug === "manager" && turn.transcript.includes("find the sources")) return { calls: [{ name: "node_delegate", arguments: { to: "researcher", brief: "Find the sources.", kind: "research" } }], then: "Planned." };
+      if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)", hold: gate };
+      if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The archive was out of reach; nothing else to do." };
+      if (turn.slug === "researcher") return { calls: [reportCall({ outcome: "blocked", summary: "No access to the archive.", blockedBy: "missing_access" })], then: "(no reply)" };
+      return { text: "(no reply)" };
+    };
+    assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager find the sources" } })).statusCode, 201);
+    let planId = "";
+    for (let i = 0; i < 300; i += 1) {
+      const mission = await h.prisma.nodeMission.findFirst({ where: { originRoomId: room.id } });
+      planId = mission?.id ?? "";
+      if (mission?.status === "replanning" && seen.some((turn) => turn.transcript.includes("one re-plan turn"))) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    // The same failure again (the threshold is 1 here): the owner gets the card while the re-plan turn runs, and finishes without it.
+    const found = await checkWork(h.app);
+    assert.deepEqual(found.map((row) => [row.rule, row.action]), [["same_error", "ask_owner"]]);
+    for (let i = 0; i < 100 && !(await read(kofi, room.id)).some((row) => row.kind === "approval" && row.data.type === "plan_decision"); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    const card = (await read(kofi, room.id)).find((row) => row.kind === "approval" && row.data.type === "plan_decision")!;
+    assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 200);
+    assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: planId } })).status, "reporting");
+    release();
+    await settleTurns();
+    assert.equal(seen.filter((turn) => turn.slug === "manager" && turn.transcript.includes("nothing left to run")).length, 1, "the lead's report turn ran after the re-plan turn");
+    const ended = await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: planId } });
+    assert.equal(ended.status, "partially_completed");
+    assert.ok((await read(kofi, room.id)).some((row) => row.body === "The archive was out of reach; nothing else to do."));
+  } finally {
+    delete process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG;
+    resetHeuristicsCache();
+  }
+});
+
+test("a re-plan turn that waits for its owner's answer goes on in the turn the answer starts, whose end ends the re-plan", async () => {
+  const { enqueueTurn, requestPark } = await import("./queue.js");
+  const kofi = await person("Kofi");
+  const { ids, room } = await crew(kofi, ["manager", "researcher"]);
+  let ask: () => void = () => undefined;
+  const asked = new Promise<void>((resolve) => (ask = resolve));
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("find the sources")) return { calls: [{ name: "node_delegate", arguments: { to: "researcher", brief: "Find the sources.", kind: "research" } }], then: "Planned." };
+    // The re-plan turn asks its owner something: it parks after this call, and the answer wakes it.
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { calls: [{ name: "node_overview", arguments: {} }], hold: asked };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The archive was out of reach." };
+    if (turn.slug === "researcher") return { calls: [reportCall({ outcome: "blocked", summary: "No access to the archive.", blockedBy: "missing_access" })], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager find the sources" } })).statusCode, 201);
+  let replan: { id: string; planId: string | null } | null = null;
+  for (let i = 0; i < 300 && !replan; i += 1) {
+    replan = await h.prisma.nodeTurn.findFirst({ where: { nodeId: ids[0], reason: "plan", planStep: null, status: "running" }, select: { id: true, planId: true } });
+    if (!replan) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(replan?.planId, "the lead's re-plan turn runs");
+  assert.ok(requestPark(replan.id, "Waiting for Kofi to answer the card in this chat."));
+  ask();
+  await settleTurns();
+  assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: replan.id } })).outcome, "parked");
+  assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: replan.planId } })).status, "replanning", "a parked re-plan turn has not ended the re-plan");
+
+  // The owner's answer wakes the lead on the plan: that turn carries the re-plan on, and its end ends it.
+  assert.ok(await enqueueTurn(h.app, { nodeId: ids[0]!, roomId: room.id, reason: "approval", note: "Kofi answered: the archive stays closed.", planId: replan.planId }));
+  await settleTurns();
+  assert.ok(seen.some((turn) => turn.slug === "manager" && turn.transcript.includes("Kofi answered: the archive stays closed.")), "the answer's turn keeps its own note");
+  assert.equal(seen.filter((turn) => turn.slug === "manager" && turn.transcript.includes("one re-plan turn")).length, 1, "one re-plan turn");
+  assert.equal((await read(kofi, room.id)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").length, 1, "the next rung: its owner's card");
+  await pressCard(kofi, room.id, "discard");
+  assert.equal((await loadPlan(h.prisma, replan.planId))!.data.status, "partially_completed");
+  assert.ok((await read(kofi, room.id)).some((row) => row.body === "The archive was out of reach."));
+});
+
+test("a report turn dropped before it started does not leave the plan waiting: the report is given up and asked for again", async () => {
+  const { stopTurns } = await import("./queue.js");
+  const kofi = await person("Kofi");
+  const { ids, room } = await crew(kofi, ["manager", "researcher"]);
+  let found: () => void = () => undefined;
+  const research = new Promise<void>((resolve) => (found = resolve));
+  let answered: () => void = () => undefined;
+  const chat = new Promise<void>((resolve) => (answered = resolve));
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("find the sources")) return { calls: [{ name: "node_delegate", arguments: { to: "researcher", brief: "Find the sources.", kind: "research" } }], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("how is it going")) return { text: "Still on it.", hold: chat };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "One source found." };
+    if (turn.slug === "researcher") return { calls: [reportCall({ outcome: "done", summary: "One source: the archive index." })], then: "(no reply)", hold: research };
+    return { text: "(no reply)" };
+  };
+  const wait = async (what: string, ready: () => Promise<boolean>) => {
+    for (let i = 0; i < 300 && !(await ready()); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(await ready(), what);
+  };
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager find the sources" } })).statusCode, 201);
+  await wait("the research step runs", async () => seen.some((turn) => turn.slug === "researcher"));
+  const planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } })).id;
+  // The lead is busy in the room when the research comes back: its report turn waits in line behind that turn.
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager how is it going?" } })).statusCode, 201);
+  await wait("the lead answers in the room", async () => seen.some((turn) => turn.slug === "manager" && turn.transcript.includes("how is it going")));
+  found();
+  const reportTurn = { planId, planStep: null, reason: "plan", status: "queued" };
+  await wait("the report turn waits in line", async () => (await h.prisma.nodeTurn.count({ where: reportTurn })) === 1 && (await h.prisma.nodeOutbox.count({ where: { missionId: planId, deliveredAt: null } })) === 0);
+  assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: planId } })).status, "reporting");
+  // A stop drops it before it began: no lead turn of the plan is on its way any more.
+  await stopTurns(h.app, [ids[0]!], room.id);
+  answered();
+  await settleTurns();
+  assert.equal(seen.filter((turn) => turn.slug === "manager" && turn.transcript.includes("nothing left to run")).length, 1, "the report was asked for again, once");
+  assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: planId } })).status, "succeeded");
+  assert.ok((await read(kofi, room.id)).some((row) => row.body === "One source found."));
 });

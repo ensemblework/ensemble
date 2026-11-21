@@ -24,7 +24,7 @@ import { compilePacket, dispatchable, type PacketWho, type StoredPacket } from "
 import { parallelMode } from "./parallel.js";
 import { placeStep, type Located } from "./placement.js";
 import { packetOrigin, stepProgress, storeStepPacket, type PlanData, type PlanStep } from "./plans.js";
-import { CHECKING_KINDS } from "./report.js";
+import { CHECKING_KINDS, reportFormatOf } from "./report.js";
 import { charterOf } from "./templates.js";
 import { computerWorkAsks, holdForOwner, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
 import { updateMessageData } from "./store.js";
@@ -60,6 +60,11 @@ async function sessionPlace(prisma: PrismaClient, sessionId: string): Promise<Lo
   const first = await prisma.workspaceJob.findUnique({ where: { id: sessionId }, select: { folderLabel: true, device: { select: { id: true, name: true, capabilities: true } } } });
   if (!first?.device || !first.folderLabel) return null;
   return { deviceId: first.device.id, deviceName: first.device.name, label: first.folderLabel, capabilities: first.device.capabilities };
+}
+
+/** The capabilities of the computer a session runs on. */
+async function sessionCapabilities(prisma: PrismaClient, sessionId: string): Promise<unknown> {
+  return (await prisma.workspaceJob.findUnique({ where: { id: sessionId }, select: { device: { select: { capabilities: true } } } }))?.device?.capabilities ?? null;
 }
 
 /** A repository the agent can clone: a URL or owner/repo. A bare name is not enough to find it. */
@@ -195,8 +200,10 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
     await stepProgress(prisma, data.missionId, step.id, placed.wait);
     return { done: true, summary: placed.wait };
   }
+  // What the worker's computer takes as a report: a computer not known yet (a fresh clone) gets the first format, which every runtime takes.
+  const reports = located ? reportFormatOf(located.capabilities) : continuing ? reportFormatOf(await sessionCapabilities(prisma, continuing)) : 1;
   // The session adds the applied run settings itself (node/settings.ts), so the packet does not repeat them.
-  const packet = await stepPacket(prisma, data, step, reason, { ...who, place: placed.place, sessionId: continuing, computerId: located?.deviceId ?? null, folder: located?.label ?? place.folder ?? null });
+  const packet = await stepPacket(prisma, data, step, reason, { ...who, place: placed.place, sessionId: continuing, computerId: located?.deviceId ?? null, folder: located?.label ?? place.folder ?? null, reports });
   if (!packet) return { done: true, summary: "The step moved on before it was handed over." };
   const startInput = () => StartInput.parse({ title: packet.title, prompt: packet.prompt, ...place });
   const call: SessionCall = continuing ? { action: "send", input: SendInput.parse({ session: continuing, prompt: packet.prompt, title: packet.title, delivery: "queue" }) } : { action: "start", input: startInput() };

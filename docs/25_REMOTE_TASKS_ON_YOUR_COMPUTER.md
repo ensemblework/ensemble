@@ -377,7 +377,7 @@ They keep the program or operation and the folder or origin, never the output; `
 
 #### Read the worker’s report
 
-**Report.** A run's worker reports its own result with `report_result`, or `.ensemble/result.json` when its agent has no MCP ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). The computer validates it as a `StepReport` (`node/report.ts`) and keeps it on its local job. `complete` sends it as `report` (protocol 6).
+**Report.** A run's worker reports its own result with `report_result`, or `.ensemble/result.json` when its agent has no MCP ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). The computer validates it as a `StepReport` (`node/report.ts`) and keeps it on its local job. `complete` sends it as `report` (protocol 6). `capabilities.reports` 2 says its `StepReport` takes the current format (`partial`, `uncertain` and `stopped` outcomes, evidence `strength`, `remaining`, `ownerDecision`, `provenance`); a plan step's packet for a computer without it asks only for the first format ([35 §6.2](35_ENSEMBLE_NODE.md#62-plans-and-missions)).
 
 The server checks the shape again, redacts it and keeps it on the job (`workspace_jobs.report`); an invalid report is dropped with a warning.
 

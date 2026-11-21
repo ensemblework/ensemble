@@ -334,3 +334,29 @@ test("a stalled step is asked once, then ends blocked; the same failure across s
   assert.deepEqual(sameErrors(repeat, 3).map((row) => [row.count, row.stepId]), [[3, "x3"]]);
   assert.deepEqual(sameErrors(repeat, 4), []);
 });
+
+test("re-plan turns count along a replacement: a replacement that gets stuck too goes to the owner's card", () => {
+  const draft = mission([step("b1", "build")], 3, true);
+  settle(draft, NOW);
+  finish(draft, "b1", { status: "blocked", result: "No access.", report: { outcome: "blocked", summary: "No access." } }, NOW);
+  settle(draft, NOW);
+  assert.equal(draft.mission.status, "replanning");
+  // The lead's re-plan: another node takes the step over.
+  draft.steps.push(step("b2", "build", [], { position: 2 }));
+  assert.equal(replaceStep(draft, "b1", "b2", NOW), true);
+  draft.mission.status = "running";
+  draft.effects = [];
+  settle(draft, NOW);
+  assert.equal(stepById(draft, "b2")!.status, "working");
+  finish(draft, "b2", { status: "blocked", result: "Still no access.", report: { outcome: "blocked", summary: "Still no access." } }, NOW);
+  draft.effects = [];
+  settle(draft, NOW);
+  assert.equal(draft.mission.status, "running", "no second re-plan turn: the step's one was used");
+  assert.deepEqual(effects(draft, "replan"), []);
+  assert.deepEqual(effects(draft, "decide").map((row) => row.stepId), ["b2"]);
+});
+
+test("a mission with no step done is never a success", () => {
+  assert.equal(finalStatus([]), "stopped");
+  assert.equal(finalStatus([step("s1", "research", [], { status: "done", outcome: "done" })]), "succeeded");
+});

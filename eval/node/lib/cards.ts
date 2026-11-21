@@ -5,8 +5,9 @@
  * this run", held writes, sessions, drafts and proposals are approved. Cards only a
  * person can answer (a password, a secret, a sign-in) are declined, as by an owner who is away, and
  * so is any request to see or use the owner's own screen: an agent's private screen is fine, the
- * owner's never is. Both are reported. A stuck plan step's card is answered "finish without it", so a
- * run never retries the same failure until its deadline.
+ * owner's never is. Both are reported. A stuck plan step's card is answered "finish without it" (a step
+ * whose input changed: "keep the result"), so a run never retries the same failure until its deadline;
+ * the report counts and lists it as a problem, with the step and why it was stuck.
  */
 
 /** What the agent asked in a question when the owner cannot answer it now. */
@@ -59,6 +60,10 @@ export function planDecision(row: DecisionRow, scope: "session" | "once" = "sess
   return { url, body: { decision: "allow", scope, ...confirmed }, answer: scope === "session" ? "allow for this run" : "allow once" };
 }
 
+/** How the harness answers a stuck plan step's card: the plan goes on without the step, or keeps a result whose input changed. */
+export const FINISHED_WITHOUT = "finish without it";
+export const KEPT = "keep the result";
+
 /** Card types answered by approving them (node/approvals.ts `settleApproval`). */
 const APPROVED = new Set(["tools", "session", "post", "node_proposal", "crew_add", "media_preview"]);
 /** Card types only a person could approve: they need a password, a secret or a sign-in. The harness declines them. */
@@ -68,6 +73,14 @@ const PERSON_ONLY: Record<string, string> = {
   login: "a sign-in or human check needs the owner",
   device_code: "a command's sign-in code needs the owner",
 };
+
+/** A stuck plan step's card, for the report: the step, and why it was stuck (the card's question without the closing ask). */
+function stuckNote(data: Record<string, unknown>, conflict: boolean): string {
+  const step = record(data.plan).step;
+  const question = typeof data.question === "string" ? data.question.replace(/\s+/g, " ").trim() : "";
+  const why = question.replace(/(?<=[.!?…])\s+[^.!?…]*\?$/, "");
+  return `step ${typeof step === "string" ? step : "unknown"} ${conflict ? "changed under it" : "stuck"}${why ? `: ${why}` : ""}`;
+}
 
 /** A node message card (`kind: "approval"`): how the harness answers it, or why it does not. Computer and run-question cards are answered through their decision. */
 export function planCard(card: CardRow): Plan | null {
@@ -82,7 +95,10 @@ export function planCard(card: CardRow): Plan | null {
   if (card.kind !== "approval") return null;
   if (ownersScreen(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "declined", note: `a request for the owner's own screen (${type}), which the eval never allows` };
   if (APPROVED.has(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "approve" }, answer: type === "media_preview" ? "send" : "approve" };
-  if (type === "plan_decision") return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "finish without it", note: "a stuck plan step: the plan finishes without it and its lead reports" };
+  if (type === "plan_decision") {
+    const conflict = data.why === "conflict";
+    return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: conflict ? KEPT : FINISHED_WITHOUT, note: stuckNote(data, conflict) };
+  }
   return { skip: `a ${type} card the harness does not know how to answer` };
 }
 

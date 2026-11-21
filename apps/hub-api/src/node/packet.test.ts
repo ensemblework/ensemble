@@ -311,3 +311,18 @@ test("a review packet lists the acceptance ids it judges with their proof, the c
   assert.ok(packet.prompt.length <= PACKET_LIMIT);
   assert.equal(dispatchable(data, review, "first"), true);
 });
+
+test("a packet for a computer that takes only the first report format leaves the newer fields out and says so in its header", () => {
+  const build = step({ id: "builder", kind: "build", status: "done", outcome: "done", attempts: [{ n: 1, reason: "first", outcome: "done", summary: "Built.", candidate: { commit: "4ea13ef" }, startedAt: null, endedAt: null }] });
+  const review = step({ id: "reviewer", kind: "review", verifies: "builder", after: ["builder"], requirementIds: ["R1"] });
+  const data = plan([build, review]);
+  const current = compilePacket(data, review, "first", who);
+  const older = compilePacket(data, review, "first", { ...who, reports: 1 });
+  assert.equal(current.header.reportVersion, 2);
+  assert.equal(older.header.reportVersion, 1);
+  assert.match(current.prompt, /strength/);
+  for (const word of [/strength/, /remaining/, /ownerDecision/, /provenance/, /\bpartial\b/, /\buncertain\b/]) assert.doesNotMatch(older.prompt, word);
+  assert.match(older.prompt, /outcome: done \(you built or wrote it\), pass or fail \(you checked something\), or blocked/);
+  assert.match(older.prompt, /Report one check for every acceptance criterion listed, named with its id/);
+  assert.notEqual(older.header.instructionVersion, current.header.instructionVersion);
+});

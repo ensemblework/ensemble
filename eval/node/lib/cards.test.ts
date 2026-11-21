@@ -45,12 +45,19 @@ test("cards: approve what can be approved, decline what needs a person, ignore s
   assert.equal(planCard({ id: "x", kind: "approval", data: { type: "session", status: "applied" } }), null);
   assert.equal(planCard({ id: "y", kind: "approval", data: { type: "computer", status: "pending" } }), null);
   assert.equal(planCard({ id: "z", kind: "text", data: { type: "live" } }), null);
-  assert.deepEqual(planCard({ id: "p", kind: "approval", data: { type: "plan_decision", status: "pending" } }), {
-    url: "/api/node/approvals/p",
-    body: { decision: "discard" },
-    answer: "finish without it",
-    note: "a stuck plan step: the plan finishes without it and its lead reports",
-  });
+  assert.deepEqual(
+    planCard({ id: "p", kind: "approval", data: { type: "plan_decision", status: "pending", plan: { id: "m", step: "s2-abc" }, why: "stuck", question: "@builder's step in @manager's plan is stuck. No access to the repo. Try it again, or finish the plan without it?" } }),
+    {
+      url: "/api/node/approvals/p",
+      body: { decision: "discard" },
+      answer: "finish without it",
+      note: "step s2-abc stuck: @builder's step in @manager's plan is stuck. No access to the repo.",
+    },
+  );
+  assert.deepEqual(
+    planCard({ id: "q", kind: "approval", data: { type: "plan_decision", status: "pending", plan: { id: "m", step: "s1-abc" }, why: "conflict", question: "@builder's step in @manager's plan: spec.md changed (aaa is now bbb) after it worked from it. Redo it with the new version, or keep its result as it is?" } }),
+    { url: "/api/node/approvals/q", body: { decision: "discard" }, answer: "keep the result", note: "step s1-abc changed under it: @builder's step in @manager's plan: spec.md changed (aaa is now bbb) after it worked from it." },
+  );
 });
 
 test("a request for the owner's own screen is declined; an agent's private screen is allowed", () => {

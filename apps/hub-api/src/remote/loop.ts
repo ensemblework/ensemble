@@ -160,6 +160,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     secretScope: 1,
     // An Ensemble Node build can work in its own git worktree of a shared folder (the claim's `mission.worktree`, B13).
     worktrees: 1,
+    // A worker's report_result takes the current StepReport: partial, uncertain and stopped, what remains, the owner's decision, provenance and evidence strength.
+    reports: 2,
     // The key the web encrypts secrets for, how runs get secrets, and secrets used by reference (B12).
     ...credentialCapabilities(settings),
     // A node's browser and capture tools run here (protocol 7), and what this computer can capture.

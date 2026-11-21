@@ -260,10 +260,12 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     return { status: "skipped" };
   }
   // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
-  // its update is written from the plan as it is now. Null: the plan no longer waits for its lead.
-  const leadPlan = turn.reason === "plan" && turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id) : undefined;
-  if (leadPlan === null) return { status: "skipped" };
-  const note = leadPlan?.note ?? turn.note;
+  // its update is written from the plan as it is now. Null: the plan no longer waits for its lead. A lead turn that
+  // carries on that work (an answer to its card) takes its place and keeps its own note.
+  const planTurn = turn.reason === "plan";
+  const leadPlan = turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id, { carry: planTurn }) : undefined;
+  if (leadPlan === null && planTurn) return { status: "skipped" };
+  const note = planTurn ? (leadPlan?.note ?? turn.note) : turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
     rootMessageId: trigger ? (trigger.rootMessageId ?? (trigger.authorKind === "human" ? trigger.id : null)) : null,
@@ -623,7 +625,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     if (step) await finishStep(app, step.planId, step.stepId, { status: "stopped", result: "Stopped." });
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
-    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     // The stop already said so in a status line: a DM hears more only when the turn had done something.
     if (!step && room.kind === "dm" && result.toolCalls.length) {
       const said = cleanReply(result.content.replace(/\n*Stopped before finishing\.\s*$/i, ""), true);
@@ -651,7 +653,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
         if (result.interrupted) await stopPlans(app, { planId: made.message.id, userId: owner });
         else await startPlan(app, made.message.id, null);
       }
-      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     }
     return { status: "failed", model: result.model, credits: result.credits, error: result.content };
   }
@@ -724,7 +726,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
   // The lead's report turn: the plan is done, unless it added steps (they start now).
-  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
   return { status: "done", model: result.model, credits: result.credits };
 }
 

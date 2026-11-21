@@ -3293,6 +3293,9 @@ model NodeMission {
   artifacts     Json       @default("[]")
   /// What the watchdog already raised for this mission (node/watchdog.ts): { <condition>: ISO time }, each once.
   watchdog      Json       @default("{}")
+  /// The lead's plan turn that last started for it (node/plans.ts beginPlanTurn): { id, kind: report | replan, at }.
+  /// Only that turn's end concludes the mission (report) or ends its re-plan (replan).
+  leadTurn      Json?      @map("lead_turn")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
   endedAt       DateTime?  @map("ended_at")

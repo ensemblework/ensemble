@@ -51,7 +51,7 @@ import {
   type StepState,
   type StepStatus,
 } from "./missions-core.js";
-import { CHECKING_KINDS, parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
+import { CHECKING_KINDS, parseReport, STEP_KINDS, withStrength, type StepKind, type StepOutcome } from "./report.js";
 import { renderConstraints, type ArtifactInput, type Constraints, type PlanInput, type ProofKind, type StepInput } from "./plan-contract.js";
 import { conflictsOf, reviewPart, storedPacket, versionLines, type MissionArtifact, type PacketHeader, type StoredPacket } from "./packet.js";
 import { activeHeuristics } from "./heuristics.js";
@@ -495,6 +495,9 @@ export async function addStep(
 ): Promise<{ planId: string; step: PlanStep; position: number }> {
   let plan = await currentPlan(db, input.lead.id, input.turnId, input.continuing);
   if ((input.step.executor ?? "node") === "node" && input.step.node.id !== input.lead.id) await assertInRoom(db, plan?.message.roomId ?? input.room.id, [input.step.node]);
+  // A new plan has no steps yet: its first step comes after none and checks none. Refused before any card is made.
+  const named = input.step.verifies ?? input.step.after[0];
+  if (!plan && named) throw new PlanError(`@${named.replace(/^@/, "")} has no step in a plan of this turn yet. Add its step first, then this one after it.`);
   if (!plan) {
     const { message } = await postMessage(db, {
       roomId: input.room.id,
@@ -554,10 +557,13 @@ export async function addStep(
       if (input.step.verifies) {
         const target = latest(input.step.verifies);
         if (!target) throw new PlanError(`@${input.step.verifies.replace(/^@/, "")} has no step in this plan to ${kind === "review" ? "review" : "verify"}. Add its build step first.`);
-        if (kind === "review" && target.nodeId === input.step.node.id) throw new PlanError("A review is independent: give it to another node (or a helper) than the one whose work it reviews.");
         verifies = target.id;
       } else {
         verifies = after.map((id) => rows.find((row) => row.id === id)!).filter((row) => row.kind === "build" || (kind === "review" && row.kind === "write")).at(-1)?.id ?? null;
+      }
+      // Named or found from `after`, the work a review checks is never its own reviewer's.
+      if (kind === "review" && rows.find((row) => row.id === verifies)?.nodeId === input.step.node.id) {
+        throw new PlanError("A review is independent: give it to another node (or a helper) than the one whose work it reviews.");
       }
     }
     position = rows.length + 1;
@@ -606,7 +612,8 @@ export async function startPlan(app: FastifyInstance, planId: string, intro: str
   const card = await app.prisma.nodeMessage.findUnique({ where: { id: planId }, select: { body: true } });
   await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
     if (draft.mission.status !== "draft") return false;
-    draft.mission.status = "running";
+    // A plan whose first step could not be added is never opened: it ends stopped, with nothing to report.
+    draft.mission.status = draft.steps.length ? "running" : "stopped";
     draft.missionDirty = true;
     return { body: intro?.trim() ? truncateText(intro.trim(), 6000) : card?.body || "Plan" };
   });
@@ -637,11 +644,14 @@ export async function finishStep(app: FastifyInstance, planId: string, stepId: s
     const now = new Date().toISOString();
     const step = stepById(draft, stepId);
     const row = rows.find((candidate) => candidate.id === stepId);
-    const packet = storedPacket(row?.packet);
+    const stored = storedPacket(row?.packet);
+    const header = step && stored && stored.header.attempt === step.attempt ? stored.header : null;
     // Conflicts: what this attempt's packet named has a new version now (node/packet.ts).
-    const conflicts = step && packet && packet.header.attempt === step.attempt && outcome.status === "done" ? conflictsOf(packet.header, artifactsOf(mission), draft, now) : [];
+    const conflicts = header && outcome.status === "done" ? conflictsOf(header, artifactsOf(mission), draft, now) : [];
     const criteria = row ? judgedBy(mission, row) : { mandatory: [], judged: [] };
-    ended = finish(draft, stepId, { ...outcome, mandatory: criteria.mandatory, judged: row?.kind === "review" ? criteria.judged : [], conflicts }, now);
+    // A reviewer whose computer takes only the first report format was never asked for strength: the checks it ran in its review count as judged now.
+    const report = outcome.report && row?.kind === "review" && header?.reportVersion === 1 ? withStrength(outcome.report, "A") : outcome.report;
+    ended = finish(draft, stepId, { ...outcome, ...(report ? { report } : {}), mandatory: criteria.mandatory, judged: row?.kind === "review" ? criteria.judged : [], conflicts }, now);
     return ended ? undefined : false;
   });
   return ended;
@@ -682,15 +692,40 @@ export async function nudgeStep(app: FastifyInstance, planId: string, stepId: st
   return nudged;
 }
 
+/** The lead's plan turn that last started for a mission (node_missions.lead_turn), and what it was for. */
+export type LeadTurn = { id: string; kind: "report" | "replan"; at: string };
+
+function leadTurnOf(mission: Pick<NodeMission, "leadTurn">): LeadTurn | null {
+  const row = mission.leadTurn as Partial<LeadTurn> | null;
+  return row && typeof row.id === "string" && (row.kind === "report" || row.kind === "replan") ? (row as LeadTurn) : null;
+}
+
+/** Whether more of the lead's work on a mission is on its way: another of its plan turns queued or running, or a report or re-plan not delivered yet. */
+async function leadOnItsWay(tx: Prisma.TransactionClient, planId: string, except: string | null): Promise<boolean> {
+  const turns = await tx.nodeTurn.count({ where: { planId, planStep: null, status: { in: ["queued", "running"] }, ...(except ? { id: { not: except } } : {}) } });
+  if (turns) return true;
+  return (await tx.nodeOutbox.count({ where: { missionId: planId, deliveredAt: null, kind: { in: ["report", "replan"] } } })) > 0;
+}
+
 /**
- * After the lead's plan turn. A re-plan turn: the mission goes on, and the rules take the next rung for
- * what is still stuck (its replacement starts, or its owner gets a card). A report turn: done, unless
- * that turn added steps (they start), or results came in that the turn did not carry: then exactly one
- * more report turn (its operation is keyed by those results, so asking again adds nothing).
+ * After the lead's plan turn `turnId`, by what that turn started as (beginPlanTurn), never by where the
+ * mission has got to meanwhile; any other turn's end changes nothing. A re-plan turn: if the mission is
+ * still re-planning it goes on, and the rules take the next rung for what is still stuck (its
+ * replacement starts, or its owner gets a card). A report turn: if the mission is still reporting it is
+ * done, unless that turn added steps (they start), or results came in that the turn did not carry: then
+ * exactly one more report turn (its operation is keyed by those results, so asking again adds nothing).
+ * `dropped`: the turn may have ended before it began (stopped or dropped before it ran); then, when the
+ * mission still waits for its lead and nothing else of the lead's is on its way, the report or re-plan
+ * the mission waits for is given up as if that turn had ended, so the plan never waits forever.
  */
-export async function afterReport(app: FastifyInstance, planId: string): Promise<void> {
-  await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission) => {
-    if (draft.mission.status === "replanning") {
+export async function afterReport(app: FastifyInstance, planId: string, turnId: string | null, options: { dropped?: boolean } = {}): Promise<void> {
+  await mutateMission({ prisma: app.prisma, app }, planId, async (draft, mission, { tx }) => {
+    const began = leadTurnOf(mission);
+    const waiting = draft.mission.status === "replanning" ? "replan" : draft.mission.status === "reporting" ? "report" : null;
+    const kind = turnId && began?.id === turnId ? began.kind : options.dropped && waiting && !(await leadOnItsWay(tx, planId, turnId)) ? waiting : null;
+    if (!kind) return false;
+    if (kind === "replan") {
+      if (draft.mission.status !== "replanning") return false;
       draft.mission.status = "running";
       draft.missionDirty = true;
       return undefined;
@@ -717,20 +752,25 @@ export async function afterReport(app: FastifyInstance, planId: string): Promise
 }
 
 /**
- * The lead's report or re-plan turn starts: in one transaction, every result it now carries is marked
- * delivered to it (the lead's seen list), and its update is written from the mission as it is now.
- * Null when the mission no longer waits for its lead (it went on running, or it ended): the turn has
- * nothing to do.
+ * The lead's report or re-plan turn starts: in one transaction, it becomes the mission's lead turn (what
+ * it is for decides what its end does, afterReport), every result it now carries is marked delivered to
+ * it (the lead's seen list), and its update is written from the mission as it is now. A turn that only
+ * carries on that work (the owner's answer to its card) takes its place without carrying results
+ * (`carry: false`). Null when the mission no longer waits for its lead (it went on running, or it ended).
  */
-export async function beginPlanTurn(app: FastifyInstance, planId: string, turnId: string): Promise<{ kind: "report" | "replan"; note: string } | null> {
+export async function beginPlanTurn(app: FastifyInstance, planId: string, turnId: string, options: { carry?: boolean } = {}): Promise<{ kind: "report" | "replan"; note: string } | null> {
+  const carry = options.carry !== false;
   let kind: "report" | "replan" | null = null;
   const result = await mutateMission(
     { prisma: app.prisma, app },
     planId,
-    (draft) => {
+    async (draft, _mission, { tx }) => {
       if (draft.mission.status !== "reporting" && draft.mission.status !== "replanning") return false;
+      const now = new Date().toISOString();
       kind = draft.mission.status === "replanning" ? "replan" : "report";
-      return markDelivered(draft, turnId, new Date().toISOString()).length ? undefined : false;
+      // What this turn is for is kept with the mission: its end acts on that alone (afterReport).
+      await tx.nodeMission.update({ where: { id: planId }, data: { leadTurn: { id: turnId, kind, at: now } satisfies LeadTurn } });
+      return carry && markDelivered(draft, turnId, now).length ? undefined : false;
     },
     { settle: false },
   );
@@ -765,6 +805,16 @@ export async function answerPlanDecision(app: FastifyInstance, planId: string, s
   return applied;
 }
 
+/** The lead cannot take its re-plan turn (paused or gone): the mission goes on, and its owner is asked. */
+export async function replanSkipped(app: FastifyInstance, planId: string): Promise<void> {
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+    if (draft.mission.status !== "replanning") return false;
+    draft.mission.status = "running";
+    draft.missionDirty = true;
+    return undefined;
+  });
+}
+
 /** Ends a mission at once (its lead cannot report: paused or gone). */
 export async function endPlan(app: FastifyInstance, planId: string): Promise<void> {
   await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
@@ -779,9 +829,9 @@ export async function endPlan(app: FastifyInstance, planId: string): Promise<voi
  * blocked, or the lead's report is given up, so the plan never waits forever. A no-op when the turn
  * already settled it, or when a run or card of the step is still to come back.
  */
-export async function planTurnEnded(app: FastifyInstance, turn: { planId: string | null; planStep: string | null }, why: string): Promise<void> {
+export async function planTurnEnded(app: FastifyInstance, turn: { id: string; planId: string | null; planStep: string | null }, why: string): Promise<void> {
   if (!turn.planId) return;
-  if (!turn.planStep) return afterReport(app, turn.planId);
+  if (!turn.planStep) return afterReport(app, turn.planId, turn.id, { dropped: true });
   if (await stepPending(app.prisma, turn.planId, turn.planStep)) return;
   await finishStep(app, turn.planId, turn.planStep, { status: "blocked", result: why, outcome: "blocked" });
 }

@@ -108,6 +108,25 @@ export const StepReport = z
   .strict();
 export type StepReport = z.infer<typeof StepReport>;
 
+/**
+ * The report format a computer's runtime takes from its workers (`capabilities.reports`): 2 is this one;
+ * an older runtime validates the first (outcomes done, pass, fail, blocked; checks without strength) and
+ * refuses any newer field, so its packets ask for the first only (node/packet.ts).
+ */
+export function reportFormatOf(capabilities: unknown): 1 | 2 {
+  const value = capabilities && typeof capabilities === "object" && !Array.isArray(capabilities) ? (capabilities as { reports?: unknown }).reports : undefined;
+  return typeof value === "number" && value >= 2 ? 2 : 1;
+}
+
+/** The report with `strength` on every check and evidence item that has none. */
+export function withStrength(report: StepReport, strength: EvidenceStrength): StepReport {
+  return {
+    ...report,
+    ...(report.checks ? { checks: report.checks.map((check) => (check.strength ? check : { ...check, strength })) } : {}),
+    ...(report.evidence ? { evidence: report.evidence.map((item) => (item.strength ? item : { ...item, strength })) } : {}),
+  };
+}
+
 /** Parses a stored or reported value; null when it is not a valid report. */
 export function parseReport(value: unknown): StepReport | null {
   const parsed = StepReport.safeParse(value);

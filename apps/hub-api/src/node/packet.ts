@@ -48,6 +48,8 @@ export type PacketHeader = {
   attempt: number;
   /** The step's own objective. */
   goal: string;
+  /** The report format the packet asks for: 2, or 1 for a computer whose runtime refuses the newer fields. */
+  reportVersion: 1 | 2;
   artifacts: PacketArtifact[];
   constraints: string[];
   acceptance: PacketAcceptance[];
@@ -84,6 +86,8 @@ export type PacketWho = {
   artifacts?: readonly MissionArtifact[];
   /** The packet this step was given before: the new version's amendment is computed from it. */
   previous?: PacketHeader | null;
+  /** The report format the worker's computer takes (node/report.ts reportFormatOf); 2 when Ensemble itself reads it. */
+  reports?: 1 | 2;
 };
 
 export type SectionName = "Changes" | "Goal" | "Your part" | "Constraints" | "Inputs" | "Settings" | "Who you are" | "Report" | "Task";
@@ -303,14 +307,16 @@ function whoSection(data: PlanData, step: PlanStep, who: PacketWho): string {
   ].join(" ");
 }
 
-/** The instruction sections a packet's fixed text comes from. */
-function packetRules(step: Pick<PlanStep, "kind">): PromptSection[] {
-  return step.kind === "review" ? ["node/85-task-review", "node/84-task-report"] : ["node/84-task-report"];
+/** The instruction sections a packet's fixed text comes from, in the report format its worker's computer takes. */
+function packetRules(step: Pick<PlanStep, "kind">, reports: 1 | 2 = 2): PromptSection[] {
+  const report: PromptSection = reports === 2 ? "node/84-task-report" : "node/84-task-report-basic";
+  if (step.kind !== "review") return [report];
+  return [reports === 2 ? "node/85-task-review" : "node/85-task-review-basic", report];
 }
 
 /** The version of those sections: the header's instructionVersion. */
-export function instructionVersionOf(step: Pick<PlanStep, "kind">): string {
-  return assemble({ surface: "node", sections: packetRules(step).map((name) => ({ name, tier: "volatile" as const })) }).version;
+export function instructionVersionOf(step: Pick<PlanStep, "kind">, reports: 1 | 2 = 2): string {
+  return assemble({ surface: "node", sections: packetRules(step, reports).map((name) => ({ name, tier: "volatile" as const })) }).version;
 }
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -469,6 +475,7 @@ function embedded(header: PacketHeader): string {
     kind: header.kind,
     reason: header.reason,
     attempt: header.attempt,
+    reportVersion: header.reportVersion,
     acceptance: header.acceptance.map((item) => item.id),
     artifacts: header.artifacts.filter((item) => item.authoritative).map((item) => ({ ref: truncateText(item.ref, 200), hash: item.hash })),
     amendmentOf: header.amendmentOf,
@@ -493,17 +500,19 @@ function changesSection(header: Pick<PacketHeader, "packetVersion" | "amendment"
 function headerOf(data: PlanData, step: PlanStep, reason: AttemptReason, who: PacketWho, constraints: string): Omit<PacketHeader, "hash" | "amendment" | "amendmentOf" | "packetVersion" | "format"> {
   const role = [who.node.role ?? "", who.node.charter ?? ""].join("\n");
   const run = step.run ?? {};
+  const reports = who.reports ?? 2;
   return {
     taskId: `${data.missionId}/${step.id}`,
     parentTaskId: data.missionId,
     rootTaskId: who.rootTaskId ?? data.missionId,
     origin: who.origin ?? { kind: data.routine ? "routine" : "message", id: data.routine?.id ?? data.leadTurnId },
     role: { id: who.node.templateId ?? `node:${who.node.handle}`, version: sha256(role).slice(0, 12) },
-    instructionVersion: instructionVersionOf(step),
+    instructionVersion: instructionVersionOf(step, reports),
     kind: step.kind,
     reason,
     attempt: step.attempt,
     goal: truncateText(oneLine(step.brief), 400),
+    reportVersion: reports,
     artifacts: artifactsFor(data, step, who.artifacts ?? []),
     constraints: constraints.split("\n").filter((line) => line.trim()),
     acceptance: acceptanceOf(data, step),
@@ -534,7 +543,7 @@ export function compilePacket(data: PlanData, step: PlanStep, reason: AttemptRea
     { name: "Inputs", text: inputLines(data, step, who).join("\n") },
     { name: "Settings", text: settingsSection(who) },
     { name: "Who you are", text: whoSection(data, step, who) },
-    { name: "Report", text: packetRules(step).map((name) => renderSection(name)).join("\n") },
+    { name: "Report", text: packetRules(step, fields.reportVersion).map((name) => renderSection(name)).join("\n") },
   ];
   // The header block's size, before its hash is known (a hash is always 64 characters).
   const room = PACKET_LIMIT - embedded({ ...base, hash: "0".repeat(64) }).length - "\n\n## Task\n".length;

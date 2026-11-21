@@ -160,9 +160,15 @@ export function stuck(step: StepState): Stuck | null {
   return null;
 }
 
-/** Re-plan turns a step's lead already had for it. */
-function replans(step: StepState): number {
-  return step.attempts.filter((row) => row.escalation?.replan).length;
+/**
+ * Re-plan turns a step's lead already had for it, the steps it replaced included: a replacement takes over
+ * the step's place on the ladder, so re-planning never starts over.
+ */
+function replans(draft: Pick<Draft, "steps">, step: StepState, seen: Set<string> = new Set()): number {
+  if (seen.has(step.id)) return 0;
+  seen.add(step.id);
+  const own = step.attempts.filter((row) => row.escalation?.replan).length;
+  return own + draft.steps.filter((row) => row.supersededBy === step.id).reduce((sum, row) => sum + replans(draft, row, seen), 0);
 }
 
 /** Whether every step this one comes after has an outcome that lets it start. */
@@ -374,7 +380,7 @@ export function settle(draft: Draft, now: string, rules: Rules = DEFAULT_RULES):
   if (draft.mission.ladder && draft.mission.contract >= 3) {
     const open = draft.steps.filter((step) => stuck(step) && !lastAttempt(step)?.decision);
     const climbing = open.filter((step) => !lastAttempt(step)?.escalation?.owner);
-    const replan = climbing.filter((step) => !lastAttempt(step)?.escalation?.replan && lastAttempt(step)?.repair !== "owner" && replans(step) < rules.replanTurns);
+    const replan = climbing.filter((step) => !lastAttempt(step)?.escalation?.replan && lastAttempt(step)?.repair !== "owner" && replans(draft, step) < rules.replanTurns);
     if (replan.length) {
       for (const step of replan) {
         const last = lastAttempt(step)!;
@@ -571,10 +577,10 @@ export function conclude(draft: Draft, now: string): MissionStatus {
   return draft.mission.status;
 }
 
-/** How a mission ended: a step a re-plan replaced does not count; a conflict left open is not a success. */
+/** How a mission ended: a step a re-plan replaced does not count; a conflict left open, or nothing done, is not a success. */
 export function finalStatus(steps: readonly StepState[]): MissionStatus {
   const counted = steps.filter((row) => !row.supersededBy);
-  if (!counted.length) return "succeeded";
+  if (!counted.length) return "stopped";
   if (counted.every((row) => SATISFIED.has(row.outcome) && !openConflicts(row).length)) return "succeeded";
   if (counted.some((row) => row.outcome === "fail")) return "failed";
   if (counted.every((row) => row.status === "stopped")) return "stopped";
