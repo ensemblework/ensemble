@@ -24,6 +24,7 @@ export function stateParts(completion: TurnCompletion): Part[] {
   const checks = completion.checks;
   if (checks.state === "passed") parts.push({ text: `Checks passed (${checks.passed})`, tone: "ok" });
   else if (checks.state === "failed") parts.push({ text: `Checks failed (${checks.failed} of ${checks.claimed})`, tone: "danger" });
+  else if (checks.state === "uncertain") parts.push({ text: `Checks uncertain (${checks.uncertain ?? checks.runs.filter((run) => run.verdict === "uncertain").length} of ${checks.claimed})`, tone: "warn" });
   else if (checks.state === "unverified") parts.push({ text: "Checks not confirmed", tone: "warn" });
   if (completion.accepted.state === "accepted") parts.push({ text: "Accepted", tone: "ok" });
   else if (completion.accepted.state === "rejected") parts.push({ text: "Discarded", tone: "muted" });
@@ -35,7 +36,7 @@ export function stateParts(completion: TurnCompletion): Part[] {
 /** What each check showed: what the agent said, and what Ensemble's own run showed. */
 export function checkLines(completion: TurnCompletion): string[] {
   return completion.checks.runs.map((run) => {
-    const ran = run.verdict === "pass" ? "passed" : run.verdict === "fail" ? "failed" : "was not run";
+    const ran = run.verdict === "pass" ? "passed" : run.verdict === "fail" ? "failed" : run.verdict === "uncertain" ? "exited 0" : "was not run";
     return `${run.id ? `${run.id} ` : ""}${run.name}: the agent said ${run.claimed}; Ensemble's run ${ran}${run.reason ? `. ${run.reason}` : ""}`;
   });
 }
@@ -62,7 +63,7 @@ export function TurnStates({ completion }: { completion: TurnCompletion }) {
         label="How this turn ended"
         text={
           <span className="flex flex-col gap-1.5">
-            <span>Each state is its own: the agent finishing its turn, files changing, checks passing, you accepting the changes and a pull request are separate. Passing checks are not acceptance.</span>
+            <span>Each state is its own: the agent finishing its turn, files changing, checks passing, you accepting the changes and a pull request are separate. Passing checks are not acceptance. A check's exit code decides; one that exited 0 but showed other output than the agent said is uncertain, not failed.</span>
             {lines.length ? <span>Ensemble ran each check the agent reported again, in this folder, after it finished:</span> : null}
             {lines.map((line) => <span key={line} className="font-mono text-[11.5px]">{line}</span>)}
             {unrun > 0 ? <span>{plural(unrun, "check")} came without a command to run again, so only the agent's word stands for {unrun === 1 ? "it" : "them"}.</span> : null}

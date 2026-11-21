@@ -202,6 +202,21 @@ test("switching agent starts a new session with a handoff record of the earlier 
   assert.deepEqual([accepted?.accepted.state, accepted?.checks.state], ["accepted", "failed"]);
 });
 
+test("a handoff record keeps a check whose output differed apart: exited 0, not verified, not failed", async () => {
+  const { turn, ctx, ran, base } = await setup("uncertain-handoff");
+  const first = await turn({ instructions: "Make the build list its files.\nAC-1: the build reports 3 files" });
+  await ran(first, await prepareCodeTurn(ctx(first), { ...base, resume: null }), "claude-uncertain");
+  const differed = { name: "build", id: "AC-1", command: "node build.js", cwd: null, expects: { outputMatches: "Built 3 files" }, claimed: "pass" as const, verdict: "uncertain" as const, reason: 'Output differed: expected "Built 3 files", saw "Built 2 files".', exitCode: 0, ms: 30, counts: null, output: "Built 2 files" };
+  await db.run.update({ where: { id: first.runId! }, data: { completion: completionOf({ outcome: "success", files: [], report: null, runs: [differed], pr: { state: "none", url: null, source: null } }) as never } });
+  const switched = await turn({ provider: "codex", continueFrom: first.id, instructions: "Codex, take it from here." });
+  const record = (await prepareCodeTurn(ctx(switched), { ...base, resume: null })).handoff!.record;
+  assert.deepEqual([record.acceptance[0]?.id, record.acceptance[0]?.state], ["AC-1", "unverified"]);
+  assert.match(record.acceptance[0]!.evidence, /^node build\.js exited 0 when Ensemble ran it again, but output differed: expected "Built 3 files", saw "Built 2 files"\.$/);
+  assert.match(record.checks[0]!.result, /^build: exited 0 when Ensemble ran it again, but output differed/);
+  assert.equal(record.state.failed.length, 0, "not a failure");
+  assert.match(record.openWork.nextStep, /^Check AC-1 \(not verified yet\)/);
+});
+
 test("a fork starts a new session from a handoff record of the turn it forks, even with the same agent", async () => {
   const { board, turn, ctx, ran, base } = await setup("fork");
   const first = await turn({ instructions: `Try approach A.${mention(board.title, board.id)}` });
