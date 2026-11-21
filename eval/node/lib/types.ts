@@ -3,7 +3,7 @@
  */
 import type { World, Owner } from "./world.js";
 
-export type Suite = "core" | "crew";
+export type Suite = "core" | "crew" | "hard";
 
 /** Where a check's answer comes from: the reply text, the database or files, the trace of tools, live ground truth, or the rubric judge. */
 export type CheckKind = "reply" | "state" | "trace" | "truth" | "judge";
@@ -124,7 +124,7 @@ export type Task = {
   category: string;
   /** One line for the README and the summary. */
   title: string;
-  /** Default 10 minutes (core) or 25 minutes (crew). */
+  /** Default 10 minutes (core and hard) or 25 minutes (crew). */
   timeoutMs?: number;
   setup: (ctx: TaskContext) => Promise<void>;
   steps: Step[];
@@ -151,6 +151,10 @@ export type RunMetrics = {
   approvals: number;
   unanswered: number;
   errors: number;
+  /** Turns that failed because the agent ended without a reply ("The model returned no answer"). Absent in older result files. */
+  noAnswerTurns?: number;
+  /** Error messages posted in the chat for the owner to read. Absent in older result files. */
+  errorMessages?: number;
 };
 
 export type RunResult = {

@@ -12,15 +12,21 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
 const json = (value: unknown, max: number): string => cut(typeof value === "string" ? value : JSON.stringify(value ?? null), max);
 
-/** The plain text of a page's document (TipTap JSON), one block per line. */
+/** Blocks whose children are inline text: each becomes one line. */
+const LINES = new Set(["paragraph", "heading", "codeBlock"]);
+
+/** The plain text of a page's document (TipTap JSON): one line per paragraph, heading or list item, table cells joined by " | ". */
 export function docText(node: unknown): string {
   const item = record(node);
   if (typeof item.text === "string") return item.text;
   // A mention of a task, page, person or date shows its label.
   if (item.type === "mention") return text(record(item.attrs).label) ?? "";
-  const children = Array.isArray(item.content) ? item.content.map(docText) : [];
-  const block = ["paragraph", "heading", "listItem", "taskItem", "codeBlock", "blockquote", "tableRow"].includes(String(item.type));
-  return children.join(block || item.type === "doc" ? "\n" : "").replace(/\n{3,}/g, "\n\n");
+  if (item.type === "hardBreak") return "\n";
+  const children = Array.isArray(item.content) ? item.content : [];
+  if (item.type === "tableRow") return `${children.map((cell) => docText(cell).replace(/\s*\n\s*/g, " ").trim()).join(" | ")}\n`;
+  const inner = children.map(docText).join("");
+  if (LINES.has(String(item.type))) return `${inner}\n`;
+  return item.type === "doc" ? inner.replace(/\n{3,}/g, "\n\n").trim() : inner;
 }
 
 export type Scope = { ownerId: string; roomIds: string[]; since: Date; seededTasks: string[]; seededPages: string[] };

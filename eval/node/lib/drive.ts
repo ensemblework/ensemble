@@ -138,7 +138,7 @@ async function answerCards(drive: Drive): Promise<void> {
       }
     }
     const ok = response.statusCode < 300;
-    logCard(drive, { id: row.id, type, answer: plan.answer, answered: ok, at: new Date().toISOString(), ...(ok ? {} : { note: `${response.statusCode} ${response.body.slice(0, 160)}` }) });
+    logCard(drive, { id: row.id, type, answer: plan.answer, answered: ok, at: new Date().toISOString(), ...(ok ? (plan.note ? { note: plan.note } : {}) : { note: `${response.statusCode} ${response.body.slice(0, 160)}` }) });
   }
   const rooms = await ownerRooms(drive);
   const cards = await prisma.nodeMessage.findMany({
@@ -157,7 +157,7 @@ async function answerCards(drive: Drive): Promise<void> {
     }
     const response = await drive.owner.inject({ method: "POST", url: plan.url, payload: plan.body });
     const ok = response.statusCode < 300;
-    logCard(drive, { id: card.id, type: cardType(card), answer: plan.answer, answered: ok, at: new Date().toISOString(), ...(ok ? {} : { note: `${response.statusCode} ${response.body.slice(0, 160)}` }) });
+    logCard(drive, { id: card.id, type: cardType(card), answer: plan.answer, answered: ok, at: new Date().toISOString(), ...(ok ? (plan.note ? { note: plan.note } : {}) : { note: `${response.statusCode} ${response.body.slice(0, 160)}: ${plan.note ?? ""}` }) });
   }
 }
 

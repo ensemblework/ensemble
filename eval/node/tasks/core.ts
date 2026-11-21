@@ -4,25 +4,11 @@
  * work on the owner's computer (files, a coding fix, a screenshot) and short research.
  */
 import { join } from "node:path";
-import { CHATTER, check, has, mentionsDate, norm, numbersIn, okTool, urlsIn } from "../lib/grade.js";
+import { check, has, mentionsDate, norm, numbersIn, okTool, urlsIn } from "../lib/grade.js";
 import { getJson, nodeLts } from "../lib/truth.js";
-import { localDay, localMinutes, seedCalendar, seedPage, seedTask, serveHtml, shareFolder, writeFiles } from "../lib/fixtures.js";
-import type { Check, Evidence, Task, TaskContext } from "../lib/types.js";
-import { filesIn, hiddenTests, lastAnswer, linkStatus, nodeTests, readText, sha256, sharedFiles, webLookup, type Shared } from "./helpers.js";
-
-/** "Friday 27 November" for a date, in the owner's words. */
-function spoken(date: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "long", day: "numeric", month: "long" }).format(new Date(`${date}T12:00:00Z`));
-}
-
-/** The calendar date an instant falls on in a time zone. */
-const dateIn = (iso: string | null, timeZone: string): string | null => (iso ? new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso)) : null);
-const timeIn = (iso: string, timeZone: string): string => new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
-
-const newTasks = (ev: Evidence) => ev.tasks.filter((task) => !task.seeded);
-const newPages = (ev: Evidence) => ev.pages.filter((page) => !page.seeded && !page.taskId);
-const assistant = async (ctx: TaskContext) => void (await ctx.makeNode("assistant", "assistant"));
-const noChatter = (ev: Evidence): Check => check("no approval or password chatter", !CHATTER.test(ev.replies.join("\n")), "reply");
+import { localDay, seedCalendar, seedPage, seedTask, serveHtml, shareFolder, writeFiles } from "../lib/fixtures.js";
+import type { Task } from "../lib/types.js";
+import { assistant, dateIn, filesIn, hiddenTests, lastAnswer, linkStatus, meetingsAhead, newPages, newTasks, nodeTests, noChatter, readText, sha256, sharedFiles, spoken, timeIn, webLookup, type Shared } from "./helpers.js";
 
 const factWithSource: Task = {
   id: "fact-with-source",
@@ -172,8 +158,6 @@ const meetingToTasks: Task = {
   },
 };
 
-const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-
 const planMyDay: Task = {
   id: "plan-my-day",
   suite: "core",
@@ -182,21 +166,12 @@ const planMyDay: Task = {
   setup: async (ctx) => {
     await assistant(ctx);
     const zone = ctx.world.timeZone;
-    const today = localDay(zone);
-    // The meetings lie ahead, whenever the eval runs, so there is a rest of the day to plan.
-    const first = Math.ceil((localMinutes(zone) + 45) / 15) * 15;
-    const gap = first + 240 <= 23 * 60 + 30 ? 105 : 45;
-    if (first + 2 * gap + 30 > 23 * 60 + 59) throw new Error("plan-my-day needs a few hours of the day left: run it before 22:00 local time.");
-    const meetings = [
-      { uid: "standup@eval", title: "Standup", start: first, minutes: 15 },
-      { uid: "design@eval", title: "Design review", start: first + gap, minutes: 30 },
-      { uid: "theo@eval", title: "1:1 with Theo", start: first + 2 * gap, minutes: 30 },
-    ];
+    const meetings = meetingsAhead(zone);
     await seedTask(ctx, { title: "Renew the company domain", due: localDay(zone, -1).at("17:00") });
-    await seedTask(ctx, { title: "Review the Q4 budget", due: today.at("23:30") });
+    await seedTask(ctx, { title: "Review the Q4 budget", due: localDay(zone).at("23:30") });
     await seedTask(ctx, { title: "Prepare the board deck", due: localDay(zone, 5).at("17:00") });
-    await seedCalendar(ctx, meetings.map((row) => ({ uid: row.uid, title: row.title, start: today.at(clock(row.start)), end: today.at(clock(row.start + row.minutes)) })));
-    ctx.data.meetings = meetings.map((row) => `${row.title} ${clock(row.start)}`);
+    await seedCalendar(ctx, meetings);
+    ctx.data.meetings = meetings.map((row) => `${row.title} ${row.at}`);
   },
   steps: [{ say: "Plan my day for today." }],
   checks: async ({ ev, judge, data }) => {

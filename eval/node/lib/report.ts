@@ -1,7 +1,19 @@
 /**
- * The Markdown summary of a run (eval/node/results/<stamp>-<label>.md) and the totals behind it.
+ * The Markdown summary of a run (eval/node/results/<stamp>-<label>.md) and the totals behind it,
+ * with the measures v2 is meant to move: turns that ended without a reply, error messages in the
+ * chat, false claims and input tokens per task, per suite.
  */
 import type { CleanupEntry, RunResult, Saved } from "./types.js";
+
+/** A turn that failed because the agent ended without a reply. */
+export const NO_ANSWER = /returned no answer/i;
+
+/** A result with its no-answer and error-message counts, read from its errors when an older file lacks them. */
+export function withMetrics(result: RunResult): RunResult {
+  const noAnswerTurns = result.metrics.noAnswerTurns ?? result.errors.filter((line) => /^turn of @/.test(line) && NO_ANSWER.test(line)).length;
+  const errorMessages = result.metrics.errorMessages ?? result.errors.filter((line) => line.startsWith("error message in the chat:")).length;
+  return { ...result, metrics: { ...result.metrics, noAnswerTurns, errorMessages } };
+}
 
 const pct = (value: number) => `${Math.round(value * 100)}%`;
 const mean = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0);
@@ -27,11 +39,14 @@ export type Totals = {
   approvals: number;
   unanswered: number;
   errors: number;
+  noAnswerTurns: number;
+  errorMessages: number;
   timeouts: number;
   wallMs: number;
 };
 
-export function totals(results: RunResult[]): Totals {
+export function totals(rows: RunResult[]): Totals {
+  const results = rows.map(withMetrics);
   return {
     runs: results.length,
     passed: results.filter((row) => row.pass).length,
@@ -48,27 +63,45 @@ export function totals(results: RunResult[]): Totals {
     approvals: sum(results.map((row) => row.metrics.approvals)),
     unanswered: sum(results.map((row) => row.metrics.unanswered)),
     errors: sum(results.map((row) => row.metrics.errors)),
+    noAnswerTurns: sum(results.map((row) => row.metrics.noAnswerTurns ?? 0)),
+    errorMessages: sum(results.map((row) => row.metrics.errorMessages ?? 0)),
     timeouts: results.filter((row) => row.status === "timeout").length,
     wallMs: sum(results.map((row) => row.metrics.wallMs)),
   };
 }
 
-function row(result: RunResult, repeats: number): string {
+function row(input: RunResult, repeats: number): string {
+  const result = withMetrics(input);
   const m = result.metrics;
   const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
   const status = result.status === "done" ? (result.pass ? "pass" : "fail") : result.status;
-  return `| ${name} | ${result.suite} | ${status} | ${result.verifiedPass ? "yes" : "no"} | ${pct(result.score)} | ${result.falseClaims.length} | ${m.turns} | ${m.modelCalls} | ${m.ensembleTools} | ${m.agentTools} | ${thousands(m.tokensIn)} / ${thousands(m.tokensOut)} | ${m.credits.toFixed(2)} | ${seconds(m.wallMs)} | ${m.approvals}${m.unanswered ? ` (${m.unanswered} unanswered)` : ""} | ${m.errors} |`;
+  return `| ${name} | ${result.suite} | ${status} | ${result.verifiedPass ? "yes" : "no"} | ${pct(result.score)} | ${result.falseClaims.length} | ${m.noAnswerTurns ?? 0} / ${m.errorMessages ?? 0} | ${m.turns} | ${m.modelCalls} | ${m.ensembleTools} | ${m.agentTools} | ${thousands(m.tokensIn)} / ${thousands(m.tokensOut)} | ${m.credits.toFixed(2)} | ${seconds(m.wallMs)} | ${m.approvals}${m.unanswered ? ` (${m.unanswered} unanswered)` : ""} | ${m.errors} |`;
 }
 
 const HEADER = [
-  "| task | suite | result | verified | score | false claims | turns | model calls | Ensemble tools | agent tools | tokens in / out | credits | time | approvals | errors |",
-  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+  "| task | suite | result | verified | score | false claims | no answer / error msgs | turns | model calls | Ensemble tools | agent tools | tokens in / out | credits | time | approvals | errors |",
+  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 
 export function summaryTable(results: RunResult[], repeats = 1): string {
   const t = totals(results);
-  const total = `| **total** | | **${t.passed}/${t.runs}** | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${t.approvals}${t.unanswered ? ` (${t.unanswered} unanswered)` : ""} | ${t.errors} |`;
+  const total = `| **total** | | **${t.passed}/${t.runs}** | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.noAnswerTurns} / ${t.errorMessages} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${t.approvals}${t.unanswered ? ` (${t.unanswered} unanswered)` : ""} | ${t.errors} |`;
   return [...HEADER, ...results.map((result) => row(result, repeats)), total].join("\n");
+}
+
+/** Per suite and overall: the measures v2 is meant to move. */
+export function suiteTable(results: RunResult[]): string {
+  const suites = [...new Set(results.map((result) => result.suite))];
+  const line = (name: string, rows: RunResult[]) => {
+    const t = totals(rows);
+    return `| ${name} | ${t.runs} | ${t.passed} | ${pct(t.meanScore)} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
+  };
+  return [
+    "| suite | tasks | passed | mean score | turns ended with no answer | error messages | false claims | input tokens per task | credits per task |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...suites.map((suite) => line(suite, results.filter((result) => result.suite === suite))),
+    ...(suites.length > 1 ? [line("**all**", results)] : []),
+  ].join("\n");
 }
 
 function cleanupLines(entries: CleanupEntry[]): string[] {
@@ -92,14 +125,18 @@ export function markdown(saved: Saved): string {
     "",
     `Commit \`${saved.commit}\` · agent ${saved.agent} · model ${saved.model} · judge ${saved.judgeModel} · repeat ${repeats} · started ${saved.startedAt}${saved.finishedAt ? ` · finished ${saved.finishedAt}` : " · unfinished"}.`,
     "",
-    "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).",
+    "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).",
     "",
     summaryTable(saved.results, repeats),
+    "",
+    "## Suite metrics",
+    "",
+    suiteTable(saved.results),
     "",
     "## Failed checks, false claims and errors",
     "",
   ];
-  const problems = saved.results.filter((result) => !result.pass || result.falseClaims.length || result.errors.length);
+  const problems = saved.results.filter((result) => !result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined"));
   if (!problems.length) lines.push("None.");
   for (const result of problems) {
     const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
@@ -109,6 +146,8 @@ export function markdown(saved: Saved): string {
     for (const error of result.errors) lines.push(`  - Error: ${cell(error)}`);
     const unanswered = result.cards.filter((card) => !card.answered);
     if (unanswered.length) lines.push(`  - Cards not answered: ${unanswered.map((card) => `${card.type}${card.note ? ` (${cell(card.note)})` : ""}`).join(", ")}.`);
+    const declined = result.cards.filter((card) => card.answered && card.answer === "declined");
+    if (declined.length) lines.push(`  - Cards declined: ${declined.map((card) => `${card.type}${card.note ? ` (${cell(card.note)})` : ""}`).join(", ")}.`);
   }
   lines.push("", "## Cleanup receipt", "", ...cleanupLines(saved.cleanup));
   if (saved.notes.length) lines.push("", "## Notes", "", ...saved.notes.map((note) => `- ${note}`));

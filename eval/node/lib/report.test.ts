@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markdown, summaryTable, totals } from "./report.js";
+import { markdown, suiteTable, summaryTable, totals, withMetrics } from "./report.js";
 import type { RunResult, Saved } from "./types.js";
 
 const run = (task: string, over: Partial<RunResult> = {}): RunResult => ({
@@ -68,4 +68,20 @@ test("the report lists failed checks, false claims, unanswered cards and the cle
   assert.match(text, /Cards not answered: sudo \(needs a password\)/);
   assert.match(text, /1 of 1 agent sessions deleted/);
   assert.ok(!text.includes("—") && !text.includes(" -- "));
+});
+
+test("no-answer turns and error messages come from the metrics, or from the errors of an older file", () => {
+  const older = run("a", { errors: ["turn of @assistant failed: The model returned no answer. Recorded actions are available separately.", "error message in the chat: The model returned no answer.", "turn of @x failed: Rate limited."] });
+  assert.deepEqual([withMetrics(older).metrics.noAnswerTurns, withMetrics(older).metrics.errorMessages], [1, 1]);
+  const newer = run("b", { metrics: { ...run("b").metrics, noAnswerTurns: 2, errorMessages: 0 } });
+  assert.deepEqual([withMetrics(newer).metrics.noAnswerTurns, withMetrics(newer).metrics.errorMessages], [2, 0]);
+  assert.match(summaryTable([older, newer]).split("\n").at(-1)!, /\| 0 \| 3 \/ 1 \|/);
+});
+
+test("the suite table has a row per suite, an overall row, and input tokens per task", () => {
+  const lines = suiteTable([run("a"), run("b", { suite: "hard", pass: false, score: 0.5, falseClaims: ["x"] }), run("c", { suite: "hard" })]).split("\n");
+  assert.equal(lines.length, 5);
+  assert.match(lines[2]!, /^\| core \| 1 \| 1 \| 100% \| 0 \| 0 \| 0 \| 12k \| 0\.50 \|$/);
+  assert.match(lines[3]!, /^\| hard \| 2 \| 1 \| 75% \| 0 \| 0 \| 1 \| 12k \|/);
+  assert.match(lines[4]!, /^\| \*\*all\*\* \| 3 \| 2 \|/);
 });

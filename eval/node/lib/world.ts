@@ -4,11 +4,14 @@
  * on the owner's subscription (`ENSEMBLE_DESKTOP=1`), and the owner's computer as a second process
  * (computer-main.ts) with its own database, paired by the real remote loop, so device tools and coding
  * sessions act on this machine. Every folder Ensemble writes is inside the run's scratch folder; the
- * databases live in memory and disappear with the processes.
+ * databases live in memory and disappear with the processes. Nothing the run starts can reach the
+ * owner's screen: no display, a private runtime folder, and a session bus that only reaches the keyring.
  */
+import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HttpUser } from "../../../apps/hub-api/src/test/http.js";
 import { startComputer } from "./computer.js";
@@ -21,15 +24,39 @@ export const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "st
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** What could reach the owner's screen, sound, agents or desktop session from a process the run starts. */
+const DESKTOP_SESSION = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "WAYLAND_SOCKET",
+  "SWAYSOCK",
+  "I3SOCK",
+  "HYPRLAND_INSTANCE_SIGNATURE",
+  "PIPEWIRE_REMOTE",
+  "PULSE_SERVER",
+  "SESSION_MANAGER",
+  "DESKTOP_STARTUP_ID",
+  "XDG_ACTIVATION_TOKEN",
+  "GNOME_TERMINAL_SCREEN",
+  "GNOME_TERMINAL_SERVICE",
+  "SSH_AUTH_SOCK",
+  "GPG_AGENT_INFO",
+];
+
 /** The variables that could reach real data, keys or a screen, cleared or pointed into the scratch folder before Ensemble loads. */
-export function hermetic(dirs: { state: string; workspace: string; app: string; data: string; tmp: string }): void {
+export function hermetic(dirs: { state: string; workspace: string; app: string; data: string; tmp: string; run: string }): void {
   for (const key of Object.keys(process.env)) {
     if (/(_API_KEY|_API_TOKEN|_SECRET)$|^(AZURE|OPENAI|ANTHROPIC|GEMINI|XAI|MISTRAL|GOOGLE_API|STRIPE|RESEND)_/.test(key)) delete process.env[key];
   }
-  for (const key of ["ENSEMBLE_TEST_DATABASE_URL", "ENSEMBLE_REMOTE_API", "ENSEMBLE_INSTALL_PATH", "ENSEMBLE_LOCAL_ONLY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_RUNTIME_MODE", "ENSEMBLE_DISCOVERY_FILE", "ENSEMBLE_SECRET_KEY_FILE", "ENSEMBLE_CHROMIUM", "DISPLAY", "WAYLAND_DISPLAY", "HUB_API_PUBLIC_URL", "AZURE_STORAGE_CONNECTION_STRING"]) {
+  for (const key of ["ENSEMBLE_TEST_DATABASE_URL", "ENSEMBLE_REMOTE_API", "ENSEMBLE_INSTALL_PATH", "ENSEMBLE_LOCAL_ONLY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_RUNTIME_MODE", "ENSEMBLE_DISCOVERY_FILE", "ENSEMBLE_SECRET_KEY_FILE", "ENSEMBLE_CHROMIUM", "HUB_API_PUBLIC_URL", "AZURE_STORAGE_CONNECTION_STRING", ...DESKTOP_SESSION]) {
     delete process.env[key];
   }
+  // Wayland, PipeWire and PulseAudio find the desktop's sockets in XDG_RUNTIME_DIR by default.
+  mkdirSync(dirs.run, { recursive: true, mode: 0o700 });
   Object.assign(process.env, {
+    XDG_RUNTIME_DIR: dirs.run,
+    XDG_SESSION_TYPE: "tty",
     ENSEMBLE_REMOTE_STATE_DIR: dirs.state,
     ENSEMBLE_WORKSPACE_ROOT: dirs.workspace,
     ENSEMBLE_APP_DATA_DIR: dirs.app,
@@ -48,14 +75,64 @@ export function hermetic(dirs: { state: string; workspace: string; app: string; 
   });
 }
 
+/**
+ * Points the session bus at a filtered copy (xdg-dbus-proxy) that reaches only the keyring
+ * (`org.freedesktop.secrets`), where agent CLIs such as Copilot keep their sign-in: no desktop portal,
+ * notification, screen cast or app activation gets through. Without the proxy, the bus is cut. Call it
+ * before `hermetic` moves XDG_RUNTIME_DIR; the socket goes in `dir`.
+ */
+export async function keyringBus(dir: string, log: Log): Promise<{ filtered: boolean; stop: () => void }> {
+  const real = process.env.DBUS_SESSION_BUS_ADDRESS;
+  delete process.env.DBUS_SESSION_BUS_ADDRESS;
+  if (!real || process.platform !== "linux") return { filtered: false, stop: () => undefined };
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const socket = join(dir, "keyring-bus");
+  // `--fd=3`: the proxy ends when this process does and the pipe closes.
+  const proxy = spawn("xdg-dbus-proxy", ["--fd=3", real, socket, "--filter", "--talk=org.freedesktop.secrets"], { stdio: ["ignore", "ignore", "ignore", "pipe"] });
+  const failed = new Promise<boolean>((resolve) => proxy.once("error", () => resolve(true)));
+  for (let waited = 0; waited < 5000 && !existsSync(socket); waited += 100) {
+    if (await Promise.race([failed, sleep(100).then(() => false)])) break;
+  }
+  if (!existsSync(socket)) {
+    proxy.kill();
+    log("no xdg-dbus-proxy: the session bus is off, so an agent that keeps its sign-in in the keyring is signed out");
+    return { filtered: false, stop: () => undefined };
+  }
+  process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${socket}`;
+  return { filtered: true, stop: () => void proxy.kill() };
+}
+
+/**
+ * A Copilot home of the run's own (COPILOT_HOME): the signed-in accounts copied from this machine's
+ * config.json (host and login; the token stays in the keyring) and nothing else. No MCP server, skill,
+ * plugin, instruction or setting of this machine reaches a node turn, a coding session or the judge,
+ * and every Copilot session the run makes stays in the scratch folder. False when no account was found.
+ */
+export function agentHome(dir: string): boolean {
+  const real = process.env.COPILOT_HOME?.trim() || join(homedir(), ".copilot");
+  let accounts: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(join(real, "config.json"), "utf8").replace(/^\s*\/\/.*$/gm, "")) as Record<string, unknown>;
+    accounts = Object.fromEntries(["loggedInUsers", "lastLoggedInUser"].filter((key) => parsed[key] !== undefined).map((key) => [key, parsed[key]]));
+  } catch {
+    accounts = {};
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, "config.json"), `${JSON.stringify(accounts, null, 2)}\n`, { mode: 0o600 });
+  process.env.COPILOT_HOME = dir;
+  return Object.keys(accounts).length > 0;
+}
+
 export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log }) {
   // Chromium's singleton socket lives in the computer's TMPDIR, and a Unix socket path holds at most 107 bytes.
   if (Buffer.byteLength(join(options.workDir, "nv-XXXXXX", "pc", "tmp")) > 60) throw new Error(`The work folder ${options.workDir} is too deep for the computer's browser: pick one with a shorter path.`);
   mkdirSync(options.workDir, { recursive: true });
   const root = mkdtempSync(join(options.workDir, "nv-"));
-  const dirs = { root, state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), tasks: join(root, "tasks"), computer: join(root, "pc") };
+  const dirs = { root, state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), run: join(root, "run"), copilot: join(root, "copilot"), tasks: join(root, "tasks"), computer: join(root, "pc") };
   for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
+  const bus = await keyringBus(dirs.run, options.log);
   hermetic(dirs);
+  if (!agentHome(dirs.copilot)) options.log("no signed-in Copilot account found in this machine's Copilot config");
   const timeZone = process.env.ENSEMBLE_TIMEZONE!;
 
   const { createHttpHarness } = await import("../../../apps/hub-api/src/test/http.js");
@@ -82,6 +159,7 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     stopNode();
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
+    bus.stop();
     throw error;
   });
   options.log(`computer: own process, sandbox ${computer.sandbox ?? "none"}`);
@@ -135,6 +213,7 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     await computer.close().catch(() => undefined);
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
+    bus.stop();
   }
 
   return {
@@ -146,6 +225,8 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     agent: options.agent,
     model: options.model,
     timeZone,
+    /** Whether the session bus reaches the keyring only (false: it is cut). */
+    keyringOnly: bus.filtered,
     newOwner,
     pair,
     unpair,

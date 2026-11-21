@@ -2,7 +2,9 @@
  * The harness answers its nodes' owner cards as an owner in a hurry would, allowing work for this
  * run or mission and never "always": computer questions get "This mission", a coding run's
  * permission "for this run", held writes, sessions, drafts and proposals are approved. Cards only a
- * person can answer (a password, a secret, a sign-in) are left and reported.
+ * person can answer (a password, a secret, a sign-in) are declined, as by an owner who is away, and
+ * so is any request to see or use the owner's own screen: an agent's private screen is fine, the
+ * owner's never is. Both are reported.
  */
 
 /** What the agent asked in a question when the owner cannot answer it now. */
@@ -11,10 +13,15 @@ export const UNATTENDED_ANSWER = "I can't answer right now. Decide yourself and 
 export type DecisionRow = { id: string; source: string; event: string; toolName: string; detail: unknown };
 export type CardRow = { id: string; kind: string; data: unknown };
 
-export type Plan = { url: string; body: Record<string, unknown>; answer: string } | { skip: string };
+export type Plan = { url: string; body: Record<string, unknown>; answer: string; note?: string } | { skip: string };
 
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+
+/** A capability that would show or drive the owner's real screen rather than an agent's private one. */
+export function ownersScreen(capability: string): boolean {
+  return /screen|desktop|display|portal|takeover/i.test(capability) && !/private|agent|virtual|sandbox/i.test(capability);
+}
 
 /** An Ensemble decision waiting for the owner (`agent_decisions`): how the harness answers it, or why it does not. */
 export function planDecision(row: DecisionRow, scope: "session" | "once" = "session"): Plan {
@@ -22,6 +29,8 @@ export function planDecision(row: DecisionRow, scope: "session" | "once" = "sess
   const url = `/api/decisions/${row.id}/decide`;
   const options = strings(detail.options);
   if (record(detail.nodeTool).nodeId) {
+    const capability = String(record(detail.nodeTool).capability ?? "");
+    if (ownersScreen(capability)) return { url, body: { decision: "deny", scope: "once" }, answer: "declined", note: `a request for the owner's own screen (${capability}), which the eval never allows` };
     const mission = options.find((option) => /this mission/i.test(option)) ?? options.find((option) => /^once$/i.test(option));
     if (!mission) return { skip: "a computer question without a mission or once answer" };
     return { url, body: { decision: "allow", scope: "once", reason: mission }, answer: mission };
@@ -40,7 +49,7 @@ export function planDecision(row: DecisionRow, scope: "session" | "once" = "sess
 
 /** Card types answered by approving them (node/approvals.ts `settleApproval`). */
 const APPROVED = new Set(["tools", "session", "post", "node_proposal", "crew_add", "media_preview"]);
-/** Card types the harness cannot answer: they need a person's password, secret or sign-in. */
+/** Card types only a person could approve: they need a password, a secret or a sign-in. The harness declines them. */
 const PERSON_ONLY: Record<string, string> = {
   sudo: "an administrator command needs the computer's password",
   secret: "a secret has to be typed by the owner",
@@ -54,8 +63,12 @@ export function planCard(card: CardRow): Plan | null {
   const type = typeof data.type === "string" ? data.type : "tools";
   if (data.status !== undefined && data.status !== "pending") return null;
   if (type === "computer" || type === "run_decision") return null;
-  if (PERSON_ONLY[type]) return { skip: PERSON_ONLY[type]! };
+  if (PERSON_ONLY[type]) {
+    const note = PERSON_ONLY[type]!;
+    return type === "sudo" ? { url: `/api/node/sudo/${card.id}`, body: { action: "deny" }, answer: "declined", note } : { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "declined", note };
+  }
   if (card.kind !== "approval") return null;
+  if (ownersScreen(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "declined", note: `a request for the owner's own screen (${type}), which the eval never allows` };
   if (APPROVED.has(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "approve" }, answer: type === "media_preview" ? "send" : "approve" };
   return { skip: `a ${type} card the harness does not know how to answer` };
 }

@@ -15,7 +15,7 @@ type Request = { id: number; op: string; apiBase?: string; code?: string; name?:
 const root = process.argv[2];
 if (!root || !process.send) throw new Error("Started only by the eval run (lib/computer.ts).");
 const send = (message: unknown) => process.send?.(message);
-const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp") };
+const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), run: join(root, "run") };
 for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
 hermetic(dirs);
 

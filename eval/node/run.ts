@@ -5,6 +5,7 @@
  *        --agent copilot-cli --model gpt-6-luna --repeat 1 --label baseline-v1 [--judge-model gpt-6-luna]
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --regrade eval/node/results/<stamp>-<label>.json [--tasks ids]
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --combine <results.json>,<results.json> --label <label>
+ *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --report <results.json>
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --cleanup <ledger.jsonl>
  *
  * Options: --work-dir <dir> (scratch folders; default the system's temporary folder), --keep (keep the
@@ -15,16 +16,16 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, falseClaims, scoreOf } from "./lib/grade.js";
-import { markdown, summaryTable } from "./lib/report.js";
+import { markdown, NO_ANSWER, summaryTable, withMetrics } from "./lib/report.js";
 import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
 import { collectEvidence } from "./lib/evidence.js";
 import { busy, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, waitQuiet, waitUntil } from "./lib/drive.js";
-import { bootWorld, hermetic, type World } from "./lib/world.js";
+import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
 import { lastAnswer } from "./tasks/helpers.js";
 import { selectTasks } from "./tasks/index.js";
 import type { Check, CleanupEntry, Evidence, GradeInput, Judge, RunResult, Saved, Task } from "./lib/types.js";
@@ -35,19 +36,27 @@ const RESULTS = join(HERE, "results");
 const CORE_MS = 10 * 60_000;
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+/** Removes a scratch folder, then again a moment later: agent processes still ending write their logs into it. */
+async function removeScratch(root: string): Promise<void> {
+  rmSync(root, { recursive: true, force: true });
+  await sleep(3000);
+  rmSync(root, { recursive: true, force: true });
+}
+
 /** What every run of this harness says about itself in its results. */
 const RUN_NOTES = [
   "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
   "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
   "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
-  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in are left and reported.",
-  "The agent CLI runs with this machine's own configuration and sign-in, as on an owner's computer: MCP servers configured for the agent itself (for Copilot, in ~/.copilot) are offered to node turns too.",
+  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland, PipeWire or PulseAudio socket) and no session bus beyond the keyring. Cards asking for the owner's own screen are never approved; a desktop task that needs a screen must bring its own.",
 ];
 
-type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
+type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [] };
+  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, report: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]!;
     const value = () => {
@@ -63,6 +72,7 @@ function parseArgs(argv: string[]): Args {
     else if (flag === "--judge-model") args.judgeModel = value();
     else if (flag === "--regrade") args.regrade = value();
     else if (flag === "--combine") args.combine = value();
+    else if (flag === "--report") args.report = value();
     else if (flag === "--cleanup") args.cleanup = value();
     else if (flag === "--work-dir") args.workDir = resolve(value());
     else if (flag === "--keep") args.keep = true;
@@ -111,6 +121,7 @@ async function grade(task: Task, ev: Evidence, data: Record<string, unknown>, ju
 function result(task: Task, repeat: number, startedAt: string, status: RunResult["status"], ev: Evidence, graded: { checks: Check[]; claims: string[] }, errors: string[], wallMs: number, trace: string): RunResult {
   const { score, pass, verified } = scoreOf(graded.checks);
   const failedTurns = ev.turns.filter((turn) => turn.status === "failed");
+  const noAnswer = failedTurns.filter((turn) => NO_ANSWER.test(turn.error ?? "")).length;
   const turnErrors = failedTurns.map((turn) => `turn of @${turn.node} failed: ${turn.error ?? "no error given"}`);
   const roomErrors = ev.messages.filter((row) => row.kind === "error").map((row) => `error message in the chat: ${row.body.slice(0, 200)}`);
   const allErrors = [...errors, ...turnErrors, ...roomErrors];
@@ -139,6 +150,8 @@ function result(task: Task, repeat: number, startedAt: string, status: RunResult
       approvals: ev.cards.length,
       unanswered: ev.cards.filter((card) => !card.answered).length,
       errors: allErrors.length,
+      noAnswerTurns: noAnswer,
+      errorMessages: ev.messages.filter((row) => row.kind === "error").length,
     },
     tools: [...new Set(ev.tools.map((call) => call.name))],
     agentToolNames: [...new Set(ev.agentTools.map((call) => call.name))],
@@ -243,6 +256,7 @@ async function main(): Promise<void> {
   const log = (line: string) => console.log(`[eval ${new Date().toISOString().slice(11, 19)}] ${line}`);
   if (args.cleanup) return cleanupLedger(args, log);
   if (args.regrade) return regrade(args, log);
+  if (args.report) return rewriteReport(args, log);
   if (!args.label) throw new Error("Give the run a --label (for example baseline-v1).");
   if (args.combine) return combine(args, log);
   const tasks = selectTasks(args.tasks);
@@ -252,6 +266,7 @@ async function main(): Promise<void> {
   const saved: Saved = { label: args.label, stamp, commit: commit(), agent: args.agent, model: args.model, judgeModel: args.judgeModel, tasks: tasks.map((task) => task.id), repeat: args.repeat, startedAt: new Date().toISOString(), finishedAt: null, results: [], cleanup: [], notes: [...RUN_NOTES] };
   log(`${tasks.length} tasks × ${args.repeat} on ${args.agent} ${args.model}, judge ${args.judgeModel}. Results: ${relative(REPO, join(RESULTS, file))}.{json,md}`);
   const world = await bootWorld({ workDir: args.workDir, agent: args.agent, model: args.model, log });
+  saved.notes.push(world.keyringOnly ? "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through." : "The session bus is off (no xdg-dbus-proxy here).");
   const ledger = new SessionLedger(join(world.dirs.root, "ledger.jsonl"), before, new Set(args.protect));
   const judge = makeJudge({ model: args.judgeModel, ledger, root: world.dirs.root, log, cleanup: saved.cleanup });
   let stopping = false;
@@ -292,13 +307,13 @@ async function main(): Promise<void> {
       const entry = saved.cleanup.find((item) => item.id === row.id);
       if (entry) {
         entry.deleted = false;
-        entry.note = `${entry.note ? `${entry.note}; ` : ""}still in ~/.copilot/session-state at the end`;
+        entry.note = `${entry.note ? `${entry.note}; ` : ""}still in Copilot's session-state at the end`;
       }
     }
     saved.finishedAt = new Date().toISOString();
     saveRun(file, saved);
     await world.close();
-    if (!args.keep) rmSync(world.dirs.root, { recursive: true, force: true });
+    if (!args.keep) await removeScratch(world.dirs.root);
     else log(`scratch folder kept: ${world.dirs.root}`);
   }
   console.log(`\n${summaryTable(saved.results, args.repeat)}\n\nSaved ${relative(REPO, join(RESULTS, file))}.{json,md}. Sessions: ${saved.cleanup.filter((row) => row.deleted).length} of ${saved.cleanup.length} deleted.`);
@@ -310,10 +325,12 @@ async function regrade(args: Args, log: (line: string) => void): Promise<void> {
   const file = existsSync(path) ? path : resolve(REPO, args.regrade!);
   const saved = JSON.parse(readFileSync(file, "utf8")) as Saved;
   const wanted = args.tasks === "all" ? null : new Set(selectTasks(args.tasks).map((task) => task.id));
-  const root = mkdtempSync(join(args.workDir, "ensemble-node-regrade-"));
-  const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp") };
+  const root = mkdtempSync(join(args.workDir, "nv-regrade-"));
+  const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), run: join(root, "run") };
   for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
+  const bus = await keyringBus(dirs.run, log);
   hermetic(dirs);
+  agentHome(join(root, "copilot"));
   process.env.DATABASE_URL = "postgresql://regrade@127.0.0.1:1/ensemble_unused";
   const ledger = new SessionLedger(join(root, "ledger.jsonl"), copilotSessionIds(), new Set(args.protect));
   const judge = makeJudge({ model: args.judgeModel, ledger, root, log, cleanup: saved.cleanup });
@@ -339,8 +356,20 @@ async function regrade(args: Args, log: (line: string) => void): Promise<void> {
     saveRun(name, saved);
     console.log(`\n${summaryTable(saved.results, saved.repeat)}`);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    bus.stop();
+    await removeScratch(root);
   }
+}
+
+/** Writes a saved run's files again (its JSON with the counts older files lack, and its Markdown); no agent calls. */
+function rewriteReport(args: Args, log: (line: string) => void): void {
+  const path = resolve(process.cwd(), args.report!);
+  const file = existsSync(path) ? path : resolve(REPO, args.report!);
+  const saved = JSON.parse(readFileSync(file, "utf8")) as Saved;
+  saved.results = saved.results.map(withMetrics);
+  const name = basename(file, ".json");
+  saveRun(name, saved);
+  log(`Rewrote ${relative(REPO, join(RESULTS, name))}.{json,md}`);
 }
 
 /** One result file from several runs on the same agent and model: a later run of a task replaces an earlier one. */
@@ -353,7 +382,7 @@ function combine(args: Args, log: (line: string) => void): void {
   for (const run of runs) if (run.agent !== first.agent || run.model !== first.model) throw new Error(`${run.stamp}-${run.label} ran ${run.agent} ${run.model}, not ${first.agent} ${first.model}.`);
   const byTask = new Map<string, RunResult>();
   for (const run of runs) for (const row of run.results) byTask.set(`${row.task}#${row.repeat}`, row);
-  const results = [...byTask.values()];
+  const results = [...byTask.values()].map(withMetrics);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const unique = (values: string[]) => [...new Set(values)];
   const saved: Saved = {
@@ -379,10 +408,14 @@ function combine(args: Args, log: (line: string) => void): void {
 /** Deletes the sessions a crashed run recorded in its ledger (the scratch folder's ledger.jsonl). */
 async function cleanupLedger(args: Args, log: (line: string) => void): Promise<void> {
   const entries = readFileSync(resolve(args.cleanup!), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as LedgerEntry);
-  const root = mkdtempSync(join(args.workDir, "ensemble-node-cleanup-"));
-  const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp") };
+  // The run's own Copilot home sits beside its ledger, and its sessions are in it.
+  const home = join(dirname(resolve(args.cleanup!)), "copilot");
+  const root = mkdtempSync(join(args.workDir, "nv-cleanup-"));
+  const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), run: join(root, "run") };
   for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
+  const bus = await keyringBus(dirs.run, log);
   hermetic(dirs);
+  if (existsSync(join(home, "config.json"))) process.env.COPILOT_HOME = home;
   process.env.DATABASE_URL = "postgresql://cleanup@127.0.0.1:1/ensemble_unused";
   const ledger = new SessionLedger(join(root, "ledger.jsonl"), new Set(), new Set(args.protect));
   for (const entry of entries) ledger.record(entry);
@@ -390,7 +423,8 @@ async function cleanupLedger(args: Args, log: (line: string) => void): Promise<v
     const done = await deleteSessions(ledger, ledger.entries(), log);
     console.log(JSON.stringify(done, null, 1));
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    bus.stop();
+    await removeScratch(root);
   }
 }
 

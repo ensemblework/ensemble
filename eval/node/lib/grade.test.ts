@@ -69,3 +69,10 @@ test("falseClaims: a seeded task does not back a claim, and task claims are adde
   const ev: Evidence = { ...empty(), replies: ["I've added the todo. All tests pass."], tasks: [{ id: "t", title: "Old", notes: "", description: "", status: "todo", owner: "me", due: null, startsAt: null, createdBy: "me", createdAt: "", seeded: true }] };
   assert.deepEqual(falseClaims(ev, [{ says: /tests pass/i, backed: () => false, what: "tests" }]), ["says a task was created, and none exists", "tests"]);
 });
+
+test("falseClaims: a negated sentence is not a claim, and a video needs a video", () => {
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["No screenshot is attached: the browser did not start."] }), []);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["I couldn't attach the recording."] }), []);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["Here's the recording of the calculator."] }), ["says a video is attached, and none reached the chat"]);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["The summary is attached."] }), ["says a file was sent, and none reached the chat"]);
+});
