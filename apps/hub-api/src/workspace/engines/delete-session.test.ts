@@ -269,3 +269,41 @@ exit 2
     await rm(bin, { recursive: true, force: true });
   }
 });
+
+test("a Copilot session that is already gone counts as deleted; any other refusal does not", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-copilot-bin-"));
+  const saved = process.env.PATH;
+  // Copilot's headless server answers session.delete for a session it no longer has with "Session file not found for <id>".
+  await writeFile(
+    join(bin, "copilot"),
+    `#!/usr/bin/env node
+let buffer = Buffer.alloc(0);
+const send = (message) => {
+  const body = JSON.stringify({ jsonrpc: "2.0", ...message });
+  process.stdout.write("Content-Length: " + Buffer.byteLength(body) + "\\r\\n\\r\\n" + body);
+};
+process.stdin.on("data", (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  for (;;) {
+    const end = buffer.indexOf("\\r\\n\\r\\n");
+    if (end < 0) return;
+    const length = Number(/content-length:\\s*(\\d+)/i.exec(buffer.subarray(0, end).toString())[1]);
+    if (buffer.length < end + 4 + length) return;
+    const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
+    buffer = buffer.subarray(end + 4 + length);
+    const id = message.params.sessionId;
+    if (message.method === "session.delete") send({ id: message.id, error: { code: -32603, message: id.startsWith("gone") ? "Session file not found for " + id : "Copilot could not open its session store" } });
+  }
+});
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeSession("copilot-cli", "gone-4f2a9c1b-7e3d", bin);
+    await assert.rejects(deleteNativeSession("copilot-cli", "live-4f2a9c1b-7e3d", bin), /could not open its session store/);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});

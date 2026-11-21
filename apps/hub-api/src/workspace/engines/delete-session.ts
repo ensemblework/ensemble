@@ -18,7 +18,8 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
 /**
  * The agent no longer has the session (deleted in its own app, or expired): already gone counts as deleted.
- * Codex: "no rollout found for thread id <id>"; OpenCode's storage: "Resource not found: …/<id>.json".
+ * Copilot: "Session file not found for <id>"; Codex: "no rollout found for thread id <id>"; OpenCode's storage:
+ * "Resource not found: …/<id>.json".
  */
 const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:|no rollout found for thread|resource not found:|no such session/i.test(message);
 
@@ -196,7 +197,11 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     const program = await copilotBinary();
     if (!program) throw new Error("Install or update GitHub Copilot on this computer to delete its saved session.");
     await withCopilotServer(program, async request => {
-      const answer = await request("session.delete", { sessionId });
+      // Copilot answers a session it no longer has with an error ("Session file not found for <id>"), or with success: false.
+      const answer = await request("session.delete", { sessionId }).catch((error: unknown): Record<string, unknown> => {
+        if (error instanceof Error && absentSession(error.message, sessionId)) return { success: true };
+        throw error;
+      });
       if (answer.success !== true && !(typeof answer.error === "string" && absentSession(answer.error, sessionId))) throw new Error(typeof answer.error === "string" ? answer.error : "Copilot did not confirm deletion. Update Copilot and retry.");
     });
     return;

@@ -415,7 +415,7 @@ A signed-in Copilot tile shows *Signed in as <account>*, and its models show the
 
 The thinking menu names the model's own default level ("Automatic (Medium)").
 
-**Detection** (`subscriptions/detect.ts`, reported in the heartbeat's `capabilities.agents` with `assistantTurns` (`ASSISTANT_TURNS_API`, 5); rechecked every 10 minutes, on *Check again* and after a sign-in):
+**Detection** (`subscriptions/detect.ts`, reported in the heartbeat's `capabilities.agents` with `assistantTurns` (`ASSISTANT_TURNS_API`, 6); rechecked every 10 minutes, on *Check again* and after a sign-in):
 
 | | Where it looks | Signed in? | Models |
 |---|---|---|---|
