@@ -7,6 +7,7 @@ import { EVIDENCE_HEADERS, INSTANCE_HEADER, ROUTES, type ActivityPost, type Code
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
+import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
 
 function channelBase(base: string): string {
   const channel = process.env.ENSEMBLE_CLI_CHANNEL;
@@ -122,8 +123,10 @@ export interface HostedClient {
   /** A file attached to the turn's message, at most `maxBytes`; null when the turn ended or the file is gone. */
   assistantFile(turnId: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }): Promise<Uint8Array | null>;
   assistantTool(turnId: string, body: { name: string; input: unknown }): Promise<unknown>;
-  /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
-  assistantStream(turnId: string, body: { seq: number; text: string; status?: string }): Promise<{ stop: boolean }>;
+  /** Asks the node's owner about one of the agent's own calls; the web holds it until they answer, at most 90 seconds. */
+  assistantAsk(turnId: string, body: OwnAsk): Promise<unknown>;
+  /** Reply text in order, with the agent's own calls in a node's turn. `stop`: the person stopped the turn, or it ended. */
+  assistantStream(turnId: string, body: { seq: number; text: string; status?: string; tools?: OwnToolEvent[] }): Promise<{ stop: boolean }>;
   assistantDone(turnId: string, body: unknown): Promise<void>;
   /** Entries of the owner's AI activity log made here. False: a server without the route (they stay on this computer). */
   activity?(body: ActivityPost): Promise<boolean>;
@@ -548,6 +551,12 @@ export function hostedClient(base: string, token: string): HostedClient {
       const res = await call("POST", ROUTES.assistantTool(turnId), body);
       if (res.status === 404 || res.status === 410) return { text: "This turn has ended.", isError: true };
       if (res.status >= 400) return { text: messageOf(res.body, `Ensemble refused the tool call (${res.status}).`), isError: true };
+      return res.body;
+    },
+    async assistantAsk(turnId, body) {
+      const res = await call("POST", ROUTES.assistantAsk(turnId), body);
+      if (res.status === 404 || res.status === 410) return { decision: "deny", message: "This turn has ended." };
+      if (res.status >= 400) return { decision: "deny", message: messageOf(res.body, `Ensemble on the web could not ask your owner (${res.status}), so this call was not run.`) };
       return res.body;
     },
     async assistantStream(turnId, body) {

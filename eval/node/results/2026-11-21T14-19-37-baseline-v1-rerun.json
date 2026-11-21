@@ -1,0 +1,317 @@
+{
+ "label": "baseline-v1-rerun",
+ "stamp": "2026-11-21T14-19-37",
+ "commit": "9a418803",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "multi-part-tasks",
+  "meeting-to-tasks",
+  "plan-my-day"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T14:19:37.595Z",
+ "finishedAt": "2026-11-21T14:23:12.216Z",
+ "results": [
+  {
+   "task": "multi-part-tasks",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "three tasks",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "venue due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-11-28"
+    },
+    {
+     "name": "invitations due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-12-01"
+    },
+    {
+     "name": "catering due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-12-05"
+    },
+    {
+     "name": "the Launch checklist page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the page lists the three with dates",
+     "pass": true,
+     "kind": "state",
+     "note": "3 of 3 dates"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 51190,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 4,
+    "tokensIn": 150530,
+    "tokensOut": 636,
+    "credits": 0.781211,
+    "ensembleCalls": 1,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_how_to",
+    "hub_create_tasks",
+    "hub_create_page"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_how_to",
+    "ensemble-hub_create_tasks",
+    "ensemble-hub_create_page"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "61ece78d-7db9-413c-8ed6-1caab41f8a84"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-rerun/multi-part-tasks--1.jsonl",
+   "startedAt": "2026-11-21T14:19:52.245Z"
+  },
+  {
+   "task": "meeting-to-tasks",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a task for the pricing page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "a task for the CSV export bug",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "a task for the onboarding email",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "no more than the action items",
+     "pass": true,
+     "kind": "state",
+     "note": "3 tasks"
+    },
+    {
+     "name": "a summary page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the summary has the decisions",
+     "pass": true,
+     "kind": "state"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 95024,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 11,
+    "tokensIn": 535113,
+    "tokensOut": 2627,
+    "credits": 1.581271,
+    "ensembleCalls": 1,
+    "ensembleTools": 10,
+    "agentTools": 10,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_meeting_notes",
+    "hub_how_to",
+    "hub_list_pages",
+    "hub_read_page",
+    "hub_list_people",
+    "hub_create_tasks",
+    "hub_create_page",
+    "hub_list_tasks"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_meeting_notes",
+    "ensemble-hub_how_to",
+    "ensemble-hub_list_pages",
+    "ensemble-hub_read_page",
+    "ensemble-hub_list_people",
+    "ensemble-hub_create_tasks",
+    "ensemble-hub_create_page",
+    "ensemble-hub_list_tasks"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "23a0b337-03f6-43e6-8139-a261e0757bb2"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-rerun/meeting-to-tasks--1.jsonl",
+   "startedAt": "2026-11-21T14:20:44.049Z"
+  },
+  {
+   "task": "plan-my-day",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.6,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "names the overdue task",
+     "pass": false,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's task",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's meetings",
+     "pass": true,
+     "kind": "reply",
+     "note": "3 of 3"
+    },
+    {
+     "name": "read the board and the calendar",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "judge ≥ 0.6",
+     "pass": false,
+     "kind": "judge",
+     "note": "0.5: It gives an ordered plan around all three meetings and includes the budget review, but omits the overdue domain-renewal task and does not say it is overdue."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 51799,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 57244,
+    "tokensOut": 532,
+    "credits": 0.318672,
+    "ensembleCalls": 1,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_reminders",
+    "hub_list_due",
+    "hub_list_events"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_events",
+    "ensemble-hub_list_due",
+    "ensemble-hub_list_reminders"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "70344a8e-d845-4410-a811-70ba7ced3698"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-rerun/plan-my-day--1.jsonl",
+   "startedAt": "2026-11-21T14:22:19.739Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "61ece78d-7db9-413c-8ed6-1caab41f8a84",
+   "kind": "node-turn",
+   "task": "multi-part-tasks",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "23a0b337-03f6-43e6-8139-a261e0757bb2",
+   "kind": "node-turn",
+   "task": "meeting-to-tasks",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "335f333e-f6e9-423c-85be-6973b550106b",
+   "kind": "judge",
+   "task": "plan-my-day",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "70344a8e-d845-4410-a811-70ba7ced3698",
+   "kind": "node-turn",
+   "task": "plan-my-day",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in are left and reported.",
+  "The agent CLI runs with this machine's own configuration and sign-in, as on an owner's computer: MCP servers configured for the agent itself (for Copilot, in ~/.copilot) are offered to node turns too."
+ ]
+}

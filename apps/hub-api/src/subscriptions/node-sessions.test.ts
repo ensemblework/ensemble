@@ -2,8 +2,9 @@
  * An Ensemble Node (or any chat) on the person's own AI plan keeps one session: changed instructions go in
  * the next message as the lines that changed, a session long in use starts over, and a replaced session is
  * dropped from the store (turn-sessions.ts). The turn's agent gets its own web tools when asked (agents.ts),
- * a node is told how it runs there (turn.ts howYouRun), and its own instructions (node/instructions.ts) stay
- * the same while its room and memories change.
+ * a node is told how it runs there (turn.ts howYouRun): with all its own tools on a computer that judges them by
+ * the node's folder policy, with its own web only on an older one. Its own instructions (node/instructions.ts)
+ * stay the same while its room and memories change, with its own shell and files only for a computer that keeps them.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -72,12 +73,18 @@ test("the agent's own web tools: on when asked, otherwise closed", () => {
   assert.deepEqual(copilot(false).slice(copilot(false).indexOf("url") - 1, copilot(false).indexOf("url") + 3), ["--deny-tool", "url", "--excluded-tools", "web_search"]);
 });
 
-test("a node on its owner's plan is told what it has: its own web, the computer through Ensemble, coding to sessions", () => {
-  const node = howYouRun("copilot-cli", { ownWeb: true, node: true });
-  assert.match(node, /your own web search and page reading, which their plan pays for/);
+test("a node on its owner's plan is told what it has: its own shell, files and web, what Ensemble adds, coding to sessions", () => {
+  const node = howYouRun("copilot-cli", { ownWeb: true, node: true, ownTools: true });
+  assert.match(node, /all your own tools: your shell, files and web, which their plan pays for/);
   assert.match(node, /browser_\*/);
   assert.match(node, /node_session_start/);
   assert.match(node, /build on it instead of doing it again/);
+  assert.doesNotMatch(node, /\u2014|--/, "no long dashes in what the agent reads");
+  // An older computer gives a node its own web only: the computer is reached through Ensemble's tools.
+  const older = howYouRun("copilot-cli", { ownWeb: true, node: true });
+  assert.match(older, /your own web search and page reading, which their plan pays for/);
+  assert.match(older, /reached only through Ensemble's tools/);
+  assert.match(older, /node_session_start/);
   assert.match(howYouRun("codex"), /no shell, files or web of your own/);
   assert.match(agentConversation([{ role: "system", content: "S" }, { role: "user", content: "hi" }], "claude-code", { ownWeb: true }).system, /^S\n\nYou run on their own Claude subscription/);
 });
@@ -94,6 +101,20 @@ test("a node on an AI plan drives the browser itself, and looks facts up with it
   const helper = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, room: { title: "Auditor", kind: "task" }, helper: { parent: "ada", parentName: "Ada", grant: "computer" } })).tiers.stable;
   assert.match(helper, /several steps on a site: drive the browser yourself/);
   assert.doesNotMatch(helper, /web_task/);
+});
+
+test("a node with its own tools does commands and files with them, only where the computer keeps them; sudo still goes to its owner's card", async () => {
+  const { assembleNode } = await import("../node/instructions.js");
+  const own = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, ownTools: true })).tiers.stable;
+  assert.match(own, /your own shell and files, in your own folder unless your owner names one/);
+  assert.match(own, /computer_sudo \(your owner types their password on a card here; you never see it\)\. Download with your own shell first\./);
+  assert.doesNotMatch(own, /computer_run or computer_files_write yourself|Download with computer_run first/);
+  assert.equal(assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, ownTools: true })).tiers.stable, own, "the same byte for byte for the same node and computer");
+  const older = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, ownTools: false })).tiers.stable;
+  assert.match(older, /computer_run or computer_files_write yourself/, "a computer that keeps Ensemble's tools only: its computer tools");
+  assert.doesNotMatch(older, /your own shell/);
+  const helper = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, ownTools: true, room: { title: "Auditor", kind: "task" }, helper: { parent: "ada", parentName: "Ada", grant: "computer" } })).tiers.stable;
+  assert.match(helper, /commands and files \(your own shell and files\)/);
 });
 
 test("a node's instructions on an AI plan stay the same while its room, skills and memories change: no update for its session", async () => {
@@ -121,6 +142,7 @@ function nodeFacts(over: Record<string, unknown> = {}) {
     ownerOnly: true,
     ownLoop: false,
     ownWeb: false,
+    ownTools: false,
     runProfile: "a coding agent signed in on the computer, on its default model (the run profile “Default”)",
     computerFiles: false,
     computerWorkAsks: false,

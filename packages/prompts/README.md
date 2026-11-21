@@ -4,20 +4,36 @@ The instructions Ensemble gives its models, as Markdown sections, and `assemble(
 sections a request needs together in three tiers with a budget for each. The Hub assistant, Ensemble
 Node and the Code tab's agent use them (`apps/hub-api/src/assistant/state.ts`,
 `apps/hub-api/src/node/instructions.ts`, `apps/hub-api/src/workspace/turn-packet.ts`; docs/11, docs/35
-§5.5 and docs/16 §9).
+§5.5 and docs/16 §9). It also embeds Ensemble's bundled skills from the repository's `skills/` folder
+(`SKILLS`, below).
 
 ## Layout
 
 | Folder | What is there | Used by |
 | --- | --- | --- |
 | `sections/constitution/` | The shared rules: who Ensemble works for, whose word decides, how a task runs, acting, asking, permissions, tools, teamwork, knowledge, how replies read, and what counts as done | Every node turn gets all of them. The Hub assistant gets the ones whose note says "shared word for word" (`03-acting`, `09-look-up`, `10-sources`, `12-records`, `13-every-part`) |
-| `sections/node/` | A node's role and charter, the routing rows (who does the work), crew, lead and step rules, helpers, sessions, the variants for the owner's own AI plan, the context tier (`50` to `57`, `67`) and the turn packet (`80` to `83`) | `node/instructions.ts` (`nodeSections` chooses them from the turn's facts), `node/plans.ts` (`21-step-rules`) |
+| `sections/node/` | A node's role and charter, the routing rows (who does the work), crew, lead and step rules, helpers, sessions, the variants for the owner's own AI plan, the context tier (`50` to `59`, `67`: the room and team, the skills catalogue, memories, workspace items, the best skill in full) and the turn packet (`80` to `83`) | `node/instructions.ts` (`nodeSections` chooses them from the turn's facts), `node/plans.ts` (`21-step-rules`) |
 | `sections/assistant/` | The Hub assistant's own lines: where it works, its scope, facts, dates, one space, playbooks and skills | `assistant/state.ts` (`assistantInstructions`) |
 | `sections/code/` | The Code tab agent's turn packet: who and where it is (`00`), Ensemble's tools (`01`), the run's rules (`02`), `report_result` and the checks Ensemble runs again (`03`), completion states (`04`), the context tier (`10` run profile, `11` skills and when to read them, `12` project, `13` the Context DB slice), the volatile part (`20` acceptance criteria, `21` the date, `22` a handoff record, `90` the line before the message) and a later turn's changes (`30` to `33`) | `workspace/turn-packet.ts` (`buildPacket`), with the constitution's `01` to `05`, `08`, `10`, `12` and `13` |
 
 `src/sections.generated.ts` holds every section's text, its variables and the SHA-256 of its text.
 It is written by `scripts/generate.mjs` and committed, so nothing reads a Markdown file at run time: the
 API, the desktop sidecar and the CLI's bundle import the module.
+
+## Bundled skills
+
+`scripts/generate.mjs` also reads `../../skills/<name>/SKILL.md` and writes `src/skills.generated.ts`:
+`SKILLS`, each skill's `name`, `description`, `license`, `metadata`, its `keywords`, `tools` and
+`priority` (from `metadata`), its body and the SHA-256 of its frontmatter and body (type `BundledSkill`). Ensemble Node
+lists the ones that fit a turn and reads one with `node_skill` (docs/35 §5.6, docs/04 §2.1).
+
+A skill's frontmatter has only `name` (the folder's name, lower-case words joined by hyphens),
+`description` (when to use it: it starts "Use when" and stays under 500 characters), `license` and
+`metadata`, whose indented lines are `priority` (`p0`, `p1` or `p2`), `keywords` (comma-separated
+words and phrases that call for it, required), `tools` (comma-separated: it is offered only with one of
+them) and `source` (where its method comes from). The body follows the same writing rules as a
+section. The generator refuses anything else, so a skill reads the same in every harness that accepts
+the Agent Skills format.
 
 ## Writing a section
 
@@ -32,9 +48,9 @@ API, the desktop sidecar and the CLI's bundle import the module.
 - Write rules as what to do, in Ensemble's own words. No Markdown headings (models copied a heading
   into their replies), and no em dash, en dash or double hyphen: the generator refuses them.
 
-After editing a section, run `pnpm prompts:build` (`pnpm --filter @ensemble/prompts build:sections`)
-and commit the generated module with it. `pnpm prompts:check` and the package's tests fail while it
-is out of date; CI runs both.
+After editing a section or a skill, run `pnpm prompts:build` (`pnpm --filter @ensemble/prompts build:sections`)
+and commit the generated modules with it. `pnpm prompts:check` and the package's tests fail while they
+are out of date; CI runs both.
 
 ## Assembling
 
@@ -55,7 +71,8 @@ const result = assemble({
 - **Tiers.** `stable` (the constitution, the role, what it can do) is the same byte for byte while a
   node and its setup are the same. `context` changes between turns: the room and who is in it, crew
   and rooms, labelled as information, not instructions; then, each under its own label, the skills for
-  this request (guidance) and the owner's standing preferences (what they told the node to remember).
+  this request (guidance), the owner's standing preferences (what they told the node to remember) and
+  what their workspace holds for the turn (information).
   `volatile` is the turn packet.
 - **Budgets** are tokens per tier, estimated as characters / 4. Each tier is filled in priority order
   (lower first, then the order given). A section that does not fit is left out whole, or loses the

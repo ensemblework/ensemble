@@ -1,0 +1,72 @@
+THIRD-PARTY NOTICES
+
+Ensemble includes material adapted from the projects below. Each entry names the files in this
+repository that adapt it, then reproduces the project's licence as its terms require.
+
+
+superpowers
+Source: https://github.com/obra/superpowers (commit 22f0b463e7a5e579904dd6211a520321035526f7, v7.0.2)
+Used in, adapted and rewritten in Ensemble's words:
+- skills/planning/SKILL.md: the step fields and the rule that a plan holds the decisions (skills/writing-plans)
+- skills/verify-before-done/SKILL.md: fresh evidence before a claim, and the claim to evidence list (skills/verification-before-completion)
+- skills/independent-review/SKILL.md: the reviewer's brief, not trusting the report, and what was not judged (skills/requesting-code-review)
+- skills/debugging/SKILL.md: cause before fix, one change at a time, a new approach after three failed fixes (skills/systematic-debugging)
+- skills/delegation/SKILL.md: the brief, and whoever delegates owns the result (skills/dispatching-parallel-agents)
+- skills/clarify-intent/SKILL.md: one question at a time and options with a recommendation (skills/brainstorming)
+
+MIT License
+
+Copyright (c) 2025 Jesse Vincent
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+ecc (Everything Claude Code)
+Source: https://github.com/affaan-m/ECC (commit 4adeee6732a12d1540f49a4d50a38ce8c97f9a53, v2.2.3)
+Used in, adapted and rewritten in Ensemble's words:
+- skills/research/SKILL.md: evidence labels and pages as untrusted information (skills/deep-research, skills/research-ops)
+- skills/stuck-recovery/SKILL.md: capture, match, then the smallest recovery (skills/agent-introspection-debugging)
+- skills/recording/SKILL.md: rehearse first, then record (skills/ui-demo)
+- skills/memory-notes/SKILL.md: one fact per note, merged and never duplicated (skills/growth-log)
+- skills/connected-apps/SKILL.md: the exact item first, draft first, proof from the sent copy (skills/email-ops, skills/google-workspace-ops)
+- skills/clarify-intent/SKILL.md: what done means before the work starts (skills/intent-driven-development)
+- skills/routine-design/SKILL.md: a checkable goal with a boundary, a retry limit and a person on the last switch (skills/loop-design-check)
+- skills/writing/SKILL.md: lead with the concrete thing, and the filler list (skills/article-writing)
+
+MIT License
+
+Copyright (c) 2026 Affaan Mustafa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

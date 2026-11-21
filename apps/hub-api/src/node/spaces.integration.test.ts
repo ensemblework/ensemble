@@ -189,7 +189,8 @@ test("playbooks, personal skills, the write policy, Apply and Undo work for a no
   const turn = seen[0]!;
   assert.match(turn.transcript, /<guide name="Diagrams and flowcharts">/, "the message's playbooks are routed as for the assistant");
   assert.ok(turn.tools.includes("hub_create_diagram"), "and bring their tools");
-  assert.match(turn.system, /Release notes style \([0-9a-f-]{36}\): Short bullet points/, "enabled personal skills are in the instructions");
+  assert.match(turn.system, /\n- Release notes style \(your owner's skill\): Short bullet points, newest first\./, "an enabled personal skill its words call for is in the skills catalogue");
+  assert.doesNotMatch(turn.system, /Standing preferences Mira set/, "listed once, in the node's catalogue");
   assert.equal(await h.prisma.task.count({ where: { userId: mira.id, title: "Draw the release flow" } }), 0, "under preview nothing changes before Apply");
   const [held] = await receipts(node.id, room.id);
   assert.equal(held!.state, "awaiting_approval");

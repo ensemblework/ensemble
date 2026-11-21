@@ -275,7 +275,7 @@ test("a live terminal: the node opens it, the owner watches and types from the w
     const card = cards[0]!;
     assert.equal(card.kind, "text");
     assert.equal(card.private, true, "owner-only");
-    assert.deepEqual(Object.keys(card.data).sort(), ["computer", "deviceId", "kind", "liveId", "session", "startedAt", "status", "title", "type"]);
+    assert.deepEqual(Object.keys(card.data).sort(), ["computer", "deviceId", "kind", "liveId", "session", "startedAt", "status", "title", "turnId", "type"], "the card names the turn that posted it");
     assert.deepEqual([card.data.type, card.data.kind, card.data.status, card.data.liveId, card.data.session, card.data.title, card.data.computer, card.data.deviceId], ["live", "terminal", "open", session, session, "Deploy", "Mira's laptop", computer.laptop.id]);
 
     // The owner opens it: watching, a terminal, sealed for the session.
@@ -367,7 +367,7 @@ test("a live view of the node's tab: watching shows it while the node works and 
     script = (transcript) => (transcript.includes("show me live") ? { calls: [{ name: "live_view", arguments: { kind: "browser", tab } }], then: "The card is above." } : { text: "ok" });
     await node.say("show me live");
     const card = (await node.cards())[0]!;
-    assert.deepEqual(Object.keys(card.data).sort(), ["computer", "deviceId", "kind", "liveId", "startedAt", "status", "tab", "title", "type"]);
+    assert.deepEqual(Object.keys(card.data).sort(), ["computer", "deviceId", "kind", "liveId", "startedAt", "status", "tab", "title", "turnId", "type"]);
     assert.deepEqual([card.data.kind, card.data.status, card.data.tab, card.data.title], ["browser", "open", tab, "Counter"]);
     assert.match(card.data.liveId, /^lv[0-9a-f]{16}$/);
 

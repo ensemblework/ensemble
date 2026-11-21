@@ -4,8 +4,9 @@
  * writing into the run's evidence folder. What the tools write is the run's evidence at once
  * (evidence/captures.ts): uploaded with its other files, or held for the owner's preview. A run with
  * the internet off browses only this computer's own addresses, and an app it starts for capture runs
- * in its folder, sandboxed as the run is. When the run ends, its recordings are finished and kept, and
- * its tabs, apps and displays end (`finishRunCapture`).
+ * in its folder, sandboxed as the run is. On Linux the desktop tools are here too (desktop/control/run-tools.ts):
+ * the agent screen and the person's real screen, for this run. When the run ends, its recordings are finished and kept, and
+ * its tabs, apps, displays and hold on the desktop end (`finishRunCapture`).
  */
 import { realpath } from "node:fs/promises";
 import { BROWSER_TOOLS, browserToolDefinitions, isBrowserTool, runBrowserTool } from "../browser/tools.js";
@@ -22,12 +23,13 @@ import { capturedFiles, finishedFiles, recordCaptures, recordedNote } from "./ca
 import { awaitRunLogin } from "../logins/run.js";
 import type { LoginInfo } from "../logins/requests.js";
 import { prepareEvidenceDir } from "./files.js";
+import { DESKTOP_RUN_TOOLS, desktopToolDefinitions, isDesktopTool, runRunDesktopTool } from "../desktop/control/run-tools.js";
 
-/** Every browser and capture tool name. */
-export const CAPTURE_RUN_TOOLS: readonly string[] = [...BROWSER_TOOLS.map((tool) => tool.name), ...CAPTURE_TOOLS.map((tool) => tool.name)];
+/** Every browser, capture and desktop tool name. */
+export const CAPTURE_RUN_TOOLS: readonly string[] = [...BROWSER_TOOLS.map((tool) => tool.name), ...CAPTURE_TOOLS.map((tool) => tool.name), ...DESKTOP_RUN_TOOLS];
 
 export function isRunCaptureTool(name: string): boolean {
-  return isBrowserTool(name) || isCaptureTool(name);
+  return isBrowserTool(name) || isCaptureTool(name) || isDesktopTool(name);
 }
 
 /**
@@ -36,8 +38,9 @@ export function isRunCaptureTool(name: string): boolean {
  */
 export function runCaptureToolList(): Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> {
   const all = [...browserToolDefinitions(), ...captureToolDefinitions()];
-  if (browserBroker().chromium(true)) return all;
-  return all.filter((tool) => tool.name === "capture_status");
+  const desktop = desktopToolDefinitions();
+  if (browserBroker().chromium(true)) return [...all, ...desktop];
+  return [...all.filter((tool) => tool.name === "capture_status"), ...desktop];
 }
 
 const URL_TOOLS = new Set(["browser_open", "browser_view", "browser_fetch", "browser_extract", "capture_screenshot", "capture_video", "capture_check"]);
@@ -53,6 +56,7 @@ async function runFolder(ctx: Pick<JobContext, "root" | "grants">, cwd: string):
 
 /** One browser or capture tool call of a run: run, its files recorded as the run's evidence. */
 export async function runRunCaptureTool(ctx: JobContext, name: string, input: unknown): Promise<{ ok: boolean; text: string }> {
+  if (isDesktopTool(name)) return runRunDesktopTool(ctx, name, input);
   const operation = ctx.job.id;
   const evidenceDir = await prepareEvidenceDir(ctx.prisma, ctx.job.id);
   const loopbackOnly = !ctx.network;

@@ -14,7 +14,7 @@
  * the phone or `ensemble needs`.
  */
 import { resolve } from "node:path";
-import { checkGit, expandHome, GuardError, harmlessPath, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
+import { checkGit, expandHome, GuardError, harmlessPath, holdsProtected, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
 import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, RUN_RULE_SOURCE, WRITE_TOOL, type JobContext } from "../tools.js";
@@ -39,10 +39,12 @@ export const ENSEMBLE_OWN_TOOLS = ["ask_person", "report_result", "attach_eviden
 
 const ALLOW: EngineAnswer = { decision: "allow" };
 const READS = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
+/** Reads that go through everything under a folder. */
+const SEARCHES = new Set(["Grep", "Glob"]);
 const WRITES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const SHELLS = new Set(["Bash", "PowerShell"]);
 /** Bookkeeping tools that touch nothing outside the agent itself. */
-const HARMLESS = new Set([
+export const HARMLESS: ReadonlySet<string> = new Set([
   "TodoWrite", "TodoRead", "Task", "Agent", "ExitPlanMode", "BashOutput", "KillShell", "KillBash", "Skill", "SlashCommand", "ToolSearch",
   "ListMcpResourcesTool", "ReadMcpResourceTool",
   ...ENSEMBLE_OWN_TOOLS.map((name) => `mcp__ensemble__${name}`),
@@ -66,8 +68,29 @@ async function outside(ctx: JobContext, path: string, write: boolean, options: {
   return verdict.held ? { ...refused(verdict.held), asked: verdict.asked } : { decision: "allow", asked: verdict.asked };
 }
 
-function pathsOf(input: Record<string, unknown>): string[] {
-  return [str(input.file_path), str(input.path), str(input.notebook_path)].filter((value): value is string => Boolean(value));
+/** Every path a file tool's input names: its own fields, and `paths` (GitHub Copilot's searches, a patch's files). */
+export function pathsOf(input: Record<string, unknown>): string[] {
+  const many = Array.isArray(input.paths) ? input.paths : [input.paths];
+  return [str(input.file_path), str(input.path), str(input.notebook_path), str(input.filePath), ...many.map(str)].filter((value): value is string => Boolean(value));
+}
+
+/** Where a glob that names its place looks (`~/notes/*.md`, `/srv/app/src`): the folder before its first wildcard. */
+export function globRoot(pattern: unknown): string | null {
+  const text = str(pattern)?.trim();
+  if (!text || !/^(?:~(?=[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(text)) return null;
+  return text.split(/[*?[{]/)[0]!.replace(/[^\\/]*$/, "") || "/";
+}
+
+/** The files a patch in the apply_patch form adds, changes, deletes or moves to (`*** Update File: …`, `*** Move to: …`). */
+export function patchPaths(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  const found = [...text.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1]!.trim()).filter(Boolean);
+  return [...new Set(found)];
+}
+
+/** The patch text of an apply_patch call, however the agent sent it. */
+function patchText(input: Record<string, unknown>): string {
+  return [input.value, input.input, input.patch, input.content, input.diff, input.text].find((value): value is string => typeof value === "string" && value.includes("*** ")) ?? "";
 }
 
 /** Rough shell split: each program's argv, quotes honoured (`parseShell`). */
@@ -287,9 +310,10 @@ async function questions(ctx: JobContext, input: Record<string, unknown>, withdr
  * they would in the person's own agent, without asking. Refused whatever the request: the dangerous
  * commands, the privilege, persistence and system-settings programs, and, outside the turn's own folder,
  * what no run may reach (keys and sign-ins, Ensemble's own data and code, start-up items, the system's
- * files, other accounts: `outsideRefusal`).
+ * files, other accounts: `outsideRefusal`). `neverPrograms: false` leaves those programs to the caller
+ * (an Ensemble Node's turn asks its owner about them: subscriptions/node-own-tools.ts).
  */
-export async function judgeFloor(root: string, call: EngineCall): Promise<EngineAnswer> {
+export async function judgeFloor(root: string, call: EngineCall, options: { neverPrograms?: boolean } = {}): Promise<EngineAnswer> {
   const input = call.input ?? {};
   const guarded = async (path: string, write: boolean): Promise<EngineAnswer | null> => {
     const real = await realOutside(resolve(root, expandHome(path)));
@@ -304,7 +328,7 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
     if (hit) return { decision: "deny", message: dangerousMessage(hit) };
     // Run where the agent says (Codex names its working folder), else in the turn's folder.
     const parsed = parseShell(command, str(input.cwd) ? resolve(root, expandHome(str(input.cwd)!)) : root);
-    for (const segment of parsed) {
+    for (const segment of options.neverPrograms === false ? [] : parsed) {
       const program = segment.argv[0];
       if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
     }
@@ -324,9 +348,14 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
     return ALLOW;
   }
   if (READS.has(call.tool) || WRITES.has(call.tool)) {
-    for (const path of pathsOf(input)) {
+    const glob = call.tool === "Glob" ? globRoot(input.pattern) : null;
+    for (const path of [...pathsOf(input), ...(glob ? [glob] : [])]) {
       const refused = await guarded(path, WRITES.has(call.tool));
       if (refused) return refused;
+      // A search reads everything under its folder: never one that holds keys, sign-ins or Ensemble's own data or code.
+      if (SEARCHES.has(call.tool) && holdsProtected(await realOutside(resolve(root, expandHome(path))))) {
+        return { decision: "deny", message: `${path} holds keys, sign-ins or Ensemble's own data, so it is not searched as a whole. Search a folder inside it.` };
+      }
     }
   }
   return ALLOW;
@@ -334,14 +363,27 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
 
 /**
  * A tool call as an agent's hook names it (Claude Code's own names, GitHub Copilot CLI's), in the
- * judge's terms: shells as Bash, file reads as Read, file changes as Write; anything else as it is.
+ * judge's terms: shells as Bash, file reads as Read, file changes as Write, web pages as WebFetch and
+ * searches as WebSearch; anything else as it is.
  */
 export function hookCall(name: string, input: Record<string, unknown>): EngineCall {
-  const path = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path) ?? str(input.filePath);
-  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "" } };
+  const named = pathsOf(input);
+  const paths = (more: string[] = []) => {
+    const all = [...new Set([...named, ...more])];
+    return all.length ? { paths: all } : {};
+  };
+  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "", ...(str(input.cwd) ? { cwd: str(input.cwd) } : {}) } };
   if (READS.has(name) || WRITES.has(name) || SHELLS.has(name)) return { tool: name, input };
-  if (/^(view|read|read_file|glob|grep|rg|ls|list_dir|search)$/i.test(name)) return { tool: "Read", input: path ? { file_path: path } : {} };
-  if (/^(create|edit|write|str_replace|str_replace_editor|apply_patch|delete|move)$/i.test(name)) return { tool: "Write", input: path ? { file_path: path } : {} };
+  if (/^(grep|rg|search)$/i.test(name)) return { tool: "Grep", input: paths() };
+  if (/^glob$/i.test(name)) return { tool: "Glob", input: { ...paths(), ...(str(input.pattern) ? { pattern: str(input.pattern)! } : {}) } };
+  if (/^(ls|list_dir)$/i.test(name)) return { tool: "LS", input: paths() };
+  if (/^(view|read|read_file)$/i.test(name) || (/^str_replace_editor$/i.test(name) && input.command === "view")) return { tool: "Read", input: paths() };
+  if (/^apply_patch$/i.test(name)) return { tool: "Write", input: paths(patchPaths(patchText(input))) };
+  if (/^(create|edit|write|str_replace|str_replace_editor|delete|move|rename)$/i.test(name)) {
+    return { tool: "Write", input: paths([str(input.destination), str(input.new_path), str(input.newPath), str(input.to)].filter((value): value is string => Boolean(value))) };
+  }
+  if (/^(web_?fetch|fetch|url)$/i.test(name)) return { tool: "WebFetch", input: { url: str(input.url) ?? "" } };
+  if (/^web_?search$/i.test(name)) return { tool: "WebSearch", input: { query: str(input.query) ?? "" } };
   return { tool: name, input };
 }
 
