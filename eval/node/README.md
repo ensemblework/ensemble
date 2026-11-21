@@ -124,7 +124,7 @@ Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: m
 
 ## Cost and safety
 
-- Every node turn, coding session and judge call is a call on the owner's own subscription. On Copilot CLI with gpt-6-luna the `core` suite took about 8 minutes, 14 sessions (2 of them the judge's), 1.2 million input tokens and 5 credits; the `crew` suite about 35 minutes (25 of them a task that timed out), 18 sessions, 3.5 million input tokens and 12 credits; the `hard` suite about 9 minutes, 13 sessions, 1.7 million input tokens and 7 credits. Use a cheap model.
+- Every node turn, coding session and judge call is a call on the owner's own subscription. On Ensemble Node v1 with Copilot CLI and gpt-6-luna the `core` suite took about 8 minutes, 14 sessions (2 of them the judge's), 1.2 million input tokens and 5 credits; the `crew` suite about 35 minutes (25 of them a task that timed out), 18 sessions, 3.5 million input tokens and 12 credits; the `hard` suite about 9 minutes, 13 sessions, 1.7 million input tokens and 7 credits. On node-v2/phase2 `core` took about 11 minutes, 1.8 million input tokens and 7 credits, and `hard` about 11 minutes, 2.9 million input tokens and 9 credits. Use a cheap model.
 - Runs are sequential: one task at a time, one agent process at a time where the product allows it.
 - Included models and Ensemble's own agent get no runtime here (`AGENT_RUNTIME_URL` points nowhere), so those calls fail at once and cost nothing.
 - Variables that could reach real keys or a screen are removed before Ensemble loads; every folder Ensemble writes (state, workspace, app data, temporary files, the runtime folder) is in the scratch folder, and the session bus reaches only the keyring.
