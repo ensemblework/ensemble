@@ -29,7 +29,7 @@ import { codeBuiltLog, nodeInstructions, packetSections, packetText, type NodeIn
 import { recordMetric } from "../lib/metrics.js";
 import { helperFolders, helperGrant } from "./helpers.js";
 import { RuntimeError } from "../lib/runtime-error.js";
-import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers, type DispatchOutcome } from "./queue.js";
+import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, RESTART_NOTE, takeOffers, type DispatchOutcome } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
@@ -334,6 +334,10 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
         take: thread.cursor ? 40 : 20,
       });
   fresh.reverse();
+  // An owner's interrupt or replacement is read by the turn queued for it, which carries what it stopped or kept
+  // (node/stop.ts): a turn queued before it (a plan's report, a run's end) reads up to it and leaves it there.
+  const fence = fresh.findIndex((row) => row.id !== turn.triggerMessageId && row.authorKind === "human" && row.createdAt > turn.createdAt && Boolean((row.data as { steering?: unknown } | null)?.steering));
+  if (fence >= 0) fresh.splice(fence);
   let readUpTo = fresh.reduce((max, row) => Math.max(max, row.seq), thread.cursor);
   // What its owner added that an earlier turn of this node took while it worked, and answered (node/steering.ts),
   // is not answered again: in an independent answer the cursor stays before its siblings' answers, so it is still here.
@@ -364,11 +368,13 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
   // its update is written from the plan as it is now. Null: the plan no longer waits for its lead. A lead turn that
-  // carries on that work (an answer to its card) takes its place and keeps its own note.
+  // carries on that work (an answer to its card) takes its place and keeps its own note. One resumed after a restart
+  // also keeps what may already have run (node/queue.ts `recoverTurns`), ahead of the plan's update.
   const planTurn = turn.reason === "plan";
   const leadPlan = turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id, { carry: planTurn }) : undefined;
   if (leadPlan === null && planTurn) return { status: "skipped" };
-  const note = planTurn ? (leadPlan?.note ?? turn.note) : turn.note;
+  const resumed = leadPlan && planTurn && turn.note?.startsWith(RESTART_NOTE) ? turn.note : null;
+  const note = planTurn ? ([resumed, leadPlan?.note].filter(Boolean).join("\n\n") || turn.note) : turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
     rootMessageId: trigger ? (trigger.rootMessageId ?? (trigger.authorKind === "human" ? trigger.id : null)) : null,

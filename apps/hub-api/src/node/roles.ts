@@ -37,10 +37,11 @@ export type RoleSources = {
 
 export type RoleResolution = { ok: true; role: NodeRole; reason: RoleReason; choice: Choice } | { ok: false; role: NodeRole; reason: "unresolved"; error: string };
 
-/** The role of a plan step's work, by its kind (node/plan-contract.ts). */
+/** The role of a plan step's work, by its kind (node/report.ts `STEP_KINDS`): a check of a build is testing, an independent review is review. */
 export function roleForStep(kind: string | null | undefined): NodeRole {
   if (kind === "build") return "implementation";
-  if (kind === "verify") return "review";
+  if (kind === "verify") return "test";
+  if (kind === "review") return "review";
   if (kind === "write") return "writing";
   if (kind === "research") return "research";
   return "general";

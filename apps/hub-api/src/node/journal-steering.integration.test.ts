@@ -2,7 +2,9 @@
  * Ensemble Node orchestration (docs/35 §4.2, §5.1, §5.8, §5.9, §6.4, §8.3) against an in-memory database, with
  * the model scripted per node: the tool journal and what a restart does with a call that started and never
  * answered; the five steering cases (a follow-up, an amendment taken between steps, an interrupt, a replacement
- * that stops or keeps what it replaces, a stop with every child); independent views in a crew; Roles (beta).
+ * that stops or keeps what it replaces, a stop with every child); independent views in a crew; Roles (beta); and
+ * how steering, a stop and a restart meet a plan (node/plans.ts): a child's result reaches its lead once, a lead's
+ * report or re-plan turn is never left waiting, and the watchdog never starts again what its owner replaced.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -23,11 +25,14 @@ const { recordingStarted, recordingsOf } = await import("./recordings.js");
 const { recoverRounds } = await import("./groups.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
+const { beginPlanTurn, loadPlan, LIVE_MISSIONS } = await import("./plans.js");
+const { checkWork } = await import("./watchdog.js");
+const { dispatchOutbox } = await import("./outbox.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
 type Step = { calls?: Call[]; text?: string };
-type Seen = { slug: string; transcript: string; messages: Array<{ role?: string; content?: unknown }> };
+type Seen = { slug: string; transcript: string; messages: Array<{ role?: string; content?: unknown }>; signal?: AbortSignal };
 /** Each node's model calls, in order, by its handle: a step, or a function of what the call was given. Out of steps: "ok". */
 const plans = new Map<string, Array<Step | ((seen: Seen) => Step | Promise<Step>)>>();
 const seen: Seen[] = [];
@@ -39,7 +44,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const messages = args.messages as Array<{ role?: string; content?: unknown }>;
   const system = messages.filter((row) => row.role === "system").map((row) => String(row.content)).join("\n");
   const slug = /You are .+? \(@([a-z0-9-]+)\), (?:an Ensemble Node|a temporary helper)/.exec(system)?.[1] ?? "?";
-  const current: Seen = { slug, transcript: textOf(messages.filter((row) => row.role === "user").at(-1)?.content), messages };
+  const current: Seen = { slug, transcript: textOf(messages.filter((row) => row.role === "user").at(-1)?.content), messages, signal: args.signal };
   if (slug !== "?") seen.push(current);
   const next = slug === "?" ? undefined : plans.get(slug)?.shift();
   const step = typeof next === "function" ? await next(current) : (next ?? { text: "ok" });
@@ -716,4 +721,327 @@ test("journal labels: secrets are taken out by key and in text, before the label
   assert.match(label({ command: "psql -h db PGPASSWORD=hunter2secret --quiet" }), /psql -h db PGPASSWORD=\[redacted\] --quiet/, "the words around it stay");
   assert.match(label({ headers: { Authorization: "Bearer abcdefghijklmnop123456" } }), /"Authorization":"\[redacted\]"/);
   assert.match(label({ title: "Book the venue" }), /"title":"Book the venue"/, "the rest stays");
+});
+
+// Steering, a stop and a restart meeting a plan (node/plans.ts, node/outbox.ts, node/watchdog.ts).
+
+/** A gate a scripted model call waits at until it is opened, or until the call is stopped (never past 15 s: a scenario that went wrong fails instead of hanging). */
+function gate() {
+  let open: () => void = () => undefined;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  const at = (turn: Seen) =>
+    turn.signal?.aborted
+      ? Promise.resolve()
+      : Promise.race([
+          opened,
+          new Promise<void>((resolve) => {
+            turn.signal?.addEventListener("abort", () => resolve(), { once: true });
+            setTimeout(resolve, 15_000).unref();
+          }),
+        ]);
+  return { open, at };
+}
+const delegate = (to: string, brief: string): Call => ({ name: "node_delegate", arguments: { to, brief, kind: "research" } });
+const stepReport = (summary: string, outcome = "done", extra: Record<string, unknown> = {}): Call => ({ name: "node_step_report", arguments: { outcome, summary, ...extra } });
+const leadPlanTurns = (planId: string) => h.prisma.nodeTurn.findMany({ where: { planId, planStep: null }, orderBy: { createdAt: "asc" } });
+const times = (text: string, part: string) => text.split(part).length - 1;
+const childrenOf = (row: { children: unknown }) => row.children as { stopped?: Array<{ kind: string; id: string }>; kept?: Array<{ kind: string; id: string }> };
+
+/**
+ * A crew whose researcher's result comes in while its lead answers something else; the owner then steers the
+ * lead (`extra`: the message's steering) while the plan's report turn waits in line behind that answer.
+ */
+async function resultWhileSteered(extra: Record<string, unknown>) {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+  const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+  // Model calls of this crew only: another crew's nodes may have the same handles.
+  const from = seen.length;
+  const mine = () => seen.slice(from);
+  const research = gate();
+  let planId = "";
+  let steering = "";
+  plans.set(
+    lead.slug,
+    always(async (turn) => {
+      if (turn.transcript.includes("nothing left to run")) return { text: "Report: three flights, 89 to 120 euros." };
+      if (turn.transcript.includes("check trains instead")) return { text: /Done before the stop[\s\S]*89, 95 and 120 euros/.test(turn.transcript) ? "Trains instead; the flights found are noted." : "Trains instead." };
+      if (turn.transcript.includes("how is it going")) {
+        // The result comes in now: the plan's report turn waits in line behind this one, and the owner steers.
+        research.open();
+        await until(() => h.prisma.nodeTurn.findFirst({ where: { planId, planStep: null, reason: "plan", status: "queued" } }), "the report turn in line");
+        steering = (await sayNow(kofi, crew.id, "wait, check trains instead", extra)).id;
+        await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: lead.id, messageId: steering } }), "the steering");
+        return { text: "Still on it." };
+      }
+      if (turn.transcript.includes("cheapest flights")) return afterTool(turn) ? { text: "Planned." } : { calls: [delegate(member.slug, "Find the three cheapest flights to Lisbon.")] };
+      return { text: "(no reply)" };
+    }),
+  );
+  plans.set(
+    member.slug,
+    always(async (turn) => {
+      if (afterTool(turn)) return { text: "(no reply)" };
+      await research.at(turn);
+      return { calls: [stepReport("Found three flights: 89, 95 and 120 euros.")] };
+    }),
+  );
+  await sayNow(kofi, crew.id, `@${lead.slug} find the cheapest flights to Lisbon`);
+  await until(async () => mine().some((turn) => turn.slug === member.slug), "the research step");
+  planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } })).id;
+  const asked = await sayNow(kofi, crew.id, `@${lead.slug} how is it going?`);
+  await settleTurns();
+  const turnFor = (messageId: string) => h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: lead.id, triggerMessageId: messageId } });
+  return {
+    planId,
+    plan: (await loadPlan(h.prisma, planId))!.data,
+    busy: await turnFor(asked.id),
+    next: await turnFor(steering),
+    planTurns: await leadPlanTurns(planId),
+    steer: await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: lead.id, messageId: steering } }),
+    calls: mine().filter((turn) => turn.slug === lead.slug),
+    replies: (await read(kofi, crew.id)).filter((row) => row.authorNodeId === lead.id && row.kind === "text").map((row) => row.body),
+  };
+}
+
+test("a child's result that comes in while its lead is interrupted reaches the lead once, in the plan's report turn; the new message is answered after it", async () => {
+  const run = await resultWhileSteered({ steering: "interrupt" });
+  assert.equal(run.busy.outcome, "cancelled", "the answer going on stopped");
+  assert.deepEqual(run.planTurns.map((row) => row.outcome), ["done"], "the report turn was never stopped");
+  assert.equal(run.plan.status, "succeeded");
+  assert.equal(run.plan.steps[0]!.attempts[0]!.deliveredTo, run.planTurns[0]!.id, "carried by the report turn");
+  const carried = run.calls.filter((turn) => turn.transcript.includes("89, 95 and 120 euros"));
+  assert.equal(carried.length, 1, "the result reached the lead once");
+  assert.match(carried[0]!.transcript, /nothing left to run/);
+  assert.ok(!run.calls.find((turn) => turn.transcript.includes("nothing left to run"))!.transcript.includes("check trains instead"), "the report turn leaves the new message to its own turn");
+  assert.deepEqual(run.replies.slice(-2), ["Report: three flights, 89 to 120 euros.", "Trains instead."]);
+  assert.ok(!run.replies.includes("Still on it."));
+  assert.equal(run.next.outcome, "done");
+  assert.deepEqual(childrenOf(run.steer).stopped, [{ kind: "turn", id: run.busy.id }]);
+});
+
+test("a child's result that comes in during a replacement: work kept on purpose reports it once; stopped work keeps it, and its lead hears it once with the new work", async () => {
+  const kept = await resultWhileSteered({ steering: "replace", children: "keep" });
+  assert.deepEqual(kept.planTurns.map((row) => row.outcome), ["done"]);
+  assert.equal(kept.plan.status, "succeeded");
+  assert.equal(kept.plan.steps[0]!.attempts[0]!.deliveredTo, kept.planTurns[0]!.id);
+  assert.equal(kept.calls.filter((turn) => turn.transcript.includes("89, 95 and 120 euros")).length, 1);
+  assert.deepEqual(kept.replies.slice(-2), ["Report: three flights, 89 to 120 euros.", "Trains instead."]);
+  assert.ok(childrenOf(kept.steer).kept!.some((child) => child.kind === "plan" && child.id === kept.planId));
+
+  const stopped = await resultWhileSteered({ steering: "replace" });
+  assert.equal(stopped.plan.status, "stopped");
+  assert.deepEqual(stopped.planTurns.map((row) => row.outcome), ["cancelled"], "the report turn in line stopped with its plan before it began");
+  assert.deepEqual([stopped.plan.steps[0]!.status, stopped.plan.steps[0]!.result], ["done", "Found three flights: 89, 95 and 120 euros."], "what was done stays");
+  const carried = stopped.calls.filter((turn) => turn.transcript.includes("89, 95 and 120 euros"));
+  assert.equal(carried.length, 1, "the result reached the lead once");
+  assert.match(carried[0]!.transcript, /check trains instead[\s\S]*Done before the stop, and kept/);
+  assert.equal(stopped.replies.at(-1), "Trains instead; the flights found are noted.");
+  assert.ok(childrenOf(stopped.steer).stopped!.some((child) => child.kind === "plan" && child.id === stopped.planId));
+});
+
+test("a stop during a lead's report or re-plan turn ends its plan once: nothing is left reporting or re-planning, and nothing asks for it again", async () => {
+  for (const stuck of [false, true]) {
+    const kofi = await person("Kofi");
+    const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+    const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+    const from = seen.length;
+    const held = gate();
+    plans.set(
+      lead.slug,
+      always(async (turn) => {
+        if (/nothing left to run|one re-plan turn/.test(turn.transcript)) {
+          await held.at(turn);
+          return { text: "Report after the stop." };
+        }
+        if (turn.transcript.includes("find the sources")) return afterTool(turn) ? { text: "Planned." } : { calls: [delegate(member.slug, "Find the sources.")] };
+        return { text: "(no reply)" };
+      }),
+    );
+    plans.set(member.slug, always((turn) => (afterTool(turn) ? { text: "(no reply)" } : { calls: [stuck ? stepReport("No access to the archive.", "blocked", { blockedBy: "missing_access" }) : stepReport("One source: the archive index.")] })));
+    await sayNow(kofi, crew.id, `@${lead.slug} find the sources`);
+    await until(async () => seen.slice(from).some((turn) => turn.slug === lead.slug && /nothing left to run|one re-plan turn/.test(turn.transcript)), "the lead's plan turn");
+    const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } });
+    assert.equal(mission.status, stuck ? "replanning" : "reporting");
+
+    const response = await kofi.inject({ method: "POST", url: `/api/node/rooms/${crew.id}/stop`, payload: {} });
+    assert.equal(response.statusCode, 200, response.body);
+    held.open();
+    await settleTurns();
+    // Ended (stopped, or concluded by the cut-off turn's end when that came first), never left waiting for its lead.
+    const ended = (await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } })).status;
+    assert.ok(!(LIVE_MISSIONS as readonly string[]).includes(ended), ended);
+    const planTurns = await leadPlanTurns(mission.id);
+    assert.deepEqual(planTurns.map((row) => row.outcome), ["cancelled"], "its one plan turn stopped, and none came after it");
+    assert.equal(await h.prisma.nodeOutbox.count({ where: { missionId: mission.id, deliveredAt: null } }), 0, "no report or re-plan on its way");
+    assert.deepEqual((await checkWork(h.app, Date.now() + 6 * 60 * 60_000)).filter((row) => row.missionId === mission.id), [], "the watchdog finds nothing to start again");
+    const rows = await read(kofi, crew.id);
+    assert.ok(!rows.some((row) => row.body === "Report after the stop."));
+    assert.ok(!rows.some((row) => row.kind === "approval" && row.data.status === "pending"), "no card left asking");
+    const stop = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: lead.id, kind: "stop" } });
+    assert.deepEqual(
+      childrenOf(stop).stopped!.map((child) => [child.kind, child.id]),
+      [
+        ["turn", planTurns[0]!.id],
+        ["plan", mission.id],
+      ],
+      "the record lists the plan, re-planning or reporting",
+    );
+  }
+});
+
+test("a replacement that stops the old work stops a plan in its re-plan turn too, and the watchdog never starts that work again", async () => {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+  const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+  const held = gate();
+  plans.set(
+    lead.slug,
+    always(async (turn) => {
+      if (turn.transcript.includes("one re-plan turn")) {
+        await held.at(turn);
+        return { text: "(no reply)" };
+      }
+      if (turn.transcript.includes("write the changelog")) return { text: /Stopped for it: /.test(turn.transcript) ? "On the changelog." : "Missing what stopped." };
+      if (turn.transcript.includes("find the sources")) return afterTool(turn) ? { text: "Planned." } : { calls: [delegate(member.slug, "Find the sources.")] };
+      return { text: "(no reply)" };
+    }),
+  );
+  plans.set(member.slug, always((turn) => (afterTool(turn) ? { text: "(no reply)" } : { calls: [stepReport("No access to the archive.", "blocked", { blockedBy: "missing_access" })] })));
+  await sayNow(kofi, crew.id, `@${lead.slug} find the sources`);
+  await until(async () => seen.some((turn) => turn.slug === lead.slug && turn.transcript.includes("one re-plan turn")), "the lead's re-plan turn");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } });
+  assert.equal(mission.status, "replanning");
+
+  const message = await sayNow(kofi, crew.id, "new plan: write the changelog instead", { steering: "replace" });
+  await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: lead.id, messageId: message.id } }), "the replacement");
+  held.open();
+  await settleTurns();
+  assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } })).status, "stopped");
+  assert.deepEqual((await leadPlanTurns(mission.id)).map((row) => row.outcome), ["cancelled"], "the re-plan turn stopped with its plan");
+  const steer = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: lead.id, messageId: message.id } });
+  assert.ok(childrenOf(steer).stopped!.some((child) => child.kind === "plan" && child.id === mission.id), "the record lists the plan it stopped");
+  const turnsBefore = await h.prisma.nodeTurn.count({ where: { nodeId: { in: [lead.id, member.id] } } });
+  assert.deepEqual((await checkWork(h.app, Date.now() + 6 * 60 * 60_000)).filter((row) => row.missionId === mission.id), [], "no nudge, no re-plan again, no card");
+  await settleTurns();
+  assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: { in: [lead.id, member.id] } } }), turnsBefore, "nothing of the old work starts again");
+  const rows = await read(kofi, crew.id);
+  assert.ok(!rows.some((row) => row.kind === "approval" && row.data.status === "pending"), "no card for the stuck step");
+  assert.equal(rows.filter((row) => row.authorNodeId === lead.id && row.kind === "text").at(-1)?.body, "On the changelog.");
+});
+
+test("an owner's message during a lead's re-plan turn is not taken into it: it waits, and its own turn answers it after", async () => {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+  const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+  let added = "";
+  plans.set(
+    lead.slug,
+    always(async (turn) => {
+      if (turn.transcript.includes("one re-plan turn")) {
+        if (!afterTool(turn)) return { calls: [createTask("Ask for access to the archive")] };
+        // The re-plan turn has acted: its owner writes now.
+        added = (await sayNow(kofi, crew.id, `@${lead.slug} also try the library`)).id;
+        await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: lead.id, messageId: added } }), "the message's record");
+        return { text: "(no reply)" };
+      }
+      if (turn.transcript.includes("also try the library")) return { text: "Trying the library too." };
+      if (turn.transcript.includes("find the sources")) return afterTool(turn) ? { text: "Planned." } : { calls: [delegate(member.slug, "Find the sources.")] };
+      return { text: "(no reply)" };
+    }),
+  );
+  plans.set(member.slug, always((turn) => (afterTool(turn) ? { text: "(no reply)" } : { calls: [stepReport("No access to the archive.", "blocked", { blockedBy: "missing_access" })] })));
+  await say(kofi, crew.id, `@${lead.slug} find the sources`);
+
+  const steer = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: lead.id, messageId: added } });
+  assert.deepEqual([steer.kind, steer.operation, steer.outcome], ["follow_up", "queue", "done"], "queued for its own turn, not an amendment");
+  const decided = await h.prisma.nodeDecision.findFirstOrThrow({ where: { nodeId: lead.id, kind: "steer", inputs: { path: ["messageId"], equals: added } } });
+  assert.deepEqual((decided.inputs as { worker: unknown }).worker, { state: "running", acted: true, canSteer: false, mergeable: false }, "decided by the worker's state: a plan's turn that acted takes nothing");
+  assert.equal(await h.prisma.nodeSteer.count({ where: { nodeId: lead.id, kind: "amendment" } }), 0);
+  const replans = seen.filter((turn) => turn.slug === lead.slug && turn.transcript.includes("one re-plan turn"));
+  assert.equal(replans.length, 2);
+  assert.ok(replans.every((turn) => !turn.messages.some((row) => row.role === "user" && textOf(row.content).includes("also try the library"))), "nothing of it reached the re-plan turn");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } });
+  assert.notEqual(mission.status, "replanning", "the re-plan turn's end ended the re-plan");
+  const answer = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: lead.id, triggerMessageId: added } });
+  assert.equal(answer.outcome, "done");
+  const replies = (await read(kofi, crew.id)).filter((row) => row.authorNodeId === lead.id && row.kind === "text").map((row) => row.body);
+  assert.equal(replies.at(-1), "Trying the library too.");
+});
+
+test("a restart with a run's end waiting in the outbox and a call of a lead's report turn left unsure: the resumed report says what may have run and carries each result once; the run's end comes once", async () => {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+  const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+  const research = gate();
+  const chat = gate();
+  const venue = createTask("Book the venue");
+  plans.set(
+    lead.slug,
+    always(async (turn) => {
+      if (turn.transcript.includes("nothing left to run")) return afterTool(turn) ? { text: "Report: one source found." } : { calls: [venue] };
+      if (turn.transcript.includes("Check the build")) return { text: "The build check passed." };
+      if (turn.transcript.includes("how is it going")) {
+        await chat.at(turn);
+        return { text: "Still on it." };
+      }
+      if (turn.transcript.includes("find the sources")) return afterTool(turn) ? { text: "Planned." } : { calls: [delegate(member.slug, "Find the sources.")] };
+      return { text: "(no reply)" };
+    }),
+  );
+  plans.set(
+    member.slug,
+    always(async (turn) => {
+      if (afterTool(turn)) return { text: "(no reply)" };
+      await research.at(turn);
+      return { calls: [stepReport("One source: the archive index.")] };
+    }),
+  );
+  await sayNow(kofi, crew.id, `@${lead.slug} find the sources`);
+  await until(async () => seen.some((turn) => turn.slug === member.slug), "the research step");
+  const planId = (await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } })).id;
+  // The lead is busy in the room when the result comes in: its report turn waits in line.
+  await sayNow(kofi, crew.id, `@${lead.slug} how is it going?`);
+  await until(async () => seen.some((turn) => turn.slug === lead.slug && turn.transcript.includes("how is it going")), "the lead's answer");
+  research.open();
+  const cut = await until(() => h.prisma.nodeTurn.findFirst({ where: { planId, planStep: null, reason: "plan", status: "queued" } }), "the report turn in line");
+  // It starts (carrying the result), calls a tool that acts, and the server stops before the call's result is saved.
+  await h.prisma.nodeTurn.update({ where: { id: cut.id }, data: { status: "running", outcome: "running" } });
+  assert.equal((await beginPlanTurn(h.app, planId, cut.id))?.kind, "report");
+  const ticket = await turnJournal(h.app, cut).begin({ name: venue.name, arguments: JSON.stringify(venue.arguments), sideEffect: true });
+  assert.ok("ticket" in ticket);
+  await ticket.ticket.dispatched();
+  await h.prisma.task.create({ data: { userId: kofi.id, title: "Book the venue" } });
+  chat.open();
+  await settleTurns();
+  // A run of the lead's ended just before: its end was written to the outbox (node/runs.ts) and not delivered yet.
+  const operationId = `run:${randomUUID()}:end`;
+  const note = "The session run for “Check the build” finished.\nThe agent reported: done. All checks pass.";
+  await h.prisma.nodeOutbox.create({ data: { operationId, kind: "wake", payload: { request: { nodeId: lead.id, roomId: crew.id, reason: "run", triggerMessageId: null, note }, status: "succeeded", summary: "All checks pass." } } });
+
+  // The restart: turns are reconciled, then the outbox delivers what was left, and once more (a crash before its row was marked).
+  await recoverTurns(h.app);
+  await dispatchOutbox(h.app);
+  await settleTurns();
+  await h.prisma.nodeOutbox.update({ where: { operationId }, data: { deliveredAt: null, claimedUntil: null } });
+  await dispatchOutbox(h.app);
+  await settleTurns();
+
+  assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: cut.id } })).error, "Interrupted by a server restart after it had acted.");
+  const resumed = await h.prisma.nodeTurn.findFirstOrThrow({ where: { originTurnId: cut.id } });
+  assert.equal(resumed.outcome, "done");
+  const reports = seen.filter((turn) => turn.slug === lead.slug && turn.transcript.includes("nothing left to run"));
+  assert.match(reports[0]!.transcript, /These calls started but their result was never saved[\s\S]*- hub_create_tasks \{"tasks":\[\{"title":"Book the venue"\}\]\}[\s\S]*nothing left to run/);
+  assert.equal(times(reports[0]!.transcript, "One source: the archive index."), 1, "the result once, from the plan as it is now");
+  assert.match(toolAnswers(reports.at(-1)!)[0]!, /may already have happened\. It was not run again/);
+  assert.equal(await tasksCalled(kofi.id, "Book the venue"), 1, "not run again blindly");
+  const plan = (await loadPlan(h.prisma, planId))!;
+  assert.equal(plan.data.status, "succeeded");
+  assert.equal(plan.data.steps[0]!.attempts[0]!.deliveredTo, cut.id, "carried once, by the turn that took it first");
+  assert.equal((plan.mission.leadTurn as { id: string }).id, resumed.id, "the resumed turn's end ended the report");
+  assert.equal(await h.prisma.nodeTurn.count({ where: { operationId } }), 1, "the run's end wakes the lead once");
+  assert.equal(seen.filter((turn) => turn.slug === lead.slug && turn.transcript.includes("Check the build")).length, 1);
+  const replies = (await read(kofi, crew.id)).filter((row) => row.authorNodeId === lead.id && row.kind === "text").map((row) => row.body);
+  assert.equal(replies.filter((body) => body === "Report: one source found.").length, 1);
+  assert.equal(replies.filter((body) => body === "The build check passed.").length, 1);
 });

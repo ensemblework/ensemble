@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Settings } from "@ensemble/shared-types";
 import { parentChoice, profileChoice, resolveRole, roleForStep, rolesEnabled } from "./roles.js";
+import { STEP_KINDS } from "./report.js";
 
 test("Roles resolve a delegated run's agent and model in a fixed order, with a reason code, and never fall back silently", () => {
   const all = {
@@ -32,7 +33,8 @@ test("Roles resolve a delegated run's agent and model in a fixed order, with a r
 });
 
 test("a step's kind is its role; Roles are off unless turned on; the parent and the profile count only on an owner's agent", () => {
-  assert.deepEqual(["build", "verify", "write", "research", "other", null].map(roleForStep), ["implementation", "review", "writing", "research", "general", "general"]);
+  // Every kind a plan step can have (node/report.ts): a verify step runs the checks, a review step is an independent review.
+  assert.deepEqual([...STEP_KINDS, null].map(roleForStep), ["implementation", "test", "review", "writing", "research", "general", "general"]);
   const settings = Settings.parse({});
   assert.equal(rolesEnabled(settings, undefined), false);
   assert.equal(rolesEnabled(Settings.parse({ node: { roles: { enabled: true } } }), undefined), true);

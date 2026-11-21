@@ -670,6 +670,9 @@ export function abortAllTurns(): void {
   delayed.clear();
 }
 
+/** How the note of a turn resumed after a restart begins (`recoverTurns`). */
+export const RESTART_NOTE = "Your previous turn was cut off by a server restart after it had started acting. Do not repeat what it already did: check first (node_sessions, the plan card, the workspace).";
+
 /**
  * After a restart (B4): a turn cut off before it acted runs again; one cut off after it acted is not
  * run twice but resumed, with a note of what it already did and of the calls that started without a
@@ -693,11 +696,13 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
       .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
       .join("\n");
     const unsure = mayHaveRun.map((row) => `- ${row.tool}${row.label ? ` ${row.label}` : ""}`).join("\n");
+    // A lead's report or re-plan turn is told where its plan stands when it starts (node/brain.ts): its old update is not repeated.
+    const leadPlanTurn = turn.reason === "plan" && Boolean(turn.planId) && !turn.planStep;
     const note = [
-      "Your previous turn was cut off by a server restart after it had started acting. Do not repeat what it already did: check first (node_sessions, the plan card, the workspace).",
+      RESTART_NOTE,
       unsure ? `These calls started but their result was never saved, so they may already have happened. Check each one before you do it again; the same call made again first answers that it may have run:\n${unsure}` : "",
       receipts ? `It ran:\n${receipts}` : "",
-      turn.note ?? "",
+      leadPlanTurn ? "" : (turn.note ?? ""),
     ].filter(Boolean).join("\n");
     const resumed = turn.roomId
       ? await enqueueTurn(app, {

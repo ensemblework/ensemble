@@ -19,13 +19,12 @@ import { deviceOnline } from "../devices/constants.js";
 import { quietRun, runningToolRuns, stopRunOnComputer } from "../devices/tool-runs.js";
 import { DESKTOP_API } from "../remote/contract.js";
 import { inBackground, interruptTurns, laneFor, liveTurnsIn, stopTurns } from "./queue.js";
-import { stopPlans } from "./plans.js";
+import { LIVE_MISSIONS, loadPlan, stopPlans } from "./plans.js";
 import { updateMessageData } from "./store.js";
 import { recordingEnded, recordingsOf, type Recording } from "./recordings.js";
 import { recordSteer, steerOperation, type SteerChild, type SteerKind } from "./steering.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval"];
-const LIVE_MISSION = ["draft", "running", "reporting"];
 
 /** A message that is only a stop command: "stop", "stop all", "stop everything", optionally with "/" or punctuation. */
 export function stopCommand(text: string): "room" | "all" | null {
@@ -64,7 +63,7 @@ async function liveRuns(app: FastifyInstance, nodeIds: readonly string[], roomId
 }
 
 async function heldBy(app: FastifyInstance, accountId: string, nodeId: string, roomId: string | null): Promise<Held> {
-  const plans = await app.prisma.nodeMission.findMany({ where: { userId: accountId, leadNodeId: nodeId, status: { in: LIVE_MISSION }, ...(roomId ? { originRoomId: roomId } : {}) }, select: { id: true, goal: true } });
+  const plans = await app.prisma.nodeMission.findMany({ where: { userId: accountId, leadNodeId: nodeId, status: { in: [...LIVE_MISSIONS] }, ...(roomId ? { originRoomId: roomId } : {}) }, select: { id: true, goal: true } });
   const missions = new Set([...plans.map((row) => row.id), ...(roomId ? [`conversation:${roomId}:private`, `conversation:${roomId}:shared`] : [])]);
   const recordings = (await recordingsOf(redisOf(app), nodeId)).filter((row) => roomId === null || missions.has(row.mission));
   const commands = (await runningToolRuns(redisOf(app), nodeId)).filter(({ run }) => roomId === null || run.roomId === roomId || (run.planId !== null && missions.has(run.planId)));
@@ -78,6 +77,24 @@ async function heldBy(app: FastifyInstance, accountId: string, nodeId: string, r
 }
 
 const short = (text: string | null | undefined, max = 80) => (text ? (text.length > max ? `${text.slice(0, max - 1)}…` : text) : undefined);
+
+/**
+ * Results the steps of these (stopped) plans reported that no turn of their lead carried yet (node/plans.ts
+ * `beginPlanTurn` marks what a report turn carries): what was done stays, and the lead hears it once, here.
+ */
+async function uncarriedResults(app: FastifyInstance, planIds: readonly string[]): Promise<string[]> {
+  const lines: string[] = [];
+  for (const planId of planIds) {
+    const plan = await loadPlan(app.prisma, planId);
+    for (const step of plan?.data.steps ?? []) {
+      for (const attempt of step.attempts) {
+        const said = (attempt.summary ?? step.result ?? "").replace(/\s+/g, " ").trim();
+        if (attempt.reportedAt && !attempt.deliveredAt && said) lines.push(`@${step.handle}: ${short(said, 300)}`);
+      }
+    }
+  }
+  return lines;
+}
 
 /** The children as a steering record lists them. */
 function childList(held: Held, turns: readonly string[]): SteerChild[] {
@@ -241,6 +258,8 @@ export async function steerConversation(
         await stopCommands(app, nodeId, held.commands);
         children = { stopped: [...(children.stopped ?? []), ...listed] };
         if (listed.length) lines.push(`Stopped for it: ${listed.map((child) => child.title ?? child.kind).join("; ")}.`);
+        const results = await uncarriedResults(app, held.plans.map((plan) => plan.id));
+        if (results.length) lines.push(`Done before the stop, and kept (you had not been told yet):\n${results.map((line) => `- ${line}`).join("\n")}`);
       } else {
         children = { ...children, kept: listed };
         if (listed.length) lines.push(`Still going, kept on purpose: ${listed.map((child) => `${child.title ?? child.kind} (${child.kind} ${child.id})`).join("; ")}. Use what fits the new work and stop the rest.`);
