@@ -1,8 +1,9 @@
 name: Fast checks
 description: >-
   The checks every push and pull request into testing and main runs before anything deploys:
-  versions in step, shared/API/web/CLI types, CLI channel isolation, focused web and API
-  regressions, public docs and read-only lookup, deployment guards, release scripts and the route inventory. About five
+  versions in step, shared/prompts/API/web/CLI types, CLI channel isolation, focused web and API
+  regressions, public docs and read-only lookup, deployment guards, release scripts, the route inventory and the
+  generated prompt sections. About five
   minutes in one job; ci.yml runs it as four parallel parts (`part`). The slower suites are paused in full-checks.yml
   (docs/37_PAUSED_CHECKS.md).
 
@@ -43,6 +44,7 @@ runs:
       run: |
         pnpm version:check
         pnpm --filter @ensemble/shared-types typecheck
+        pnpm --filter @ensemble/prompts typecheck
         pnpm --filter @ensemble/hub-api typecheck
         pnpm --filter @ensemble/hub-web typecheck
         pnpm --filter ensemblework typecheck
@@ -82,7 +84,7 @@ runs:
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/workspace/engines/delete-session.test.ts src/workspace/engines/app-sessions.test.ts src/remote/project-delete.test.ts src/subscriptions/session-touch.test.ts src/subscriptions/chat-folders.test.ts src/context/summarize.test.ts src/desktop/runtime-lock.test.ts src/lib/pglite-utc.test.ts src/remote/runtime-claims.test.ts src/workspace/engines/session-restart.test.ts src/subscriptions/outside.test.ts src/workspace/engines/sub-agents.test.ts src/subscriptions/copilot-output.test.ts src/subscriptions/outside.e2e.test.ts src/assistant/outside.test.ts src/workspace/outside-runs.test.ts src/workspace/outside-runs.e2e.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/assistant/ask-sessions.integration.test.ts src/assistant/delete-chat.integration.test.ts src/workspace/project-delete.integration.test.ts src/devices/runtime-instances.integration.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.
-        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
+        DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/instructions.test.ts src/subscriptions/node-sessions.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
         # Agents' apps without their command line: detection, Set up and its route, the tiles and `ensemble doctor` (docs/30 §8).
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/subscriptions/subscriptions.integration.test.ts
@@ -120,7 +122,7 @@ runs:
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/included.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/included/pricing.test.ts src/included/budget.integration.test.ts src/runtime/included.test.ts src/runtime/web-search.test.ts src/node/model.test.ts
-    - name: Deployment guards, release scripts and route inventory
+    - name: Deployment guards, release scripts, route inventory and prompt sections
       if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
@@ -129,3 +131,5 @@ runs:
         # Prisma's Rust-free client on PGlite, which the Windows arm64 sidecar carries; desktop.yml builds only on tags.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/lib/pglite-adapter.test.ts
         pnpm --filter @ensemble/hub-api route:inventory:check
+        # The instructions' sections and src/sections.generated.ts must match (packages/prompts/README.md).
+        pnpm --filter @ensemble/prompts test

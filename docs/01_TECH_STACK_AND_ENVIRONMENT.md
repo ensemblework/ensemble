@@ -109,7 +109,7 @@ Only verified accounts listed exactly in `ENSEMBLE_OPERATOR_EMAILS` may use host
 
 Manifests and lockfiles hold exact versions. Beyond §1: the MCP SDK, SimpleWebAuthn, `fflate`, Office/CSV readers and writers, `pdfjs-dist`, `@azure/storage-blob`, `prom-client`, PGlite; `jspdf` serves both the browser and the assistant's server PDF export. Python holds FastAPI, httpx, provider adapters and the plotting stack. Either runtime can resolve encrypted provider keys.
 
-`packages/prompts` and `apps/skill-forge` are stubs.
+`apps/skill-forge` is a stub. `packages/prompts` holds the instructions the assistant and nodes get, as Markdown sections compiled into a TypeScript module ([its README](../packages/prompts/README.md)).
 
 ### 5. Data storage (Postgres)
 

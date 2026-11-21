@@ -244,7 +244,7 @@ export function nodeRunProfile(settings: Pick<Settings, "runProfiles" | "default
 }
 
 /**
- * What a node's sessions run with unless its owner names others, in one line for its persona: “GitHub
+ * What a node's sessions run with unless its owner names others, in one line for its instructions: “GitHub
  * Copilot · gpt-6.1-sol · medium thinking · 1M context (the run profile “Copilot”)”. A profile with no
  * coding agent takes one signed in on the computer (`agentOn`).
  */

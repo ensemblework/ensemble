@@ -25,6 +25,7 @@ Find the application or package responsible for a change before editing. Start w
 | Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
 | Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
+| What the assistant or a node is told (their instructions) | `packages/prompts/sections/`, then `pnpm prompts:build`; which sections a node turn gets: `apps/hub-api/src/node/instructions.ts` ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)) |
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
 | Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
@@ -52,7 +53,8 @@ ensemble/
 │   ├── shared-types/      Zod domain types, settings, modules, plots, connectors, files, shortcuts
 │   ├── block-diagrams/    Diagram DSL: parse, layout, SVG, Mermaid (docs/21)
 │   ├── ide-theme/         VS Code theme conversion and built-in Code-tab themes
-│   └── prompts/           Placeholder (README and package.json only)
+│   └── prompts/           The models' instructions as Markdown sections (constitution, node, assistant),
+│                          their generated module and assemble() (packages/prompts/README.md)
 ├── infra/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions: vector, pg_trgm, uuid-ossp
@@ -74,7 +76,7 @@ ensemble/
 └── README.md              How to run it
 ```
 
-Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bridge:*`, `brand:*`, `version:*`), `pnpm-workspace.yaml`, `turbo.json` (TypeScript task graph; `pnpm dev` does not use it), `tsconfig.base.json`, `.env.example` (development configuration, [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)), `LICENSE.md`.
+Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bridge:*`, `brand:*`, `prompts:*`, `version:*`), `pnpm-workspace.yaml`, `turbo.json` (TypeScript task graph; `pnpm dev` does not use it), `tsconfig.base.json`, `.env.example` (development configuration, [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)), `LICENSE.md`.
 
 ### 2. Applications
 

@@ -78,6 +78,7 @@ import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
 import { formatEntityText, linkedRefs, refLink, refsInText, type AssistantRef } from "@ensemble/shared-types";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import type { Assembled } from "@ensemble/prompts";
 import type { Redis } from "ioredis";
 
 export const MAX_STEPS = 8;
@@ -163,6 +164,16 @@ export interface AssistantTurnArgs {
    * person's persona for this turn. Not a permission change.
    */
   agentPersona?: string;
+  /**
+   * An Ensemble Node turn's own instructions (node/instructions.ts): `stable` (the constitution, its role and
+   * what it can do) and `context` (its room, crew, skills and memories, as information). They replace the
+   * assistant's rules and persona. On Ensemble's loop both follow the assistant's instructions as one system
+   * message; on the person's own AI plan only `stable` joins the system prompt, so the agent's session keeps
+   * it unchanged, and `context` leads the turn's prompt. Not a permission change.
+   */
+  nodeInstructions?: { stable: string; context: string };
+  /** What the turn's instructions were assembled from, recorded with each `model.call` metric. */
+  instructionsLog?: Pick<Assembled, "version" | "hash" | "hashes" | "sections" | "dropped">;
   /** Tools added to this turn and always shown (Ensemble Node's room tools). Same checks as every tool. */
   extraTools?: AnyHubTool[];
   /** Assistant tools this surface replaces with its own (Ensemble Node's session tools replace agent assignment). */
@@ -323,7 +334,7 @@ async function drive(
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
   };
   const persona =
-    args.agentPersona !== undefined || (args.preamble !== undefined && args.actAs === undefined)
+    args.agentPersona !== undefined || args.nodeInstructions !== undefined || (args.preamble !== undefined && args.actAs === undefined)
       ? undefined
       : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
   // Instructions stay the same from message to message; what this message is about goes in its context.
@@ -336,6 +347,8 @@ async function drive(
     playbooks,
     ...(args.spaces ? { spaces: await args.spaces.instructions() } : {}),
     ...(args.where ? { where: args.where } : {}),
+    // A node's own instructions carry the shared rules (packages/prompts constitution).
+    ...(args.nodeInstructions ? { rules: false } : {}),
   });
   const context = turnContext(openPage, {
     today: clock.date,
@@ -356,9 +369,13 @@ async function drive(
     for (const ref of refs ?? []) known.set(ref.id.toLowerCase(), ref);
   };
 
-  const asked = `${context}\n\n${args.message}`;
+  // On the person's own AI plan the node's context tier leads the prompt, so the system prompt (and the session) stays the same.
+  const nodeContext = subscription ? (args.nodeInstructions?.context ?? "") : "";
+  const asked = `${nodeContext ? `${nodeContext}\n\n` : ""}${context}\n\n${args.message}`;
+  const node = args.nodeInstructions;
   const messages: ModelMessage[] = [
     { role: "system", content: system },
+    ...(node ? [{ role: "system" as const, content: subscription || !node.context ? node.stable : `${node.stable}\n\n${node.context}` }] : []),
     ...(args.agentPersona ? [{ role: "system" as const, content: truncateText(args.agentPersona, 12_000) }] : []),
     ...(args.preamble
       ? [{ role: "system" as const, content: truncateText(args.preamble, 2000) }]
@@ -376,6 +393,8 @@ async function drive(
     },
   ];
   if (contextRefs.length) args.emit({ type: "refs", refs: contextRefs });
+  // Which instruction files the turn was given and how big each part was (a node turn's, node/instructions.ts).
+  const instructionsMeta = args.instructionsLog ? { instructions: args.instructionsLog } : {};
 
   let chatTools = chatToolSpecs(shown());
   let responsesTools = responsesToolSpecs(shown());
@@ -508,6 +527,7 @@ async function drive(
           // Exchanges brought in from the agent's own app before this turn (assistant/outside.ts).
           ...(done.outside?.turns.length ? { outside: { app: done.outside.app, turns: done.outside.turns.length, earlier: done.outside.earlier } } : {}),
           title: truncateText(args.message, 80),
+          ...instructionsMeta,
         },
       }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
     } catch (error) {
@@ -577,6 +597,7 @@ async function drive(
               ...callCost(args.provider, model, known.tokensIn, known.tokensOut),
               title: truncateText(args.message, 80),
               cancelled: true,
+              ...instructionsMeta,
             },
           });
         } catch (metricError) {
@@ -629,6 +650,7 @@ async function drive(
           tokensOut: turn.tokensOut,
           ...callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits),
           title: truncateText(args.message, 80),
+          ...instructionsMeta,
         },
       });
     } catch (error) {
@@ -1159,7 +1181,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     ...(args.code ? { code: args.code } : {}),
     ...(args.toolsOff?.length ? { toolsOff: args.toolsOff } : {}),
     // A node's turn may research at length; the Hub chat's searches are counted (graph.ts, hub_web_search).
-    ...(args.agentPersona === undefined ? { turn: { webSearches: 0 } } : {}),
+    ...(args.agentPersona === undefined && args.nodeInstructions === undefined ? { turn: { webSearches: 0 } } : {}),
     ...(isSubscriptionProvider(args.provider) ? { ownPlan: true } : {}),
   };
 }

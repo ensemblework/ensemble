@@ -216,7 +216,7 @@ A turn resumes the chat's session when the agent is the same and the chat is whe
 
 A message that got no answer (its computer was offline, the turn failed before replying) and a failed exchange (the message and its error) do not count (`sessionPosition` in `assistant/agent.ts`), so a routine whose run failed while its computer slept goes on in the same session.
 
-For an agent that keeps the instructions from a session's first message (Copilot, Cursor's agent, the ACP agents), changed instructions do not start a new session, since a node's instructions change on most messages (the skills matched to the message, a new memory, the room). The message is led by what changed instead (`instructionsUpdate`: "Your instructions changed since this conversation began", the lines now part of them and the lines no longer part of them).
+For an agent that keeps the instructions from a session's first message (Copilot, Cursor's agent, the ACP agents), changed instructions do not start a new session. The message is led by what changed instead (`instructionsUpdate`: "Your instructions changed since this conversation began", the lines now part of them and the lines no longer part of them). An Ensemble Node's instructions rarely change: its system prompt is its stable tier, and what changes from message to message (the room, the skills matched to the message, a new memory) leads the message as context ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 
 When more than half of the lines changed, or after 80 messages in one session (`ROTATE_MESSAGES`), it starts a new session with the chat so far. A session replaced in the store (a new one for the same chat) is deleted from the agent at once; the chat goes on in its folder, which stays.
 
