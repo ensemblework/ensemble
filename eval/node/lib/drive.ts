@@ -6,7 +6,7 @@
  */
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { cardType, planCard, planDecision } from "./cards.js";
+import { cardType, decisionType, planCard, planDecision } from "./cards.js";
 import { codingSessions, copilotSessionsIn, turnSessions, type SessionLedger } from "./sessions.js";
 import type { Redactor } from "./redact.js";
 import type { CardLog, MadeNode, Task, TaskContext } from "./types.js";
@@ -123,7 +123,7 @@ async function answerCards(drive: Drive): Promise<void> {
   for (const row of decisions) {
     if (state.handled.has(row.id)) continue;
     state.handled.add(row.id);
-    const type = record(row.detail).nodeTool ? "computer" : row.event === "question" ? "run_question" : "run_permission";
+    const type = decisionType(row);
     let plan = planDecision(row);
     if ("skip" in plan) {
       logCard(drive, { id: row.id, type, answer: "", answered: false, at: new Date().toISOString(), note: plan.skip });
@@ -213,7 +213,10 @@ async function traceChanges(drive: Drive): Promise<void> {
     drive.trace.write("message", { room: row.roomId.slice(0, 8), seq: row.seq, author, messageKind: row.kind, ...(data.type ? { type: data.type } : {}), ...(status ? { status } : {}), ...(media ? { media } : {}), private: row.visibleTo.length > 0, body: row.body });
   }
   for (const row of await prisma.nodeTurn.findMany({ where: { userId: drive.owner.id, createdAt: { gte: since } }, orderBy: { createdAt: "asc" } })) {
-    if (changed(`t:${row.id}`, row.status)) drive.trace.write("turn", { node: slug.get(row.nodeId) ?? "?", reason: row.reason, status: row.status, ...(row.planStep ? { step: row.planStep } : {}), ...(row.error ? { error: row.error } : {}) });
+    // Where a checkout records how a turn ended (parked, coalesced, skipped), beside its status.
+    const outcome = (row as { outcome?: string | null }).outcome ?? null;
+    const ended = outcome && outcome !== row.status && outcome !== "running" && outcome !== "queued" ? outcome : null;
+    if (changed(`t:${row.id}`, `${row.status}|${ended ?? ""}`)) drive.trace.write("turn", { turn: row.id.slice(0, 8), node: slug.get(row.nodeId) ?? "?", reason: row.reason, status: row.status, ...(ended ? { outcome: ended } : {}), ...(row.planStep ? { step: row.planStep } : {}), ...(row.error ? { error: row.error } : {}) });
   }
   for (const row of await prisma.workspaceJob.findMany({ where: { createdAt: { gte: since } }, select: { id: true, deviceId: true, status: true, provider: true, model: true, kind: true } })) {
     if (changed(`j:${row.id}`, row.status)) drive.trace.write("job", { job: row.id.slice(0, 8), on: row.deviceId ? "computer" : "server", status: row.status, provider: row.provider, model: row.model, jobKind: row.kind });
@@ -289,6 +292,43 @@ export async function waitUntil(drive: Drive, until: (ctx: TaskContext) => Promi
     if (seen) return seen;
     if (Date.now() > end) return null;
     await sleep(1000);
+  }
+}
+
+type Rows = Array<Record<string, unknown>>;
+
+/**
+ * Ensemble Node's own record of each turn and of the decisions it made (`node_turn_traces`,
+ * `node_decisions`), where this checkout keeps them: hashes, sizes, models, placement and how the loop
+ * ran, never a message's text.
+ */
+export async function traceNodeRecords(drive: Drive): Promise<void> {
+  const db = drive.world.prisma as unknown as { nodeTurnTrace?: { findMany(args: unknown): Promise<Rows> }; nodeDecision?: { findMany(args: unknown): Promise<Rows> } };
+  const where = { where: { userId: drive.owner.id, createdAt: { gte: new Date(drive.started) } }, orderBy: { createdAt: "asc" } };
+  const short = (value: unknown) => (typeof value === "string" ? value.slice(0, 12) : (value ?? null));
+  for (const row of db.nodeTurnTrace ? await db.nodeTurnTrace.findMany(where) : []) {
+    const sections = record(row.sections);
+    const tiers: Record<string, { sections: number; tokens: number }> = {};
+    for (const item of Array.isArray(sections.list) ? (sections.list as Rows) : []) {
+      const tier = (tiers[String(item.tier ?? "?")] ??= { sections: 0, tokens: 0 });
+      tier.sections += 1;
+      tier.tokens += Number(item.tokens ?? 0);
+    }
+    const calls = Array.isArray(row.calls) ? (row.calls as Rows) : [];
+    drive.trace.write("turnTrace", {
+      turn: String(row.turnId).slice(0, 8),
+      instructions: { version: short(row.instructionVersion), hash: short(row.instructionHash), tiers: Object.fromEntries(Object.entries(record(sections.hashes)).map(([tier, hash]) => [tier, short(hash)])), sizes: tiers, dropped: Array.isArray(sections.dropped) ? sections.dropped.length : 0 },
+      tools: { hash: short(row.toolSchemaHash), count: row.toolCount ?? null },
+      model: { requested: row.modelRequested ?? null, sent: row.modelSent ?? null, reported: row.modelReported ?? null, provider: row.provider ?? null, effort: row.effort ?? null },
+      placement: row.placement ?? null,
+      tokens: { in: row.tokensIn ?? null, out: row.tokensOut ?? null },
+      calls: calls.slice(0, 60).map((call) => `${String(call.name)}:${String(call.state)}`),
+      loop: row.loop ?? null,
+      ...(row.error ? { error: row.error } : {}),
+    });
+  }
+  for (const row of db.nodeDecision ? await db.nodeDecision.findMany(where) : []) {
+    drive.trace.write("nodeDecision", { turn: typeof row.turnId === "string" ? row.turnId.slice(0, 8) : null, decision: row.kind, choice: row.choice ?? null, ambiguous: row.ambiguous === true, config: row.configVersion ?? null });
   }
 }
 

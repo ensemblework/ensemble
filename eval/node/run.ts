@@ -25,7 +25,7 @@ import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
 import { collectEvidence } from "./lib/evidence.js";
-import { busy, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, waitQuiet, waitUntil } from "./lib/drive.js";
+import { busy, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, traceNodeRecords, waitQuiet, waitUntil } from "./lib/drive.js";
 import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
 import { lastAnswer } from "./tasks/helpers.js";
 import { selectTasks, TASKS } from "./tasks/index.js";
@@ -49,7 +49,7 @@ const RUN_NOTES = [
   "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
   "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
   "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
-  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
   "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
   "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland, PipeWire or PulseAudio socket) and no session bus beyond the keyring. Cards asking for the owner's own screen are never approved; a desktop task that needs a screen must bring its own.",
 ];
@@ -217,6 +217,7 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
     drive.errors.push(`harness: ${error instanceof Error ? error.message : String(error)}`);
   }
   await finalSessions(drive);
+  await traceNodeRecords(drive).catch((error: unknown) => drive.errors.push(`harness: node records: ${error instanceof Error ? error.message : String(error)}`));
   const rooms = await world.prisma.nodeRoomMember.findMany({ where: { userId: owner.id }, select: { roomId: true } });
   const ev = await collectEvidence(world, { ownerId: owner.id, roomIds: [...new Set([...rooms.map((row) => row.roomId), ...Object.values(ctx.rooms)])], since: new Date(started), seededTasks: (ctx.data.seededTasks as string[]) ?? [], seededPages: (ctx.data.seededPages as string[]) ?? [] }, ledger, task.id, drive.cards);
   if (task.collect) {
