@@ -31,7 +31,7 @@ pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:co
 
 The agent must be installed and signed in on this computer. Press Ctrl+C once to stop after the current task, twice to quit at once.
 
-Tests of the harness itself (graders, card answers, redaction, the report, the hard suite's fixtures), no agent calls:
+Tests of the harness itself (graders, card answers, redaction, the report, the hard suite's fixtures), no agent calls; hub-api's `pnpm test` lists them too:
 
 ```
 cd apps/hub-api && DATABASE_URL=postgresql://localhost/ensemble_unused npx tsx --test ../../eval/node/lib/*.test.ts ../../eval/node/tasks/*.test.ts
