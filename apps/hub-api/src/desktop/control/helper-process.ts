@@ -18,6 +18,10 @@ export type HelperOptions = {
   maxRestarts?: number;
   restartWindowMs?: number;
   helloTimeoutMs?: number;
+  /** How long the helper may take to end after its input closes before it is made to (default 4 s). */
+  stopGraceMs?: number;
+  /** After the helper answered that it cannot run here, starting again waits this long (default: no wait). */
+  unavailableRetryMs?: number;
   now?: () => number;
 };
 
@@ -49,6 +53,7 @@ export class HelperProcess extends EventEmitter {
   private reason: string | null = null;
   private lastExit: HelperHealth["lastExit"] = null;
   private lastExitExpected = true;
+  private unavailableAt: number | null = null;
   /** Starts after a crash (not after an idle stop). */
   restarts = 0;
   crashes = 0;
@@ -83,6 +88,9 @@ export class HelperProcess extends EventEmitter {
   async start(): Promise<void> {
     if (this.child && this.state === "ready") return;
     if (this.starting) return this.starting;
+    if (this.state === "unavailable" && this.unavailableAt !== null && this.now - this.unavailableAt < (this.options.unavailableRetryMs ?? 0)) {
+      throw new HelperError("unavailable", this.reason ?? "The desktop helper cannot run here.", "no");
+    }
     if (this.crashedTooOften()) {
       this.state = "failed";
       throw new HelperError("gone", `The desktop helper stopped ${this.crashTimes.length} times in a few minutes; it rests until it has been quiet for a while.`, "no", true);
@@ -119,6 +127,7 @@ export class HelperProcess extends EventEmitter {
         this.reason = hello.unavailable;
         await this.stop();
         this.state = "unavailable";
+        this.unavailableAt = this.now;
         throw new HelperError("unavailable", hello.unavailable, "no");
       }
       if (hello.protocol !== HELPER_PROTOCOL) {
@@ -220,7 +229,7 @@ export class HelperProcess extends EventEmitter {
     this.stopping = true;
     child.stdin?.end();
     const ended = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), 4_000);
+      const timer = setTimeout(() => resolve(false), this.options.stopGraceMs ?? 4_000);
       timer.unref?.();
       child.once("exit", () => {
         clearTimeout(timer);

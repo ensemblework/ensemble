@@ -11,13 +11,14 @@ import subprocess
 from typing import Any, Iterable
 
 UNIT_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})")
-# app-gnome-org.gnome.Calculator-12345.scope, app-cursor-3587639.scope, app-ensemble-org.gnome.Calculator-1a2b3c.scope
-APP_SCOPE = re.compile(r"^app-(?:(?P<launcher>[A-Za-z0-9_]+)-)?(?P<app>.+?)-(?P<random>[0-9A-Za-z]+)\.scope$")
+# app-gnome-org.gnome.Calculator-12345.scope, app-cursor-3587639.scope, app-ensemble-org.gnome.Calculator-1a2b3c.scope,
+# app-ensemble-agent-org.gnome.Calculator-1a2b3c4d.scope (started on the agent screen)
+APP_SCOPE = re.compile(r"^app-(?:(?P<launcher>ensemble-agent|[A-Za-z0-9_]+)-)?(?P<app>.+?)-(?P<random>[0-9A-Za-z]+)\.scope$")
 # app-gnome-org.gnome.Calculator@12345.service, app-org.gnome.Nautilus@abc.service
 APP_SERVICE = re.compile(r"^app-(?:(?P<launcher>[A-Za-z0-9_]+)-)?(?P<app>.+?)(?:@(?P<random>[0-9A-Za-z]+))?\.service$")
 # snap.firefox.firefox-f079e53f-6ec6-4a82-ac5d-e7f29b987375.scope
 SNAP_SCOPE = re.compile(r"^snap\.(?P<snap>[a-z0-9-]+)\.(?P<app>[A-Za-z0-9-]+?)-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)\.scope$")
-KNOWN_LAUNCHERS = {"gnome", "kde", "ensemble", "flatpak", "dbus", "xfce", "cinnamon", "mate", "lxqt"}
+KNOWN_LAUNCHERS = {"gnome", "kde", "ensemble", "ensemble-agent", "flatpak", "dbus", "xfce", "cinnamon", "mate", "lxqt"}
 APP_ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.+-]{0,250}$")
 
 
@@ -176,14 +177,17 @@ def running_units(bus) -> list[dict[str, str]]:
     return out
 
 
-def launch_command(desktop_file: str, app_id: str, systemd_run: str | None = None, gio: str | None = None) -> list[str]:
-    """The command that starts an app from its desktop file, in a scope of its own when systemd can."""
+def launch_command(desktop_file: str, app_id: str, systemd_run: str | None = None, gio: str | None = None, prefix: list[str] | None = None, unit_prefix: str = "app-ensemble") -> list[str]:
+    """The command that starts an app from its desktop file, in a scope of its own when systemd can.
+
+    `prefix` runs between the scope and the launch (the agent screen's runtime folder for the app)."""
     gio = gio or shutil.which("gio") or "gio"
     run = systemd_run if systemd_run is not None else shutil.which("systemd-run")
+    launch = [*(prefix or []), gio, "launch", desktop_file]
     if run:
-        unit = f"app-ensemble-{escape_unit(app_id)}-{secrets.token_hex(4)}"
-        return [run, "--user", "--scope", "--collect", "--quiet", f"--unit={unit}", "--", gio, "launch", desktop_file]
-    return [gio, "launch", desktop_file]
+        unit = f"{unit_prefix}-{escape_unit(app_id)}-{secrets.token_hex(4)}"
+        return [run, "--user", "--scope", "--collect", "--quiet", f"--unit={unit}", "--", *launch]
+    return launch
 
 
 def start(command: list[str], env: dict[str, str], timeout_s: float = 15.0) -> int | None:

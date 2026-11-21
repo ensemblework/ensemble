@@ -38,6 +38,8 @@ STATES = {
 }
 BROWSERS = {"firefox", "chromium", "google chrome", "chrome", "brave", "brave browser", "microsoft edge", "epiphany", "web", "vivaldi", "opera", "librewolf", "zen", "floorp"}
 PRESS_ACTIONS = ("press", "click", "activate", "jump", "toggle", "open", "select")
+SELECT_ACTIONS = ("select", "activate", "click", "press")
+TOGGLE_ACTIONS = ("toggle", "click", "press", "activate")
 MAX_NAME = 120
 MAX_VALUE = 200
 TREES_KEPT = 4
@@ -66,7 +68,7 @@ def _alive(node) -> bool:
         return False
 
 
-IFACES = {"action": "Action", "text": "Text", "editable_text": "EditableText", "component": "Component", "value": "Value", "document": "Document"}
+IFACES = {"action": "Action", "text": "Text", "editable_text": "EditableText", "component": "Component", "value": "Value", "document": "Document", "selection": "Selection"}
 
 
 def _iface(node, name: str):
@@ -527,7 +529,39 @@ class A11y:
                 except GLib.Error:
                     verified = None
             return {"done": bool(done), "via": f"atspi:{action}", "verified": verified}
+        if action == "select":
+            # In its container's selection when it has one (a list, tabs, a combo box), else its own action.
+            parent = node.get_parent()
+            if parent is not None and _iface(parent, "selection") is not None:
+                try:
+                    done = Atspi.Selection.select_child(parent, node.get_index_in_parent())
+                except GLib.Error as failure:
+                    raise error("input_failed", f"The app refused the selection ({clean(failure.message, 200)}).", ran="maybe")
+                return {"done": bool(done), "via": "atspi:selection", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+            return self._named_action(node, element, role, before, SELECT_ACTIONS, "select")
+        if action == "toggle":
+            return self._named_action(node, element, role, before, TOGGLE_ACTIONS, "toggle")
+        if action == "scroll_to":
+            if _iface(node, "component") is None:
+                raise error("input_failed", f"Element {element} ({role}) cannot be scrolled into view.")
+            try:
+                done = Atspi.Component.scroll_to(node, Atspi.ScrollType.ANYWHERE)
+            except GLib.Error as failure:
+                raise error("input_failed", f"The app refused to scroll ({clean(failure.message, 200)}).", ran="maybe")
+            return {"done": bool(done), "via": "atspi:scroll_to", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
         raise error("invalid_params", f"Unknown element action {clean(action, 40)}.")
+
+    def _named_action(self, node, element: str, role: str, before: list[str], order: tuple[str, ...], what: str) -> dict[str, Any]:
+        names = _actions(node) if _iface(node, "action") is not None else []
+        index = next((names.index(label) for label in order if label in names), None)
+        if index is None:
+            can = ", ".join(names[:6])
+            raise error("input_failed", f"Element {element} ({role}) cannot {what} through accessibility{f'; it can {can}' if names else ''}.")
+        try:
+            done = Atspi.Action.do_action(node, index)
+        except GLib.Error as failure:
+            raise error("input_failed", f"The app refused the action ({clean(failure.message, 200)}).", ran="maybe")
+        return {"done": bool(done), "via": f"atspi:{names[index]}", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
 
     def insert_at_focus(self, text: str) -> bool:
         """Text into the focused editable element at its caret; False when nothing editable has the focus."""

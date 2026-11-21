@@ -80,16 +80,21 @@ def ensure_desktop_file(home: str) -> str | None:
 
 
 class Helper:
-    def __init__(self, state_dir: str, write: Callable[[str], None], test_source: str | None = None):
+    def __init__(self, state_dir: str, write: Callable[[str], None], test_source: str | None = None, agent=None):
         self.state_dir = state_dir
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
         self.write = write
         self.test_source = test_source
+        # The agent screen (agent_screen.AgentScreen): this helper then works only there, on its private bus.
+        self.agent = agent
         try:
             self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         except GLib.Error:
             self.bus = None
-        self.env = complete(os.environ, manager_environment_reader(self.bus) if self.bus else None)
+        if agent is not None:
+            self.env = agent.app_env()
+        else:
+            self.env = complete(os.environ, manager_environment_reader(self.bus) if self.bus else None)
         self.tokens = TokenStore(os.path.join(state_dir, "portal-restore-token"))
         self.portal: PortalSession | None = None
         self.sources: dict[int, FrameSource] = {}
@@ -214,6 +219,8 @@ class Helper:
         self._stop_streams()
         if self.portal is not None:
             self.portal.close()
+        if self.agent is not None:
+            self.agent.stop()
         self.loop.quit()
         return False
 
@@ -235,6 +242,8 @@ class Helper:
             "gstreamer": Gst.version_string(),
             "methods": sorted(self.methods),
             "test_source": bool(self.test_source),
+            "screen": "agent" if self.agent is not None else "owner",
+            **({"agent": {"display": self.agent.paths["display"], "size": list(self.agent.size), "version": self.agent.version}} if self.agent is not None else {}),
         }
 
     def _locked_idle(self) -> tuple[bool | None, int | None]:
@@ -254,6 +263,8 @@ class Helper:
         return locked, idle_ms
 
     def status(self, params, _deadline, _id) -> dict[str, Any]:
+        if self.agent is not None:
+            return self._agent_status()
         kind = session_type(self.env)
         versions = interface_versions(self.bus) if self.bus else {}
         apps = failure = None
@@ -281,12 +292,39 @@ class Helper:
             "recordings": [{"id": key, "active": rec.active, "wall_ms": rec.wall_ms()} for key, rec in self.recordings.items()],
         }
 
+    def _agent_status(self) -> dict[str, Any]:
+        apps = failure = None
+        try:
+            apps = len(self.a11y.apps())
+        except RpcError as problem:
+            failure = problem.message
+        session_state = self.portal.state if self.portal else "off"
+        alive = self.agent.alive()
+        facts = {
+            "session": readiness.fact("working" if alive else "failed", f"The agent screen: headless {self.agent.version or 'GNOME Shell'}, {self.agent.size[0]}x{self.agent.size[1]}, private to the agent." if alive else "The agent screen's GNOME Shell stopped.", None if alive else "It starts again on the next use."),
+            "consent": readiness.fact("not_needed", "The agent screen is the agent's own: it needs no consent and nobody sees it unless they watch it."),
+            "capture": self.proven.get("capture", "No frame of the agent screen has been captured yet."),
+            "input": self.proven.get("input", "No input has been sent to the agent screen yet."),
+            "a11y": readiness.a11y_fact(apps, failure),
+            "recorder": readiness.recorder_fact(encoder(log)),
+        }
+        return {
+            "facts": facts,
+            "session": {"state": "on" if session_state == "on" else session_state, "epoch": self.epoch, **({"streams": [self.geometry[node] for node in sorted(self.geometry)]} if self.geometry else {})},
+            "registered": True,
+            "recordings": [{"id": key, "active": rec.active, "wall_ms": rec.wall_ms()} for key, rec in self.recordings.items()],
+        }
+
     def idle(self, _params, _deadline, _id) -> dict[str, Any]:
+        if self.agent is not None:
+            return {"locked": False, "idle_ms": None}
         locked, idle_ms = self._locked_idle()
         return {"locked": locked, "idle_ms": idle_ms}
 
     def notify(self, params, _deadline, _id) -> dict[str, Any]:
         """A notice on the owner's screen (the desktop's notification service)."""
+        if self.agent is not None:
+            raise error("unsupported_here", "Notices are for the owner's screen; nobody reads the agent screen's.")
         title = clean(param(params, "title", str, required=True), 80)
         body = clean(param(params, "body", str, ""), 300)
         if self.bus is None:
@@ -316,6 +354,17 @@ class Helper:
             return self._session_info()
         if self.test_source:
             return self._open_test_source()
+        if self.agent is not None:
+            from .mutter import MutterSession, wait_for_names
+
+            if not self.agent.alive():
+                raise error("unsupported_here", "The agent screen's GNOME Shell stopped; it starts again with the next helper.")
+            if not wait_for_names(self.bus, ["org.gnome.Mutter.ScreenCast", "org.gnome.Mutter.RemoteDesktop", "org.gnome.Mutter.DisplayConfig"], min(15.0, max(1.0, deadline.remaining() - 2.0))):
+                raise error("unsupported_here", "The agent screen's compositor offers no screen cast here.")
+            if self.portal is None or self.portal.state != "on":
+                self.portal = MutterSession(self.bus, log, self._on_closed)
+            info = self.portal.start(min(8.0, max(1.0, deadline.remaining() - 2.0)))
+            return self._open_streams(info)
         if self.bus is None:
             raise error("unsupported_here", "No session bus reaches this runtime.")
         if self.portal is not None and self.portal.state == "waiting":
@@ -363,13 +412,14 @@ class Helper:
     def _open_streams(self, info: dict[str, Any]) -> dict[str, Any]:
         assert self.portal is not None
         fd = self.portal.pipewire_fd()
+        remote = f"fd={fd} " if fd is not None else ""
         names = self._monitor_names()
         self._stop_streams()
         sources: dict[int, FrameSource] = {}
         geometry: dict[int, dict[str, Any]] = {}
         try:
             for stream in self.portal.streams:
-                source = FrameSource(f"pipewiresrc fd={fd} path={stream.node} do-timestamp=true keepalive-time=250 always-copy=true ! video/x-raw", log)
+                source = FrameSource(f"pipewiresrc {remote}path={stream.node} do-timestamp=true keepalive-time=250 always-copy=true ! video/x-raw", log)
                 if not source.start(5.0):
                     detail = source.error or "no frame came"
                     source.stop()
@@ -391,10 +441,11 @@ class Helper:
                 source.stop()
             raise
         finally:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
         if geometry and not any(row["primary"] for row in geometry.values()):
             first = min(geometry)
             geometry[first]["primary"] = True
@@ -787,7 +838,14 @@ class Helper:
             stages.update(accepted=True, process=True, window=True)
         else:
             self.check(deadline, request_id, "no")
-            code = appmod.start(appmod.launch_command(path_, app_id), self.env, timeout_s=min(15.0, max(1.0, deadline.remaining() - 1.0)))
+            if self.agent is not None:
+                from .agent_screen import UNIT_PREFIX, app_launch_prefix, unit_of
+
+                command = appmod.launch_command(path_, app_id, prefix=app_launch_prefix(self.agent.paths["runtime"]), unit_prefix=UNIT_PREFIX)
+                self.agent.track(unit_of(command))
+            else:
+                command = appmod.launch_command(path_, app_id)
+            code = appmod.start(command, self.env, timeout_s=min(15.0, max(1.0, deadline.remaining() - 1.0)))
             if code is None or code != 0:
                 raise error("launch_failed", f"{clean(info.get_display_name() or app_id, 60)} could not be started.", ran="maybe")
             stages["accepted"] = True

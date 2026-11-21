@@ -2,8 +2,9 @@
  * The observation ledger: every screenshot the model is shown gets a capture id bound to the screen it
  * came from (its logical geometry and the portal session it belongs to) and the time it was taken.
  * Coordinates are taken only for a controller's latest observation (or a zoom of it); anything older, or
- * from a screen that changed since, is refused with "look again". A look that failed leaves an
- * observation debt: actions wait until a look works.
+ * from a screen that changed since, is refused with "look again". A look at an app's elements without a
+ * screenshot (`treeOnly`) gives element ids but no coordinates. A look that failed leaves an observation
+ * debt: actions wait until a look works.
  */
 import { randomBytes } from "node:crypto";
 import type { Region, Size } from "./mapping.js";
@@ -27,6 +28,8 @@ export type Capture = {
   /** The accessibility tree this observation read (its element ids), when it read one. */
   tree: { id: string; app: { name: string; id: string | null; pid: number | null; toolkit: string }; window: string; elements: Map<string, HelperElement> } | null;
   path: string | null;
+  /** Elements only, no screenshot: its element ids may be aimed at, never coordinates. */
+  treeOnly?: boolean;
 };
 
 /** A new capture id, which also names the screenshot's file. */
@@ -74,6 +77,7 @@ export class ObservationLedger {
     if (!capture || capture.controller !== controller) return { ok: false, code: "stale_capture", message: `${captureId} is not one of your current observations. Look again with desktop_observe and use its captureId.` };
     const current = capture.parent ?? capture.id;
     if (current !== latest) return { ok: false, code: "stale_capture", message: `${captureId} is older than your latest observation (${latest ?? "none"}). Aim at the latest one, or look again.` };
+    if (capture.treeOnly) return { ok: false, code: "observation_required", message: `${captureId} read elements only, without a screenshot: aim at its element ids, or look with a screenshot to aim at coordinates.` };
     if (capture.epoch !== epoch) return { ok: false, code: "stale_capture", message: "The screens changed since that observation (screen control started again). Look again." };
     const screen = screens.find((item) => item.node === capture.screen.node);
     if (!screen || !sameScreen(screen, capture.screen)) return { ok: false, code: "stale_capture", message: "That screen moved, changed size or is gone since the observation. Look again." };

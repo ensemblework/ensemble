@@ -804,8 +804,10 @@ const LiveCall = {
 
 /**
  * `capabilities.desktop`: this computer answers a node's desktop control tools (`node.tool.request` with
- * `tool: "desktop"`, docs/25 §11): its owner's real screen, keyboard and pointer, through the desktop
- * portal (Linux), one conversation at a time. `capabilities.desktopReadiness` says whether it can start now.
+ * `tool: "desktop"`, docs/25 §11): a private agent screen (a headless GNOME Shell of the agent's own) and
+ * its owner's real screen, keyboard and pointer through the desktop portal (Linux), one conversation at a
+ * time on each. `capabilities.desktopReadiness` says whether the owner's screen can start now, and its
+ * `agentScreen` whether the agent screen can.
  */
 export const DESKTOP_API = 1;
 
@@ -1283,7 +1285,7 @@ export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: t
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({
-  /** `browse`: a page opened in the browser, or captured (protocol 7). `read`: a file shared into the chat (nodeTools 2). `desktop`: a sensitive app used on the owner's screen (desktop 1). */
+  /** `browse`: a page opened in the browser, or captured (protocol 7). `read`: a file shared into the chat (nodeTools 2). `desktop`: a sensitive app, or the owner's own pointer and keyboard (`screen:owner`), used by a node (desktop 1). */
   capability: z.enum(["run", "git", "http", "files", "browse", "read", "desktop"]),
   /** What the answer covers: the folder's real path, the address's origin, or the app's id. */
   target: text(4096).min(1),

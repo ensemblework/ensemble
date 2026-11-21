@@ -11,8 +11,10 @@ process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
 
 const { HelperProcess } = await import("./helper-process.js");
 const { DesktopError, DesktopService } = await import("./service.js");
+const { Desktops } = await import("./screens.js");
 type Service = InstanceType<typeof DesktopService>;
 type Caller = import("./service.js").Caller;
+type ServiceOptions = import("./service.js").DesktopServiceOptions;
 const { ObservationLedger } = await import("./ledger.js");
 const { boxToRegion, fit, imageToLogical } = await import("./mapping.js");
 const { sensitiveApp } = await import("./sensitive.js");
@@ -34,12 +36,13 @@ type Harness = {
   captures: string;
 };
 
-function harness(): Harness {
+function harness(options: { agent?: "up" | "fails"; service?: Partial<ServiceOptions> } = {}): Harness {
   let t = Date.now();
   const clock = { now: () => t, advance: (ms: number) => void (t += ms) };
-  const helper = new HelperProcess({ spawn: () => ({ command: process.execPath, args: [FAKE], env: { PATH: process.env.PATH ?? "" } }), helloTimeoutMs: 10_000 });
+  const args = [FAKE, ...(options.agent === "up" ? ["--agent-screen"] : options.agent === "fails" ? ["--fail-agent"] : [])];
+  const helper = new HelperProcess({ spawn: () => ({ command: process.execPath, args, env: { PATH: process.env.PATH ?? "" } }), helloTimeoutMs: 10_000 });
   const captures = join(root, `captures-${(counter += 1)}`);
-  const service = new DesktopService({ helper, captureDir: captures, now: clock.now, secretValues: async () => ["saved-value-123"] });
+  const service = new DesktopService({ helper, captureDir: captures, now: clock.now, secretValues: async () => ["saved-value-123"], ...(options.agent ? { screen: "agent" as const } : {}), ...options.service });
   services.push(service);
   const call = (method: string, params: Record<string, unknown>) => helper.call(method, params, { timeoutMs: 5_000 });
   return {
@@ -53,7 +56,8 @@ function harness(): Harness {
   };
 }
 
-const caller = (key = "node:n1:m1", extra: Partial<Caller> = {}): Caller => ({ key, label: `@${key}`, budgetMs: 30_000, ...extra });
+// Callers here may use the owner's pointer and keyboard (the foreground) unless a test says otherwise.
+const caller = (key = "node:n1:m1", extra: Partial<Caller> = {}): Caller => ({ key, label: `@${key}`, budgetMs: 30_000, gate: async () => ({ allow: true }), ...extra });
 const methods = async (h: Harness, name: string) => (await h.log()).log.filter((row) => row.method === name);
 
 before(() => {
@@ -169,18 +173,18 @@ test("coordinates on an older look are refused; on the latest they are mapped to
   const a = caller();
   const old = await h.service.observe(a, {});
   const latest = await h.service.observe(a, {});
-  const stale = await h.service.act(a, { captureId: old.captureId, steps: [{ action: "click", x: 100, y: 100 }], observe: false });
+  const stale = await h.service.act(a, { captureId: old.captureId, foreground: true, steps: [{ action: "click", x: 100, y: 100 }], observe: false });
   assert.equal(stale.steps[0]!.verdict, "refused");
   assert.equal(stale.steps[0]!.code, "stale_capture");
   assert.equal(stale.steps[0]!.ran, "no");
   assert.equal((await methods(h, "input.pointer")).length, 0);
-  const done = await h.service.act(a, { captureId: latest.captureId, steps: [{ action: "click", x: 100, y: 100 }] });
+  const done = await h.service.act(a, { captureId: latest.captureId, foreground: true, steps: [{ action: "click", x: 100, y: 100 }] });
   assert.equal(done.steps[0]!.verdict, "confirmed");
   assert.equal(done.steps[0]!.ran, "yes");
   const sent = await methods(h, "input.pointer");
   assert.ok(Math.abs((sent[0]!.params.x as number) - (100.5 * 2560) / 1568) < 1e-6);
   assert.ok(done.observation, "a fresh look comes back");
-  const afterwards = await h.service.act(a, { captureId: latest.captureId, steps: [{ action: "click", x: 5, y: 5 }], observe: false });
+  const afterwards = await h.service.act(a, { captureId: latest.captureId, foreground: true, steps: [{ action: "click", x: 5, y: 5 }], observe: false });
   assert.equal(afterwards.steps[0]!.code, "stale_capture", "the look before the input is stale after it");
 });
 
@@ -191,7 +195,7 @@ test("a new session (other screens) makes every look stale", { timeout: 30_000 }
   await h.set({ epoch: 7, streams: [{ node: 50, x: 0, y: 0, width: 1920, height: 1080, frame_width: 1920, frame_height: 1080, name: "HDMI-1", primary: true }] });
   await h.emit({ kind: "session.started", epoch: 7, streams: [{ node: 50, x: 0, y: 0, width: 1920, height: 1080, name: "HDMI-1", primary: true }] });
   await new Promise((resolve) => setTimeout(resolve, 100));
-  const result = await h.service.act(a, { captureId: look.captureId, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
+  const result = await h.service.act(a, { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
   assert.equal(result.steps[0]!.code, "stale_capture");
 });
 
@@ -201,13 +205,13 @@ test("after a failed look only waiting and opening run until a look works", { ti
   const look = await h.service.observe(a, {});
   await h.set({ fail: { "frame.capture": { kind: "capture_failed", message: "The screen stream stopped." } } });
   await assert.rejects(h.service.observe(a, {}), (error: unknown) => error instanceof DesktopError && error.code === "capture_failed");
-  const blocked = await h.service.act(a, { captureId: look.captureId, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
+  const blocked = await h.service.act(a, { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
   assert.equal(blocked.steps[0]!.code, "observation_required");
   const waited = await h.service.act(a, { steps: [{ action: "wait", ms: 10 }], observe: false });
   assert.equal(waited.steps[0]!.verdict, "confirmed");
   await h.set({ fail: {} });
   const fresh = await h.service.observe(a, {});
-  const works = await h.service.act(a, { captureId: fresh.captureId, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
+  const works = await h.service.act(a, { captureId: fresh.captureId, foreground: true, steps: [{ action: "click", x: 10, y: 10 }], observe: false });
   assert.equal(works.steps[0]!.verdict, "confirmed");
 });
 
@@ -215,11 +219,11 @@ test("the owner's input takes the computer: the agent pauses, and gets it back a
   const h = harness();
   const a = caller();
   const look = await h.service.observe(a, {});
-  await h.service.act(a, { captureId: look.captureId, steps: [{ action: "click", x: 10, y: 10 }] });
+  await h.service.act(a, { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 10, y: 10 }] });
   const counter = h.service.lease.counter;
   h.clock.advance(10_000);
   await h.set({ idle: 2_000 });
-  const paused = await h.service.act(a, { steps: [{ action: "key", keys: "Return" }], observe: false });
+  const paused = await h.service.act(a, { foreground: true, steps: [{ action: "key", keys: "Return" }], observe: false });
   assert.equal(paused.steps[0]!.code, "owner_has_control");
   assert.equal(paused.steps[0]!.ran, "no");
   assert.equal(h.service.lease.holder, "owner");
@@ -249,7 +253,7 @@ test("a step the helper does not answer in time may have run; the helper is star
   const a = caller("node:n1:m1", { budgetMs: 7_000 });
   const look = await h.service.observe(a, {});
   await h.set({ slow: { "input.pointer": { ms: 20_000, when: { action: "click" } } } });
-  const result = await h.service.act(a, { captureId: look.captureId, steps: [{ action: "click", x: 10, y: 10 }, { action: "key", keys: "Return" }], observe: false });
+  const result = await h.service.act(a, { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 10, y: 10 }, { action: "key", keys: "Return" }], observe: false });
   assert.equal(result.steps[0]!.verdict, "unknown");
   assert.equal(result.steps[0]!.ran, "maybe");
   assert.equal(result.steps[1]!.verdict, "not_run");
@@ -291,7 +295,7 @@ test("the hard floor: Ensemble's own windows and pages, password prompts and sec
   const look = await h.service.observe(a, {});
 
   await h.set({ focus: { app: ensemble, window: { index: 0, title: "Ensemble", role: "frame" }, shell: false, prompt: null, focused: { role: "push button", name: "Allow", editable: false }, documents: [] } });
-  const typed = await h.service.act(a, { steps: [{ action: "type", text: "yes" }], observe: false });
+  const typed = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "yes" }], observe: false });
   assert.equal(typed.steps[0]!.verdict, "refused");
   assert.equal(typed.steps[0]!.rule, "ensemble_window");
 
@@ -300,32 +304,32 @@ test("the hard floor: Ensemble's own windows and pages, password prompts and sec
     apps: [{ ...calculator, windows: [{ index: 0, title: "Calculator", role: "frame", active: true, showing: true, iconified: false }] }, { ...ensemble, windows: [{ index: 0, title: "Ensemble", role: "frame", active: false, showing: true, iconified: false }] }],
   });
   const fresh = await h.service.observe(a, {});
-  const click = await h.service.act(a, { captureId: fresh.captureId, steps: [{ action: "click", x: 50, y: 50 }], observe: false });
+  const click = await h.service.act(a, { captureId: fresh.captureId, foreground: true, steps: [{ action: "click", x: 50, y: 50 }], observe: false });
   assert.equal(click.steps[0]!.rule, "ensemble_window", "a click by position while Ensemble shows");
   const again = await h.service.observe(a, {});
-  const press = await h.service.act(a, { captureId: again.captureId, steps: [{ action: "press", element: "e1" }], observe: false });
+  const press = await h.service.act(a, { captureId: again.captureId, foreground: true, steps: [{ action: "press", element: "e1" }], observe: false });
   assert.equal(press.steps[0]!.verdict, "confirmed", "an element of another app is exact");
 
   await h.set({ apps: [{ ...calculator, windows: [{ index: 0, title: "Calculator", role: "frame", active: true, showing: true, iconified: false }] }], focus: { app: { name: "Firefox", toolkit: "Gecko", pid: 70, app_id: "firefox" }, window: { index: 0, title: "Ensemble", role: "frame" }, shell: false, prompt: null, focused: null, documents: [{ app: "Firefox", url: "https://app.ensemblework.com/r/1", window: "Ensemble", active: true }] } });
   const page = await h.service.observe(a, {});
-  const onPage = await h.service.act(a, { captureId: page.captureId, steps: [{ action: "click", x: 50, y: 50 }], observe: false });
+  const onPage = await h.service.act(a, { captureId: page.captureId, foreground: true, steps: [{ action: "click", x: 50, y: 50 }], observe: false });
   assert.equal(onPage.steps[0]!.rule, "ensemble_page");
 
   await h.set({ focus: { app: { name: "gnome-shell", toolkit: "GNOME Shell", pid: 2, app_id: null }, window: { index: 0, title: "", role: "window" }, shell: true, prompt: { title: "Authentication Required" }, focused: { role: "password text", name: "", editable: true }, documents: [] } });
-  const prompt = await h.service.act(a, { steps: [{ action: "type", text: "anything" }], observe: false });
+  const prompt = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "anything" }], observe: false });
   assert.equal(prompt.steps[0]!.rule, "password_prompt");
 
   await h.set({ focus: { app: calculator, window: { index: 0, title: "Calculator", role: "frame" }, shell: false, prompt: null, focused: { role: "text", name: "Notes", editable: true, text: "" }, documents: [] } });
-  const token = await h.service.act(a, { steps: [{ action: "type", text: "ghp_0123456789abcdefghijABCDEFGHIJ012345" }], observe: false });
+  const token = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "ghp_0123456789abcdefghijABCDEFGHIJ012345" }], observe: false });
   assert.equal(token.steps[0]!.rule, "secret_text");
-  const saved = await h.service.act(a, { steps: [{ action: "type", text: "the saved-value-123" }], observe: false });
+  const saved = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "the saved-value-123" }], observe: false });
   assert.equal(saved.steps[0]!.rule, "secret_text");
 
   await h.set({ focus: { app: calculator, window: { index: 0, title: "Calculator", role: "frame" }, shell: false, prompt: null, focused: { role: "password text", name: "Password", editable: true }, documents: [] } });
-  const plain = await h.service.act(a, { steps: [{ action: "type", text: "hunter2" }], observe: false });
+  const plain = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "hunter2" }], observe: false });
   assert.equal(plain.steps[0]!.rule, "secret_field");
   assert.equal((await methods(h, "input.text")).length, 0, "nothing was typed so far");
-  const reference = await h.service.act(a, { steps: [{ action: "type", text: "$GH_PASSWORD" }], observe: false });
+  const reference = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "$GH_PASSWORD" }], observe: false });
   assert.equal(reference.steps[0]!.ran, "yes");
   const sent = await methods(h, "input.text");
   assert.equal(sent.at(-1)!.params.text, "s3cr3t-Value-99");
@@ -333,7 +337,7 @@ test("the hard floor: Ensemble's own windows and pages, password prompts and sec
   void look;
 });
 
-test("a sensitive app asks the owner once per app and mission; unattended work goes ahead", { timeout: 40_000 }, async () => {
+test("the owner's pointer and keyboard, and a sensitive app, are each asked once per mission; unattended work goes ahead", { timeout: 40_000 }, async () => {
   const h = harness();
   const { runNodeDesktop } = await import("./device.js");
   const rules: Array<{ userId: string; source: string; toolName: string; pattern: string; decision: string; sessionId: string | null }> = [];
@@ -346,28 +350,156 @@ test("a sensitive app asks the owner once per app and mission; unattended work g
     },
   };
   await h.set({ focus: { app: { name: "Terminal", toolkit: "GTK", pid: 66, app_id: "org.gnome.Ptyxis" }, window: { index: 0, title: "~", role: "frame" }, shell: false, prompt: null, focused: { role: "terminal", name: "", editable: true }, documents: [] } });
+  const screens = new Desktops(h.service, () => assert.fail("this work stays on the owner's screen"));
   const request = (mission: string, extra: Record<string, unknown> = {}) =>
-    ({ id: "q1", nodeId: "n1", nodeSlug: "helper", mission, attended: true, grants: [], tool: "desktop", name: "desktop_act", input: { steps: [{ action: "type", text: "ls" }] }, operation: "node:n1:own", inlineImage: false, ...extra }) as never;
+    ({ id: "q1", nodeId: "n1", nodeSlug: "helper", mission, attended: true, grants: [], tool: "desktop", name: "desktop_act", input: { screen: "owner", foreground: true, steps: [{ action: "type", text: "ls" }] }, operation: "node:n1:own", inlineImage: false, ...extra }) as never;
   const app = { prisma } as never;
   const client = {} as never;
+  const screenGrant = { id: "g0", scope: "mission", target: "screen:owner" };
+  const terminalGrant = { id: "g1", scope: "mission", target: "org.gnome.Ptyxis" };
 
-  const asked = await runNodeDesktop(app, client, request("plan-1"), h.service);
+  const asked = await runNodeDesktop(app, client, request("plan-1"), screens);
   assert.equal(asked.status, 428);
-  assert.deepEqual(asked.body.ask, { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false });
+  assert.deepEqual(asked.body.ask, { capability: "desktop", target: "screen:owner", label: "the pointer and keyboard", scope: "app", weak: false });
+  const terminal = await runNodeDesktop(app, client, request("plan-1", { grants: [screenGrant] }), screens);
+  assert.equal(terminal.status, 428);
+  assert.deepEqual(terminal.body.ask, { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false });
   assert.equal((await methods(h, "input.text")).length, 0);
 
-  const allowed = await runNodeDesktop(app, client, request("plan-1", { grants: [{ id: "g1", scope: "mission", target: "org.gnome.Ptyxis" }] }), h.service);
+  const allowed = await runNodeDesktop(app, client, request("plan-1", { grants: [screenGrant, terminalGrant] }), screens);
   assert.equal(allowed.status, 200);
-  assert.deepEqual(allowed.grantsUsed, ["g1"]);
+  assert.deepEqual(allowed.grantsUsed, ["g0", "g1"]);
   assert.equal((await methods(h, "input.text")).length, 1);
+  assert.match(String(allowed.body.summary), /on your owner's screen, with their pointer and keyboard/);
 
-  const later = await runNodeDesktop(app, client, request("plan-1"), h.service);
+  const later = await runNodeDesktop(app, client, request("plan-1"), screens);
   assert.equal(later.status, 200, "the same mission is not asked again");
-  await h.service.release("node:n1:plan-1");
-  const other = await runNodeDesktop(app, client, request("plan-2"), h.service);
+  await screens.release("node:n1:plan-1");
+  const other = await runNodeDesktop(app, client, request("plan-2"), screens);
   assert.equal(other.status, 428, "another mission asks again");
-  await h.service.release("node:n1:plan-2");
-  const unattended = await runNodeDesktop(app, client, request("plan-3", { attended: false }), h.service);
+  await screens.release("node:n1:plan-2");
+  const unattended = await runNodeDesktop(app, client, request("plan-3", { attended: false }), screens);
   assert.equal(unattended.status, 200);
-  assert.equal(rules.length, 1);
+  assert.equal(rules.length, 2);
+});
+
+// ── background mode and the agent screen ────────────────────────────────────
+
+test("in the background on the owner's screen, steps on elements go through accessibility; anything else needs the screen and sends nothing", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller("node:n1:m1", { gate: async () => assert.fail("the background asks nobody") });
+  await h.set({ idle: 300_000 });
+  const look = await h.service.observe(a, {});
+  const done = await h.service.act(a, { steps: [{ action: "press", element: "e1" }, { action: "type", element: "e2", text: "12" }, { action: "select", element: "e1" }, { action: "toggle", element: "e1" }, { action: "scroll", element: "e1" }], observe: false });
+  assert.equal(done.mode, "background");
+  assert.equal(done.screen, "owner");
+  assert.deepEqual(done.steps.map((step) => step.verdict), ["confirmed", "confirmed", "confirmed", "confirmed", "confirmed"]);
+  assert.deepEqual((await methods(h, "a11y.do")).map((row) => row.params.action), ["press", "insert_text", "select", "toggle", "scroll_to"]);
+  for (const step of [{ action: "click", x: 10, y: 10, captureId: look.captureId }, { action: "type", text: "hello" }, { action: "key", keys: "ctrl+s" }, { action: "focus", element: "e2" }, { action: "double_click", element: "e1" }, { action: "open", app: "org.gnome.Calculator" }] as const) {
+    await h.service.observe(a, {});
+    const refused = await h.service.act(a, { steps: [step], observe: false });
+    assert.equal(refused.steps[0]!.verdict, "refused", step.action);
+    assert.equal(refused.steps[0]!.code, "needs_screen");
+    assert.match(refused.steps[0]!.detail ?? "", /^Needs the screen: ask to use the owner's screen .* or use the agent screen\./);
+  }
+  const sent = (await h.log()).log.filter((row) => row.method.startsWith("input.") || row.method === "apps.launch");
+  assert.deepEqual(sent, [], "no pointer, keyboard or launch on the owner's screen");
+});
+
+test("a background step waits while the owner uses the app it acts in; elsewhere it goes on while they type", { timeout: 30_000 }, async () => {
+  const h = harness({ service: { ownerWaitMs: 0 } });
+  const a = caller();
+  await h.service.observe(a, {});
+  await h.set({ idle: 1_500 });
+  const waiting = await h.service.act(a, { steps: [{ action: "press", element: "e1" }], observe: false });
+  assert.equal(waiting.steps[0]!.verdict, "not_run");
+  assert.equal(waiting.steps[0]!.code, "owner_using_app");
+  assert.equal((await methods(h, "a11y.do")).length, 0);
+  await h.set({ focus: { app: { name: "Text Editor", toolkit: "GTK", pid: 777, app_id: "org.gnome.TextEditor" }, window: { index: 0, title: "notes", role: "frame" }, shell: false, prompt: null, focused: { role: "text", name: "", editable: true }, documents: [] } });
+  const elsewhere = await h.service.act(a, { steps: [{ action: "press", element: "e1" }], observe: false });
+  assert.equal(elsewhere.steps[0]!.verdict, "confirmed", "the owner types in another app");
+  const foreground = await h.service.act(a, { foreground: true, steps: [{ action: "key", keys: "Return" }], observe: false });
+  assert.equal(foreground.steps[0]!.code, "owner_has_control", "their keyboard waits until they pause");
+  assert.equal((await methods(h, "input.keys")).length, 0);
+});
+
+test("a look at elements only needs no screen control; its ids work, its coordinates do not", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller();
+  await h.set({ idle: 300_000 });
+  const look = await h.service.observe(a, { screenshot: false, app: "Calculator" });
+  assert.equal(look.image, null);
+  assert.equal(look.tree?.elements.length, 3);
+  const pressed = await h.service.act(a, { steps: [{ action: "press", element: "e1" }] });
+  assert.deepEqual([pressed.steps[0]!.verdict, pressed.steps[0]!.ran], ["unknown", "yes"], "without a screenshot to compare, the new look shows what changed");
+  assert.ok(pressed.observation && pressed.observation.image === null, "the new look is of elements only too");
+  const aimed = await h.service.act(a, { captureId: pressed.observation!.captureId, foreground: true, steps: [{ action: "click", x: 5, y: 5 }], observe: false });
+  assert.equal(aimed.steps[0]!.code, "observation_required");
+  assert.equal((await methods(h, "session.start")).length, 0, "no screen control was started");
+  h.service.lease.take("owner_input");
+  await h.set({ idle: 1_000, focus: { app: { name: "Text Editor", toolkit: "GTK", pid: 777, app_id: "org.gnome.TextEditor" }, window: { index: 0, title: "notes", role: "frame" }, shell: false, prompt: null, focused: null, documents: [] } });
+  await assert.rejects(h.service.observe(a, {}), (error: unknown) => error instanceof DesktopError && error.code === "owner_has_control" && /screenshot false/.test(error.message));
+  const stillReads = await h.service.observe(a, { screenshot: false, app: "Calculator" });
+  assert.equal(stillReads.tree?.app, "Calculator", "elements of another app are read while the owner types");
+});
+
+test("on the agent screen the pointer and keyboard are the agent's: no owner checks, results name the screen", { timeout: 30_000 }, async () => {
+  const h = harness({ agent: "up" });
+  const a = caller("node:n1:m1", { gate: async (app) => (app.id === "screen:owner" ? assert.fail("the agent screen is not the owner's") : { allow: true }) });
+  const opened = await h.service.open(a, { app: "org.gnome.Calculator" });
+  assert.equal(opened.screen, "agent");
+  const look = await h.service.observe(a, {});
+  assert.equal(look.screen, "agent");
+  assert.equal(look.display?.id, "Meta-0");
+  const done = await h.service.act(a, { captureId: look.captureId, steps: [{ action: "click", x: 100, y: 100 }, { action: "type", text: "7*6" }, { action: "key", keys: "Return" }] });
+  assert.equal(done.mode, "agent_screen");
+  assert.deepEqual(done.steps.map((step) => step.ran), ["yes", "yes", "yes"]);
+  assert.equal((await methods(h, "idle")).length, 0, "nobody's idle time is read there");
+  const { actText, observationText } = await import("./text.js");
+  assert.match(actText(done), /3 of 3 steps ran, on the agent screen\./);
+  assert.match(observationText(look), /of the agent screen: monitor Meta-0/);
+  await assert.rejects(h.service.handoff(a, { reason: "password" }), (error: unknown) => error instanceof DesktopError && error.code === "unsupported");
+  const frame = await h.service.liveFrame({ maxWidth: 800 });
+  assert.equal(frame.screen, "agent");
+  assert.ok(frame.base64.length > 0 && frame.width <= 800);
+  assert.equal((await methods(h, "frame.capture")).at(-1)!.params.save_path, undefined, "a live frame is kept nowhere");
+});
+
+test("an agent screen that cannot start says why, and nothing moves to the owner's screen", { timeout: 30_000 }, async () => {
+  const owner = harness();
+  const agent = harness({ agent: "fails" });
+  const screens = new Desktops(owner.service, () => agent.service);
+  const a = caller();
+  const where = screens.pick(a.key, {});
+  assert.equal(where, "agent", "work starts on the agent screen");
+  await assert.rejects(screens.service(where).observe(a, {}), (error: unknown) => error instanceof DesktopError && error.code === "unavailable" && /could not start.*Fix:/.test(error.message));
+  assert.equal(agent.helper.health().state, "unavailable");
+  assert.equal(owner.helper.health().state, "stopped", "the owner's screen was not touched");
+});
+
+test("a call works on the screen it names, its look's, its recording's or the last one used, else the agent screen", { timeout: 30_000 }, async () => {
+  const owner = harness();
+  const agent = harness({ agent: "up" });
+  const screens = new Desktops(owner.service, () => agent.service);
+  const a = caller();
+  assert.equal(screens.runningAgent(), null, "asking does not start the agent screen");
+  const both = await screens.status(20_000, async () => ({ ready: true, version: "GNOME Shell 50.1" }));
+  assert.equal(both.agent, null);
+  const { statusText } = await import("./text.js");
+  assert.match(statusText(both), /The agent screen \(yours, private\): ready, not running/);
+  const ownerLook = await screens.service("owner").observe(a, {});
+  screens.remember(a.key, "owner");
+  assert.equal(screens.pick(a.key, {}), "owner", "where it last worked");
+  assert.equal(screens.pick(a.key, { screen: "agent" }), "agent");
+  const agentLook = await screens.service("agent").observe(a, {});
+  screens.remember(a.key, "agent");
+  assert.equal(screens.pick(a.key, { captureId: ownerLook.captureId }), "owner", "a look's own screen");
+  assert.equal(screens.pick(a.key, { captureId: agentLook.captureId }), "agent");
+  await screens.service("owner").recordStart(a, { evidenceDir: join(root, "evidence-router") });
+  assert.equal(screens.pick(a.key, { recording: true }), "owner", "save goes where the recording is");
+  assert.ok(screens.runningAgent());
+  const apps = await screens.apps({ running: true }, 20_000);
+  assert.deepEqual(apps.map((list) => list.screen), ["owner", "agent"]);
+  await screens.release(a.key);
+  assert.equal(screens.pick(a.key, {}), "agent");
 });

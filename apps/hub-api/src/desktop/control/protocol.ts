@@ -119,6 +119,17 @@ export type StatusResult = {
   recordings: Array<{ id: string; active: boolean; wall_ms: number }>;
 };
 
-export type HelloResult = { protocol: number; version: string; platform: string; desktop?: string | null; session?: string; methods: string[]; unavailable?: string };
+export type HelloResult = {
+  protocol: number;
+  version: string;
+  platform: string;
+  desktop?: string | null;
+  session?: string;
+  methods: string[];
+  unavailable?: string;
+  /** Which screen this helper works on: the owner's, or the agent screen it started (`--agent-screen`). */
+  screen?: "owner" | "agent";
+  agent?: { display: string; size: [number, number]; version: string | null };
+};
 
 export type HelperEvent = { kind: "session.started" | "session.closed" | "session.failed" | "consent.waiting" | "record.stopped" | string; [key: string]: unknown };

@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // A stand-in for desktop-helper/linux/ensemble_desktop.py in tests: the same JSON-RPC over stdin and
 // stdout, with a desktop held in memory. Tests steer it with `test.set` (merge state), `test.emit` (an
-// event) and read what it did with `test.log`.
+// event) and read what it did with `test.log`. `--agent-screen` plays the agent screen (no idle time, no
+// owner); `--fail-agent` an agent screen that cannot start.
 import { writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
 
-const screen = { node: 42, x: 0, y: 0, width: 2560, height: 1440, frame_width: 2560, frame_height: 1440, name: "DP-2", primary: true, scale: 1 };
+const AGENT = process.argv.includes("--agent-screen") || process.argv.includes("--fail-agent");
+const screen = AGENT
+  ? { node: 100, x: 0, y: 0, width: 1600, height: 1000, frame_width: 1600, frame_height: 1000, name: "Meta-0", primary: true, scale: 1 }
+  : { node: 42, x: 0, y: 0, width: 2560, height: 1440, frame_width: 2560, frame_height: 1440, name: "DP-2", primary: true, scale: 1 };
 const state = {
   consent: "given",
   epoch: 0,
@@ -54,7 +58,10 @@ const changed = () => {
 };
 
 const methods = {
-  hello: () => ({ protocol: 1, version: "fake", platform: "linux", methods: Object.keys(methods) }),
+  hello: () =>
+    process.argv.includes("--fail-agent")
+      ? { protocol: 1, version: "fake", platform: "linux", methods: [], unavailable: "The agent screen could not start: GNOME Shell for the agent screen stopped as it started. Fix: Check that GNOME Shell runs headless here." }
+      : { protocol: 1, version: "fake", platform: "linux", methods: Object.keys(methods), screen: AGENT ? "agent" : "owner", ...(AGENT ? { agent: { display: "ensemble-agent-0a1b2c3d", size: [1600, 1000], version: "GNOME Shell 50.1" } } : {}) },
   ping: () => ({ pong: true }),
   status: () => ({
     facts: { session: { state: "working", detail: "wayland" }, consent: { state: state.consent === "given" ? "remembered" : "ask" } },
@@ -62,8 +69,11 @@ const methods = {
     registered: true,
     recordings: [],
   }),
-  idle: () => ({ locked: state.locked, idle_ms: state.idle }),
-  notify: () => ({ shown: true }),
+  idle: () => (AGENT ? { locked: false, idle_ms: null } : { locked: state.locked, idle_ms: state.idle }),
+  notify: () => {
+    if (AGENT) fail("unsupported_here", "Notices are for the owner's screen.");
+    return { shown: true };
+  },
   "session.start": () => {
     if (state.session) return { state: "on", epoch: state.epoch, streams: state.streams };
     if (state.consent !== "given") return { state: "waiting_owner_at_computer" };
@@ -107,7 +117,9 @@ const methods = {
   "a11y.tree": () => state.tree,
   "a11y.do": (params) => {
     changed();
-    return params.action === "set_text" ? { done: true, via: "atspi:set_text", verified: params.text !== undefined ? true : null } : { done: true, via: `atspi:${params.action}`, states_before: ["focusable"], states_after: params.action === "focus" ? ["focusable", "focused"] : ["focusable"] };
+    if (params.action === "set_text" || params.action === "insert_text") return { done: true, via: `atspi:${params.action}`, verified: params.text !== undefined ? true : null };
+    const after = params.action === "focus" ? ["focusable", "focused"] : params.action === "select" || params.action === "toggle" ? ["focusable", params.action === "select" ? "selected" : "checked"] : ["focusable"];
+    return { done: true, via: `atspi:${params.action}`, states_before: ["focusable"], states_after: after };
   },
   "apps.catalog": (params) => ({ apps: state.catalog.filter((app) => !params.query || `${app.id} ${app.name}`.toLowerCase().includes(String(params.query).toLowerCase())) }),
   "apps.launch": (params) => {

@@ -1,8 +1,9 @@
 /**
  * Whether desktop control can work on this computer, as cheaply as it can be told: for the
  * capabilities this computer reports (`capabilities.desktop`, the capture line's `desktop` target).
- * It never starts screen control: the libraries are checked by the helper's `--check` (once in ten
- * minutes), consent by whether a restore token is kept, and the rest by the running helper, if any.
+ * It never starts screen control or the agent screen: the libraries and the agent screen's GNOME Shell
+ * are checked by the helper's `--check` (once in ten minutes), consent by whether a restore token is
+ * kept, and the rest by the running helpers, if any.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -11,8 +12,10 @@ import { DESKTOP_API } from "../../remote/contract.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
 import { desktopDataDir, helperEnv, helperScript, runningDesktop, UNSUPPORTED_HERE } from "./index.js";
 
+export type AgentScreenReadiness = { ready: boolean; version: string | null; reason?: string };
+
 export type DesktopReadiness = {
-  /** Screen control could start here (the owner may still be asked to allow it). */
+  /** Screen control of the owner's screen could start here (the owner may still be asked to allow it). */
   ready: boolean;
   session: "wayland" | "x11" | "none";
   /** The owner allowed screen control before and it is remembered (it starts without asking). */
@@ -20,9 +23,28 @@ export type DesktopReadiness = {
   recorder: "mp4" | "webm" | null;
   helper: string;
   reason?: string;
+  /** The agent's own private screen: a headless GNOME Shell. */
+  agentScreen: AgentScreenReadiness;
 };
 
-type Check = { gi: boolean; atspi: boolean; gst: boolean; pipewiresrc: boolean; recorder: "mp4" | "webm" | null };
+type AgentCheck = { gnome_shell: boolean; dbus_daemon: boolean; a11y_launcher: boolean; pipewire: boolean; headless: boolean; version: string | null };
+type Check = { gi: boolean; atspi: boolean; gst: boolean; pipewiresrc: boolean; recorder: "mp4" | "webm" | null; agent_screen?: AgentCheck };
+
+const LIBRARIES = "sudo apt install python3-gi gir1.2-atspi-2.0 gir1.2-gstreamer-1.0 gstreamer1.0-pipewire gstreamer1.0-plugins-good";
+
+/** Whether the agent screen can start, and the fix when it cannot. */
+export function agentScreenReadiness(libs: Check | null): AgentScreenReadiness {
+  if (!libs || !libs.gi || !libs.atspi || !libs.gst || !libs.pipewiresrc) return { ready: false, version: null, reason: `Needs python3 with its GObject bindings: ${LIBRARIES}` };
+  const agent = libs.agent_screen;
+  if (!agent) return { ready: false, version: null, reason: "Update Ensemble on this computer: its desktop helper cannot start an agent screen." };
+  const version = agent.version ?? null;
+  if (!agent.gnome_shell) return { ready: false, version, reason: "Needs GNOME Shell for the agent screen: sudo apt install gnome-shell" };
+  if (!agent.headless) return { ready: false, version, reason: `${version ?? "This GNOME Shell"} cannot run headless with a virtual monitor and a Wayland display name of its own: its help lists no such options.` };
+  if (!agent.dbus_daemon) return { ready: false, version, reason: "Needs dbus-daemon for the agent screen's own bus: sudo apt install dbus-daemon" };
+  if (!agent.a11y_launcher) return { ready: false, version, reason: "Needs the AT-SPI bus launcher: sudo apt install at-spi2-core" };
+  if (!agent.pipewire) return { ready: false, version, reason: "Needs PipeWire running for this user (systemctl --user start pipewire)." };
+  return { ready: true, version };
+}
 
 let checked: { at: number; value: Check | null } | null = null;
 const CHECK_MS = 10 * 60_000;
@@ -71,15 +93,16 @@ export function sessionKind(env: NodeJS.ProcessEnv = process.env): DesktopReadin
 
 export async function desktopReadiness(platform: string = process.platform, env: NodeJS.ProcessEnv = process.env): Promise<DesktopReadiness> {
   const helper = runningDesktop() ? "running" : "stopped";
-  if (platform !== "linux") return { ready: false, session: "none", consent: "ask", recorder: null, helper, reason: UNSUPPORTED_HERE };
+  if (platform !== "linux") return { ready: false, session: "none", consent: "ask", recorder: null, helper, reason: UNSUPPORTED_HERE, agentScreen: { ready: false, version: null, reason: UNSUPPORTED_HERE } };
   const session = sessionKind(env);
   const consent = existsSync(join(desktopDataDir(env), "portal-restore-token")) ? "remembered" : "ask";
   const libs = await libraries();
-  if (!libs) return { ready: false, session, consent, recorder: null, helper, reason: "Needs python3 with its GObject bindings: sudo apt install python3-gi gir1.2-atspi-2.0 gir1.2-gstreamer-1.0 gstreamer1.0-pipewire gstreamer1.0-plugins-good" };
-  if (!libs.gi || !libs.atspi || !libs.gst) return { ready: false, session, consent, recorder: null, helper, reason: "Needs AT-SPI and GStreamer for Python: sudo apt install python3-gi gir1.2-atspi-2.0 gir1.2-gstreamer-1.0" };
-  if (!libs.pipewiresrc) return { ready: false, session, consent, recorder: libs.recorder, helper, reason: "Needs GStreamer's PipeWire source: sudo apt install gstreamer1.0-pipewire" };
-  if (session === "none") return { ready: false, session, consent, recorder: libs.recorder, helper, reason: "Ensemble here does not run inside a desktop session." };
-  return { ready: true, session, consent, recorder: libs.recorder, helper };
+  const agentScreen = agentScreenReadiness(libs);
+  if (!libs) return { ready: false, session, consent, recorder: null, helper, reason: `Needs python3 with its GObject bindings: ${LIBRARIES}`, agentScreen };
+  if (!libs.gi || !libs.atspi || !libs.gst) return { ready: false, session, consent, recorder: null, helper, reason: "Needs AT-SPI and GStreamer for Python: sudo apt install python3-gi gir1.2-atspi-2.0 gir1.2-gstreamer-1.0", agentScreen };
+  if (!libs.pipewiresrc) return { ready: false, session, consent, recorder: libs.recorder, helper, reason: "Needs GStreamer's PipeWire source: sudo apt install gstreamer1.0-pipewire", agentScreen };
+  if (session === "none") return { ready: false, session, consent, recorder: libs.recorder, helper, reason: "Ensemble here does not run inside a desktop session.", agentScreen };
+  return { ready: true, session, consent, recorder: libs.recorder, helper, agentScreen };
 }
 
 /** The capture line's `desktop` target: a screenshot or a video of the owner's screen. */
@@ -99,6 +122,15 @@ export async function desktopCapabilities(timeoutMs = 5_000): Promise<Record<str
   const readiness = await Promise.race([check, new Promise<DesktopReadiness | null>((resolve) => setTimeout(() => resolve(lastKnown), timeoutMs).unref())]);
   return {
     desktop: DESKTOP_API,
-    desktopReadiness: readiness ? { ready: readiness.ready, session: readiness.session, consent: readiness.consent, recorder: readiness.recorder, ...(readiness.reason ? { reason: readiness.reason.slice(0, 300) } : {}) } : null,
+    desktopReadiness: readiness
+      ? {
+          ready: readiness.ready,
+          session: readiness.session,
+          consent: readiness.consent,
+          recorder: readiness.recorder,
+          ...(readiness.reason ? { reason: readiness.reason.slice(0, 300) } : {}),
+          agentScreen: { ready: readiness.agentScreen.ready, version: readiness.agentScreen.version, ...(readiness.agentScreen.reason ? { reason: readiness.agentScreen.reason.slice(0, 300) } : {}) },
+        }
+      : null,
   };
 }

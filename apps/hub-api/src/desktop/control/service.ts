@@ -11,6 +11,12 @@
  * pause until two minutes after their last input, and a call that was going on when they did is
  * discarded. The hard floor (floor.ts) is checked before every step; sensitive apps (sensitive.ts) are
  * the caller's to ask about (`Caller.gate`). Each step answers honestly what happened and whether it ran.
+ *
+ * One service works on one screen (`screen`): the owner's, or the agent screen, a private headless
+ * compositor of the agent's own (desktop-helper/linux/desktop_helper/agent_screen.py) where the owner's
+ * lease, lock and activity do not apply. On the owner's screen a batch runs in the background unless it
+ * asks for the foreground: steps aim at elements through accessibility only, never moving the pointer,
+ * typing or changing the focus there, and wait while the owner uses the app they act in.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -19,11 +25,11 @@ import { join } from "node:path";
 import { hideSecretValues } from "../../lib/redact.js";
 import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, type FloorHit } from "./floor.js";
 import type { HelperHealth } from "./helper-process.js";
-import { Controllers, TakeoverLease, type LeaseView } from "./lease.js";
+import { Controllers, LEASE_IDLE_MS, OWNER_INPUT_MARGIN_MS, TakeoverLease, type LeaseView } from "./lease.js";
 import { newCaptureId, ObservationLedger, type Capture, type ScreenRef } from "./ledger.js";
 import { boxToRegion, imageToLogical, MAX_LONG_EDGE, type Region } from "./mapping.js";
 import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
-import { sensitiveApp, SENSITIVE_WORDS, type SensitiveCategory } from "./sensitive.js";
+import { GATE_WORDS, sensitiveApp, type GateCategory } from "./sensitive.js";
 import type { DesktopStep, StepAction } from "./tool-specs.js";
 
 export type DesktopCode =
@@ -51,7 +57,9 @@ export type DesktopCode =
   | "input_failed"
   | "launch_failed"
   | "helper_crashed"
-  | "cancelled";
+  | "cancelled"
+  | "needs_screen"
+  | "owner_using_app";
 
 export class DesktopError extends Error {
   constructor(
@@ -105,7 +113,14 @@ export interface HelperLike {
   on(event: "exit", listener: (info: { expected: boolean }) => void): unknown;
 }
 
-export type GateApp = { id: string; name: string; category: SensitiveCategory };
+export type ScreenName = "owner" | "agent";
+
+export type GateApp = { id: string; name: string; category: GateCategory };
+
+/** What a batch in the foreground of the owner's screen asks for: their pointer and keyboard, once per mission. */
+export const OWNER_SCREEN_GATE: GateApp = { id: "screen:owner", name: "the pointer and keyboard", category: "screen" };
+
+export const NEEDS_SCREEN = "Needs the screen: ask to use the owner's screen (foreground: true asks them once) or use the agent screen.";
 /** The owner's answer for a sensitive app: allowed, to be asked (once per app and run), or refused with why. */
 export type GateAnswer = { allow: true } | { allow: false; ask: true } | { allow: false; ask: false; reason: string };
 
@@ -127,11 +142,13 @@ export type Caller = {
 export type DisplayView = { id: string; node: number; width: number; height: number; primary: boolean };
 
 export type Observation = {
+  screen: ScreenName;
   captureId: string;
-  display: DisplayView;
-  image: { width: number; height: number; mime: string; path: string | null; base64?: string };
+  /** The screen in the picture; null for a look at an app's elements only. */
+  display: DisplayView | null;
+  image: { width: number; height: number; mime: string; path: string | null; base64?: string } | null;
   /** Screen (logical) pixels per image pixel. */
-  scale: number;
+  scale: number | null;
   settled: boolean | null;
   takenAt: string;
   focus: { app: string | null; appId: string | null; window: string | null; shell: boolean; prompt: string | null; focused: { role: string; name: string; editable: boolean; text?: string } | null } | null;
@@ -146,6 +163,9 @@ export type Observation = {
 export type StepVerdict = "confirmed" | "partial" | "no_effect" | "refused" | "not_run" | "unknown";
 export type StepOutcome = { index: number; action: StepAction; verdict: StepVerdict; ran: Ran; code?: string; detail?: string; rule?: string };
 export type ActResult = {
+  screen: ScreenName;
+  /** On the owner's screen: through accessibility only, or with their pointer and keyboard. */
+  mode: "background" | "foreground" | "agent_screen";
   steps: StepOutcome[];
   ran: number;
   stopped: { at: number; code: string; reason: string } | null;
@@ -154,7 +174,11 @@ export type ActResult = {
   observeError: string | null;
 };
 
-export type OpenResult = { app: { id: string; name: string }; stages: Record<string, boolean>; focused: boolean; via: string | null; waitedMs: number };
+export type AppsResult = { screen: ScreenName; installed: Array<{ id: string; name: string }>; running: Array<{ name: string; id: string | null; windows: Array<{ title: string; active: boolean }> }> };
+
+export type OpenResult = { screen: ScreenName; app: { id: string; name: string }; stages: Record<string, boolean>; focused: boolean; via: string | null; waitedMs: number };
+
+export type LiveFrame = { screen: ScreenName; mime: "image/jpeg"; base64: string; width: number; height: number; at: number };
 
 export type StillRef = { path: string; mime: string; size: number; width: number; height: number };
 export type SavedRecording = {
@@ -177,6 +201,7 @@ export type SavedRecording = {
 };
 
 export type DesktopStatus = {
+  screen: ScreenName;
   facts: Record<string, Fact>;
   session: { state: string; displays: DisplayView[] };
   lease: LeaseView;
@@ -187,6 +212,12 @@ export type DesktopStatus = {
 
 export type DesktopServiceOptions = {
   helper: HelperLike;
+  /** The screen this service works on (default the owner's). */
+  screen?: ScreenName;
+  /** How long a background step waits while the owner uses the app it acts in (default 15 s). */
+  ownerWaitMs?: number;
+  /** Input at the computer this recent pauses input on the owner's screen (default 5 s). */
+  ownerQuietMs?: number;
   /** Where the model's screenshots are kept for a while (`<data>/desktop/captures`). */
   captureDir: string;
   now?: () => number;
@@ -207,9 +238,18 @@ export type DesktopServiceOptions = {
 export const DESKTOP_HOLD_REASON = "A picture of your screen can show anything on it, so you preview it before it is shown or sent.";
 
 const POINTER_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "drag"]);
+/** Steps that work through accessibility alone, on an element: the owner's pointer, keyboard and focus stay theirs. */
+function backgroundStep(step: DesktopStep): boolean {
+  if (step.action === "wait") return true;
+  if (!step.element) return false;
+  if (step.action === "click") return !step.button || step.button === "left";
+  return ["press", "set_text", "select", "toggle", "scroll", "type"].includes(step.action);
+}
 const INPUT_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key"]);
 
 type Session = { epoch: number; screens: ScreenRef[] };
+const NO_SCREEN: ScreenRef = { node: -1, x: 0, y: 0, width: 0, height: 0, name: null, primary: false };
+type StepContext = { secrets: readonly string[]; allowed: Set<string>; background: boolean; idleMs: number | null };
 type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; mime: string; container: string; codec: string; ended: string | null; lost: boolean; counter: number };
 
 class Deadline {
@@ -261,7 +301,10 @@ export class DesktopService {
   private consentFailed: { at: number; reason: string } | null = null;
   private stopped = false;
 
+  readonly screenName: ScreenName;
+
   constructor(private readonly options: DesktopServiceOptions) {
+    this.screenName = options.screen ?? "owner";
     this.lease = new TakeoverLease(this.now);
     this.controllers = new Controllers(this.now);
     this.lastCall = this.now();
@@ -409,15 +452,58 @@ export class DesktopService {
     }
   }
 
-  /** The owner's lease and the screen lock, read now. Throws when the agent may not use the desktop. */
-  private async guard(deadline: Deadline): Promise<void> {
+  /**
+   * The owner's lease, their activity and the screen lock, read now; nothing on the agent screen. Throws when
+   * the agent may not go on: `look` (a screenshot) and `screen` (their pointer or keyboard) pause while the
+   * owner has the computer, `screen` also while they are using it this moment; `background` (accessibility
+   * only) goes on. Answers the idle time for the background's own check.
+   */
+  private async guard(deadline: Deadline, kind: "look" | "screen" | "background" = "screen"): Promise<{ idleMs: number | null }> {
+    if (this.screenName === "agent") return { idleMs: null };
     const idle = await this.call<{ locked: boolean | null; idle_ms: number | null }>("idle", {}, deadline, { maxMs: 5_000 });
     const change = this.lease.observeIdle(idle.idle_ms);
     if (change) this.ledger.invalidateAll();
-    if (this.lease.holder === "owner") {
-      throw new DesktopError("owner_has_control", `Your owner is using the computer (${this.lease.reason === "handoff" ? "you handed it to them" : "they took over"} at ${clock(this.lease.view().since)}): your input and screenshots pause until two minutes after their last input. Wait, or ask them in the chat.`, "no", { lease: this.lease.view() });
+    if (this.lease.holder === "owner" && kind !== "background") {
+      throw new DesktopError(
+        "owner_has_control",
+        `Your owner is using the computer (${this.lease.reason === "handoff" ? "you handed it to them" : "they took over"} at ${clock(this.lease.view().since)}): your input and screenshots pause until two minutes after their last input. Wait, ask them in the chat, or work in the background: desktop_observe with screenshot false reads an app's elements without a picture.`,
+        "no",
+        { lease: this.lease.view() },
+      );
     }
     if (idle.locked) throw new DesktopError("screen_locked", "The computer's screen is locked: only your owner can unlock it. Ask them, or hand it over with desktop_handoff.", "no");
+    if (kind === "screen" && this.ownerActiveNow(idle.idle_ms)) {
+      throw new DesktopError("owner_has_control", "Your owner is using the keyboard or mouse right now: input on their screen waits until they pause. Try again in a moment, or work in the background or on the agent screen.", "no");
+    }
+    return { idleMs: idle.idle_ms };
+  }
+
+  /** Input at the computer a moment ago that the agent did not send. */
+  private ownerActiveNow(idleMs: number | null): boolean {
+    if (idleMs === null || idleMs >= (this.options.ownerQuietMs ?? 5_000)) return false;
+    const last = this.lease.lastAgentInputAt;
+    return last === null || idleMs < this.now() - last - OWNER_INPUT_MARGIN_MS;
+  }
+
+  /**
+   * A background step in an app whose window is in front while the owner uses the computer waits until
+   * they switch away or stop for two minutes, at most `ownerWaitMs`; then it does not run.
+   */
+  private async waitWhileOwnerUses(app: { name: string; pid: number | null }, idleMs: number | null, deadline: Deadline): Promise<boolean> {
+    if (this.screenName === "agent") return false;
+    const waitMs = Math.min(this.options.ownerWaitMs ?? 15_000, Math.max(0, deadline.remaining() - 8_000));
+    let idle = idleMs;
+    for (let waited = 0; ; waited += 1_000) {
+      if (idle === null || idle >= LEASE_IDLE_MS) return waited > 0;
+      const focus = await this.call<FocusInfo>("a11y.focus", { text: false, documents: false }, deadline, { maxMs: 5_000 });
+      const inFront = focus.app !== null && (focus.app.pid === app.pid || focus.app.name === app.name);
+      if (!inFront) return waited > 0;
+      if (waited >= waitMs) {
+        throw new DesktopError("owner_using_app", `Your owner is using ${app.name} right now (its window is in front, and they used the computer ${Math.round(idle / 1000)} s ago): steps there wait until they switch away or stop for two minutes. Try again later, or use the agent screen.`, "no");
+      }
+      await this.sleep(1_000);
+      idle = (await this.call<{ locked: boolean | null; idle_ms: number | null }>("idle", {}, deadline, { maxMs: 5_000 })).idle_ms;
+    }
   }
 
   private armIdle(): void {
@@ -465,6 +551,7 @@ export class DesktopService {
       }
       const holder = this.controllers.current();
       return {
+        screen: this.screenName,
         facts,
         session: { state, displays: this.session ? this.screens(this.session) : [] },
         lease: this.lease.view(),
@@ -475,7 +562,7 @@ export class DesktopService {
     });
   }
 
-  async apps(input: { query?: string; running?: boolean }, budgetMs = 20_000): Promise<{ installed: Array<{ id: string; name: string }>; running: Array<{ name: string; id: string | null; windows: Array<{ title: string; active: boolean }> }> }> {
+  async apps(input: { query?: string; running?: boolean }, budgetMs = 20_000): Promise<AppsResult> {
     return this.run(budgetMs, async (deadline) => {
       const installed = input.running ? [] : (await this.call<{ apps: Array<{ id: string; name: string }> }>("apps.catalog", { ...(input.query ? { query: input.query } : {}), limit: input.query ? 20 : 80 }, deadline)).apps;
       const listed = await this.call<{ apps: HelperApp[] }>("a11y.apps", {}, deadline).catch(() => ({ apps: [] as HelperApp[] }));
@@ -484,17 +571,62 @@ export class DesktopService {
         .filter((app) => app.windows.length && app.name !== "gnome-shell")
         .filter((app) => !query || `${app.name} ${app.app_id ?? ""}`.toLowerCase().includes(query))
         .map((app) => ({ name: app.name, id: app.app_id, windows: app.windows.map((window) => ({ title: hideSecretValues(window.title), active: window.active })) }));
-      return { installed: installed.map((app) => ({ id: app.id, name: app.name })), running };
+      return { screen: this.screenName, installed: installed.map((app) => ({ id: app.id, name: app.name })), running };
     });
   }
 
   // ── looking ──────────────────────────────────────────────────────────────
 
-  async observe(caller: Caller, input: { display?: string | number; app?: string; elements?: boolean; maxElements?: number }): Promise<Observation> {
+  async observe(caller: Caller, input: { display?: string | number; app?: string; elements?: boolean; maxElements?: number; screenshot?: boolean }): Promise<Observation> {
     return this.runAs(caller, async (deadline) => {
-      await this.guard(deadline);
+      if (input.screenshot === false) return this.treeLook(caller, input, deadline);
+      await this.guard(deadline, "look");
       return this.look(caller, input, deadline);
     });
+  }
+
+  /**
+   * A look at one app's elements without a screenshot: no screen control needed, and it goes on while the
+   * owner has the computer, but the app they are using waits until they pause (its text may be what they type).
+   */
+  private async treeLook(caller: Caller, input: { app?: string | number; maxElements?: number }, deadline: Deadline): Promise<Observation> {
+    const { idleMs } = await this.guard(deadline, "background");
+    const focus = await this.call<FocusInfo>("a11y.focus", { text: false, documents: true }, deadline, { maxMs: 8_000 }).catch(() => null);
+    const target = input.app ?? (focus?.app && !focus.shell ? (focus.app.pid ?? focus.app.name) : null);
+    if (target === null || target === undefined) throw new DesktopError("bad_input", "Name the app whose elements to read (app, from desktop_apps): no app is in front.", "no");
+    const read = () => this.call<TreeResult>("a11y.tree", { app: target, max_elements: input.maxElements ?? 120 }, deadline, { maxMs: 8_000 });
+    let tree = await read();
+    if (await this.waitWhileOwnerUses({ name: tree.app.name, pid: tree.app.pid }, idleMs, deadline)) tree = await read();
+    const capture = this.ledger.record({
+      id: newCaptureId(),
+      controller: caller.key,
+      epoch: -1,
+      screen: NO_SCREEN,
+      region: { x: 0, y: 0, width: 0, height: 0 },
+      image: { width: 0, height: 0 },
+      frame: { width: 0, height: 0 },
+      takenAt: this.now(),
+      hash: 0,
+      parent: null,
+      tree: { id: tree.tree_id, app: { name: tree.app.name, id: tree.app.app_id, pid: tree.app.pid, toolkit: tree.app.toolkit }, window: tree.window.title, elements: new Map(tree.elements.map((element) => [element.id, element])) },
+      path: null,
+      treeOnly: true,
+    });
+    const notes = ["No screenshot: aim at element ids only (coordinates need a look with a screenshot)."];
+    if (tree.truncated) notes.push("Not every element is listed (the window has many): use maxElements.");
+    return {
+      screen: this.screenName,
+      captureId: capture.id,
+      display: null,
+      image: null,
+      scale: null,
+      settled: null,
+      takenAt: new Date(capture.takenAt).toISOString(),
+      focus: focus ? this.focusView(focus) : null,
+      tree: this.treeView(tree),
+      displays: this.session ? this.screens(this.session) : [],
+      notes,
+    };
   }
 
   private async ensureCaptureDir(): Promise<void> {
@@ -565,36 +697,42 @@ export class DesktopService {
     return this.observation(capture, shot, focus, tree, session, notes);
   }
 
+  private focusView(focus: FocusInfo): NonNullable<Observation["focus"]> {
+    const hide = (text: string) => hideSecretValues(text);
+    return {
+      app: focus.app?.name ?? null,
+      appId: focus.app?.app_id ?? null,
+      window: focus.window ? hide(focus.window.title) : null,
+      shell: focus.shell,
+      prompt: focus.prompt?.title ?? null,
+      focused: focus.focused ? { role: focus.focused.role, name: hide(focus.focused.name), editable: focus.focused.editable, ...(typeof focus.focused.text === "string" ? { text: hide(focus.focused.text) } : {}) } : null,
+    };
+  }
+
+  private treeView(tree: TreeResult): NonNullable<Observation["tree"]> {
+    const hide = (text: string) => hideSecretValues(text);
+    return {
+      app: tree.app.name,
+      appId: tree.app.app_id,
+      window: hide(tree.window.title),
+      truncated: tree.truncated,
+      elements: tree.elements.map((element) => ({ ...element, name: hide(element.name), ...(typeof element.value === "string" ? { value: hide(element.value) } : {}) })),
+    };
+  }
+
   private observation(capture: Capture, shot: CaptureResult, focus: FocusInfo | null, tree: TreeResult | null, session: Session, notes: string[]): Observation {
     const index = session.screens.findIndex((screen) => screen.node === capture.screen.node);
     const display = this.screens(session)[Math.max(0, index)]!;
-    const hide = (text: string) => hideSecretValues(text);
     return {
+      screen: this.screenName,
       captureId: capture.id,
       display,
       image: { width: shot.image.width, height: shot.image.height, mime: shot.image.mime, path: shot.image.path ?? null, ...(shot.image.base64 ? { base64: shot.image.base64 } : {}) },
       scale: Math.round((capture.region.width / shot.image.width) * 1000) / 1000,
       settled: shot.settled,
       takenAt: new Date(shot.at).toISOString(),
-      focus: focus
-        ? {
-            app: focus.app?.name ?? null,
-            appId: focus.app?.app_id ?? null,
-            window: focus.window ? hide(focus.window.title) : null,
-            shell: focus.shell,
-            prompt: focus.prompt?.title ?? null,
-            focused: focus.focused ? { role: focus.focused.role, name: hide(focus.focused.name), editable: focus.focused.editable, ...(typeof focus.focused.text === "string" ? { text: hide(focus.focused.text) } : {}) } : null,
-          }
-        : null,
-      tree: tree
-        ? {
-            app: tree.app.name,
-            appId: tree.app.app_id,
-            window: hide(tree.window.title),
-            truncated: tree.truncated,
-            elements: tree.elements.map((element) => ({ ...element, name: hide(element.name), ...(typeof element.value === "string" ? { value: hide(element.value) } : {}) })),
-          }
-        : null,
+      focus: focus ? this.focusView(focus) : null,
+      tree: tree ? this.treeView(tree) : null,
       displays: this.screens(session),
       notes,
     };
@@ -611,7 +749,7 @@ export class DesktopService {
 
   async zoom(caller: Caller, input: { captureId: string; box: readonly [number, number, number, number] }): Promise<Observation> {
     return this.runAs(caller, async (deadline) => {
-      await this.guard(deadline);
+      await this.guard(deadline, "look");
       const session = await this.ensureSession(deadline);
       const checked = this.ledger.check(caller.key, input.captureId, session.screens, session.epoch);
       if (!checked.ok) throw new DesktopError(checked.code, checked.message, "no");
@@ -649,12 +787,17 @@ export class DesktopService {
 
   // ── acting ───────────────────────────────────────────────────────────────
 
-  async act(caller: Caller, input: { captureId?: string; steps: readonly DesktopStep[]; observe?: boolean }): Promise<ActResult> {
+  async act(caller: Caller, input: { captureId?: string; steps: readonly DesktopStep[]; observe?: boolean; foreground?: boolean }): Promise<ActResult> {
     return this.runAs(caller, async (deadline) => {
+      const mode: ActResult["mode"] = this.screenName === "agent" ? "agent_screen" : input.foreground ? "foreground" : "background";
       const outcomes: StepOutcome[] = input.steps.map((step, index) => ({ index, action: step.action, verdict: "not_run", ran: "no" }));
-      const result: ActResult = { steps: outcomes, ran: 0, stopped: null, needsOwner: null, observation: null, observeError: null };
+      const result: ActResult = { screen: this.screenName, mode, steps: outcomes, ran: 0, stopped: null, needsOwner: null, observation: null, observeError: null };
       const secrets = (await this.options.secretValues?.().catch(() => [] as string[])) ?? [];
       const allowed = new Set<string>();
+      const base = this.ledger.current(caller.key);
+      const baseApp = base?.tree?.app ?? null;
+      // The owner's pointer and keyboard are theirs: the foreground asks once per mission before anything runs.
+      if (mode === "foreground") await this.gate(caller, OWNER_SCREEN_GATE, allowed);
       let counter: number | null = null;
       let sentInput = false;
       const stop = (index: number, code: string, reason: string) => {
@@ -664,18 +807,20 @@ export class DesktopService {
         const outcome = outcomes[index]!;
         let failed = false;
         try {
-          await this.guard(deadline);
+          const background = mode === "background";
+          if (background && !backgroundStep(step)) throw new DesktopError("needs_screen", `${NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
+          const { idleMs } = await this.guard(deadline, background ? "background" : "screen");
           counter ??= this.lease.counter;
           const debt = this.ledger.debt(caller.key);
           if (debt && step.action !== "wait" && step.action !== "open") throw new DesktopError("observation_required", `Your last look failed (${debt}): look again with desktop_observe before acting.`, "no");
           if (deadline.remaining() < 5_000) throw new DesktopError("timeout", "Not enough time was left for this step.", "no");
-          const done = await this.step(caller, step, input.captureId, deadline, { secrets, allowed });
+          const done = await this.step(caller, step, input.captureId, deadline, { secrets, allowed, background, idleMs });
           Object.assign(outcome, done);
         } catch (error) {
           failed = true;
           const failure = fromHelper(error);
           if (failure.code === "needs_owner" && result.ran === 0 && !sentInput) throw failure;
-          outcome.verdict = failure.code === "needs_owner" ? "not_run" : failure.ran === "no" ? (["refused", "owner_has_control", "screen_locked", "stale_capture", "observation_required", "busy"].includes(failure.code) ? "refused" : "not_run") : "unknown";
+          outcome.verdict = failure.code === "needs_owner" || failure.code === "owner_using_app" ? "not_run" : failure.ran === "no" ? (["refused", "owner_has_control", "screen_locked", "stale_capture", "observation_required", "busy", "needs_screen"].includes(failure.code) ? "refused" : "not_run") : "unknown";
           outcome.ran = failure.ran;
           outcome.code = failure.code;
           outcome.detail = failure.message;
@@ -686,7 +831,7 @@ export class DesktopService {
           result.ran += 1;
           if (INPUT_STEPS.has(step.action)) sentInput = true;
         }
-        if (counter !== null && this.lease.counter !== counter) {
+        if (counter !== null && this.lease.counter !== counter && mode !== "background") {
           stop(index, "owner_has_control", "Your owner took over during these steps: the rest did not run.");
           break;
         }
@@ -699,10 +844,13 @@ export class DesktopService {
       // What was aimed at before input changed the screen is stale now.
       if (sentInput) this.ledger.invalidate(caller.key);
       const ownerTook = counter !== null && this.lease.counter !== counter;
-      if (input.observe !== false && !ownerTook && this.lease.holder === "agent") {
+      // The new look is like the one the batch aimed at; while the owner has the computer, elements only.
+      const picture = this.lease.holder === "agent" && !ownerTook && (base ? !base.treeOnly : mode !== "background" || this.session !== null);
+      const elementsOnly = !picture && (mode === "background" || Boolean(base?.treeOnly)) && baseApp !== null;
+      if (input.observe !== false && (picture || elementsOnly)) {
         try {
           if (deadline.remaining() < 8_000) throw new DesktopError("timeout", "No time was left to look again.", "no");
-          result.observation = await this.look(caller, {}, deadline);
+          result.observation = picture ? await this.look(caller, {}, deadline) : await this.treeLook(caller, { app: baseApp!.pid ?? baseApp!.name }, deadline);
         } catch (error) {
           result.observeError = fromHelper(error).message;
         }
@@ -723,7 +871,7 @@ export class DesktopService {
       allowed.add(app.id);
       return true;
     }
-    if (!answer.ask) throw new DesktopError("refused", `${app.name} is ${SENSITIVE_WORDS[app.category]}: ${answer.reason}`, "no");
+    if (!answer.ask) throw new DesktopError("refused", `${app.name} is ${GATE_WORDS[app.category]}: ${answer.reason}`, "no");
     return false;
   }
 
@@ -731,7 +879,7 @@ export class DesktopService {
   private async gate(caller: Caller, app: GateApp | null, allowed: Set<string>): Promise<void> {
     if (!app) return;
     if (await this.allowedIn(caller, app, allowed)) return;
-    throw new DesktopError("needs_owner", `${app.name} is ${SENSITIVE_WORDS[app.category]}: your owner is asked once before you use it in this work.`, "no", { app });
+    throw new DesktopError("needs_owner", app.category === "screen" ? "Using the owner's pointer and keyboard: your owner is asked once for this work before anything runs on their screen." : `${app.name} is ${GATE_WORDS[app.category]}: your owner is asked once before you use it in this work.`, "no", { app });
   }
 
   private target(caller: Caller, step: DesktopStep, batchCapture: string | undefined, session: Session): { capture: Capture; screen: ScreenRef } {
@@ -777,8 +925,8 @@ export class DesktopService {
     if (hit) throw new DesktopError("refused", hit.message, "no", { rule: hit.rule });
   }
 
-  private async step(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline, context: { secrets: readonly string[]; allowed: Set<string> }): Promise<Omit<StepOutcome, "index" | "action">> {
-    const env = this.options.env;
+  private async step(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
+    if (context.background && step.action !== "wait") return this.elementStep(caller, step, deadline, context);
     switch (step.action) {
       case "wait": {
         await this.sleep(Math.min(step.ms ?? 0, Math.max(0, deadline.remaining() - 6_000)));
@@ -791,6 +939,8 @@ export class DesktopService {
       case "press":
       case "focus":
       case "set_text":
+      case "select":
+      case "toggle":
         return this.elementStep(caller, step, deadline, context);
       case "click":
       case "double_click":
@@ -800,9 +950,11 @@ export class DesktopService {
           return this.elementStep(caller, { ...step, action: "press" }, deadline, context);
         }
         return this.pointerStep(caller, step, batchCapture, deadline);
+      case "scroll":
+        if (step.element) return this.elementStep(caller, step, deadline, context);
+        return this.pointerStep(caller, step, batchCapture, deadline);
       case "move":
       case "drag":
-      case "scroll":
         return this.pointerStep(caller, step, batchCapture, deadline);
       case "type":
       case "key":
@@ -811,6 +963,8 @@ export class DesktopService {
   }
 
   private async pointerStep(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline): Promise<Omit<StepOutcome, "index" | "action">> {
+    const aimed = step.captureId ?? batchCapture;
+    if (aimed && this.ledger.get(aimed)?.treeOnly) throw new DesktopError("observation_required", `${aimed} read elements only, without a screenshot: aim at its element ids, or look with a screenshot to aim at coordinates.`, "no");
     const session = await this.ensureSession(deadline);
     let node: number;
     let at: { x: number; y: number } | null = null;
@@ -860,7 +1014,7 @@ export class DesktopService {
     return { verdict, ran: "yes", ...(verdict === "unknown" ? { detail: "Sent; the screen kept changing, so its effect was not seen." } : verdict === "no_effect" ? { detail: "Sent, and nothing on the screen changed." } : {}) };
   }
 
-  private async keyboardStep(caller: Caller, step: DesktopStep, deadline: Deadline, context: { secrets: readonly string[]; allowed: Set<string> }): Promise<Omit<StepOutcome, "index" | "action">> {
+  private async keyboardStep(caller: Caller, step: DesktopStep, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
     const session = await this.ensureSession(deadline);
     const node = (session.screens.find((screen) => screen.primary) ?? session.screens[0]!).node;
     let text: string | null = null;
@@ -925,15 +1079,20 @@ export class DesktopService {
     return { verdict, ran: "yes", ...(verdict === "no_effect" ? { detail: "Sent, and nothing on the screen changed." } : verdict === "unknown" ? { detail: "Sent; its effect was not seen." } : {}) };
   }
 
-  private async elementStep(caller: Caller, step: DesktopStep, deadline: Deadline, context: { secrets: readonly string[]; allowed: Set<string> }): Promise<Omit<StepOutcome, "index" | "action">> {
-    await this.ensureSession(deadline);
+  private async elementStep(caller: Caller, step: DesktopStep, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
     const { capture, element, tree } = this.element(caller, step.element!);
+    // A look at elements only works without screen control: nothing on the screen is compared then.
+    const screen = !capture.treeOnly;
+    if (screen) await this.ensureSession(deadline);
     const focus = await this.call<FocusInfo>("a11y.focus", { text: false, documents: true }, deadline, { maxMs: 8_000 });
     this.refuse(elementFloor({ name: tree.app.name, app_id: tree.app.id, toolkit: tree.app.toolkit }, tree.window, focus, this.options.env));
     await this.gate(caller, this.gateApp({ name: tree.app.name, app_id: tree.app.id }), context.allowed);
+    if (context.background) await this.waitWhileOwnerUses({ name: tree.app.name, pid: tree.app.pid }, context.idleMs, deadline);
     let text: string | null = null;
     let secret = false;
-    if (step.action === "set_text") {
+    // Typing into an element in the background goes in through accessibility at its caret, never the keyboard.
+    const typing = step.action === "type";
+    if (step.action === "set_text" || typing) {
       const ref = SECRET_REF.exec((step.text ?? "").trim());
       if (ref) {
         if (element.role !== "password text") throw new DesktopError("refused", `A saved secret goes only into a password field, and ${element.id} is a ${element.role}.`, "no", { rule: "secret_field" });
@@ -948,8 +1107,8 @@ export class DesktopService {
       }
     }
     const node = capture.screen.node;
-    const before = await this.frameState(node, deadline, 400).catch(() => null);
-    const action = step.action === "set_text" ? "set_text" : step.action === "focus" ? "focus" : "press";
+    const before = screen ? await this.frameState(node, deadline, 400).catch(() => null) : null;
+    const action = step.action === "set_text" || (typing && secret) ? "set_text" : typing ? "insert_text" : step.action === "focus" ? "focus" : step.action === "select" ? "select" : step.action === "toggle" ? "toggle" : step.action === "scroll" ? "scroll_to" : "press";
     let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[] };
     try {
       done = await this.call("a11y.do", { tree_id: tree.id, element: element.id, action, ...(step.name ? { name: step.name } : {}), ...(text !== null ? { text } : {}) }, deadline, { effects: true, maxMs: 8_000 });
@@ -959,14 +1118,15 @@ export class DesktopService {
       if (secret) throw new DesktopError(failure.code, "Filling the password field did not finish.", failure.ran);
       throw failure;
     }
-    if (!done.done) return { verdict: "no_effect", ran: "yes", detail: `The app did not take the ${action}.` };
-    if (action === "set_text") {
+    if (!done.done) return { verdict: "no_effect", ran: "yes", detail: `The app did not take the ${action.replace("_", " ")}.` };
+    if (action === "set_text" || action === "insert_text") {
       if (done.verified === true) return { verdict: "confirmed", ran: "yes" };
       if (done.verified === false) return { verdict: "partial", ran: "yes", detail: "The field's text is not exactly what was set." };
     }
     if (action === "focus" && done.states_after?.includes("focused")) return { verdict: "confirmed", ran: "yes" };
     const statesChanged = JSON.stringify(done.states_before ?? []) !== JSON.stringify(done.states_after ?? []);
     if (statesChanged) return { verdict: "confirmed", ran: "yes" };
+    if (!screen) return { verdict: "unknown", ran: "yes", detail: "The app took it; look at its elements again to see what changed." };
     const after = await this.frameState(node, deadline, 1_200).catch(() => null);
     const verdict = this.screenVerdict(before, after);
     return { verdict: verdict === "no_effect" ? "unknown" : verdict, ran: "yes", ...(verdict !== "confirmed" ? { detail: "The app took it; no change was seen on the screen." } : {}) };
@@ -976,8 +1136,11 @@ export class DesktopService {
 
   async open(caller: Caller, input: { app: string; waitSec?: number }): Promise<OpenResult> {
     return this.runAs(caller, async (deadline) => {
+      const allowed = new Set<string>();
+      // An app opened on the owner's screen takes its front: that is the foreground, asked once per mission.
+      if (this.screenName === "owner") await this.gate(caller, OWNER_SCREEN_GATE, allowed);
       await this.guard(deadline);
-      const opened = await this.openApp(caller, input.app, (input.waitSec ?? 8) * 1000, deadline, new Set());
+      const opened = await this.openApp(caller, input.app, (input.waitSec ?? 8) * 1000, deadline, allowed);
       this.ledger.invalidate(caller.key);
       return opened;
     });
@@ -1003,14 +1166,14 @@ export class DesktopService {
       focused = Boolean(moved?.focused);
       via = moved?.via ?? null;
     }
-    return { app: { id: launched.app.id, name: launched.app.name }, stages: { ...launched.stages, focused }, focused, via, waitedMs: launched.waited_ms };
+    return { screen: this.screenName, app: { id: launched.app.id, name: launched.app.name }, stages: { ...launched.stages, focused }, focused, via, waitedMs: launched.waited_ms };
   }
 
   // ── recording ────────────────────────────────────────────────────────────
 
-  async recordStart(caller: Caller, input: { display?: string | number; maxSec?: number; evidenceDir: string }): Promise<{ id: string; display: string; container: string; maxSec: number }> {
+  async recordStart(caller: Caller, input: { display?: string | number; maxSec?: number; evidenceDir: string }): Promise<{ screen: ScreenName; id: string; display: string; container: string; maxSec: number }> {
     return this.runAs(caller, async (deadline) => {
-      await this.guard(deadline);
+      await this.guard(deadline, "look");
       const prior = this.recording;
       if (prior && !prior.ended && !prior.lost) {
         throw new DesktopError("recording_active", prior.owner === caller.key ? "Your recording is already running: save or discard it first." : "Another conversation is recording the screen.", "no");
@@ -1029,7 +1192,7 @@ export class DesktopService {
       this.recording = { id: started.id, owner: caller.key, node: screen.node, temp, dir: input.evidenceDir, startedAt: this.now(), mime: started.mime, container: started.container, codec: started.codec, ended: null, lost: false, counter: this.lease.counter };
       this.controllers.pin(caller.key, true);
       const index = session.screens.indexOf(screen);
-      return { id: started.id, display: displayId(screen, index), container: started.container, maxSec };
+      return { screen: this.screenName, id: started.id, display: displayId(screen, index), container: started.container, maxSec };
     });
   }
 
@@ -1140,7 +1303,7 @@ export class DesktopService {
   /** One screenshot of a whole screen at full size into `evidenceDir`, held for the owner's preview. */
   async evidenceScreenshot(input: { evidenceDir: string; name?: string; display?: string | number; budgetMs?: number }): Promise<StillRef & { held: true; reason: string }> {
     return this.run(input.budgetMs ?? 45_000, async (deadline) => {
-      await this.guard(deadline);
+      await this.guard(deadline, "look");
       const session = await this.ensureSession(deadline);
       const screen = this.pickScreen(session, input.display);
       await mkdir(input.evidenceDir, { recursive: true, mode: 0o700 });
@@ -1159,7 +1322,7 @@ export class DesktopService {
   async evidenceVideo(input: { evidenceDir: string; seconds: number; name?: string; display?: string | number }): Promise<SavedRecording> {
     const caller: Caller = { key: `capture:${randomBytes(4).toString("hex")}`, label: "a capture", budgetMs: 30_000 };
     const started = await this.run(30_000, async (deadline) => {
-      await this.guard(deadline);
+      await this.guard(deadline, "look");
       if (this.recording && !this.recording.ended && !this.recording.lost) throw new DesktopError("recording_active", "The screen is being recorded already.", "no");
       const session = await this.ensureSession(deadline);
       const screen = this.pickScreen(session, input.display);
@@ -1184,6 +1347,7 @@ export class DesktopService {
 
   async handoff(caller: Caller, input: { action?: "ask" | "release" | "status"; reason?: string; message?: string; waitSec?: number }): Promise<{ holder: "agent" | "owner"; returned: boolean; session: string; detail: string }> {
     const action = input.action ?? "ask";
+    if (this.screenName === "agent") throw new DesktopError("unsupported", "The agent screen is the agent's own: there is nothing to hand to the owner there. Hand over on the owner's screen.", "no");
     if (action !== "status") {
       this.claim(caller);
       this.controllers.touch(caller.key);
@@ -1242,6 +1406,50 @@ export class DesktopService {
           ? "Your owner is done (no input for two minutes): look before acting."
           : "Your owner still has the computer. Tell them in your reply what you need and end your turn; when they say they are done, call desktop_handoff with action release.";
     return { holder: this.lease.holder, returned, session: sessionState(), detail };
+  }
+
+  // ── live view ────────────────────────────────────────────────────────────
+
+  /** One small frame of the screen for a live view (not an observation: no capture id, nothing kept). */
+  async liveFrame(input: { maxWidth?: number; display?: string | number } = {}, budgetMs = 10_000): Promise<LiveFrame> {
+    return this.run(budgetMs, async (deadline) => {
+      await this.guard(deadline, "look");
+      const session = await this.ensureSession(deadline);
+      const screen = this.pickScreen(session, input.display);
+      const shot = await this.call<CaptureResult>("frame.capture", { display: screen.node, max_long_edge: Math.min(1920, Math.max(160, Math.round(input.maxWidth ?? 1024))), format: "jpeg", quality: 60, inline: true }, deadline, { maxMs: 8_000 });
+      return { screen: this.screenName, mime: "image/jpeg", base64: shot.image.base64 ?? "", width: shot.image.width, height: shot.image.height, at: shot.at };
+    });
+  }
+
+  /** Frames for a live view, one at a time and at most `fps` a second, until the returned stop is called. */
+  liveFrames(options: { fps?: number; maxWidth?: number }, onFrame: (frame: LiveFrame) => void, onError?: (error: DesktopError) => void): () => void {
+    let stopped = false;
+    const gap = 1000 / Math.min(10, Math.max(0.2, options.fps ?? 2));
+    const next = async () => {
+      while (!stopped) {
+        const started = this.now();
+        try {
+          onFrame(await this.liveFrame({ maxWidth: options.maxWidth }));
+        } catch (error) {
+          onError?.(fromHelper(error));
+        }
+        await this.sleep(Math.max(50, gap - (this.now() - started)));
+      }
+    };
+    void next();
+    return () => {
+      stopped = true;
+    };
+  }
+
+  /** Whether the helper runs now (for the agent screen: whether the screen is up). Asking never starts it. */
+  get helperReady(): boolean {
+    return this.options.helper.health().state === "ready";
+  }
+
+  /** Whether `key` has a recording here (running, or ended and not saved yet). */
+  hasRecording(key: string): boolean {
+    return this.recording?.owner === key;
   }
 
   /** The end of a controller's work (a run ended): its claim, line place and recording go. */

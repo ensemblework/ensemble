@@ -24,7 +24,7 @@ Find the application or package responsible for a change before editing. Start w
 | Live co-editing | `apps/hub-api/src/pages/collab*.ts`, `live.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `components/pages/use-collab.ts`; schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
 | Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
 | Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
-| Desktop control: the owner's real screen for Ensemble Node and coding runs | `apps/hub-api/src/desktop/control/`, the Linux helper in `apps/hub-api/desktop-helper/linux/` ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
+| Desktop control: a private agent screen and the owner's real screen for Ensemble Node and coding runs | `apps/hub-api/src/desktop/control/`, the Linux helper in `apps/hub-api/desktop-helper/linux/` ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |

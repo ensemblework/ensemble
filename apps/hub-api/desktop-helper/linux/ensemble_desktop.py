@@ -61,6 +61,9 @@ def check() -> int:
         out["recorder"] = choice["container"] if choice else None
     except (ImportError, ValueError) as failure:
         out["missing"] = type(failure).__name__
+    from desktop_helper.agent_screen import check as agent_check
+
+    out["agent_screen"] = agent_check(os.environ)
     sys.stdout.write(json.dumps(out) + "\n")
     return 0
 
@@ -70,11 +73,30 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--state-dir", help="Folder for the portal's restore token (made 0700).")
     parser.add_argument("--test-source", default=None, help="A GStreamer source to use instead of the screen (tests only).")
     parser.add_argument("--check", action="store_true", help="Print what is installed as one JSON line and exit.")
+    parser.add_argument("--agent-screen", default=None, metavar="WxH", help="Work on a private agent screen of this size (a headless GNOME Shell) instead of the owner's.")
     args = parser.parse_args(argv)
     if args.check:
         return check()
     if not args.state_dir:
         parser.error("--state-dir is required")
+    agent = None
+    if args.agent_screen is not None:
+        from desktop_helper.agent_screen import AgentScreen, AgentScreenError, clean_leftovers, owner_runtime, parse_size
+
+        def note(message: str) -> None:
+            sys.stderr.write(f"desktop-helper: {message}\n")
+
+        try:
+            size = parse_size(args.agent_screen)
+            os.makedirs(args.state_dir, mode=0o700, exist_ok=True)
+            clean_leftovers(owner_runtime(os.environ), note)
+            agent = AgentScreen(os.path.abspath(args.state_dir), size, note)
+            agent.start()
+        except (AgentScreenError, ValueError, OSError) as failure:
+            fix = getattr(failure, "fix", None)
+            return unavailable(f"The agent screen could not start: {failure}{f' Fix: {fix}' if fix else ''}")
+        # This helper works on the agent screen only: its bus, its accessibility, its compositor.
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = agent.bus_address or ""
     try:
         import gi
 
@@ -84,8 +106,10 @@ def main(argv: list[str]) -> int:
         from desktop_helper.server import Helper, Writer
     except (ImportError, ValueError) as failure:
         sys.stderr.write(f"desktop-helper: {type(failure).__name__}: {str(failure)[:200]}\n")
+        if agent is not None:
+            agent.stop()
         return unavailable(MISSING)
-    helper = Helper(os.path.abspath(args.state_dir), Writer(sys.stdout), args.test_source)
+    helper = Helper(os.path.abspath(args.state_dir), Writer(sys.stdout), args.test_source, agent=agent)
     helper.run()
     return 0
 

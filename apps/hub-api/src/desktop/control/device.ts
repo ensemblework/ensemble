@@ -1,10 +1,11 @@
 /**
  * A node's desktop tools on this computer (docs/25 §11): `node.tool.request` with `tool: "desktop"`, run
- * by the desktop service for the node's mission (`node:<nodeId>:<mission>` drives the desktop while it
- * works). A sensitive app is the policy's (device-tools/policy.ts, scope `app`): attended, the owner is
- * asked once per app and mission; unattended, it is allowed. The hard floor is the service's and is never
- * asked about. A saved recording is the node's evidence (device-tools/capture.ts `keepEvidence`), held
- * for the owner's preview; the model's screenshots are not evidence and come back only to the model.
+ * on the agent screen or the owner's screen (screens.ts) for the node's mission (`node:<nodeId>:<mission>`
+ * drives that screen while it works). A sensitive app, and the owner's own pointer and keyboard
+ * (`screen:owner`), are the policy's (device-tools/policy.ts, scope `app`): attended, the owner is asked
+ * once per app and mission; unattended, it is allowed. The hard floor is the service's and is never asked
+ * about. A saved recording is the node's evidence (device-tools/capture.ts `keepEvidence`), held for the
+ * owner's preview; the model's screenshots are not evidence and come back only to the model.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -17,10 +18,12 @@ import { appendLedger } from "../../lib/ledger.js";
 import type { HostedClient } from "../../remote/client.js";
 import type { NodeDesktopAnswer, NodeToolAsk, NodeToolRequest } from "../../remote/contract.js";
 import { loadSettings } from "../../remote/store.js";
-import { desktopService, UNSUPPORTED_HERE } from "./index.js";
+import { desktops, UNSUPPORTED_HERE } from "./index.js";
+import { desktopReadiness } from "./readiness.js";
+import type { Desktops } from "./screens.js";
 import { secretFor } from "./secrets.js";
-import { DesktopError, type Caller, type DesktopService, type GateAnswer, type GateApp, type Observation } from "./service.js";
-import { actText, appsText, failureText, observationText, openText, recordingText, statusText } from "./text.js";
+import { DesktopError, type Caller, type GateAnswer, type GateApp, type Observation, type ScreenName } from "./service.js";
+import { actText, appsText, failureText, observationText, openText, recordingText, recordStartText, statusText } from "./text.js";
 import { DESKTOP_TOOLS, DESKTOP_TRANSPORT_MS, desktopTimeoutMs, type DesktopStep } from "./tool-specs.js";
 
 export type DesktopRequest = Extract<NodeToolRequest, { tool: "desktop" }>;
@@ -33,7 +36,7 @@ export function appAsk(app: GateApp): NodeToolAsk {
 }
 
 function image(observation: Observation | null | undefined): NodeDesktopAnswer["image"] {
-  if (!observation) return undefined;
+  if (!observation?.image) return undefined;
   const mime = observation.image.mime === "image/png" ? "image/png" : "image/jpeg";
   return { captureId: observation.captureId, mime, width: observation.image.width, height: observation.image.height, ...(observation.image.base64 ? { base64: observation.image.base64 } : {}) };
 }
@@ -41,10 +44,17 @@ function image(observation: Observation | null | undefined): NodeDesktopAnswer["
 /** What the agent reads besides the summary: small, without the screenshot or element lists. */
 function lean(observation: Observation | null | undefined): Record<string, unknown> | undefined {
   if (!observation) return undefined;
-  return { captureId: observation.captureId, display: observation.display.id, image: { width: observation.image.width, height: observation.image.height }, app: observation.focus?.app ?? null, elements: observation.tree?.elements.length ?? 0 };
+  return {
+    screen: observation.screen,
+    captureId: observation.captureId,
+    display: observation.display?.id ?? null,
+    image: observation.image ? { width: observation.image.width, height: observation.image.height } : null,
+    app: observation.focus?.app ?? observation.tree?.app ?? null,
+    elements: observation.tree?.elements.length ?? 0,
+  };
 }
 
-export async function runNodeDesktop(app: App, client: HostedClient, request: DesktopRequest, injected?: DesktopService): Promise<DesktopDone> {
+export async function runNodeDesktop(app: App, client: HostedClient, request: DesktopRequest, injected?: Desktops): Promise<DesktopDone> {
   const userId = env.ENSEMBLE_DEV_USER_ID;
   const grantsUsed: string[] = [];
   const answer = (status: number, body: Record<string, unknown>): DesktopDone => ({ status, body, grantsUsed });
@@ -70,28 +80,38 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
     gate,
     secret: (name, where) => secretFor(app.prisma as never, userId, name, where.origin),
   };
-  const service = injected ?? desktopService();
+  const screens = injected ?? desktops();
+  const steps = Array.isArray(input.steps) ? (input.steps as DesktopStep[]) : [];
+  const screen = screens.pick(caller.key, {
+    screen: input.screen as ScreenName | undefined,
+    captureId: (input.captureId as string | undefined) ?? steps.find((step) => step.captureId)?.captureId,
+    recording: request.name === "desktop_record" && input.action !== "start",
+  });
+  // Handing over is of the owner's screen only: the agent screen is the agent's own.
+  const service = request.name === "desktop_handoff" ? screens.owner : screens.service(screen);
   const ok = (summary: string, extra: Record<string, unknown> = {}) => answer(200, { ok: true, summary, evidence: [], refused: [], ...extra });
   try {
     let done: DesktopDone;
     switch (request.name) {
       case "desktop_status": {
-        const status = await service.status(caller.budgetMs);
-        done = ok(statusText(status), { result: { session: status.session, lease: status.lease } });
+        const both = await screens.status(caller.budgetMs, async () => (await desktopReadiness()).agentScreen);
+        done = ok(statusText(both), { result: { owner: { session: both.owner.session, lease: both.owner.lease }, agent: both.agent ? { session: both.agent.session } : { ready: both.agentReadiness.ready, running: false } } });
         break;
       }
       case "desktop_apps": {
-        const apps = await service.apps(input as { query?: string; running?: boolean }, caller.budgetMs);
+        const apps = await screens.apps(input as { query?: string; running?: boolean; screen?: ScreenName }, caller.budgetMs);
         done = ok(appsText(apps));
         break;
       }
       case "desktop_open": {
         const opened = await service.open(caller, input as { app: string; waitSec?: number });
+        screens.remember(caller.key, service.screenName);
         done = ok(openText(opened), { result: opened });
         break;
       }
       case "desktop_observe": {
-        const observation = await service.observe(caller, input as { display?: string; app?: string; elements?: boolean; maxElements?: number });
+        const observation = await service.observe(caller, input as { display?: string; app?: string; elements?: boolean; maxElements?: number; screenshot?: boolean });
+        screens.remember(caller.key, service.screenName);
         done = ok(observationText(observation), { result: lean(observation), image: image(observation) });
         break;
       }
@@ -101,19 +121,21 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
         break;
       }
       case "desktop_act": {
-        const acted = await service.act(caller, input as { captureId?: string; steps: DesktopStep[]; observe?: boolean });
+        const acted = await service.act(caller, input as { captureId?: string; steps: DesktopStep[]; observe?: boolean; foreground?: boolean });
         if (acted.needsOwner && acted.ran === 0) return answer(428, { ask: appAsk(acted.needsOwner) });
+        screens.remember(caller.key, service.screenName);
         for (const step of acted.steps) {
           if (step.rule) await appendLedger({ userId, actor: "agent", action: "node.tool.refused", payload: { nodeId: request.nodeId, tool: "desktop", rule: step.rule } }).catch(() => undefined);
         }
-        done = ok(actText(acted), { result: { ran: acted.ran, steps: acted.steps.map(({ index, action, verdict, ran }) => ({ index, action, verdict, ran })), ...(acted.observation ? { observation: lean(acted.observation) } : {}) }, image: image(acted.observation) });
+        done = ok(actText(acted), { result: { screen: acted.screen, mode: acted.mode, ran: acted.ran, steps: acted.steps.map(({ index, action, verdict, ran, code }) => ({ index, action, verdict, ran, ...(code ? { code } : {}) })), ...(acted.observation ? { observation: lean(acted.observation) } : {}) }, image: image(acted.observation) });
         break;
       }
       case "desktop_record": {
         const action = input.action as "start" | "save" | "discard";
         if (action === "start") {
           const started = await service.recordStart(caller, { display: input.display as string | undefined, maxSec: input.maxSec as number | undefined, evidenceDir: operationEvidenceDir(request.operation) });
-          done = ok(`Recording screen ${started.display} (${started.container}), for at most ${started.maxSec} s. Save it with desktop_record save, or discard it.`, { result: started });
+          screens.remember(caller.key, service.screenName);
+          done = ok(recordStartText(started), { result: started });
         } else if (action === "discard") {
           await service.recordDiscard(caller);
           done = ok("The recording was discarded.");
@@ -121,7 +143,7 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
           if (!request.uploadId) return answer(400, { error: "Saving a recording needs its upload id. Update Ensemble on the web." });
           const saved = await service.recordSave(caller, { name: input.name as string | undefined });
           const kept = await keepEvidence(app, client, { nodeId: request.nodeId, operation: request.operation, uploadId: request.uploadId }, capturedFiles({ file: saved }));
-          done = answer(200, { ok: true, summary: recordingText(saved), result: { durationMs: saved.durationMs, width: saved.width, height: saved.height, codec: saved.codec, sha256: saved.sha256 }, ...kept });
+          done = answer(200, { ok: true, summary: recordingText(saved, service.screenName), result: { screen: service.screenName, durationMs: saved.durationMs, width: saved.width, height: saved.height, codec: saved.codec, sha256: saved.sha256 }, ...kept });
         }
         break;
       }

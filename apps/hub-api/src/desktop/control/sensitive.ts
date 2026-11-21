@@ -26,3 +26,8 @@ export const SENSITIVE_WORDS: Record<SensitiveCategory, string> = {
   terminal: "a terminal",
   banking: "a banking or wallet app",
 };
+
+/** What the owner is asked about: a sensitive app, or their own screen's pointer and keyboard. */
+export type GateCategory = SensitiveCategory | "screen";
+
+export const GATE_WORDS: Record<GateCategory, string> = { ...SENSITIVE_WORDS, screen: "the owner's own screen" };

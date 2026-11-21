@@ -1,8 +1,9 @@
 /**
- * A node's desktop tools (docs/35 §8.16): its owner's real screen, keyboard and pointer on their paired
- * computer, through `node.tool.request` with `tool: "desktop"` (desktop/control/device.ts there). Like
+ * A node's desktop tools (docs/35 §8.16): a private agent screen on its owner's paired computer, and their
+ * real screen, through `node.tool.request` with `tool: "desktop"` (desktop/control/device.ts there). Like
  * the browser and capture tools they work only in a turn only the owner reads and started; a sensitive
- * app asks the owner once per app and mission on a card in this chat. The model sees each screenshot:
+ * app, and the owner's own pointer and keyboard, ask the owner once per mission on a card in this chat.
+ * The model sees each screenshot:
  * as a picture with the tool's result on Ensemble's API, or (on the owner's own subscription) through
  * the line images.ts turns into one on the computer. Screenshots are not evidence; a saved recording is,
  * held for the owner's preview.
@@ -19,14 +20,18 @@ import { DESKTOP_TOOLS, desktopTimeoutMs } from "./tool-specs.js";
 
 const computer = z.string().max(120).optional().describe("The computer's name, when your owner has more than one.");
 
-/** The computer must answer desktop calls (`capabilities.desktop`) and, but for desktop_status, be ready for them. */
+/** The computer must answer desktop calls (`capabilities.desktop`) and, but for desktop_status, have a screen ready for them. */
 export function requireDesktop(device: Pick<Device, "name" | "capabilities">, tool = "desktop_observe"): void {
-  const caps = (device.capabilities ?? {}) as { desktop?: unknown; desktopReadiness?: { ready?: unknown; reason?: unknown } | null };
+  const caps = (device.capabilities ?? {}) as { desktop?: unknown; desktopReadiness?: { ready?: unknown; reason?: unknown; agentScreen?: { ready?: unknown; reason?: unknown } } | null };
   if (!(typeof caps.desktop === "number" && caps.desktop >= DESKTOP_API)) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name} to control its desktop: it is too old for it, or not on Linux.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use the browser tools and computer_run.");
   }
   const ready = caps.desktopReadiness;
-  if (tool !== "desktop_status" && ready && ready.ready === false && typeof ready.reason === "string") throw new ToolBlockedError(`${device.name} cannot control its desktop yet: ${ready.reason}`, "Tell your owner in one line what it needs.");
+  // Either screen will do: the agent screen works without the owner's session, the owner's without GNOME Shell's headless mode.
+  if (tool !== "desktop_status" && ready && ready.ready === false && ready.agentScreen?.ready !== true && typeof ready.reason === "string") {
+    const agent = typeof ready.agentScreen?.reason === "string" ? ` The agent screen: ${ready.agentScreen.reason}` : "";
+    throw new ToolBlockedError(`${device.name} cannot control its desktop yet: ${ready.reason}${agent}`, "Tell your owner in one line what it needs.");
+  }
 }
 
 function describe(name: string, input: Record<string, unknown>): string {

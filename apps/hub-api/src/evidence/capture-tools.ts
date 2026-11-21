@@ -5,7 +5,7 @@
  * (evidence/captures.ts): uploaded with its other files, or held for the owner's preview. A run with
  * the internet off browses only this computer's own addresses, and an app it starts for capture runs
  * in its folder, sandboxed as the run is. On Linux the desktop tools are here too (desktop/control/run-tools.ts):
- * the person's real screen, for this run. When the run ends, its recordings are finished and kept, and
+ * the agent screen and the person's real screen, for this run. When the run ends, its recordings are finished and kept, and
  * its tabs, apps, displays and hold on the desktop end (`finishRunCapture`).
  */
 import { realpath } from "node:fs/promises";
