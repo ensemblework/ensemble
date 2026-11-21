@@ -16,7 +16,7 @@ import type { PrismaClient } from "@prisma/client";
 import { SKILLS } from "@ensemble/prompts";
 import { hasModule } from "@ensemble/shared-types";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
-import type { SkillsConfig } from "../context/config.js";
+import { activeContextConfig, DEFAULT_TOOL_TIERS, type SkillsConfig, type ToolTiersConfig } from "../context/config.js";
 import { purposeOf } from "../lib/skill-purpose.js";
 import { truncateText } from "../lib/text.js";
 import { stem, STOPWORDS } from "../workspace/session-choice/text.js";
@@ -320,85 +320,63 @@ export function skillTool(scope: { prisma: PrismaClient; node: { userId: string 
   });
 }
 
-/**
- * Tool tiers (docs/35 §6.1): the browser and capture tools for building or testing a web app or making a
- * video. A conversation turn offers them only when its words are about that work, or the conversation's
- * last tools were; web screenshots are browser_view and browser_screenshot. browser_tabs and
- * browser_close are not among them: a click can open a popup (a payment window) and the owner can ask
- * to close a tab at any time. Plan steps and turns that carry on work (an answered card, a run that
- * ended) keep every tool.
- */
-export const ADVANCED_TOOLS: ReadonlySet<string> = new Set([
-  "browser_console",
-  "browser_network_errors",
-  "browser_record",
-  "browser_upload",
-  "capture_app_start",
-  "capture_app_stop",
-  "capture_apps",
-  "capture_check",
-  "capture_status",
-  "capture_video",
-  "capture_screenshot",
-]);
-
-const ADVANCED_INTENT =
-  /\b(?:videos?|record(?:ing)?|screencast|gif|(?:browser|js|javascript|dev ?tools) console|console (?:logs?|errors?|messages?|output)|network (?:errors?|requests?|tab)|devtools|upload|dev server|localhost|127\.0\.0\.1|desktop app|electron|tauri|app window|e2e|end[- ]to[- ]end|playwright|(?:test|testing|tested|debug|debugging|qa|build|building|check|checking)\b[^.?!\n]{0,40}\b(?:app|apps|site|website|web ?page|page|ui|frontend|front[- ]end|sign-?up|log-?in|form|flow|feature|endpoint|game|build))\b/i;
-
-/** Whether a turn's words (or its conversation's last tools) are about building or testing a web app or a video. */
-export function wantsAdvancedTools(words: string, recentTools: readonly string[] = []): boolean {
-  return ADVANCED_INTENT.test(words) || recentTools.some((name) => ADVANCED_TOOLS.has(name)) || [...ADVANCED_TOOLS].some((name) => words.includes(name));
-}
-
-/**
- * Tools a conversation turn is offered only for their kind of work: when its words say so, when one of them is named,
- * or when the conversation's last replies used one. `always`: the node's situation needs them whatever the words.
- * `follows`: other tools whose recent use keeps them too.
- */
-export type ToolTier = { name: string; tools: (name: string) => boolean; intent: RegExp; always?: keyof TierSituation; follows?: (name: string) => boolean };
+/** The browser and capture tools for building and testing an app or making a video (the `advanced` tier of `DEFAULT_TOOL_TIERS`). */
+export const ADVANCED_TOOLS: ReadonlySet<string> = new Set(DEFAULT_TOOL_TIERS.find((tier) => tier.name === "advanced")!.tools);
 
 /** What about the node's situation keeps a tier's tools in every turn (node/brain.ts): `crew`, it leads a crew, has helpers or other nodes beside it, or works in a crew, a task room or a plan. */
 export type TierSituation = { crew: boolean };
 
-const CREW_TOOLS = new Set(["node_plan", "node_plan_revise", "node_delegate", "node_crew_add"]);
-const SESSION_EXTRAS = new Set(["node_session_delete", "node_session_queue", "node_session_adopt", "node_session_hand_over", "node_answer_question"]);
-const MAKER_TOOLS = new Set(["node_create", "node_create_group", "node_routines"]);
+/** Why a tier's tools were offered at the start of the turn: its words, one of its tools named, used in the last replies, or the node's situation. */
+export type TierWhy = "words" | "tool-name" | "recent" | "situation";
+/** A tier as a turn decided it, for the turn's trace (node/trace.ts adds `opened` when hub_use_tool reached a held-back tool). */
+export type TierDecision = { tier: string; shown: boolean; why: TierWhy | null; tools: string[] };
 
-export const TOOL_TIERS: readonly ToolTier[] = [
-  { name: "advanced", tools: (name) => ADVANCED_TOOLS.has(name), intent: ADVANCED_INTENT },
-  // An app on the owner's screen: its windows, a recording of it, the screen itself.
-  {
-    name: "desktop",
-    tools: (name) => name.startsWith("desktop_"),
-    intent: /\b(?:desktop|(?<!web[ -]?)apps?|applications?|programs?|windows?|screens?|gui|record(?:ing)?|videos?|screencast|calculator|install(?:er|ing)?|file manager|finder|menu bar|dialog)\b/i,
-  },
-  // Work for several nodes: a crew's plan, a step for a member or a helper.
-  { name: "crew", tools: (name) => CREW_TOOLS.has(name), intent: /@[a-z0-9]|\b(?:crew|delegate|delegating|helpers?|(?:other|my|your|another|new|the) nodes?\b(?!\.))/i, always: "crew" },
-  // A coding session's less common handling, also right after the conversation started or messaged a session ("docs first after all").
-  {
-    name: "sessions",
-    tools: (name) => SESSION_EXTRAS.has(name),
-    intent: /\b(?:sessions?|claude|codex|copilot|cursor|gemini|coding agents?|adopt|hand (?:it )?over|queue)\b/i,
-    follows: (name) => name.startsWith("node_session_"),
-  },
-  { name: "terminal", tools: (name) => name.startsWith("terminal_") || name === "live_view", intent: /\b(?:terminal|shell|interactive|ssh|repl|live|watch|tty|tmux|htop)\b/i },
-  {
-    name: "maker",
-    tools: (name) => MAKER_TOOLS.has(name),
-    intent: /\b(?:routines?|every (?:day|morning|evening|night|week(?:day)?|month|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+)|daily|weekly|monthly|hourly|each (?:day|morning|evening|week|month)|recurring|automat\w*|(?:a|new|another) (?:node|group|crew)\b(?!\.))/i,
-  },
-];
+const patterns = new Map<string, RegExp>();
+const pattern = (source: string): RegExp => {
+  let found = patterns.get(source);
+  if (!found) patterns.set(source, (found = new RegExp(source, "i")));
+  return found;
+};
+const inTier = (tier: { tools: readonly string[] }, name: string) => tier.tools.some((tool) => (tool.endsWith("*") ? name.startsWith(tool.slice(0, -1)) : tool === name));
 
 /**
- * A conversation turn's tools: a tier's only when the turn is about that work (`TOOL_TIERS`), so a plain request is
- * not sent every tool's description. Steps and turns that carry on earlier work keep them all (node/brain.ts).
+ * A conversation turn's tools: a tier's (`tools.tiers` of the versioned context config, context/config.ts) only when
+ * the turn is about that work: its words match one of the tier's rules or name one of its tools, one of the
+ * conversation's last replies used one (or one of the tier's `follows`), or the node's situation keeps it. The rest are
+ * held back, within reach through hub_use_tool. Plan steps and turns that carry on work keep every tool (node/brain.ts).
+ * Deterministic; each tier's decision and why goes into the turn's trace.
  */
+export function chooseTiers<T extends { name: string }>(
+  tools: readonly T[],
+  words: string,
+  recentTools: readonly string[] = [],
+  situation: Partial<TierSituation> = {},
+  tiers: ToolTiersConfig["tiers"] = activeContextConfig().tools.tiers,
+): { kept: T[]; tiers: TierDecision[] } {
+  const decisions = tiers.map((tier): TierDecision => {
+    const held = tools.filter((tool) => inTier(tier, tool.name)).map((tool) => tool.name);
+    const why: TierWhy | null =
+      tier.always !== undefined && situation[tier.always] === true
+        ? "situation"
+        : tier.words.some((source) => pattern(source).test(words))
+          ? "words"
+          : held.some((name) => words.includes(name))
+            ? "tool-name"
+            : recentTools.some((name) => inTier(tier, name) || inTier({ tools: tier.follows ?? [] }, name))
+              ? "recent"
+              : null;
+    return { tier: tier.name, shown: why !== null, why, tools: held };
+  });
+  const hidden = new Set(decisions.filter((decision) => !decision.shown).flatMap((decision) => decision.tools));
+  return { kept: tools.filter((tool) => !hidden.has(tool.name)), tiers: decisions };
+}
+
+/** `chooseTiers`'s tools alone. */
 export function tieredTools<T extends { name: string }>(tools: readonly T[], words: string, recentTools: readonly string[] = [], situation: Partial<TierSituation> = {}): T[] {
-  const wanted = (tier: ToolTier) =>
-    (tier.always !== undefined && situation[tier.always] === true) ||
-    tier.intent.test(words) ||
-    recentTools.some((name) => tier.tools(name) || tier.follows?.(name) === true) ||
-    tools.some((tool) => tier.tools(tool.name) && words.includes(tool.name));
-  const hidden = TOOL_TIERS.filter((tier) => !wanted(tier));
-  return tools.filter((tool) => !hidden.some((tier) => tier.tools(tool.name)));
+  return chooseTiers(tools, words, recentTools, situation).kept;
+}
+
+/** Whether a turn's words (or its conversation's last tools) are about building or testing a web app or a video. */
+export function wantsAdvancedTools(words: string, recentTools: readonly string[] = []): boolean {
+  return chooseTiers([...ADVANCED_TOOLS].map((name) => ({ name })), words, recentTools).tiers.some((decision) => decision.tier === "advanced" && decision.shown);
 }

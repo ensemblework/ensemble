@@ -15,11 +15,18 @@ export type ShellSegment = {
   redirects: Array<{ path: string; write: boolean }>;
   /** `VAR=value` or `env` before the program (or alone): it changes what the program loads or runs (`LD_PRELOAD`, `PAGER`). */
   assigned?: boolean;
+  /**
+   * A wrapper in front adds arguments the words do not show: `xargs` reads them from its input or a file, `env -S`
+   * expands `${VAR}` in its string. What the program will be given cannot be judged from the command.
+   */
+  fed?: boolean;
 };
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-/** Words in front of the real program that only change how it runs. */
+/** Words in front of the real program that change how it runs; `xargs` also gives it more arguments (`FEEDERS`). */
 const WRAPPERS = new Set(["time", "nice", "nohup", "command", "builtin", "exec", "stdbuf", "timeout", "caffeinate", "xargs", "setsid", "ionice", "chrt", "taskset", "unbuffer"]);
+/** Wrappers that add arguments of their own at run time: from the input or a file (`xargs`), or by expanding variables (`env -S`). */
+const FEEDERS = new Set(["xargs"]);
 /** A wrapper's options that take the next word as their value. */
 const VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   env: new Set(["-u", "--unset", "-C", "--chdir"]),
@@ -60,6 +67,17 @@ export function expandWord(word: string, home = homedir()): string {
   return expanded;
 }
 
+/** Whether the wrappers in front of a program give it arguments the words do not show (`xargs …`, `env -S …`). */
+export function fedArguments(words: string[]): boolean {
+  for (const word of words) {
+    if (ASSIGNMENT.test(word)) continue;
+    const name = word.split(/[\\/]/).pop()!;
+    if (FEEDERS.has(name)) return true;
+    if (name !== "env" && !WRAPPERS.has(name) && !word.startsWith("-") && !/^\d+(\.\d+)?[smhd]?$/.test(word)) return false;
+  }
+  return false;
+}
+
 /** The program and its arguments without leading `VAR=value` assignments and wrappers like `env` or `nohup`. */
 export function programArgv(words: string[]): string[] {
   let start = 0;
@@ -84,6 +102,12 @@ export function programArgv(words: string[]): string[] {
       else break;
     }
   }
+}
+
+/** `env -S`/`--split-string` in front of the program: its string is split and its `${VAR}` expanded by env, unseen here. */
+function envSplits(words: string[]): boolean {
+  const at = words.findIndex((word) => word.split(/[\\/]/).pop() === "env");
+  return at >= 0 && words.slice(at + 1).some((word) => word === "-S" || /^-S./.test(word) || word.startsWith("--split-string"));
 }
 
 export function parseShell(command: string, root: string, home = homedir()): ShellSegment[] {
@@ -111,9 +135,12 @@ export function parseShell(command: string, root: string, home = homedir()): She
     pushWord();
     redirect = null;
     const argv = programArgv(words);
-    const assigned = words.slice(0, words.length - argv.length).some((word) => ASSIGNMENT.test(word) || word.split(/[\\/]/).pop() === "env");
+    const front = words.slice(0, words.length - argv.length);
+    const assigned = front.some((word) => ASSIGNMENT.test(word) || word.split(/[\\/]/).pop() === "env");
+    // `env -S '…'` splits and expands its string (programArgv reads the words it gives), `xargs` adds what it reads.
+    const fed = fedArguments(front) || envSplits(words);
     if (argv.length || redirects.length || assigned) {
-      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}) });
+      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}), ...(fed ? { fed: true } : {}) });
       const name = argv[0]?.split(/[\\/]/).pop();
       // `bash -c '…'` (or -lc, sh, zsh): the script is shell too, read as commands of its own.
       if (name && SHELLS.has(name)) {

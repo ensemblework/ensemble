@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SKILLS } from "@ensemble/prompts";
 import { DEFAULT_CONTEXT_CONFIG } from "../context/config.js";
-import { ADVANCED_TOOLS, BUNDLED_SKILLS, chooseSkills, inlineGuidance, skillTool, tieredTools, wantsAdvancedTools, type CatalogueSkill } from "./skills.js";
+import { ADVANCED_TOOLS, BUNDLED_SKILLS, chooseSkills, chooseTiers, inlineGuidance, skillTool, tieredTools, wantsAdvancedTools, type CatalogueSkill } from "./skills.js";
 
 const config = DEFAULT_CONTEXT_CONFIG.skills;
 const every = () => true;
@@ -190,10 +190,25 @@ test("the desktop, crew, session, terminal and maker tools come with their kind 
     "Create three tasks for the launch: Book the venue, due Saturday 28 November. Then make a page called Launch checklist.",
     "Briefly compare SQLite and PostgreSQL for a small team's internal web app, and cite at least two sources.",
     "Find the official release date of Python 3.14 on the web and put it in the notes of my todo Draft the Q4 plan. Don't ask me anything.",
-    "Make a Markdown report of the 3 largest files in ~/data on my computer and share the file with me here.",
+    "Write a one-page summary of the field trial report as a Markdown file and send the file here.",
   ])
     assert.deepEqual(names(words), core, words);
-  for (const words of ["Open the Calculator app on my computer, compute 7 times 6 and send me a screenshot of it", "Record a short video of the Calculator app", "what is on my screen?"]) assert.ok(names(words).includes("desktop_act"), words);
+  for (const words of [
+    "Open the Calculator app on my computer, compute 7 times 6 and send me a screenshot of it",
+    "Record a short video of the Calculator app",
+    "what is on my screen?",
+    "take a screenshot",
+    "open Figma",
+    "close Slack",
+    "is Spotify running?",
+    "click the Save button in Photoshop",
+    "check my Mac",
+    "what is on my computer right now?",
+  ])
+    assert.ok(names(words).includes("desktop_act"), words);
+  for (const words of ["Make me a new node.", "Please create a new crew."]) assert.ok(names(words).includes("node_create"), words);
+  for (const words of ["Give this to my other node.", "Please create a new crew."]) assert.ok(names(words).includes("node_delegate"), words);
+  assert.ok(!names("The Node.js docs say so.").includes("node_create"), "Node.js is no node");
   assert.ok(names("and then?", ["desktop_observe"]).includes("desktop_status"), "a recent desktop call keeps them");
   assert.ok(names("use desktop_act to press Enter").includes("desktop_act"), "a tool named in the words comes with its tier");
   assert.ok(names("ask @developer to fix the build").includes("node_plan"));
@@ -203,4 +218,20 @@ test("the desktop, crew, session, terminal and maker tools come with their kind 
   assert.ok(names("adopt the Claude session I started").includes("node_session_adopt"));
   assert.ok(names("docs first after all", ["node_session_send"]).includes("node_session_adopt"), "a session the conversation just messaged keeps its other tools");
   assert.ok(!names("docs first after all", ["browser_open"]).includes("node_session_adopt"));
+});
+
+test("tool tiers are rules of the versioned context config: each decision says why, and an override changes them without a release", async () => {
+  const { ContextConfig, contextConfigRef, DEFAULT_CONTEXT_CONFIG } = await import("../context/config.js");
+  const tools = ["computer_run", "desktop_status", "node_plan", "terminal_open", "node_routines"].map((name) => ({ name }));
+  const decided = (words: string, recent: string[] = [], situation = {}) => Object.fromEntries(chooseTiers(tools, words, recent, situation).tiers.map((row) => [row.tier, row.why]));
+  assert.equal(decided("open Figma").desktop, "words");
+  assert.equal(decided("use desktop_status please").desktop, "tool-name");
+  assert.equal(decided("and then?", ["desktop_observe"]).desktop, "recent");
+  assert.equal(decided("docs first after all", ["node_session_send"]).sessions, "recent", "a tier's `follows` used lately keeps it");
+  assert.equal(decided("hello", [], { crew: true }).crew, "situation");
+  assert.deepEqual(decided("hello"), { advanced: null, desktop: null, crew: null, sessions: null, terminal: null, maker: null });
+  const custom = ContextConfig.parse({ tools: { tiers: [{ name: "desktop", tools: ["desktop_*"], words: ["\\bhello\\b"] }] } });
+  assert.deepEqual(chooseTiers(tools, "hello", [], {}, custom.tools.tiers).kept.map((tool) => tool.name), tools.map((tool) => tool.name), "only the tiers the config names hold anything back");
+  assert.notEqual(contextConfigRef(custom).hash, contextConfigRef(DEFAULT_CONTEXT_CONFIG).hash, "a turn's record names the rules it ran under");
+  assert.equal(ContextConfig.safeParse({ tools: { tiers: [{ name: "x", tools: ["a"], words: ["(unclosed"] }] } }).success, false, "a rule that is no regular expression is refused");
 });

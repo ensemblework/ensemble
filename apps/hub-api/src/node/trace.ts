@@ -16,6 +16,7 @@ import { safePublicError, truncateText } from "../lib/text.js";
 import { activeHeuristics, heuristicsVersion } from "./heuristics.js";
 import type { InstructionsLog } from "./instructions.js";
 import { remainingIn, replyOutcome, statedOutcome, type ReplyOutcome } from "./reply-report.js";
+import type { TierDecision } from "./skills.js";
 import type { PostedMessage } from "./turn-context.js";
 
 /** Where a turn ran (DESIGN §3.2): which loop, who pays for the model, where its tools act, who keeps the conversation. */
@@ -94,6 +95,8 @@ export class TurnTrace {
   shown: Array<{ id: string; kind: string }> = [];
   saved: string[] = [];
   error: string | null = null;
+  /** How a conversation turn's tool tiers were decided (node/skills.ts `chooseTiers`); kept with `selected`. */
+  tiers: TierDecision[] | null = null;
 
   constructor(readonly turn: Pick<NodeTurn, "id" | "userId" | "nodeId">) {}
 
@@ -230,7 +233,7 @@ export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, tr
     credits: trace.credits,
     costUsd: trace.loop.costUsd,
     calls: trace.loop.calls as unknown as Prisma.InputJsonValue,
-    selected: json(log?.selected === undefined ? null : compactJson(log.selected)),
+    selected: json(selectedOf(log?.selected, trace)),
     verification: json(trace.verification),
     report: json(reportOf(trace, posted, outcome?.status ?? null)),
     loop: json(loop ? compactJson(loop) : null),
@@ -238,6 +241,17 @@ export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, tr
   };
   await app.prisma.nodeTurnTrace.upsert({ where: { turnId: trace.turn.id }, create: { turnId: trace.turn.id, ...row }, update: row });
   if (placement && JSON.stringify(placement) !== JSON.stringify(trace.placement)) await setPlacement(app, trace.turn.id, placement);
+}
+
+/**
+ * The instructions' `selected` with the turn's tool tiers: each shown or held back, why, and `opened` when hub_use_tool
+ * reached one of a held-back tier's tools during the turn. Names only, never the words that decided.
+ */
+function selectedOf(selected: unknown, trace: TurnTrace): Prisma.InputJsonValue | null {
+  const called = new Set(trace.loop.calls.filter((call) => !("kind" in call)).map((call) => call.name));
+  const tiers = trace.tiers?.map(({ tier, shown, why, tools }) => ({ tier, shown, why, ...(!shown && tools.some((name) => called.has(name)) ? { opened: "hub_use_tool" } : {}) }));
+  if (selected === undefined && !tiers) return null;
+  return compactJson({ ...(selected && typeof selected === "object" ? selected : {}), ...(tiers ? { tiers } : {}) });
 }
 
 export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation";

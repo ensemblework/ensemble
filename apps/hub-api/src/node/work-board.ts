@@ -12,8 +12,11 @@ import { labelStatus } from "../services/tasks.js";
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
 const LIVE_MISSION = ["draft", "running", "replanning", "reporting"];
 
-/** Tools that only look but keep what they saw for the owner (evidence, a picture with the reply): a merge would drop it. */
-const KEEPS_WHAT_IT_SAW = new Set(["capture_screenshot", "browser_screenshot", "browser_view", "computer_terminal_screenshot"]);
+/**
+ * Tools marked as only looking that still keep what they saw for the owner (evidence, a picture with the reply, a saved
+ * document): a merge would drop it. A tool marked as acting (`readOnly` false) acts whether it is here or not.
+ */
+const KEEPS_WHAT_IT_SAW = new Set(["capture_screenshot", "browser_screenshot", "browser_view", "browser_shop", "browser_fetch", "computer_terminal_screenshot"]);
 /** Looks that keep their screenshot for the owner only when asked to (`share`, desktop/control/tool-specs.ts). */
 const SHARES_WHAT_IT_SAW = new Set(["desktop_observe", "desktop_zoom"]);
 

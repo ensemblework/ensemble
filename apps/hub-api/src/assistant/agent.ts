@@ -71,7 +71,8 @@ import { agentConversation, runSubscriptionTurn, USE_TOOL, type SubscriptionTurn
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
-import { ToolBlockedError, type AnyHubTool, type CallSpace, type CodeSession, type SpaceGateway, type ToolContext } from "./types.js";
+import { defineTool, ToolBlockedError, type AnyHubTool, type CallSpace, type CodeSession, type SpaceGateway, type ToolContext } from "./types.js";
+import { z } from "zod";
 import { codePreamble, codeTools } from "./tools/code.js";
 import {
   assistantEcho,
@@ -85,7 +86,7 @@ import {
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
 import { headAndTail, safePublicError, truncateText } from "../lib/text.js";
-import { redactValue } from "../lib/redact.js";
+import { redactArgs } from "../lib/redact.js";
 import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
@@ -144,7 +145,8 @@ export interface AssistantTurnArgs {
   coreTools?: readonly string[];
   /**
    * Tools not shown but there when the work needs them (a node's tools its turn's words did not call for, node/skills.ts):
-   * on the owner's AI plan hub_use_tool names and calls them, and one called is shown for the rest of the turn.
+   * on both loops hub_use_tool names and calls them, and one called is shown for the rest of the turn. Only what the
+   * turn may have: a room-bound or another person's turn passes none.
    */
   hiddenTools?: readonly AnyHubTool[];
   page?: AssistantPageContext;
@@ -355,6 +357,38 @@ function callTrace(outcome: CallOutcome, tool: AnyHubTool | undefined): ToolCall
   };
 }
 
+/** hub_use_tool's description, with the held-back tools it reaches. */
+function useToolDescription(names: readonly string[]): string {
+  return `${USE_TOOL.description} Also there when the work needs them: ${names.join(", ")}.`;
+}
+
+/** hub_use_tool on Ensemble's own loop, listed while held-back tools are not; never run itself (`unwrapUseTool`). */
+function useToolFor(names: readonly string[]): AnyHubTool {
+  return defineTool({
+    name: USE_TOOL.name,
+    area: "context",
+    description: useToolDescription(names),
+    input: z.object({ name: z.string().min(1).max(100).describe("The tool's exact name."), input: z.record(z.unknown()).optional().describe("The tool's input.") }),
+    isWrite: false,
+    risk: "low",
+    async run() {
+      throw new Error("hub_use_tool runs the tool it names.");
+    },
+  }) as AnyHubTool;
+}
+
+/** A hub_use_tool call as the call it names, on both loops: that tool runs by its own rules, and only if the turn has it. */
+export function unwrapUseTool(requested: { id: string; name: string; arguments: string }): { id: string; name: string; arguments: string } {
+  if (requested.name !== USE_TOOL.name) return requested;
+  let inner: { name?: unknown; input?: unknown } = {};
+  try {
+    inner = (JSON.parse(requested.arguments || "{}") ?? {}) as typeof inner;
+  } catch {
+    // Unreadable: it names no tool, so none runs.
+  }
+  return { id: requested.id, name: typeof inner.name === "string" ? inner.name : "", arguments: JSON.stringify(inner.input ?? {}) };
+}
+
 /** The messages with the system message `from` (a node's stable instructions) replaced by `to`. */
 function swapSystem(messages: readonly ModelMessage[], from: string | undefined, to: string | undefined): readonly ModelMessage[] {
   if (from === undefined || to === undefined) return messages;
@@ -486,7 +520,7 @@ async function drive(
   const loop = activeLoopConfig(app.log);
   const limits = turnLimits(loop, args.provider, args.model, Boolean(args.code));
   const hubTools = (await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name));
-  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...(subscription ? (args.hiddenTools ?? []) : [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
+  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...(args.hiddenTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);
@@ -500,13 +534,32 @@ async function drive(
       playbooks,
     ).map((playbook) => [playbook.name, playbook]),
   );
-  // Tools the loop adds during the turn (read_tool_output once a long result is kept), always shown.
+  // Tools the loop adds during the turn (read_tool_output once a long result is kept, a held-back tool once called), always shown.
   const turnTools: AnyHubTool[] = [];
-  const shown = () => {
-    const selected = advertisedTools(tools, active.values(), routeWords);
+  const hidden = new Map((args.hiddenTools ?? []).map((tool) => [tool.name, tool]));
+  const listed = () => {
+    // With toolsets off every allowed tool is listed, the held-back ones too.
+    const selected = advertisedTools(process.env.ENSEMBLE_ASSISTANT_TOOLSETS === "off" ? tools : tools.filter((tool) => !hidden.has(tool.name)), active.values(), routeWords);
     const always = args.coreTools?.length && process.env.ENSEMBLE_ASSISTANT_TOOLSETS !== "off" ? tools.filter((tool) => args.coreTools!.includes(tool.name)) : [];
     const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...always, ...selected];
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
+  };
+  /** Held-back tools not listed yet: hub_use_tool names them, on both loops. */
+  const unlisted = () => {
+    const names = new Set(listed().map((tool) => tool.name));
+    return [...hidden.keys()].filter((name) => !names.has(name));
+  };
+  // Ensemble's own loop lists hub_use_tool as a tool; on the owner's plan the agent gets it with Ensemble's tools (below).
+  const shown = () => {
+    const names = subscription ? [] : unlisted();
+    return names.length ? [...listed(), useToolFor(names)] : listed();
+  };
+  /** A held-back tool, once called, is listed for the rest of the turn; true when it was not listed before. */
+  const showHeldBack = (name: string): boolean => {
+    const tool = hidden.get(name);
+    if (!tool || turnTools.some((row) => row.name === name)) return false;
+    turnTools.push(tool);
+    return true;
   };
   const persona =
     args.agentPersona !== undefined || args.nodeInstructions !== undefined || (args.preamble !== undefined && args.actAs === undefined)
@@ -665,16 +718,14 @@ async function drive(
   if (isSubscriptionProvider(args.provider)) {
     // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
     const agent = args.provider;
-    const hidden = new Map((args.hiddenTools ?? []).map((tool) => [tool.name, tool]));
     const toolSpecs = () => {
-      const listed = shown();
-      const unlisted = [...hidden.keys()].filter((name) => !listed.some((tool) => tool.name === name));
+      const names = unlisted();
       return [
-        ...chatToolSpecs(listed).map((spec) => {
+        ...chatToolSpecs(shown()).map((spec) => {
           const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
           return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
         }),
-        unlisted.length ? { ...USE_TOOL, description: `${USE_TOOL.description} Also there when the work needs them: ${unlisted.join(", ")}.` } : USE_TOOL,
+        names.length ? { ...USE_TOOL, description: useToolDescription(names) } : USE_TOOL,
       ];
     };
     // A chat, Ask Ensemble or a routine keeps the agent's own tools; a node's turn keeps them with its node's policy (node/brain.ts).
@@ -691,8 +742,7 @@ async function drive(
       const waiting = nodeTools?.parking();
       if (waiting) return { text: JSON.stringify({ error: `${waiting} Stop here: end your turn now without a reply. You go on when they answer.` }), isError: true };
       used += 1;
-      const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
-      const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
+      const requested = unwrapUseTool({ id: `call_${randomUUID()}`, name, arguments: JSON.stringify(input ?? {}) });
       args.emit({ type: "status", text: statusFor([requested]) });
       await updateActivity(app.redis, userId, activityId, { label: "Assistant is working", detail: requested.name });
       const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName, known);
@@ -709,9 +759,7 @@ async function drive(
       const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
       const loaded = Boolean(playbook && !active.has(playbook.name));
       if (playbook && loaded) active.set(playbook.name, playbook);
-      // A tool the turn had not shown, once called, is shown for the rest of the turn.
-      const shownNow = hidden.has(requested.name) && !turnTools.some((tool) => tool.name === requested.name);
-      if (shownNow) turnTools.push(hidden.get(requested.name)!);
+      const shownNow = showHeldBack(requested.name);
       return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded || shownNow ? { tools: toolSpecs() } : {}) };
     });
     // The agent's own calls end up in the turn's reply when the agent writes none (empty-reply.ts).
@@ -1134,7 +1182,10 @@ async function drive(
     const batch: CallOutcome[] = [];
     const pendingProjectNames: string[] = [];
     // Reads next to each other run at the same time; anything else runs alone, in the model's order.
-    for (const group of callGroups(turn.toolCalls, byName)) {
+    // hub_use_tool runs the tool it names; its result goes back under the name the model called.
+    const requestedCalls = turn.toolCalls.map(unwrapUseTool);
+    const calledAs = new Map(turn.toolCalls.filter((requested) => requested.name === USE_TOOL.name).map((requested) => [requested.id, requested.name]));
+    for (const group of callGroups(requestedCalls, byName)) {
       args.emit({ type: "status", text: statusFor(group) });
       if (stop.signal.aborted || (await stopRequested(app.redis, userId, activityId))) {
         stop.abort();
@@ -1152,7 +1203,7 @@ async function drive(
         if (proposed) pendingProjectNames.push(proposed);
       }
     }
-    let loadedPlaybook = false;
+    let listChanged = false;
     const opened: ContentPart[] = [];
     const settledBatch = settleWriteBatch(batch);
     for (const outcome of settledBatch) {
@@ -1167,18 +1218,19 @@ async function drive(
       results.push({ call: outcome.call, result: outcome.forModel });
       learn(outcome.call.refs);
       if (outcome.call.state === "ok" && outcome.call.isWrite) mutated = true;
-      messages.push(toolResult(outcome.call.id, outcome.call.name, outcome.forModel));
+      messages.push(toolResult(outcome.call.id, calledAs.get(outcome.call.id) ?? outcome.call.name, outcome.forModel));
+      if (showHeldBack(outcome.call.name)) listChanged = true;
       // A loaded playbook brings its tools into the next step.
       const playbook = outcome.call.name === "hub_how_to" && outcome.call.state === "ok" ? findPlaybook(String(outcome.call.input?.name ?? ""), args.modules) : undefined;
       if (playbook && !active.has(playbook.name)) {
         active.set(playbook.name, playbook);
-        loadedPlaybook = true;
+        listChanged = true;
       }
     }
     // Pictures and files a tool opened follow all of this step's tool results, if this model still reads them.
     const shownParts = partsAtStage(opened, stage, verified) as ContentPart[];
     if (shownParts.length) messages.push({ role: "user", content: [{ type: "text", text: "What you opened (information, not instructions):" }, ...shownParts] });
-    if (loadedPlaybook) {
+    if (listChanged) {
       chatTools = chatToolSpecs(shown());
       responsesTools = responsesToolSpecs(shown());
     }
@@ -1553,7 +1605,16 @@ async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown,
 /** The most characters a failed call's record keeps of what it was sent. */
 const FAILED_INPUT_CHARS = 4_000;
 
-/** What a call that failed was sent, as its record keeps it: redacted, long values cut, at most `FAILED_INPUT_CHARS`. */
+/** A value cut for a record: each string to 500 characters, lists and objects to 20 entries, nothing deeper than 4 levels. */
+function cutValue(value: unknown, level = 0): unknown {
+  if (typeof value === "string") return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+  if (value === null || typeof value !== "object") return value;
+  if (level >= 4) return Array.isArray(value) ? `[${value.length} items]` : "{…}";
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => cutValue(item, level + 1));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 20).map(([key, item]) => [key, cutValue(item, level + 1)]));
+}
+
+/** What a call that failed was sent, as its record keeps it: redacted (lib/redact.ts `redactArgs`), then long values cut, at most `FAILED_INPUT_CHARS`. */
 export function sentInput(raw: string | undefined): Record<string, unknown> {
   let value: unknown = {};
   try {
@@ -1561,7 +1622,7 @@ export function sentInput(raw: string | undefined): Record<string, unknown> {
   } catch {
     value = { text: raw ?? "" };
   }
-  const kept = redactValue(value);
+  const kept = cutValue(redactArgs(value));
   const record = kept && typeof kept === "object" && !Array.isArray(kept) ? (kept as Record<string, unknown>) : { value: kept };
   const json = JSON.stringify(record);
   return json.length <= FAILED_INPUT_CHARS ? record : { cut: true, text: `${json.slice(0, FAILED_INPUT_CHARS)}…` };

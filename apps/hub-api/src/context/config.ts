@@ -1,6 +1,7 @@
 /**
- * The numbers that choose what a node turn is given from its owner's workspace, its memories and the skills
- * catalogue (docs/35 §5.6): every weight, cap and budget in one versioned config, with the defaults here.
+ * The numbers that choose what a node turn is given from its owner's workspace, its memories, the skills
+ * catalogue and its tool tiers (docs/35 §5.6): every weight, cap, budget and rule in one versioned config, with the
+ * defaults here.
  * Context DB retrieval (context/retrieve.ts), memory (node/memory.ts) and skill selection (node/skills.ts)
  * read it; each turn's `node.instructions` record names its version and hash with what was chosen, so a
  * choice can be judged again under other numbers.
@@ -14,11 +15,77 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 const weight = (value: number) => z.number().min(-100).max(100).default(value);
+
+/**
+ * The default tool tiers (node/skills.ts `chooseTiers`): tools a conversation turn is offered only for their kind of
+ * work. Tools by name, or a prefix ending in `*`; words as case-insensitive regular expressions, any one calling for them;
+ * `follows`, other tools (by name or prefix) whose use in the last replies keeps the tier too.
+ */
+export const DEFAULT_TOOL_TIERS = [
+  {
+    name: "advanced",
+    tools: ["browser_console", "browser_network_errors", "browser_record", "browser_upload", "capture_app_start", "capture_app_stop", "capture_apps", "capture_check", "capture_status", "capture_video", "capture_screenshot"],
+    words: [
+      String.raw`\b(?:videos?|record(?:ing)?|screencast|gif|(?:browser|js|javascript|dev ?tools) console|console (?:logs?|errors?|messages?|output)|network (?:errors?|requests?|tab)|devtools|upload|dev server|localhost|127\.0\.0\.1|desktop app|electron|tauri|app window|e2e|end[- ]to[- ]end|playwright|(?:test|testing|tested|debug|debugging|qa|build|building|check|checking)\b[^.?!\n]{0,40}\b(?:app|apps|site|website|web ?page|page|ui|frontend|front[- ]end|sign-?up|log-?in|form|flow|feature|endpoint|game|build))\b`,
+    ],
+  },
+  {
+    // An app on the owner's screen: its windows, the screen, a recording, the computer itself.
+    name: "desktop",
+    tools: ["desktop_*"],
+    words: [
+      String.raw`\b(?:desktop|(?<!web[ -]?)apps?|applications?|programs?|windows?|screens?|screenshots?|gui|record(?:ing)?|videos?|screencast|calculator|install(?:er|ing)?|file manager|finder|menu bar|dialog|click(?:s|ed|ing)?)\b`,
+      String.raw`\btype (?:in|into)\b`,
+      String.raw`\b(?:open|close|quit)\s+\S`,
+      String.raw`\b(?:is|are)\s+[^?.!\n]{1,40}?\s+(?:running|open)\b`,
+      String.raw`\bmy\s+(?:mac|pc|computer|laptop|desktop|machine)\b`,
+    ],
+  },
+  {
+    // Work for several nodes: a crew's plan, a step for a member or a helper.
+    name: "crew",
+    tools: ["node_plan", "node_plan_revise", "node_delegate", "node_crew_add"],
+    words: [String.raw`@[a-z0-9]|\b(?:crew|delegate|delegating|helpers?|(?:other|my|your|another|new|the) nodes?\b(?!\.\w))`],
+    always: "crew" as const,
+  },
+  {
+    // A coding session's less common handling, also right after the conversation started or messaged a session ("docs first after all").
+    name: "sessions",
+    tools: ["node_session_delete", "node_session_queue", "node_session_adopt", "node_session_hand_over", "node_answer_question"],
+    words: [String.raw`\b(?:sessions?|claude|codex|copilot|cursor|gemini|coding agents?|adopt|hand (?:it )?over|queue)\b`],
+    follows: ["node_session_*"],
+  },
+  { name: "terminal", tools: ["terminal_*", "live_view"], words: [String.raw`\b(?:terminal|shell|interactive|ssh|repl|live|watch|tty|tmux|htop)\b`] },
+  {
+    name: "maker",
+    tools: ["node_create", "node_create_group", "node_routines"],
+    words: [String.raw`\b(?:routines?|every (?:day|morning|evening|night|week(?:day)?|month|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+)|daily|weekly|monthly|hourly|each (?:day|morning|evening|week|month)|recurring|automat\w*|(?:a|new|another) (?:node|group|crew)\b(?!\.\w))`],
+  },
+];
+
+const regexSource = z.string().min(1).max(4_000).refine((source) => {
+  try {
+    new RegExp(source, "i");
+    return true;
+  } catch {
+    return false;
+  }
+}, "Not a regular expression.");
+
+const ToolTier = z.object({
+  name: z.string().min(1).max(40),
+  tools: z.array(z.string().min(1).max(100)).min(1).max(100),
+  words: z.array(regexSource).max(50),
+  /** What about the node keeps the tier in every turn: `crew`, it leads a crew, has helpers or other nodes, or works in a crew, task room or plan. */
+  always: z.enum(["crew"]).optional(),
+  /** Other tools (by name, or a prefix ending in `*`) whose use in the last replies keeps the tier too. */
+  follows: z.array(z.string().min(1).max(100)).max(100).optional(),
+});
 const count = (value: number, max = 1_000) => z.number().int().min(0).max(max).default(value);
 
 export const ContextConfig = z.object({
   /** Change it with every change of the defaults; recorded with each turn's choices. */
-  version: z.string().max(40).default("2026-11-21.1"),
+  version: z.string().max(40).default("2026-11-22.2"),
   retrieval: z
     .object({
       enabled: z.boolean().default(true),
@@ -125,11 +192,20 @@ export const ContextConfig = z.object({
       recentReplies: count(6, 100),
     })
     .default({}),
+  /** Tools a conversation turn is offered only for their kind of work (node/skills.ts `chooseTiers`); the rest stay within reach through hub_use_tool. */
+  tools: z
+    .object({
+      tiers: z.array(ToolTier).max(20).default(DEFAULT_TOOL_TIERS),
+      /** Replies looked back over for a tier's tools used lately. */
+      recentReplies: count(3, 50),
+    })
+    .default({}),
 });
 export type ContextConfig = z.infer<typeof ContextConfig>;
 export type RetrievalConfig = ContextConfig["retrieval"];
 export type MemoryConfig = ContextConfig["memory"];
 export type SkillsConfig = ContextConfig["skills"];
+export type ToolTiersConfig = ContextConfig["tools"];
 
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = ContextConfig.parse({});
 

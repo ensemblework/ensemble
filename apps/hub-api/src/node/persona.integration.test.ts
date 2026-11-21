@@ -34,6 +34,8 @@ after(() => h.close());
 type Seen = { slug: string; systems: string[]; stable: string; context: string; transcript: string; tools: string[] };
 type Call = { name: string; arguments: Record<string, unknown> };
 const seen: Seen[] = [];
+/** The tools of every model request, the follow-ups after tool results too. */
+const requestTools: string[][] = [];
 let script: (turn: Seen) => Call[] = () => [];
 
 setAskRuntimeStreamForTests(async (args) => {
@@ -48,6 +50,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const second = messages.at(-1)?.role === "tool";
   const current = { slug, systems, stable: at < 0 ? own : own.slice(0, at), context: at < 0 ? "" : own.slice(at + 2), transcript, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
+  requestTools.push(current.tools);
   const calls = second ? [] : script(current);
   const turn: RuntimeTurn = {
     text: calls.length ? "" : "(no reply)",
@@ -355,8 +358,42 @@ test("the eval's day plan, far from UTC: yesterday's task comes in as overdue, t
     const listDue = getTool("hub_list_due")!;
     const due = await listDue.run({ app: { log: { warn() {}, error() {} } }, prisma: h.prisma, userId: akash.id, actor: "agent", settings: Settings.parse({ timezone: zone }) } as never, listDue.input.parse({ from: today, to: today }));
     assert.deepEqual((due.data as { tasks: Array<{ title: string }> }).tasks.map((task) => task.title), ["Review the Q4 budget"], `${zone}: today's task on the owner's day`);
-    assert.match(due.summary, new RegExp(`^1 task\\(s\\), 0 deliverable\\(s\\), 0 reminder\\(s\\) due ${today} to ${today}\\. 1 more task\\(s\\) overdue: “Renew the company domain” \\(due ${addCalendarDays(today, -1)}\\)\\.$`), due.summary);
+    assert.match(due.summary, new RegExp(`^1 task\\(s\\), 0 deliverable\\(s\\), 0 reminder\\(s\\) due ${today} to ${today}\\. 1 more task\\(s\\) overdue, the most recent first: “Renew the company domain” \\(due ${addCalendarDays(today, -1)}\\)\\.$`), due.summary);
+    // Many old ones: all counted, the most recently overdue named first, not the oldest.
+    const old = Date.parse(`${addCalendarDays(today, -400)}T00:00:00.000Z`);
+    await h.prisma.task.createMany({ data: Array.from({ length: 130 }, (_, index) => ({ userId: akash.id, title: `Old chore ${index}`, status: "todo" as const, due: new Date(old + index * 86_400_000) })) });
+    const many = await listDue.run({ app: { log: { warn() {}, error() {} } }, prisma: h.prisma, userId: akash.id, actor: "agent", settings: Settings.parse({ timezone: zone }) } as never, listDue.input.parse({ from: today, to: today }));
+    assert.match(many.summary, /131 more task\(s\) overdue, the most recent first: “Renew the company domain” \(due [0-9-]{10}\), “Old chore 129” /, many.summary);
+    assert.equal((many.data as { overdue: { count: number; mostRecent: unknown[] } }).overdue.count, 131);
   }
+});
+
+test("on Ensemble's own loop a held-back tool stays within reach: hub_use_tool names it and runs it by its own rules, then it is listed; the trace keeps each tier and how it opened", async () => {
+  const akash = await person("Akash");
+  await laptopFor(akash);
+  const { node, room } = await createNode(akash, "assistant");
+  requestTools.length = 0;
+  script = (turn) => (turn.transcript.includes("hello there") ? [{ name: "hub_use_tool", arguments: { name: "desktop_status", input: {} } }] : []);
+  await say(akash, room.id, "hello there");
+  const [first, second] = requestTools;
+  assert.ok(first && !first.includes("desktop_status") && first.includes("hub_use_tool"), "held back, and hub_use_tool lists it");
+  assert.ok(second?.includes("desktop_status"), "listed once called");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  const receipts = turn.receipts as Array<{ name: string; summary?: string | null }>;
+  assert.equal(receipts[0]?.name, "desktop_status", "it ran as itself");
+  assert.doesNotMatch(String(receipts[0]?.summary ?? ""), /There is no tool called/);
+  const trace = await h.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: turn.id } });
+  const tiers = (trace.selected as { tiers: Array<{ tier: string; shown: boolean; why: string | null; opened?: string }> }).tiers;
+  assert.deepEqual(tiers.find((row) => row.tier === "desktop"), { tier: "desktop", shown: false, why: null, opened: "hub_use_tool" });
+  assert.deepEqual(tiers.find((row) => row.tier === "maker"), { tier: "maker", shown: false, why: null });
+  // Asked for, a tier is offered from the start, and the record says why.
+  requestTools.length = 0;
+  script = () => [];
+  await say(akash, room.id, "Make me a new node.");
+  assert.ok(requestTools[0]!.includes("node_create"));
+  const next = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  const decided = ((await h.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: next.id } })).selected as { tiers: Array<{ tier: string; shown: boolean; why: string | null }> }).tiers;
+  assert.deepEqual(decided.find((row) => row.tier === "maker"), { tier: "maker", shown: true, why: "words" });
 });
 
 test("an owner's turn gets their overdue and due-today work, the memories and skills that fit, and the turn's record keeps what was chosen", async () => {

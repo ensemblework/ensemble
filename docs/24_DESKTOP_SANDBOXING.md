@@ -29,7 +29,7 @@ Kimi Code has no file to share: a run in a folder trusted by name gets `KIMI_COD
 
 A run Ensemble starts carries the same trust: in a folder the person trusted by name (for good or for this task), Claude Code loads the folder's own `.claude/` settings and Codex treats it as trusted, as in their own terminal; in folders inside it, the workspace and fresh clones neither does ([30 §1–§2](30_ENGINES.md)).
 
-In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, git's read-only subcommands such as `git status`, `git log` or `git -C <dir> diff`…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
+In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, git's read-only subcommands such as `git status` or `git log` in a repository that starts nothing of its own…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
 
 Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)).
 

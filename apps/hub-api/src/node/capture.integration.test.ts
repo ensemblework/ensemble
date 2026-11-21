@@ -356,7 +356,7 @@ test("looking at a page or a capture is not acting; clicking, typing and capturi
   for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check", "desktop_status", "desktop_apps", "desktop_observe", "desktop_zoom"]) {
     assert.equal(acts(name), false, name);
   }
-  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start", "browser_screenshot", "browser_view", "desktop_act", "desktop_open"]) {
+  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start", "browser_screenshot", "browser_view", "browser_shop", "browser_fetch", "desktop_act", "desktop_open"]) {
     assert.equal(acts(name), true, name);
   }
   // A desktop look that sends its screenshot to the owner (share) keeps what it saw.
@@ -364,6 +364,9 @@ test("looking at a page or a capture is not acting; clicking, typing and capturi
     assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: true } }), true, `${name} with share`);
     assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: false } }), false, `${name} without share`);
   }
+  // A tool whose flag says it acts acts, kept here or not (computer_terminal_screenshot runs a command).
+  assert.equal(actsOnTheWorld({ name: "computer_terminal_screenshot", isWrite: false, readOnly: false }), true);
+  assert.equal(actsOnTheWorld({ name: "computer_terminal_screenshot", isWrite: false, readOnly: true }), true);
 });
 
 /** A paired computer running one job of Mira's from her node, with its run card in the node's DM (as evidence.integration.test.ts). */

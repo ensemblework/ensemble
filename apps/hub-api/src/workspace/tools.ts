@@ -20,7 +20,9 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, gitReadsOnly, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { gitParts, gitReadsOnly } from "./git-read.js";
+import { gitDirSafe, isGitDir } from "./git-config.js";
 import { expandWord, programArgv } from "./shell-parse.js";
 import { commandKind, urlKind } from "./command-kind.js";
 import type { RunChanges } from "./outside-changes.js";
@@ -540,6 +542,11 @@ const baseName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.e
 /** Inline code or prose, not a path: a newline, or spaces together with shell or code punctuation. */
 const looksLikeCode = (arg: string) => arg.includes("\n") || (/\s/.test(arg) && /[(){};=<>|&`$"']/.test(arg));
 
+/** The path glued to a short option (`-f/home/x/.aws/credentials`, `-C../repo`, `-o~/out.txt`), else null: it is read or written like any other. */
+export function gluedPath(word: string): string | null {
+  return /^-[A-Za-z]((?:[~./\\]|[A-Za-z]:[\\/]).*)$/.exec(word)?.[1] ?? null;
+}
+
 /** Arguments that could be a relative file name: not the program, an option, code, a URL or a variable. */
 export function plainArgs(argv: string[]): string[] {
   return argv.slice(1).filter((arg) => arg && !arg.startsWith("-") && !looksLikeCode(arg) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !arg.startsWith("$") && arg.length <= 1000);
@@ -572,7 +579,7 @@ export function outsideArgs(root: string, args: string[], cwd = root): string[] 
       pattern = false;
       continue;
     }
-    const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : raw;
+    const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : (gluedPath(raw) ?? raw);
     if (!arg || (arg === raw && arg.startsWith("-"))) continue;
     if (looksLikeCode(arg) || /^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) continue;
     const expanded = expandWord(arg);
@@ -592,7 +599,7 @@ const READ_ONLY_PROGRAMS = new Set([
   "jq", "yq", "xxd", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum", "cksum",
   "cd", "pushd", "popd", "pwd", "echo", "printf", "true", "false", "sleep", "test", "[", "which", "type", "whereis", "date", "uname", "whoami", "id", "hostname", "ps", "lsof",
 ]);
-/** True when a command only reads: a read-only tool, or a git command that only reads (guard.ts `gitReadsOnly`). */
+/** True when a command only reads: a read-only tool, or a git command that only reads (git-read.ts `gitReadsOnly`). */
 export function readsOnly(argv: string[]): boolean {
   const program = baseName(argv[0] ?? "");
   if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
@@ -602,6 +609,16 @@ export function readsOnly(argv: string[]): boolean {
   if (READ_ONLY_PROGRAMS.has(program)) return true;
   if (program === "git") return gitReadsOnly(argv);
   return false;
+}
+
+/**
+ * A shell segment that only reads, for both judges (engines/judge.ts, subscriptions/node-own-tools.ts): its program
+ * only reads, nothing is set in front of it (`VAR=value` or `env` can make a reader run anything: `LD_PRELOAD`,
+ * `GIT_EXTERNAL_DIFF`, `GIT_CONFIG_COUNT`), no wrapper feeds it arguments the words do not show (`xargs`, `env -S`),
+ * and no word of it is expanded by the shell (`$VAR`, `$(…)`, backticks, braces): what it is given must be what is judged.
+ */
+export function segmentReadsOnly(segment: { argv: string[]; assigned?: boolean; fed?: boolean }): boolean {
+  return !segment.assigned && !segment.fed && segment.argv.length > 0 && !segment.argv.some((word) => EXPANDS.test(word)) && readsOnly(segment.argv);
 }
 
 /** Read-only programs that still reach the network, run commands of their own (`sed`'s `e`), wait for a keyboard, or read a project config that can set a pager (`bat`, `ack`). */
@@ -675,18 +692,37 @@ async function globInside(realRoot: string, cwd: string, word: string): Promise<
   return true;
 }
 
-/** The repository a git command in `cwd` uses has no config that starts programs, and is in the folder. */
+/**
+ * The repository a git command in `cwd` uses is in the folder and starts no program of its own: its settings and hooks
+ * are read without running anything (git-config.ts `gitDirSafe`). A `.git` file (a linked worktree, a submodule) is not
+ * followed, so its read is not quiet.
+ */
 async function gitConfigSafe(root: string, cwd: string): Promise<boolean> {
   for (let dir = cwd; within(root, dir); dir = dirname(dir)) {
     const info = await stat(join(dir, ".git")).catch(() => null);
-    if (info) {
-      if (!info.isDirectory()) return false;
-      const text = await readFile(join(dir, ".git", "config"), "utf8").catch(() => null);
-      return text !== null && !DANGEROUS_GIT_CONFIG.test(text) && !/^\s*\[include/im.test(text);
-    }
+    if (info) return info.isDirectory() ? gitDirSafe(join(dir, ".git")) : false;
+    if (await isGitDir(dir)) return gitDirSafe(dir);
     if (dir === dirname(dir)) break;
   }
   return false;
+}
+
+/**
+ * For a git read outside a coding run's folder (the node's own-tools judge): the repository it reads, where `-C` and
+ * `--git-dir` point, starts no program of its own (git-config.ts `gitDirSafe`: its settings, `config.worktree`, its
+ * hooks), a bare one too. Outside any repository nothing of one is read; a `.git` file is not followed, so it is not safe.
+ */
+export async function gitReadSafeAt(argv: string[], cwd: string): Promise<boolean> {
+  const parts = gitParts(argv);
+  if (!parts) return false;
+  const dir = parts.dirs.reduce((at, next) => resolve(at, expandHome(next)), cwd);
+  if (parts.gitDir) return gitDirSafe(resolve(dir, expandHome(parts.gitDir)));
+  for (let at = dir; ; at = dirname(at)) {
+    const info = await stat(join(at, ".git")).catch(() => null);
+    if (info) return info.isDirectory() ? gitDirSafe(join(at, ".git")) : false;
+    if (await isGitDir(at)) return gitDirSafe(at);
+    if (at === dirname(at)) return true;
+  }
 }
 
 /**
@@ -699,7 +735,7 @@ export async function quietArgs(root: string, argv: string[], cwd: string): Prom
   if (!quietRead(argv) || !within(root, cwd)) return false;
   const realRoot = await realOutside(root);
   for (const arg of argv.slice(1)) {
-    const word = arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg;
+    const word = arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : (gluedPath(arg) ?? "")) : arg;
     if (!word) continue;
     if (GLOB.test(word)) {
       if (!(await globInside(realRoot, cwd, word))) return false;
