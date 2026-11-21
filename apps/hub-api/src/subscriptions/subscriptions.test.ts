@@ -7,7 +7,7 @@ import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_SESSIONS, parseAgentApp
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
@@ -695,10 +695,10 @@ test("the conversation reaches an agent as instructions, the new message, and th
 
 test("a computer that keeps sessions gets the chat as a session; an older one gets the chat folded in front of the message", () => {
   const input = { prompt: "Make a diagram of them.", history: "This chat so far, oldest first:\n\nPerson: hi", sessionKey: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" };
-  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac", deviceId: null }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
   assert.deepEqual(turnSession({ local: false, id: "d", name: "Studio Mac", agent: null, turns: ASSISTANT_TURN_SESSIONS }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
   assert.deepEqual(turnSession({ local: false, id: "d", name: "Old Mac", agent: null, turns: 2 }, input), { prompt: `${input.history}\n\n---\n\n${input.prompt}` });
-  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, { prompt: "Classify this." }), { prompt: "Classify this." }, "a one-off completion keeps no session");
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac", deviceId: null }, { prompt: "Classify this." }), { prompt: "Classify this." }, "a one-off completion keeps no session");
 });
 
 test("a reply's JSON is found inside prose or a fence", () => {
@@ -768,15 +768,24 @@ test("the computer for a turn: online, new enough, with the agent signed in; oth
   }
 });
 
-test("on the desktop runtime the computer is this one", async () => {
-  const previous = process.env.ENSEMBLE_DESKTOP;
+test("on the desktop runtime the computer is this one, by its Ensemble name and paired id, never the system's host name", async () => {
+  const previous = { desktop: process.env.ENSEMBLE_DESKTOP, state: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  const state = mkdtempSync(join(tmpdir(), "ensemble-this-computer-"));
   process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
   try {
+    writeFileSync(join(state, "remote.json"), JSON.stringify({ deviceName: "Mira's laptop", deviceId: "device-7" }));
     const computer = await pickComputer(fakePrisma([]), "u1", "claude-code", null);
-    assert.equal(computer.local, true);
+    assert.deepEqual(computer, { local: true, name: "Mira's laptop", deviceId: "device-7" });
+    assert.notEqual(computer.name, hostname());
+    writeFileSync(join(state, "remote.json"), JSON.stringify({ deviceName: "Studio" }));
+    assert.deepEqual(await pickComputer(fakePrisma([]), "u1", "claude-code", null), { local: true, name: "Studio", deviceId: null }, "not paired: no device id");
   } finally {
-    if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;
-    else process.env.ENSEMBLE_DESKTOP = previous;
+    for (const [key, value] of [["ENSEMBLE_DESKTOP", previous.desktop], ["ENSEMBLE_REMOTE_STATE_DIR", previous.state]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(state, { recursive: true, force: true });
   }
 });
 
@@ -924,7 +933,7 @@ test("a turn's files are saved under safe, distinct names; one over a limit or t
 
 test("a computer that takes files gets them; an older one gets the fallback note after the message", () => {
   const files = { list: [{ id: "f", name: "a.pdf", mediaType: "application/pdf", kind: "pdf" as const, size: 3 }], read: async () => null, fallback: "a.pdf could not be given to you." };
-  assert.deepEqual(turnFiles({ local: true, name: "Mac" }, "Hi", files), { prompt: "Hi", files: files.list });
+  assert.deepEqual(turnFiles({ local: true, name: "Mac", deviceId: null }, "Hi", files), { prompt: "Hi", files: files.list });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 2 }, "Hi", files), { prompt: "Hi", files: files.list });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", files), { prompt: "Hi\n\na.pdf could not be given to you." });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", undefined), { prompt: "Hi" });

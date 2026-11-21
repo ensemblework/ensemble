@@ -195,6 +195,8 @@ A computer that reports `assistantTurns: 5` (`ASSISTANT_TURN_NODE_TOOLS`) runs a
 
 The agent's own calls go to the web with the reply's batches on `/stream` (`tools`: id, name, summary, start or end, ok, whether it can change something; at most 50 a batch), and while one runs the computer posts a batch at least every 60 seconds, so a long build is not taken for silence. A computer before 5 gets a node's turn with Ensemble's tools only and `maxTurns` 64, the most it takes.
 
+A computer that reports `assistantTurns: 6` (`ASSISTANT_TURN_FOLLOW_UPS`) takes another message of a turn it ran (the reply its agent did not write, what an Ensemble Node's answer check found missing, a false claim to correct): the spec carries the turn's own `session.position` and `session.resume: "only"`, and no history. The computer gives it to the chat's session only when that session took the turn (its place is right after it) and refuses it otherwise, without running the agent or saving a session. The web sends such a message only to the computer that ran the turn, never another one, and none to an older computer ([41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)).
+
 A relayed turn ends when its computer sends nothing for 10 minutes (no reply text, status line, tool call or own call; `QUIET_MS` in `subscriptions/relay.ts`). One of Ensemble's tools running, or an owner's answer awaited, is working, not silence; a turn that keeps working has no time limit.
 
 #### Remove a chat’s agent history

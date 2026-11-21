@@ -32,6 +32,7 @@
  * The answers are this computer's own rules (`OWN_RULES`), apart from the node's computer tools' (which
  * run in the OS sandbox). Calls asking about the same thing at once share one question.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -48,7 +49,7 @@ import { globRoot, HARMLESS, judgeFloor, pathsOf, type EngineAnswer, type Engine
 import { parseShell } from "../workspace/shell-parse.js";
 import { outsideArgs, readsOnly, realOutside } from "../workspace/tools.js";
 import type { AgentMcpServer } from "./agent-mcp.js";
-import type { OwnAnswer, OwnAsk, OwnAskKind, OwnJudge } from "./bridge.js";
+import type { OwnAnswer, OwnAsk, OwnAskKind, OwnJudge, OwnVerdict } from "./bridge.js";
 import { logRefused } from "./own-tools.js";
 
 /**
@@ -81,6 +82,8 @@ export type NodeJudgeInput = {
   mcpServers?: AgentMcpServer[];
   /** The agent, for the AI activity log. */
   app: string;
+  /** How each call was answered, for the turn's trace: allowed with no question, asked and allowed by the owner, or refused. */
+  onVerdict?: (call: EngineCall, verdict: OwnVerdict) => void;
   /** Tests: the database, account and approval switch to use. */
   db?: Db;
   userId?: string;
@@ -89,6 +92,13 @@ export type NodeJudgeInput = {
 
 const ALLOW: EngineAnswer = { decision: "allow" };
 const deny = (message: string): EngineAnswer => ({ decision: "deny", message });
+
+/** The call being judged: whether its answer came from the owner (a call can wait on another's question). */
+const judging = new AsyncLocalStorage<{ asked: boolean }>();
+const noteAsked = () => {
+  const state = judging.getStore();
+  if (state) state.asked = true;
+};
 
 /** Programs that ask for a password on a terminal the agent's shell does not have. */
 const PRIVILEGE = new Set(["sudo", "su", "doas", "pkexec", "runas", "gsudo"]);
@@ -293,7 +303,10 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
   const answerFor = async (need: Need): Promise<EngineAnswer> => {
     const key = `${need.kind}\u0000${need.target}`;
     // Calls asking about the same thing at once share one question: the others go by its answer.
-    for (let asking = inflight.get(key); asking; asking = inflight.get(key)) await asking;
+    for (let asking = inflight.get(key); asking; asking = inflight.get(key)) {
+      noteAsked();
+      await asking;
+    }
     if (parked) return deny(parked);
     if (await covered(need)) return ALLOW;
     // Nobody watches an unattended run: changes, commands and calls go ahead above the floor (never a program, a tool Ensemble does not know, nor a call that names no path).
@@ -303,6 +316,7 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     }
     if (!input.ask) return deny(`This needs your owner's answer (${need.what}, ${need.label}), and this turn cannot ask for it. Say what you need.`);
     const ask = input.ask;
+    noteAsked();
     const asking = (async (): Promise<EngineAnswer> => {
       const answer = await ask({ capability: need.capability, target: need.target, label: need.label, scope: need.scope, operation: need.operation, what: need.what });
       if (answer.decision === "allow") {
@@ -500,14 +514,20 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     return shaped ? one(shaped) : answerFor(toolNeed(call, mcp));
   };
 
+  // One request of the agent's is one of its calls, however many parts it is judged in: one verdict for it.
   return async (calls) => {
-    for (const call of calls) {
-      const verdict = parked ? deny(parked) : await one(call);
-      if (verdict.decision !== "allow") {
-        logRefused(input.app, call, verdict);
-        return verdict;
+    const state = { asked: false };
+    const answer = await judging.run(state, async () => {
+      for (const call of calls) {
+        const verdict = parked ? deny(parked) : await one(call);
+        if (verdict.decision !== "allow") {
+          logRefused(input.app, call, verdict);
+          return verdict;
+        }
       }
-    }
-    return ALLOW;
+      return ALLOW;
+    });
+    if (calls[0]) input.onVerdict?.(calls[0], answer.decision !== "allow" ? "refused" : state.asked ? "asked" : "allowed");
+    return answer;
   };
 }

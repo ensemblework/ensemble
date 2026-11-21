@@ -6,8 +6,9 @@
  * made while the turn runs and ignored when it fails or is late. When the model gives its final text,
  * code checks it (`runAssistantTurn`'s verify hook): what the reply will show, a Markdown table, a
  * saved file that exists, the place given to a tool, links that lead somewhere (node/refs-check.ts),
- * and no claim ("attached", "added to your files") without a tool result behind it. What is missing
- * goes back to the model, at most twice per turn.
+ * and no claim that a file is in their Files ("added to your files") without a tool result behind it.
+ * What is missing goes back to the model, at most twice per turn. Claims that something reached the
+ * chat are checked apart from this list, in every conversation turn (node/delivery-claims.ts).
  */
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
@@ -19,6 +20,7 @@ import { recordMetric } from "../lib/metrics.js";
 import { callCost } from "../lib/pricing.js";
 import { truncateText } from "../lib/text.js";
 import { MAX_MEDIA, peekTurnMedia, type Media } from "./media.js";
+import { heldCaptures } from "./delivery-claims.js";
 import { validateRefs, type RefProblem } from "./refs-check.js";
 import { replyProblems } from "./reply-check.js";
 
@@ -193,8 +195,6 @@ export const CHECKLIST_PROMPT = [
 
 /** Tools that hand the work on (a plan, a session, background work) or ask the owner first: the reply is not the deliverable yet. */
 const HANDED_OFF = new Set(["node_work_start", "node_delegate", "node_plan", "node_plan_revise", "node_helper", "node_session_start", "node_session_send", "node_routines", "node_create", "node_create_group", "node_crew_add"]);
-const MEDIA_CLAIM =
-  /\b(?:i(?:'ve|’ve| have)?\s+attached|(?:is|are)\s+attached|attached\s+(?:is|are|below|above|here)|here(?:'s|’s| is| are) (?:the |your |a |an )?(?:\d+\s+|two |three |four |five |six |seven |eight )?(?:screenshots?|screen ?shots?|pictures?|images?|photos?|videos?|charts?)|(?:screenshots?|pictures?|images?|videos?) (?:is |are )?(?:below|above)|see the (?:screenshots?|pictures?|images?|videos?) (?:below|above))\b/i;
 const FILES_CLAIM = /\b(?:added|saved|uploaded|put|stored|imported)\b[^.?!\n]{0,60}\b(?:to|in|into)\s+(?:your\s+|the\s+)?(?:ensemble\s+)?files\b(?!\s+(?:folder|directory)\b)/i;
 const EXPLAINS = /\b(?:could ?n[o'’]t|can ?n[o'’]t|cannot|unable to|was ?n[o'’]t able|were ?n[o'’]t able|did ?n[o'’]t (?:load|work|show|return|find|open)|failed|blocked|not available|unavailable|not shown|no (?:prices?|results?|offers?) (?:shown|found|listed)|human check|captcha|robot or human|sign[ -]?in|log[ -]?in|refused|denied)\b/i;
 const TABLE_ROW = /^\s*\|.*\|\s*$/m;
@@ -210,15 +210,10 @@ export type Evidence = {
   round: number;
 };
 
+/** What counts as a screenshot asked for: a picture or a video. */
+const PICTURE_KINDS = new Set(["screenshot", "image", "video"]);
 const okCall = (row: { call: AssistantToolCall }) => row.call.state === "ok";
 const waitsForOwner = (result: unknown) => /"waitingForOwner"\s*:\s*true/.test(JSON.stringify(result ?? null));
-
-/** Pictures a tool kept but held for the owner's preview card (`evidence` in its result). */
-function heldPictures(result: unknown): number {
-  const list = (result as { data?: { evidence?: unknown } } | null)?.data?.evidence;
-  if (!Array.isArray(list)) return 0;
-  return list.filter((item) => item && typeof item === "object" && (item as { held?: unknown }).held === true && ["screenshot", "image", "video"].includes(String((item as { kind?: unknown }).kind))).length;
-}
 
 /** What the reply still lacks, as the model's final text reads now. */
 export function problemsWith(checks: readonly Check[], evidence: Evidence): string[] {
@@ -231,8 +226,8 @@ export function problemsWith(checks: readonly Check[], evidence: Evidence): stri
   // so does a question to the owner after one round (the first round pushes a small model to act instead).
   const explained = (EXPLAINS.test(text) && (failed || evidence.round > 0)) || (evidence.round > 0 && /\?["”')\]]*\s*$/.test(text.trim()));
   // Captures held for the owner's preview reach them on their card.
-  const held = calls.reduce((sum, row) => sum + heldPictures(row.result), 0);
-  const pictures = media.filter((item) => item.kind === "screenshot" || item.kind === "image" || item.kind === "video").length + held;
+  const held = heldCaptures(calls.map((row) => row.result)).filter((item) => PICTURE_KINDS.has(item.kind)).length;
+  const pictures = media.filter((item) => PICTURE_KINDS.has(item.kind)).length + held;
   for (const check of later ? [] : checks) {
     if (check.kind === "screenshots" && pictures < check.count && !explained) {
       const names = check.names?.length ? ` (${check.names.join(", ")})` : "";
@@ -254,7 +249,6 @@ export function problemsWith(checks: readonly Check[], evidence: Evidence): stri
   }
   // Each problem says what to do instead (node/refs-check.ts).
   for (const link of evidence.brokenLinks) problems.push(`the link ${link.href} leads nowhere: ${link.problem.replace(/\.$/, "")}`);
-  if (MEDIA_CLAIM.test(text) && media.length + held === 0) problems.push("your reply says something is attached or shown, but nothing will show with it: never say so unless a tool said it will appear");
   if (FILES_CLAIM.test(text) && evidence.savedFiles === 0) problems.push("your reply says a file is in your owner's Files, but no hub_save_file call saved it");
   return problems;
 }
@@ -367,7 +361,7 @@ export function startDeliverables(app: FastifyInstance, input: DeliverablesInput
       const brokenLinks = state.text.includes("ensemble://") ? await validateRefs(state.text, input.ownerId, app.prisma) : [];
       // What the reply says it did or will do, against what its tools did (node/reply-check.ts).
       const unbacked = replyProblems(state.text, state.calls, state.round);
-      if (!checks.length && !brokenLinks.length && !unbacked.length && !MEDIA_CLAIM.test(state.text) && !FILES_CLAIM.test(state.text)) return null;
+      if (!checks.length && !brokenLinks.length && !unbacked.length && !FILES_CLAIM.test(state.text)) return null;
       const saved = savedFileIds(state.calls);
       const owners = [...new Set([input.ownerId, ...saved.flatMap((row) => (row.space ? [row.space] : []))])];
       const savedFiles = saved.length ? await app.prisma.document.count({ where: { id: { in: saved.map((row) => row.id) }, deletedAt: null, userId: { in: owners } } }) : 0;
