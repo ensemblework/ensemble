@@ -54,6 +54,22 @@ def clamp_point(x: float, y: float, stream_w: float, stream_h: float) -> tuple[f
     return cx, cy, (cx != x or cy != y)
 
 
+def logical_to_stream(x: float, y: float, logical_size: tuple[float, float], frame_size: tuple[int, int]) -> tuple[float, float]:
+    """A logical point as the position Mutter's absolute pointer input takes: the stream's frame pixels
+    (logical times the monitor's scale), kept inside the frame."""
+    logical_w, logical_h = logical_size
+    frame_w, frame_h = frame_size
+    sx = frame_w / logical_w if logical_w > 0 else 1.0
+    sy = frame_h / logical_h if logical_h > 0 else 1.0
+    return min(max(0.0, x * sx), max(0.0, frame_w - 0.5)), min(max(0.0, y * sy), max(0.0, frame_h - 0.5))
+
+
+def stream_point(geometry: dict, x: float, y: float) -> tuple[float, float]:
+    """`logical_to_stream` for a stream's geometry as the helper keeps it."""
+    width, height = geometry["width"], geometry["height"]
+    return logical_to_stream(x, y, (width, height), (geometry.get("frame_width") or width, geometry.get("frame_height") or height))
+
+
 def image_to_logical(x: float, y: float, image_size: tuple[int, int], region: tuple[float, float, float, float]) -> tuple[float, float]:
     """A point of an image showing `region` (logical, inside one stream) as a logical stream point."""
     image_w, image_h = image_size

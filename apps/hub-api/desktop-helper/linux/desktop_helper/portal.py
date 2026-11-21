@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import select
 import time
 from typing import Any, Callable
 
@@ -33,6 +34,33 @@ MONITOR = 1
 CURSOR_EMBEDDED = 2
 PERSIST_UNTIL_REVOKED = 2
 TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,256}$")
+TEXT_MIMES = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"]
+# The owner's clipboard text kept to give back after typing through the clipboard: at most this much.
+KEEP_CLIPBOARD_BYTES = 1 << 20
+
+
+def read_all(fd: int, limit: int, timeout_s: float) -> bytes | None:
+    """Everything a pipe gives until it closes, or None when it is larger than `limit` or too slow; closes it."""
+    chunks: list[bytes] = []
+    size = 0
+    end = time.monotonic() + timeout_s
+    try:
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return None
+            ready, _, _ = select.select([fd], [], [], left)
+            if not ready:
+                return None
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            size += len(chunk)
+            if size > limit:
+                return None
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
 
 
 class TokenStore:
@@ -127,6 +155,9 @@ class PortalSession:
         self._closing = False
         self._clip_text: bytes | None = None
         self._clip_sub: int | None = None
+        self._owner_sub: int | None = None
+        self._selection_mimes: list[str] = []
+        self._selection_ours = False
 
     def _register(self, app_id: str) -> bool:
         try:
@@ -251,6 +282,7 @@ class PortalSession:
         self.started_at = time.time()
         if self.clipboard:
             self._clip_sub = self.bus.signal_subscribe(None, CLIPBOARD, "SelectionTransfer", OBJECT_PATH, None, Gio.DBusSignalFlags.NONE, self._selection_transfer)
+            self._owner_sub = self.bus.signal_subscribe(None, CLIPBOARD, "SelectionOwnerChanged", OBJECT_PATH, None, Gio.DBusSignalFlags.NONE, self._selection_owner_changed)
         return self.info()
 
     def info(self) -> dict[str, Any]:
@@ -276,6 +308,12 @@ class PortalSession:
         if self._clip_sub is not None:
             self.bus.signal_unsubscribe(self._clip_sub)
             self._clip_sub = None
+        if self._owner_sub is not None:
+            self.bus.signal_unsubscribe(self._owner_sub)
+            self._owner_sub = None
+        self._clip_text = None
+        self._selection_mimes = []
+        self._selection_ours = False
         self.state = "off"
         self.handle = None
         self.streams = []
@@ -320,11 +358,57 @@ class PortalSession:
     def keysym(self, keysym: int, pressed: bool) -> None:
         self._notify("NotifyKeyboardKeysym", "(oa{sv}iu)", int(keysym), 1 if pressed else 0)
 
+    def _selection_owner_changed(self, _conn, _sender, _path, _iface, _signal, params, *_rest) -> None:
+        session, options = params.unpack()
+        if session != self.handle:
+            return
+        self._selection_ours = bool(options.get("session_is_owner"))
+        self._selection_mimes = [str(mime) for mime in (options.get("mime_types") or [])]
+        if not self._selection_ours:
+            # Someone copied something new: the owner's earlier text kept here is not needed any more.
+            self._clip_text = None
+
+    def clipboard_snapshot(self) -> dict[str, Any] | None:
+        """The clipboard's text before typing through it, to give back after; None when it was empty or
+        Ensemble's own, `{"lost": True}` when it holds something else (an image) that cannot be given back."""
+        if not self.clipboard or not self.handle:
+            return None
+        # Owner changes still queued are taken in first: the snapshot is of what is on the clipboard now.
+        context = GLib.MainContext.default()
+        for _ in range(100):
+            if not context.iteration(False):
+                break
+        if self._selection_ours or not self._selection_mimes:
+            return None
+        mime = next((mime for mime in TEXT_MIMES if mime in self._selection_mimes), None)
+        if mime is None:
+            return {"lost": True}
+        try:
+            reply, fds = self.bus.call_with_unix_fd_list_sync(BUS_NAME, OBJECT_PATH, CLIPBOARD, "SelectionRead", GLib.Variant("(os)", (self.handle, mime)), GLib.VariantType("(h)"), Gio.DBusCallFlags.NONE, 5000, None, None)
+            data = read_all(fds.get(reply.unpack()[0]), KEEP_CLIPBOARD_BYTES, 1.0)
+        except (GLib.Error, OSError):
+            data = None
+        return {"data": data} if data is not None else {"lost": True}
+
+    def clipboard_restore(self, kept: dict[str, Any] | None) -> None:
+        """Gives back what `clipboard_snapshot` kept, else leaves the clipboard empty."""
+        data = kept.get("data") if kept else None
+        if data is None:
+            self.clipboard_clear()
+            return
+        try:
+            self._offer(data)
+        except Exception:
+            self.clipboard_clear()
+
     def clipboard_offer(self, text: str) -> None:
+        self._offer(text.encode("utf-8"))
+
+    def _offer(self, data: bytes) -> None:
         if not self.clipboard or not self.handle:
             raise error("unsupported_here", "The clipboard is not shared in this session.")
-        self._clip_text = text.encode("utf-8")
-        mime = GLib.Variant("as", ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"])
+        self._clip_text = data
+        mime = GLib.Variant("as", TEXT_MIMES)
         try:
             self.bus.call_sync(BUS_NAME, OBJECT_PATH, CLIPBOARD, "SetSelection", GLib.Variant("(oa{sv})", (self.handle, {"mime_types": mime})), None, Gio.DBusCallFlags.NONE, 5000, None)
         except GLib.Error as failure:

@@ -36,7 +36,16 @@ STATES = {
     Atspi.StateType.READ_ONLY: "read only",
     Atspi.StateType.MULTI_LINE: "multi line",
 }
-BROWSERS = {"firefox", "chromium", "google chrome", "chrome", "brave", "brave browser", "microsoft edge", "epiphany", "web", "vivaldi", "opera", "librewolf", "zen", "floorp"}
+BROWSERS = {"firefox", "chromium", "chromium browser", "google chrome", "chrome", "brave", "brave browser", "microsoft edge", "epiphany", "web", "gnome web", "vivaldi", "opera", "librewolf", "zen", "floorp"}
+BROWSER_TOOLKITS = {"gecko", "chromium"}
+BROWSER_IDS = {
+    "firefox", "firefox_firefox", "org.mozilla.firefox", "chromium", "chromium_chromium", "chromium-browser", "org.chromium.chromium",
+    "google-chrome", "com.google.chrome", "brave-browser", "com.brave.browser", "microsoft-edge", "com.microsoft.edge", "org.gnome.epiphany",
+    "vivaldi-stable", "com.vivaldi.vivaldi", "opera", "com.opera.opera", "io.gitlab.librewolf-community", "app.zen_browser.zen", "one.ablaze.floorp",
+}
+# Gecko names a page's address `DocURL`; Chromium and WebKitGTK name it `URI`.
+URL_ATTRIBUTES = ("DocURL", "URI", "URL")
+PAGE_WINDOW_ROLES = {"frame", "window"}
 PRESS_ACTIONS = ("press", "click", "activate", "jump", "toggle", "open", "select")
 SELECT_ACTIONS = ("select", "activate", "click", "press")
 TOGGLE_ACTIONS = ("toggle", "click", "press", "activate")
@@ -109,16 +118,27 @@ def _doc_url(node) -> str | None:
         return None
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        for getter in ("get_document_attribute_value", "get_attribute_value"):
-            fn = getattr(Atspi.Document, getter, None)
-            if fn is None:
-                continue
+        for name in URL_ATTRIBUTES:
+            for getter in ("get_document_attribute_value", "get_attribute_value"):
+                fn = getattr(Atspi.Document, getter, None)
+                if fn is None:
+                    continue
+                try:
+                    value = fn(node, name)
+                except (GLib.Error, TypeError):
+                    continue
+                if value:
+                    return value
+        fn = getattr(Atspi.Document, "get_document_attributes", None)
+        if fn is not None:
             try:
-                value = fn(node, "DocURL")
+                attributes = fn(node) or {}
             except (GLib.Error, TypeError):
-                continue
-            if value:
-                return value
+                attributes = {}
+            by_name = {str(key).lower(): value for key, value in dict(attributes).items()}
+            for name in URL_ATTRIBUTES:
+                if by_name.get(name.lower()):
+                    return by_name[name.lower()]
     return None
 
 
@@ -215,6 +235,17 @@ class A11y:
             return candidates[0][1], candidates[0][2]
         return None, None
 
+    def active_key(self) -> tuple[Any, ...] | None:
+        """Which window has the keyboard now, comparable over time: its app's process and the window's place."""
+        current = self.active()
+        if current["app"] is None:
+            return None
+        try:
+            pid = current["app"].get_process_id()
+        except GLib.Error:
+            pid = None
+        return (pid, current["index"], current["shell"])
+
     def active(self) -> dict[str, Any]:
         """The window with the keyboard (an app's ACTIVE window); the shell when only it is active."""
         shell = None
@@ -287,21 +318,39 @@ class A11y:
                     stack.append((child, dialog))
         return None
 
+    def _is_browser(self, app) -> bool:
+        name = normalize(app.get_name() or "")
+        toolkit = (app.get_toolkit_name() or "").lower()
+        if name in BROWSERS or toolkit in BROWSER_TOOLKITS:
+            return True
+        try:
+            pid = app.get_process_id()
+        except GLib.Error:
+            pid = None
+        app_id = app_id_for_pid(pid) if pid else None
+        return bool(app_id) and app_id.lower() in BROWSER_IDS
+
     def documents(self, budget: int = 400) -> list[dict[str, Any]]:
-        """The pages browsers show now (a tab in front in each window), with their addresses."""
+        """The pages browsers show now (a tab in front in each window), with their addresses. A browser
+        window whose page or address cannot be read is listed with no address: it may show anything."""
         found = []
         for app in self._apps():
             try:
-                name = normalize(app.get_name())
-                toolkit = (app.get_toolkit_name() or "").lower()
+                if not self._is_browser(app):
+                    continue
+                app_name = clean(app.get_name())
             except GLib.Error:
-                continue
-            if name not in BROWSERS and toolkit != "gecko":
                 continue
             for _, window in self._windows(app):
                 state_set, labels = _states(window)
                 if state_set is not None and state_set.contains(Atspi.StateType.ICONIFIED):
                     continue
+                try:
+                    window_role = window.get_role_name()
+                    title = clean(window.get_name())
+                except GLib.Error:
+                    continue
+                pages = 0
                 stack = [(window, 0)]
                 seen = 0
                 while stack and seen < budget:
@@ -312,7 +361,8 @@ class A11y:
                         if role == Atspi.Role.DOCUMENT_WEB:
                             if node.get_state_set().contains(Atspi.StateType.SHOWING):
                                 url = _doc_url(node)
-                                found.append({"app": clean(app.get_name()), "url": url or None, "window": clean(window.get_name()), "active": "active" in labels})
+                                found.append({"app": app_name, "url": url or None, "window": title, "active": "active" in labels})
+                                pages += 1
                             continue
                         if depth > 20:
                             continue
@@ -326,6 +376,9 @@ class A11y:
                             continue
                         if child is not None:
                             stack.append((child, depth + 1))
+                # A browser's main window always shows a page; one that could not be found is not known to be safe.
+                if pages == 0 and window_role in PAGE_WINDOW_ROLES:
+                    found.append({"app": app_name, "url": None, "window": title, "active": "active" in labels})
         return found
 
     def focus(self, with_text: bool = True) -> dict[str, Any]:
@@ -484,13 +537,17 @@ class A11y:
                 pass
         return entry
 
-    def act(self, tree_id: str, element: str, action: str, *, name: str | None = None, text: str | None = None) -> dict[str, Any]:
+    def act(self, tree_id: str, element: str, action: str, *, name: str | None = None, text: str | None = None, allow_focus: bool = True) -> dict[str, Any]:
+        """One action on an element. `allow_focus` false (the background on the owner's screen): nothing that
+        moves the focus, so a press on an element without an action is refused rather than focusing it."""
         node = self._node_of(tree_id, element)
         role = node.get_role_name()
         _, before = _states(node)
         if action in ("press", "action"):
             names = _actions(node) if _iface(node, "action") is not None else []
             if not names:
+                if not allow_focus:
+                    raise error("needs_screen", f"Element {element} ({role}) has no action to press: only moving the focus to it would do something, and the background never moves the owner's focus. Use the agent screen, or foreground true.")
                 if _iface(node, "component") is not None and Atspi.Component.grab_focus(node):
                     return {"done": True, "via": "atspi:focus", "detail": "It has no action; it was focused instead.", "states_before": before, "states_after": _states(node)[1]}
                 raise error("input_failed", f"Element {element} ({role}) has no action to press.")
@@ -562,6 +619,20 @@ class A11y:
         except GLib.Error as failure:
             raise error("input_failed", f"The app refused the action ({clean(failure.message, 200)}).", ran="maybe")
         return {"done": bool(done), "via": f"atspi:{names[index]}", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+
+    def set_focused_secret(self, text: str) -> bool:
+        """A saved secret into the password field that has the focus, whole, through accessibility; False
+        when the focus is not in a password field that takes text that way."""
+        current = self.active()
+        if current["window"] is None or current["shell"]:
+            return False
+        node = self._find_focused(current["window"])
+        if node is None or node.get_role_name() != "password text" or _iface(node, "editable_text") is None:
+            return False
+        try:
+            return bool(Atspi.EditableText.set_text_contents(node, text))
+        except (GLib.Error, TypeError):
+            return False
 
     def insert_at_focus(self, text: str) -> bool:
         """Text into the focused editable element at its caret; False when nothing editable has the focus."""

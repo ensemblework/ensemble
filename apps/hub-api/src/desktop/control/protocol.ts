@@ -34,6 +34,7 @@ export const HELPER_ERROR_KINDS = [
   "launch_failed",
   "bad_display",
   "no_recording",
+  "needs_screen",
 ] as const;
 export type HelperErrorKind = (typeof HELPER_ERROR_KINDS)[number];
 

@@ -1,6 +1,6 @@
 """A private screen for the agent: a headless GNOME Shell on a D-Bus session bus of its own, with its own
 Wayland socket, AT-SPI bus, runtime folder and settings, so nothing the agent opens there shows on the
-owner's screen and nothing there touches the owner's session.
+owner's screen.
 
 Isolation, each point a constraint:
 - headless mode opens no display (KMS) or input device, only a render node;
@@ -12,8 +12,14 @@ Isolation, each point a constraint:
   (`XDG_RUNTIME_DIR` of its own): the owner's sockets of the same names are never replaced;
 - the private bus starts only allowlisted services (settings, the permission store, apps that start by
   D-Bus): never the owner's keyring, file systems, document portal, indexer or calendar;
-- settings, data and caches are private folders; no sound; no login session id;
-- only PipeWire is shared (the screen's frames), through `PIPEWIRE_RUNTIME_DIR`.
+- apps there get a system bus of their own with no service on it and a `pkexec` that refuses: polkit
+  counts every process of this user outside a login session as the owner's session, so a privileged
+  request (mounting, installing, location, power) would otherwise reach polkit or GeoClue and ask the
+  owner on their screen, or be allowed silently. A setuid program started by its full path
+  (`/usr/bin/pkexec`) still reaches the computer's system bus, as setuid programs ignore the variable;
+- settings, data and caches are private folders; no sound; no login session id.
+Shared with the owner's session: the user's PipeWire (the screen's frames), and the computer's system bus
+for the compositor itself, which registers with GDM and follows logind as any GNOME Shell does.
 It is started with the helper (`--agent-screen`) and stopped with it, after the apps on it: they end on
 a signal rather than by losing their display.
 """
@@ -125,6 +131,9 @@ def paths(owner_runtime_dir: str, token: str) -> dict[str, str]:
         "bus": os.path.join(runtime, "bus"),
         "services": os.path.join(runtime, "services"),
         "config": os.path.join(runtime, "session.conf"),
+        "system_bus": os.path.join(runtime, "system_bus_socket"),
+        "system_config": os.path.join(runtime, "system.conf"),
+        "bin": os.path.join(runtime, "bin"),
         "display": f"{PREFIX}{token}",
         "wayland": os.path.join(runtime, f"{PREFIX}{token}"),
         "pids": os.path.join(runtime, "pids"),
@@ -135,13 +144,18 @@ def private_dirs(state_dir: str) -> dict[str, str]:
     return {key: os.path.join(state_dir, part) for key, part in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state"))}
 
 
-def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, wayland: str | None, bus_address: str | None = None) -> dict[str, str]:
+def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, wayland: str | None, bus_address: str | None = None, system_bus_address: str | None = None, bin_dir: str | None = None) -> dict[str, str]:
     """The agent session's environment: the owner's language and paths, nothing of the owner's session.
 
     No DISPLAY, XAUTHORITY, owner's bus or login session id; its own runtime folder, settings and data;
     the owner's installed apps still found (their data folder is read first); no sound, no virtual file
-    systems; PipeWire shared for the frames."""
+    systems; PipeWire shared for the frames. For apps, `system_bus_address` and `bin_dir` give them the
+    agent screen's own system bus and privileged programs (`write_privilege_shims`)."""
     out = {key: value for key, value in base.items() if key in KEEP or key.startswith("LC_")}
+    if bin_dir:
+        out["PATH"] = ":".join([bin_dir, *[entry for entry in (out.get("PATH") or "/usr/bin:/bin").split(":") if entry and entry != bin_dir]])
+    if system_bus_address:
+        out["DBUS_SYSTEM_BUS_ADDRESS"] = system_bus_address
     out.update(private_dirs(state_dir))
     home = base.get("HOME", "")
     owner_data = base.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
@@ -162,8 +176,29 @@ def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, waylan
     return out
 
 
-def session_config(bus_path: str, services_dir: str) -> str:
-    return SESSION_CONF.format(bus=escape(bus_path), services=escape(services_dir))
+def session_config(bus_path: str, services_dir: str | None) -> str:
+    """A bus listening at `bus_path` that starts the services in `services_dir`, or none at all."""
+    text = SESSION_CONF.format(bus=escape(bus_path), services=escape(services_dir or ""))
+    return text if services_dir else text.replace("  <servicedir></servicedir>\n", "")
+
+
+PRIVILEGE_SHIM = """#!/bin/sh
+echo "$(basename "$0") does not run on Ensemble's agent screen: it would ask the owner on their own screen without telling them why. Ask them through Ensemble, which shows them a card first." >&2
+exit 127
+"""
+
+
+def write_privilege_shims(folder: str) -> dict[str, str]:
+    """Programs that stand in for privileged ones on the agent screen's PATH, refusing with why."""
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    out = {}
+    for name in ("pkexec",):
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(PRIVILEGE_SHIM)
+        os.chmod(path, 0o700)
+        out[name] = path
+    return out
 
 
 def bus_command(config_path: str, dbus_daemon: str = "dbus-daemon") -> list[str]:
@@ -359,8 +394,11 @@ class AgentScreen:
         self.paths = paths(self.owner_runtime, self.token)
         self.processes: list[subprocess.Popen] = []
         self.shell: subprocess.Popen | None = None
+        self.session_bus: subprocess.Popen | None = None
         self.bus_address: str | None = None
+        self.system_bus_address: str | None = None
         self.env: dict[str, str] = {}
+        self.apps_env: dict[str, str] = {}
         self.started_at: float | None = None
         self.version: str | None = None
         self.units: list[str] = []
@@ -385,19 +423,32 @@ class AgentScreen:
         runtime = self.paths["runtime"]
         os.makedirs(runtime, mode=0o700)
         os.makedirs(self.paths["services"], mode=0o700)
+        write_privilege_shims(self.paths["bin"])
         env = session_env(self.base, state_dir=self.state_dir, runtime=runtime, wayland=None)
         data_dirs = [env["XDG_DATA_HOME"], *env["XDG_DATA_DIRS"].split(":")]
         for name, path in allowed_service_files(data_dirs, activatable_apps(desktop_entries(data_dirs))).items():
             os.symlink(path, os.path.join(self.paths["services"], f"{name}.service"))
+        # The apps' system bus: nothing on it, so their privileged requests reach no service and no polkit.
+        with open(self.paths["system_config"], "w", encoding="utf-8") as handle:
+            handle.write(session_config(self.paths["system_bus"], None))
+        system_bus = self._spawn(bus_command(self.paths["system_config"], bus_path), env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.system_bus_address = self._read_address(system_bus, 5.0)
+        if not self.system_bus_address:
+            self.stop()
+            raise AgentScreenError("The agent screen's own system bus for its apps did not start.")
+        apps_env = session_env(self.base, state_dir=self.state_dir, runtime=runtime, wayland=None, system_bus_address=self.system_bus_address, bin_dir=self.paths["bin"])
         with open(self.paths["config"], "w", encoding="utf-8") as handle:
             handle.write(session_config(self.paths["bus"], self.paths["services"]))
-        bus = self._spawn(bus_command(self.paths["config"], bus_path), env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # What this bus starts (apps that start by D-Bus among them) gets the apps' environment.
+        bus = self._spawn(bus_command(self.paths["config"], bus_path), apps_env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.session_bus = bus
         address = self._read_address(bus, 5.0)
         if not address:
             self.stop()
             raise AgentScreenError("The agent screen's own session bus did not start.")
         self.bus_address = address
         env = {**env, "DBUS_SESSION_BUS_ADDRESS": address}
+        self.apps_env = {**apps_env, "DBUS_SESSION_BUS_ADDRESS": address, "WAYLAND_DISPLAY": self.paths["wayland"]}
         self._spawn([launcher, "--launch-immediately"], env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         gsettings = _which("gsettings", self.base)
         if gsettings:
@@ -427,8 +478,8 @@ class AgentScreen:
         raise AgentScreenError("GNOME Shell for the agent screen did not come up in time.", "Check that GNOME Shell runs headless here (gnome-shell --headless).")
 
     def app_env(self) -> dict[str, str]:
-        """For starting an app there: the session's environment, with the owner's runtime folder for systemd-run."""
-        return {**self.env, "XDG_RUNTIME_DIR": self.owner_runtime}
+        """For starting an app there: the apps' environment, with the owner's runtime folder for systemd-run."""
+        return {**self.apps_env, "XDG_RUNTIME_DIR": self.owner_runtime}
 
     def _version(self, shell_path: str) -> str | None:
         try:
@@ -474,7 +525,7 @@ class AgentScreen:
             except (OSError, subprocess.SubprocessError):
                 pass
         self.units = []
-        bus = self.processes[0] if self.processes else None
+        bus = self.session_bus
         if bus is None or bus.poll() is not None:
             return
         started = children_of(bus.pid)
@@ -504,4 +555,5 @@ class AgentScreen:
                     pass
         self.processes = []
         self.shell = None
+        self.session_bus = None
         shutil.rmtree(self.paths["runtime"], ignore_errors=True)

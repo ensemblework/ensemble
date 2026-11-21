@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,8 @@ type ServiceOptions = import("./service.js").DesktopServiceOptions;
 const { ObservationLedger } = await import("./ledger.js");
 const { boxToRegion, fit, imageToLogical } = await import("./mapping.js");
 const { sensitiveApp } = await import("./sensitive.js");
-const { ensembleWindow, looksSecret } = await import("./floor.js");
+const { elementFloor, ensembleWindow, keyboardFloor, looksSecret, pointerFloor } = await import("./floor.js");
+const { CLAIM_IDLE_MS } = await import("./lease.js");
 const { withDesktopImages } = await import("./images.js");
 const { contentOf } = await import("../../../../../scripts/ensemble-ask-mcp.mjs");
 
@@ -31,7 +32,7 @@ type Harness = {
   helper: InstanceType<typeof HelperProcess>;
   set: (patch: Record<string, unknown>) => Promise<unknown>;
   emit: (event: Record<string, unknown>) => Promise<unknown>;
-  log: () => Promise<{ log: Array<{ method: string; params: Record<string, unknown> }>; maxActive: number }>;
+  log: () => Promise<{ log: Array<{ id?: number; method: string; params: Record<string, unknown> }>; maxActive: number }>;
   clock: { now: () => number; advance: (ms: number) => void };
   captures: string;
 };
@@ -52,7 +53,7 @@ function harness(options: { agent?: "up" | "fails"; service?: Partial<ServiceOpt
     captures,
     set: (patch) => call("test.set", patch),
     emit: (event) => call("test.emit", event),
-    log: () => call("test.log", {}) as Promise<{ log: Array<{ method: string; params: Record<string, unknown> }>; maxActive: number }>,
+    log: () => call("test.log", {}) as Promise<{ log: Array<{ id?: number; method: string; params: Record<string, unknown> }>; maxActive: number }>,
   };
 }
 
@@ -502,4 +503,148 @@ test("a call works on the screen it names, its look's, its recording's or the la
   assert.deepEqual(apps.map((list) => list.screen), ["owner", "agent"]);
   await screens.release(a.key);
   assert.equal(screens.pick(a.key, {}), "agent");
+});
+
+// ── what a review found ─────────────────────────────────────────────────────
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const calculatorApp = { name: "Calculator", toolkit: "GTK", pid: 501, app_id: "org.gnome.Calculator" };
+const calculatorWindow = { index: 0, title: "Calculator", role: "frame", active: true, showing: true, iconified: false };
+
+test("a browser page whose address cannot be read counts as Ensemble's: no clicks, typing or element actions in that window", () => {
+  const chromium = { name: "Chromium", toolkit: "Chromium", pid: 70, app_id: "chromium" };
+  const unknown = { app: "Chromium", url: null, window: "Some page", active: true };
+  const focus = { app: chromium, window: { index: 0, title: "Some page", role: "frame" }, shell: false, prompt: null, focused: null, documents: [unknown] };
+  assert.equal(keyboardFloor(focus)?.rule, "unknown_page");
+  assert.equal(elementFloor(chromium, "Some page", focus)?.rule, "unknown_page");
+  const behind = { ...focus, app: calculatorApp, window: { index: 0, title: "Calculator", role: "frame" }, documents: [{ ...unknown, active: false }] };
+  assert.equal(pointerFloor(behind, [])?.rule, "unknown_page", "a click by position could land in it");
+  assert.equal(keyboardFloor(behind), null, "the keyboard goes to the calculator in front");
+  assert.equal(elementFloor(chromium, "Another window", focus), null, "another window is judged by its own page");
+  const readable = { ...focus, documents: [{ ...unknown, url: "https://example.com/" }] };
+  assert.equal(keyboardFloor(readable), null);
+  assert.equal(pointerFloor(readable, []), null);
+});
+
+test("typing that stops because the owner acted, or the window in front changed, is partial", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller();
+  await h.set({ idle: 300_000, typing: { after: 3, stopped: "owner_input" } });
+  const owner = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "hello world" }, { action: "key", keys: "Return" }], observe: false });
+  assert.deepEqual([owner.steps[0]!.verdict, owner.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(owner.steps[0]!.detail ?? "", /3 of 11 characters.*owner/);
+  assert.equal(owner.steps[1]!.verdict, "not_run");
+  assert.equal(h.service.lease.holder, "owner", "the computer is the owner's until they stop");
+  h.service.lease.release("test");
+  await h.set({ typing: { after: 5, stopped: "focus_moved" } });
+  const moved = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "hello world" }], observe: false });
+  assert.deepEqual([moved.steps[0]!.verdict, moved.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(moved.steps[0]!.detail ?? "", /window in front changed/);
+  assert.equal(h.service.lease.holder, "agent");
+});
+
+test("ending a controller's work cancels its request in the helper", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller();
+  await h.set({ idle: 300_000, slow: { "input.text": { ms: 6_000, ran: "yes" } } });
+  const started = Date.now();
+  const acting = h.service.act(a, { foreground: true, steps: [{ action: "type", text: "a long text" }], observe: false });
+  await sleep(500);
+  await h.service.release(a.key);
+  const done = await acting;
+  assert.ok(Date.now() - started < 4_000, "it did not wait for the slow request to end");
+  assert.equal(done.steps[0]!.ran, "yes");
+  const sent = (await h.log()).log;
+  const typing = sent.find((row) => row.method === "input.text");
+  assert.deepEqual(sent.filter((row) => row.method === "cancel").map((row) => row.params.id), [typing!.id]);
+});
+
+test("a click by position asks about each sensitive app showing on the screen, not only the one in front", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const asked: string[] = [];
+  const a = caller("node:n1:m1", {
+    gate: async (app) => {
+      asked.push(app.id);
+      return app.id === "org.gnome.Ptyxis" ? { allow: false, ask: true } : { allow: true };
+    },
+  });
+  const terminal = { name: "Terminal", toolkit: "GTK", pid: 66, app_id: "org.gnome.Ptyxis", windows: [{ index: 0, title: "~", role: "frame", active: false, showing: true, iconified: false }] };
+  await h.set({ idle: 300_000, apps: [{ ...calculatorApp, windows: [calculatorWindow] }, terminal] });
+  const look = await h.service.observe(a, {});
+  await assert.rejects(
+    h.service.act(a, { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 50, y: 50 }], observe: false }),
+    (error: unknown) => error instanceof DesktopError && error.code === "needs_owner" && (error.extra.app as { id: string }).id === "org.gnome.Ptyxis",
+  );
+  assert.equal((await methods(h, "input.pointer")).length, 0);
+  assert.deepEqual(asked, ["screen:owner", "org.gnome.Ptyxis"]);
+  await h.set({ apps: [{ ...calculatorApp, windows: [calculatorWindow] }, { ...terminal, windows: [{ ...terminal.windows[0]!, iconified: true }] }] });
+  const again = await h.service.observe(a, {});
+  const clicked = await h.service.act(a, { captureId: again.captureId, foreground: true, steps: [{ action: "click", x: 50, y: 50 }], observe: false });
+  assert.equal(clicked.steps[0]!.ran, "yes", "a minimised terminal is not where a click lands");
+});
+
+test("in the background a press that could only move the focus is refused", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller();
+  await h.set({ idle: 300_000 });
+  await h.service.observe(a, {});
+  const done = await h.service.act(a, { steps: [{ action: "press", element: "e2" }], observe: false });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.code, done.steps[0]!.ran], ["refused", "needs_screen", "no"]);
+  assert.equal((await methods(h, "a11y.do"))[0]!.params.background, true);
+});
+
+test("a saved secret is typed as one: never through the clipboard, and whole or not at all", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller("node:n1:m1", { secret: async (name) => (name === "PIN" ? "pässwörd" : null) });
+  await h.set({ idle: 300_000, focus: { app: calculatorApp, window: { index: 0, title: "Sign in", role: "frame" }, shell: false, prompt: null, focused: { role: "password text", name: "Password", editable: true }, documents: [] } });
+  const refused = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "$PIN" }], observe: false });
+  assert.deepEqual([refused.steps[0]!.verdict, refused.steps[0]!.ran, refused.steps[0]!.rule], ["refused", "no", "secret_field"]);
+  assert.equal((await methods(h, "input.text")).at(-1)!.params.secret, true);
+  assert.ok(!JSON.stringify(refused).includes("pässwörd"), "the value never comes back");
+  await h.set({ fillSecrets: true });
+  const filled = await h.service.act(a, { foreground: true, steps: [{ action: "type", text: "$PIN" }], observe: false });
+  assert.equal(filled.steps[0]!.ran, "yes");
+});
+
+test("an unsaved recording is dropped once its time to be saved has passed, and its controller is let go", { timeout: 30_000 }, async () => {
+  const { RECORDING_SAVE_MS } = await import("./service.js");
+  const h = harness();
+  const a = caller("node:n1:m1");
+  const evidenceDir = join(root, "evidence-unsaved");
+  const started = await h.service.recordStart(a, { evidenceDir, maxSec: 60 });
+  await h.emit({ kind: "record.stopped", id: started.id, reason: "max_duration" });
+  await sleep(100);
+  await assert.rejects(h.service.observe(caller("node:n2:m1"), {}), (error: unknown) => error instanceof DesktopError && error.code === "busy", "it waits to be saved for a while");
+  h.clock.advance(RECORDING_SAVE_MS + CLAIM_IDLE_MS + 1_000);
+  const look = await h.service.observe(caller("node:n2:m1"), {});
+  assert.match(look.captureId, /^cap_/);
+  assert.deepEqual(readdirSync(evidenceDir).filter((name) => name.endsWith(".part")), []);
+  assert.equal((await methods(h, "record.discard")).length, 1);
+  await assert.rejects(h.service.recordSave(a, {}), (error: unknown) => error instanceof DesktopError && error.code === "no_recording" && /not saved/.test(error.message));
+});
+
+test("a recording the helper lost leaves no partial file", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const evidenceDir = join(root, "evidence-lost");
+  await h.service.recordStart(caller(), { evidenceDir });
+  assert.equal(readdirSync(evidenceDir).filter((name) => name.endsWith(".part")).length, 1);
+  process.kill(h.helper.health().pid!, "SIGKILL");
+  for (let tries = 0; tries < 60 && readdirSync(evidenceDir).some((name) => name.endsWith(".part")); tries += 1) await sleep(50);
+  assert.deepEqual(readdirSync(evidenceDir).filter((name) => name.endsWith(".part")), []);
+});
+
+test("partial recordings a stopped runtime left are swept from the evidence folders", { timeout: 30_000 }, async () => {
+  const { sweepRecordingParts } = await import("./service.js");
+  const evidence = join(root, "evidence-sweep");
+  mkdirSync(join(evidence, "node", "abc"), { recursive: true });
+  mkdirSync(join(evidence, "job1"), { recursive: true });
+  const stale = join(evidence, "node", "abc", ".desktop-recording-0123456789ab.part");
+  const live = join(evidence, "job1", ".desktop-recording-ba9876543210.part");
+  const other = join(evidence, "job1", "notes.part");
+  for (const path of [stale, live, other]) writeFileSync(path, "x");
+  const hourAgo = (Date.now() - 3_600_000) / 1000;
+  utimesSync(stale, hourAgo, hourAgo);
+  utimesSync(other, hourAgo, hourAgo);
+  assert.equal(await sweepRecordingParts(evidence, 30 * 60_000), 1);
+  assert.deepEqual([existsSync(stale), existsSync(live), existsSync(other)], [false, true, true]);
 });

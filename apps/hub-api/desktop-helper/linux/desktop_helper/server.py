@@ -22,7 +22,7 @@ from . import apps as appmod  # noqa: E402
 from . import readiness  # noqa: E402
 from .a11y import A11y, clean  # noqa: E402
 from .keys import KeyError_, char_keysym, parse_combo, split_text  # noqa: E402
-from .mapping import MAX_LONG_EDGE, clamp_point, clamp_region, fit, logical_to_native, path  # noqa: E402
+from .mapping import MAX_LONG_EDGE, clamp_point, clamp_region, fit, logical_to_native, path, stream_point  # noqa: E402
 from .media import FrameSource, Recording, check_media, encode, encoder, pump, wait_until, write_private  # noqa: E402
 from .portal import PortalSession, TokenStore, interface_versions  # noqa: E402
 from .rpc import Deadline, Request, RpcError, error, error_response, notification, param, parse_line, response  # noqa: E402
@@ -52,6 +52,13 @@ class Writer:
         with self._lock:
             self._stream.write(line)
             self._stream.flush()
+
+
+# Typing goes in chunks; on the owner's screen each is followed by a short pause, and input in that pause
+# (the idle time shorter than the time since the last key, by more than the margin) is the owner's.
+TYPE_CHUNK = 8
+TYPE_GAP_S = 0.12
+OWNER_INPUT_MARGIN_MS = 40.0
 
 
 def log(message: str) -> None:
@@ -616,7 +623,7 @@ class Helper:
         self.check(deadline, request_id, "no")
 
         def work():
-            portal.pointer_to(node, x, y)
+            portal.pointer_to(node, *stream_point(geo, x, y))
             if action == "move":
                 return
             pump(0.03)
@@ -651,14 +658,14 @@ class Helper:
         pressed = {"down": False}
 
         def work():
-            portal.pointer_to(node, sx, sy)
+            portal.pointer_to(node, *stream_point(geo, sx, sy))
             pump(0.05)
             portal.pointer_button(button, True)
             pressed["down"] = True
             for px, py in path((sx, sy), (ex, ey), steps)[1:]:
                 if request_id in self.cancelled or deadline.expired():
                     break
-                portal.pointer_to(node, px, py)
+                portal.pointer_to(node, *stream_point(geo, px, py))
                 pump(0.016)
             pump(0.05)
             portal.pointer_button(button, False)
@@ -689,7 +696,7 @@ class Helper:
 
         def work():
             if point:
-                portal.pointer_to(node, point[0], point[1])
+                portal.pointer_to(node, *stream_point(geo, point[0], point[1]))
                 pump(0.03)
             for _ in range(amount):
                 portal.pointer_axis(axis, sign)
@@ -736,48 +743,86 @@ class Helper:
         self._proven_input(work)
         return {"sent": True, "times": sent}
 
+    def _typing_interrupted(self, start_key: Any, last_key_at: float) -> str | None:
+        """Why typing must stop now: the window in front changed, or on the owner's screen input came from
+        someone else since the helper's last key (the idle time is shorter than the time since that key)."""
+        if self.a11y.active_key() != start_key:
+            return "focus_moved"
+        if self.agent is None:
+            _locked, idle_ms = self._locked_idle()
+            since_ms = (time.monotonic() - last_key_at) * 1000.0
+            if idle_ms is not None and idle_ms + OWNER_INPUT_MARGIN_MS < since_ms:
+                return "owner_input"
+        return None
+
     def input_text(self, params, deadline: Deadline, request_id) -> dict[str, Any]:
+        """Typing, in chunks with a check between them. A secret (`secret`) never goes through the clipboard
+        or insertion at the caret: typed whole by keys, or set whole in the focused password field."""
         text = param(params, "text", str, required=True)
         if len(text) > 20000:
             raise error("invalid_params", "At most 20000 characters at once.")
+        secret = bool(params.get("secret"))
         portal = self._portal_on()
         self.check(deadline, request_id, "no")
         counts = {"keysym": 0, "atspi": 0, "clipboard": 0, "untyped": 0}
-        started = False
+        state: dict[str, Any] = {"started": False, "last_key": time.monotonic(), "stopped": None}
+        start_key = self.a11y.active_key()
+        runs = split_text(text)
+
+        def must_stop() -> bool:
+            if request_id in self.cancelled or deadline.expired():
+                raise error("timeout" if deadline.expired() else "cancelled", "Typing stopped before the end.", ran="yes" if state["started"] else "no", extra={"typed": counts})
+            if not state["started"]:
+                return False
+            if self.agent is None:
+                # A pause after the last key: input during it is not the helper's.
+                pump(TYPE_GAP_S)
+            state["stopped"] = self._typing_interrupted(start_key, state["last_key"])
+            return state["stopped"] is not None
 
         def work():
-            nonlocal started
-            for kind, run in split_text(text):
-                if request_id in self.cancelled or deadline.expired():
-                    raise error("timeout" if deadline.expired() else "cancelled", "Typing stopped before the end.", ran="yes" if started else "no", extra={"typed": counts})
+            if secret and any(kind != "keys" for kind, _ in runs):
+                if self.a11y.set_focused_secret(text):
+                    counts["atspi"] = len(text)
+                    state["started"] = True
+                else:
+                    state["stopped"] = "secret_untypeable"
+                return
+            for kind, run in runs:
                 if kind == "keys":
-                    for char in run:
-                        if request_id in self.cancelled or deadline.expired():
-                            raise error("timeout" if deadline.expired() else "cancelled", "Typing stopped before the end.", ran="yes" if started else "no", extra={"typed": counts})
-                        sym = char_keysym(char)
-                        portal.keysym(sym, True)
-                        started = True
-                        portal.keysym(sym, False)
-                        counts["keysym"] += 1
-                        pump(0.008)
+                    for start in range(0, len(run), TYPE_CHUNK):
+                        if must_stop():
+                            return
+                        for char in run[start:start + TYPE_CHUNK]:
+                            sym = char_keysym(char)
+                            portal.keysym(sym, True)
+                            state["started"] = True
+                            portal.keysym(sym, False)
+                            state["last_key"] = time.monotonic()
+                            counts["keysym"] += 1
+                            pump(0.008)
                     continue
+                if must_stop():
+                    return
                 if self.a11y.insert_at_focus(run):
                     counts["atspi"] += len(run)
-                    started = True
+                    state["started"] = True
                     continue
                 if portal.clipboard:
+                    kept = portal.clipboard_snapshot()
                     portal.clipboard_offer(run)
                     pump(0.05)
                     self._press_keys(portal, parse_combo("ctrl+v"))
-                    started = True
+                    state["started"] = True
+                    state["last_key"] = time.monotonic()
                     pump(0.4)
-                    portal.clipboard_clear()
+                    portal.clipboard_restore(kept)
                     counts["clipboard"] += len(run)
                     continue
                 counts["untyped"] += len(run)
 
         self._proven_input(work)
-        return {"sent": True, "typed": counts}
+        return {"sent": state["started"], "typed": counts, "stopped": state["stopped"]}
 
     # ── accessibility ───────────────────────────────────────────────────────
 
@@ -809,7 +854,10 @@ class Helper:
         element = param(params, "element", str, required=True)
         action = param(params, "action", str, "press")
         self.check(deadline, request_id, "no")
-        return self.a11y.act(tree_id, element, action, name=params.get("name") if isinstance(params.get("name"), str) else None, text=params.get("text") if isinstance(params.get("text"), str) else None)
+        name = params.get("name") if isinstance(params.get("name"), str) else None
+        text = params.get("text") if isinstance(params.get("text"), str) else None
+        # `background`: the owner's screen without their focus, pointer or keyboard.
+        return self.a11y.act(tree_id, element, action, name=name, text=text, allow_focus=not params.get("background"))
 
     # ── apps ────────────────────────────────────────────────────────────────
 

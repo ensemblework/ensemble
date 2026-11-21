@@ -190,17 +190,31 @@ export class HelperProcess extends EventEmitter {
     this.emit("exit", { code, signal, expected });
   }
 
-  /** One request. `effects`: it acts on the desktop, so a lost answer means it may have run. */
-  async call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean }): Promise<T> {
+  /**
+   * One request. `effects`: it acts on the desktop, so a lost answer means it may have run. `signal`: the
+   * work it is for ended; the helper is told to stop between its steps and still answers.
+   */
+  async call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean; signal?: AbortSignal }): Promise<T> {
     await this.start();
-    return this.send<T>(method, params, { timeoutMs: options.timeoutMs, effects: options.effects ?? false, started: false });
+    if (options.signal?.aborted) throw new HelperError("cancelled", "The work this request was for ended.", "no");
+    const signal = options.signal;
+    const hook: { stop?: () => void } = {};
+    const answer = this.send<T>(method, params, { timeoutMs: options.timeoutMs, effects: options.effects ?? false, started: false }, (id) => {
+      if (!signal) return;
+      hook.stop = () => this.cancel(id);
+      signal.addEventListener("abort", hook.stop, { once: true });
+    });
+    return answer.finally(() => {
+      if (hook.stop) signal?.removeEventListener("abort", hook.stop);
+    });
   }
 
-  private send<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects: boolean; started: boolean }): Promise<T> {
+  private send<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects: boolean; started: boolean }, sent?: (id: number) => void): Promise<T> {
     const child = this.child;
     if (!child || !child.stdin) return Promise.reject(new HelperError("gone", "The desktop helper is not running.", "no", true));
     const id = (this.nextId += 1);
     const deadline = Math.max(500, options.timeoutMs - HELPER_MARGIN_MS);
+    sent?.(id);
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending.has(id)) return;

@@ -35,6 +35,7 @@ CODES: dict[str, int] = {
     "launch_failed": -32016,
     "bad_display": -32017,
     "no_recording": -32018,
+    "needs_screen": -32019,
 }
 
 RAN = ("no", "maybe", "yes")

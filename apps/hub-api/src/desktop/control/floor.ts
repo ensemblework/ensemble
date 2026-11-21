@@ -8,12 +8,13 @@
  * On Wayland no app may learn where other windows are, so a click by position cannot be told apart by
  * the window it lands in: while an Ensemble window or page shows on the screen (not minimised), clicks
  * and drags by position are refused; element actions and the keyboard are judged by the window they act in.
+ * A browser window whose page or address cannot be read may be showing Ensemble, so it counts as one.
  */
 import { ensembleAppOrigin } from "../../lib/ensemble-origins.js";
 import { redactKeys } from "../../lib/redact.js";
 import type { FocusInfo, HelperApp } from "./protocol.js";
 
-export type FloorRule = "ensemble_window" | "ensemble_page" | "password_prompt" | "secret_text" | "secret_field";
+export type FloorRule = "ensemble_window" | "ensemble_page" | "unknown_page" | "password_prompt" | "secret_text" | "secret_field";
 export type FloorHit = { rule: FloorRule; message: string };
 
 /** Ensemble's own apps as the accessibility bus and systemd name them. */
@@ -56,13 +57,22 @@ export function ensemblePages(documents: FocusInfo["documents"] | undefined, env
   return out;
 }
 
-/** Keyboard input goes to the window in front: refused there when it is Ensemble's, an Ensemble page or a password prompt of the desktop. */
+/** Browser windows whose page or address cannot be read now (the desktop said nothing about what they show). */
+export function unknownPages(documents: FocusInfo["documents"] | undefined): Array<{ app: string; window: string; active: boolean }> {
+  return (documents ?? []).filter((doc) => !doc.url).map((doc) => ({ app: doc.app, window: doc.window, active: doc.active }));
+}
+
+const UNKNOWN_PAGE = "its address cannot be read, so it may be showing Ensemble";
+
+/** Keyboard input goes to the window in front: refused there when it is Ensemble's, an Ensemble page, a page that cannot be read or a password prompt of the desktop. */
 export function keyboardFloor(focus: FocusInfo, env: NodeJS.ProcessEnv = process.env): FloorHit | null {
   if (focus.prompt) return { rule: "password_prompt", message: `A password prompt of the desktop is open (“${focus.prompt.title || "Authentication"}”): only your owner types there. Hand it to them with desktop_handoff.` };
   const own = ensembleWindow(focus.app, focus.window?.title);
   if (own) return { rule: "ensemble_window", message: `The window in front is Ensemble's own (${own}): you never type or click there.` };
   const page = ensemblePages(focus.documents, env).find((doc) => doc.active);
   if (page) return { rule: "ensemble_page", message: `The browser in front shows Ensemble (${page.origin}): you never type or click there. You act in Ensemble through your Ensemble tools.` };
+  const unknown = unknownPages(focus.documents).find((doc) => doc.active);
+  if (unknown) return { rule: "unknown_page", message: `The page in front in ${unknown.app} (“${unknown.window}”) cannot be read: ${UNKNOWN_PAGE}, and you never type there. Use your browser tools for web pages.` };
   return null;
 }
 
@@ -85,6 +95,8 @@ export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: 
   }
   const page = ensemblePages(focus.documents, env)[0];
   if (page) return { rule: "ensemble_page", message: `A browser window shows Ensemble (${page.origin}) and the desktop does not say where it is, so clicks by position are refused while it shows. Use element ids, or ask your owner to switch that tab or minimise the window.` };
+  const unknown = unknownPages(focus.documents)[0];
+  if (unknown) return { rule: "unknown_page", message: `A ${unknown.app} window (“${unknown.window}”) shows a page whose address cannot be read: ${UNKNOWN_PAGE}, and the desktop does not say where it is, so clicks by position are refused while it shows. Use element ids in other apps, your browser tools for web pages, or ask your owner to minimise it.` };
   return null;
 }
 
@@ -92,8 +104,10 @@ export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: 
 export function elementFloor(app: AppRef, window: string, focus: FocusInfo, env: NodeJS.ProcessEnv = process.env): FloorHit | null {
   const own = ensembleWindow(app, window);
   if (own) return { rule: "ensemble_window", message: `That element is in Ensemble's own window (${own}): you never act there.` };
-  const page = ensemblePages(focus.documents, env).find((doc) => norm(doc.window) === norm(window) && norm(doc.app) === norm(app.name));
+  const inWindow = (doc: { app: string; window: string }) => norm(doc.window) === norm(window) && norm(doc.app) === norm(app.name);
+  const page = ensemblePages(focus.documents, env).find(inWindow);
   if (page) return { rule: "ensemble_page", message: `That element is in a browser window showing Ensemble (${page.origin}): you never act there.` };
+  if (unknownPages(focus.documents).some(inWindow)) return { rule: "unknown_page", message: `That element is in a browser window whose page cannot be read: ${UNKNOWN_PAGE}. Use your browser tools for web pages.` };
   return null;
 }
 

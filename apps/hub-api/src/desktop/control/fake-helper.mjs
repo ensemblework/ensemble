@@ -2,7 +2,8 @@
 // A stand-in for desktop-helper/linux/ensemble_desktop.py in tests: the same JSON-RPC over stdin and
 // stdout, with a desktop held in memory. Tests steer it with `test.set` (merge state), `test.emit` (an
 // event) and read what it did with `test.log`. `--agent-screen` plays the agent screen (no idle time, no
-// owner); `--fail-agent` an agent screen that cannot start.
+// owner); `--fail-agent` an agent screen that cannot start. A `cancel` notification ends a slow request
+// early, as the helper stops between its steps.
 import { writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -38,6 +39,10 @@ const state = {
     truncated: false,
     visited: 40,
   },
+  // input.text: stop after `after` characters, as the helper does when the owner acts or the focus moves.
+  typing: null,
+  // A saved secret with characters no layout types goes whole into the focused password field.
+  fillSecrets: false,
   catalog: [
     { id: "org.gnome.Calculator", name: "Calculator", exec: "gnome-calculator" },
     { id: "org.gnome.Ptyxis", name: "Terminal", exec: "ptyxis" },
@@ -47,12 +52,25 @@ const state = {
 const log = [];
 let active = 0;
 let maxActive = 0;
+const cancelled = new Set();
+const wakers = new Map();
 
 const send = (message) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 const fail = (kind, message, ran = "no") => {
   throw Object.assign(new Error(message), { rpc: { code: -32000, message, data: { kind, ran } } });
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A wait that a `cancel` of request `id` cuts short. */
+const sleepFor = (ms, id) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      wakers.delete(id);
+      resolve();
+    }
+    wakers.set(id, done);
+  });
 const changed = () => {
   if (!state.noEffect) state.hash += 1;
 };
@@ -108,14 +126,22 @@ const methods = {
   "input.scroll": () => (changed(), { sent: true }),
   "input.keys": () => (changed(), { sent: true, times: 1 }),
   "input.text": (params) => {
+    if (params.secret && /[^\x20-\x7e]/.test(params.text)) {
+      if (!state.fillSecrets) return { sent: false, typed: { keysym: 0, atspi: 0, clipboard: 0, untyped: 0 }, stopped: "secret_untypeable" };
+      changed();
+      return { sent: true, typed: { keysym: 0, atspi: params.text.length, clipboard: 0, untyped: 0 }, stopped: null };
+    }
+    const text = state.typing ? params.text.slice(0, state.typing.after) : params.text;
     changed();
-    if (state.focus.focused && typeof state.focus.focused.text === "string" && !state.noEffect) state.focus.focused.text += params.text;
-    return { sent: true, typed: { keysym: params.text.length, atspi: 0, clipboard: 0, untyped: 0 } };
+    if (state.focus.focused && typeof state.focus.focused.text === "string" && !state.noEffect) state.focus.focused.text += text;
+    return { sent: true, typed: { keysym: text.length, atspi: 0, clipboard: 0, untyped: 0 }, stopped: state.typing ? state.typing.stopped : null };
   },
   "a11y.focus": (params) => ({ ...state.focus, ...(params.documents === false ? { documents: undefined } : {}) }),
   "a11y.apps": () => ({ apps: state.apps, units: [] }),
   "a11y.tree": () => state.tree,
   "a11y.do": (params) => {
+    const element = state.tree.elements.find((item) => item.id === params.element);
+    if (params.background && params.action === "press" && element && element.actions.length === 0) fail("needs_screen", `Element ${params.element} has no action to press: only moving the focus to it would do something.`);
     changed();
     if (params.action === "set_text" || params.action === "insert_text") return { done: true, via: `atspi:${params.action}`, verified: params.text !== undefined ? true : null };
     const after = params.action === "focus" ? ["focusable", "focused"] : params.action === "select" || params.action === "toggle" ? ["focusable", params.action === "select" ? "selected" : "checked"] : ["focusable"];
@@ -167,11 +193,14 @@ async function handle(request) {
   if (tracked) {
     active += 1;
     maxActive = Math.max(maxActive, active);
-    log.push({ method, params: method === "input.text" ? { ...params } : params, at: Date.now() });
+    log.push({ id, method, params: method === "input.text" ? { ...params } : params, at: Date.now() });
   }
   try {
     const slow = state.slow[method];
-    if (slow && (!slow.when || Object.entries(slow.when).every(([key, value]) => params[key] === value))) await sleep(slow.ms);
+    if (slow && (!slow.when || Object.entries(slow.when).every(([key, value]) => params[key] === value))) {
+      await sleepFor(slow.ms, id);
+      if (cancelled.has(id)) fail("cancelled", "The request was cancelled.", slow.ran ?? "no");
+    }
     const failure = state.fail[method];
     if (failure) fail(failure.kind, failure.message ?? failure.kind, failure.ran ?? "no");
     const handler = methods[method];
@@ -187,6 +216,13 @@ async function handle(request) {
 for await (const line of createInterface({ input: process.stdin })) {
   if (!line.trim()) continue;
   const request = JSON.parse(line);
-  if (request.id === undefined) continue;
+  if (request.id === undefined) {
+    if (request.method === "cancel" && request.params) {
+      cancelled.add(request.params.id);
+      log.push({ method: "cancel", params: request.params, at: Date.now() });
+      wakers.get(request.params.id)?.();
+    }
+    continue;
+  }
   void handle(request);
 }

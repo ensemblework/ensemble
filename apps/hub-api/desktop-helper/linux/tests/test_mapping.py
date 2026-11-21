@@ -48,6 +48,16 @@ class PointTests(unittest.TestCase):
         # A zoom of the region (1000, 500, 400, 300) shown at its own size.
         self.assertEqual(mapping.image_to_logical(10, 20, (400, 300), (1000, 500, 400, 300)), (1010.5, 520.5))
 
+    def test_pointer_positions_are_frame_pixels_of_the_stream(self):
+        # Mutter takes absolute pointer positions in the stream's frame pixels, which a scaled monitor makes larger than its logical ones.
+        for scale, logical, expected in ((1, (2560, 1440), (100.0, 50.0)), (1.25, (2048, 1152), (125.0, 62.5)), (2, (1280, 720), (200.0, 100.0))):
+            with self.subTest(scale=scale):
+                self.assertEqual(mapping.logical_to_stream(100, 50, logical, (2560, 1440)), expected)
+        x, y = mapping.logical_to_stream(2047.5, 1151.5, (2048, 1152), (2560, 1440))
+        self.assertLess(x, 2560)
+        self.assertLess(y, 1440)
+        self.assertEqual(mapping.logical_to_stream(-5, -5, (2048, 1152), (2560, 1440)), (0.0, 0.0))
+
     def test_drag_paths_include_both_ends(self):
         points = mapping.path((0, 0), (100, 50), 4)
         self.assertEqual(points[0], (0, 0))

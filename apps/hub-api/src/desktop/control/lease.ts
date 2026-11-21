@@ -80,7 +80,7 @@ export const CLAIM_IDLE_MS = 90_000;
 /** A conversation told it is busy keeps its place this long without asking again. */
 export const WAIT_KEEP_MS = 120_000;
 
-type Holder = { key: string; label: string; since: number; lastUsed: number; pinned: boolean };
+type Holder = { key: string; label: string; since: number; lastUsed: number; pinnedUntil: number | null };
 type Waiter = { key: string; label: string; since: number; lastAsked: number };
 
 export type Claim = { ok: true } | { ok: false; place: number; holder: { label: string; since: string } };
@@ -99,7 +99,8 @@ export class Controllers {
   private lapse(): void {
     const now = this.now();
     this.waiting = this.waiting.filter((row) => now - row.lastAsked < WAIT_KEEP_MS);
-    if (this.holder && !this.holder.pinned && now - this.holder.lastUsed > CLAIM_IDLE_MS) this.holder = null;
+    const pinned = this.holder?.pinnedUntil != null && now < this.holder.pinnedUntil;
+    if (this.holder && !pinned && now - this.holder.lastUsed > CLAIM_IDLE_MS) this.holder = null;
   }
 
   /** Whether `key` may drive the desktop now: it holds it, or nobody does and it is first in line. */
@@ -113,7 +114,7 @@ export class Controllers {
     const head = this.waiting[0];
     if (!this.holder && (!head || head.key === key)) {
       this.waiting = this.waiting.filter((row) => row.key !== key);
-      this.holder = { key, label, since: now, lastUsed: now, pinned: false };
+      this.holder = { key, label, since: now, lastUsed: now, pinnedUntil: null };
       return { ok: true };
     }
     let waiter = this.waiting.find((row) => row.key === key);
@@ -131,10 +132,10 @@ export class Controllers {
     if (this.holder?.key === key) this.holder.lastUsed = this.now();
   }
 
-  /** While it records, the controller keeps the desktop even without calls. */
-  pin(key: string, pinned: boolean): void {
+  /** While it records and its recording waits to be saved, the controller keeps the desktop even without calls, until `until` at most (null: no longer). */
+  pin(key: string, until: number | null): void {
     if (this.holder?.key === key) {
-      this.holder.pinned = pinned;
+      this.holder.pinnedUntil = until;
       this.holder.lastUsed = this.now();
     }
   }

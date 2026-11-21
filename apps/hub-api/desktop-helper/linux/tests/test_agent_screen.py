@@ -59,6 +59,31 @@ class Environment(unittest.TestCase):
         self.assertEqual(env["LANG"], "en_GB.UTF-8")
         self.assertEqual(env["LC_TIME"], "en_GB.UTF-8")
 
+    def test_apps_get_a_system_bus_and_a_pkexec_of_their_own(self):
+        runtime = "/run/user/1000/ensemble-agent-0a1b2c3d"
+        apps = screen.session_env(self.owner, state_dir="/s", runtime=runtime, wayland=None, system_bus_address=f"unix:path={runtime}/system_bus_socket", bin_dir=f"{runtime}/bin")
+        self.assertEqual(apps["DBUS_SYSTEM_BUS_ADDRESS"], f"unix:path={runtime}/system_bus_socket")
+        self.assertEqual(apps["PATH"].split(":")[0], f"{runtime}/bin")
+        shell = screen.session_env(self.owner, state_dir="/s", runtime=runtime, wayland=None)
+        self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", shell, "the compositor keeps the computer's system bus")
+        self.assertEqual(shell["PATH"], "/usr/bin:/bin")
+
+    def test_the_pkexec_there_refuses_and_says_why(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as folder:
+            shim = screen.write_privilege_shims(folder)["pkexec"]
+            self.assertEqual(os.stat(shim).st_mode & 0o777, 0o700)
+            ran = subprocess.run([shim, "true"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(ran.returncode, 127)
+        self.assertIn("agent screen", ran.stderr)
+
+    def test_the_system_bus_of_the_apps_starts_no_service(self):
+        config = screen.session_config("/run/user/1000/ensemble-agent-0a1b2c3d/system_bus_socket", None)
+        self.assertIn("<listen>unix:path=/run/user/1000/ensemble-agent-0a1b2c3d/system_bus_socket</listen>", config)
+        self.assertNotIn("<servicedir>", config)
+        self.assertNotIn("<standard_session_servicedirs", config)
+
     def test_the_owners_apps_are_still_found_first(self):
         env = screen.session_env(self.owner, state_dir="/s", runtime="/r", wayland=None)
         self.assertEqual(env["XDG_DATA_DIRS"].split(":"), ["/home/mira/.local/share", "/usr/local/share", "/usr/share"])

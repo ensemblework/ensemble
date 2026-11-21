@@ -96,6 +96,7 @@ const FROM_HELPER: Record<string, DesktopCode> = {
   invalid_params: "bad_input",
   gone: "helper_crashed",
   unavailable: "unavailable",
+  needs_screen: "needs_screen",
 };
 
 function fromHelper(error: unknown): DesktopError {
@@ -106,7 +107,7 @@ function fromHelper(error: unknown): DesktopError {
 
 /** What the helper process looks like to the service (a fake one in tests). */
 export interface HelperLike {
-  call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean }): Promise<T>;
+  call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean; signal?: AbortSignal }): Promise<T>;
   health(): HelperHealth;
   stop(): Promise<void>;
   on(event: "event", listener: (event: HelperEvent) => void): unknown;
@@ -237,6 +238,36 @@ export type DesktopServiceOptions = {
 /** Why every desktop capture waits for the owner's preview: nothing can check a screen for secrets. */
 export const DESKTOP_HOLD_REASON = "A picture of your screen can show anything on it, so you preview it before it is shown or sent.";
 
+/** How long a recording that ended waits to be saved before it is dropped (and its controller let go). */
+export const RECORDING_SAVE_MS = 10 * 60_000;
+/** A recording the helper never said it stopped counts as stopped this long after its longest. */
+const RECORDING_STOP_GRACE_MS = 30_000;
+const RECORDING_PART = /^\.desktop-recording-[0-9a-f]{12}\.part$/;
+
+/**
+ * Removes recordings that were never saved from evidence folders (`<root>/<run>/` and
+ * `<root>/node/<operation>/`): a stopped runtime's, unchanged for `olderThanMs`. Answers how many went.
+ */
+export async function sweepRecordingParts(root: string, olderThanMs: number, keep: ReadonlySet<string> = new Set(), now = Date.now()): Promise<number> {
+  const folders = [root];
+  for (const name of await readdir(root).catch(() => [] as string[])) {
+    folders.push(join(root, name));
+    if (name === "node") for (const inner of await readdir(join(root, name)).catch(() => [] as string[])) folders.push(join(root, name, inner));
+  }
+  let removed = 0;
+  for (const folder of folders) {
+    for (const name of await readdir(folder).catch(() => [] as string[])) {
+      const path = join(folder, name);
+      if (!RECORDING_PART.test(name) || keep.has(path)) continue;
+      const info = await stat(path).catch(() => null);
+      if (!info?.isFile() || now - info.mtimeMs < olderThanMs) continue;
+      await rm(path, { force: true }).catch(() => undefined);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 const POINTER_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "drag"]);
 /** Steps that work through accessibility alone, on an element: the owner's pointer, keyboard and focus stay theirs. */
 function backgroundStep(step: DesktopStep): boolean {
@@ -250,13 +281,18 @@ const INPUT_STEPS = new Set<StepAction>(["click", "double_click", "right_click",
 type Session = { epoch: number; screens: ScreenRef[] };
 const NO_SCREEN: ScreenRef = { node: -1, x: 0, y: 0, width: 0, height: 0, name: null, primary: false };
 type StepContext = { secrets: readonly string[]; allowed: Set<string>; background: boolean; idleMs: number | null };
-type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; mime: string; container: string; codec: string; ended: string | null; lost: boolean; counter: number };
+/** Why the helper stopped typing before the end: the owner's input, the window in front changing, or a secret it could not type whole. */
+type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable";
+type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; maxMs: number; mime: string; container: string; codec: string; ended: string | null; endedAt: number | null; lost: boolean; counter: number };
 
 class Deadline {
   readonly at: number;
+  /** Aborted when the work it is for ends (its controller released, the service stopping). */
+  readonly abort = new AbortController();
   constructor(
     private readonly now: () => number,
     budgetMs: number,
+    readonly key: string | null = null,
   ) {
     this.at = now() + budgetMs;
   }
@@ -300,6 +336,11 @@ export class DesktopService {
   private ownerStoppedAt: number | null = null;
   private consentFailed: { at: number; reason: string } | null = null;
   private stopped = false;
+  /** The call running now, to cancel when its work ends. */
+  private current: Deadline | null = null;
+  /** Why a controller's recording is gone, for its next save or discard. */
+  private readonly dropped = new Map<string, string>();
+  private recordingTimer: NodeJS.Timeout | null = null;
 
   readonly screenName: ScreenName;
 
@@ -335,17 +376,42 @@ export class DesktopService {
     } else if (event.kind === "session.failed") {
       this.consentFailed = { at: this.now(), reason: String(event.reason ?? "failed") };
     } else if (event.kind === "record.stopped" && this.recording && event.id === this.recording.id) {
-      this.recording.ended = String(event.reason ?? "stopped");
+      this.recordingEnded(this.recording, String(event.reason ?? "stopped"));
     }
+  }
+
+  /** A recording stopped by itself (its length, the session's end, the helper's): it waits `RECORDING_SAVE_MS` to be saved. */
+  private recordingEnded(recording: RecordingState, why: string): void {
+    if (recording.endedAt !== null) return;
+    recording.ended = why;
+    recording.endedAt = this.now();
+    // A recording the helper lost was never finished: nothing of it can be saved.
+    if (recording.lost) void rm(recording.temp, { force: true }).catch(() => undefined);
+    this.controllers.pin(recording.owner, recording.endedAt + RECORDING_SAVE_MS);
+    if (this.recordingTimer) clearTimeout(this.recordingTimer);
+    this.recordingTimer = setTimeout(() => void this.run(20_000, (deadline) => this.expireRecording(deadline)).catch(() => undefined), RECORDING_SAVE_MS + 1_000);
+    this.recordingTimer.unref?.();
+  }
+
+  /** Drops a recording whose time to be saved has passed, and lets its controller go. */
+  private async expireRecording(deadline: Deadline): Promise<void> {
+    const recording = this.recording;
+    if (!recording) return;
+    const now = this.now();
+    if (recording.endedAt === null && now > recording.startedAt + recording.maxMs + RECORDING_STOP_GRACE_MS) this.recordingEnded(recording, "max_duration");
+    if (recording.endedAt === null || now < recording.endedAt + RECORDING_SAVE_MS) return;
+    this.dropped.set(recording.owner, `Your recording was not saved within ${Math.round(RECORDING_SAVE_MS / 60_000)} minutes of its end, so it was dropped.`);
+    this.log("desktop: an unsaved recording was dropped");
+    await this.dropRecording(recording, deadline);
   }
 
   private dropSession(why: string): void {
     if (this.session) this.log(`desktop: screen control ended (${why})`);
     this.session = null;
     this.ledger.invalidateAll();
-    if (this.recording && !this.recording.ended) {
-      this.recording.ended = why;
+    if (this.recording && this.recording.endedAt === null) {
       if (why === "the desktop helper stopped") this.recording.lost = true;
+      this.recordingEnded(this.recording, why);
     }
   }
 
@@ -388,9 +454,9 @@ export class DesktopService {
   // ── the queue ────────────────────────────────────────────────────────────
 
   /** Runs `work` when the calls before it are done; gives up (not run) if its budget passes while it waits. */
-  private run<T>(budgetMs: number, work: (deadline: Deadline) => Promise<T>): Promise<T> {
+  private run<T>(budgetMs: number, work: (deadline: Deadline) => Promise<T>, key: string | null = null): Promise<T> {
     if (this.stopped) return Promise.reject(new DesktopError("unavailable", "Desktop control is stopping on this computer.", "no"));
-    const deadline = new Deadline(this.now, budgetMs);
+    const deadline = new Deadline(this.now, budgetMs, key);
     const prior = this.tail;
     let finish!: () => void;
     const mine = new Promise<void>((resolve) => (finish = resolve));
@@ -405,11 +471,14 @@ export class DesktopService {
       void prior.then(async () => {
         clearTimeout(timer);
         if (gaveUp) return finish();
+        this.current = deadline;
         try {
+          if (this.recording) await this.expireRecording(deadline).catch(() => undefined);
           resolve(await work(deadline));
         } catch (error) {
           reject(error);
         } finally {
+          this.current = null;
           this.lastCall = this.now();
           this.armIdle();
           finish();
@@ -421,7 +490,7 @@ export class DesktopService {
   /** Claims the desktop for `caller`, runs `work` in line, and keeps the claim fresh from its end. */
   private runAs<T>(caller: Caller, work: (deadline: Deadline) => Promise<T>): Promise<T> {
     this.claim(caller);
-    return this.run(caller.budgetMs, work).finally(() => this.controllers.touch(caller.key));
+    return this.run(caller.budgetMs, work, caller.key).finally(() => this.controllers.touch(caller.key));
   }
 
   private claim(caller: Caller): void {
@@ -443,8 +512,9 @@ export class DesktopService {
   private async call<T>(method: string, params: Record<string, unknown>, deadline: Deadline, options: { effects?: boolean; maxMs?: number } = {}): Promise<T> {
     const left = deadline.remaining() - 250;
     if (left < 1_000) throw new DesktopError("timeout", "This call ran out of time before it could go on.", "no");
+    if (deadline.abort.signal.aborted) throw new DesktopError("cancelled", "The work this call was for ended, so it went no further.", "no");
     try {
-      return await this.options.helper.call<T>(method, params, { timeoutMs: Math.min(options.maxMs ?? 30_000, left), effects: options.effects });
+      return await this.options.helper.call<T>(method, params, { timeoutMs: Math.min(options.maxMs ?? 30_000, left), effects: options.effects, signal: deadline.abort.signal });
     } catch (error) {
       const failure = fromHelper(error);
       if (failure.code === "no_session" || failure.code === "helper_crashed") this.dropSession(failure.code === "no_session" ? "the session ended" : "the desktop helper stopped");
@@ -809,6 +879,7 @@ export class DesktopService {
         try {
           const background = mode === "background";
           if (background && !backgroundStep(step)) throw new DesktopError("needs_screen", `${NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
+          if (deadline.abort.signal.aborted) throw new DesktopError("cancelled", "The work these steps were for ended, so this one did not run.", "no");
           const { idleMs } = await this.guard(deadline, background ? "background" : "screen");
           counter ??= this.lease.counter;
           const debt = this.ledger.debt(caller.key);
@@ -862,6 +933,19 @@ export class DesktopService {
   private gateApp(app: { name: string; app_id: string | null }): GateApp | null {
     const category = sensitiveApp({ id: app.app_id, name: app.name });
     return category ? { id: app.app_id ?? app.name.toLowerCase(), name: app.name, category } : null;
+  }
+
+  /** The sensitive apps a click by position could land in: the one in front, and any with a window that shows. */
+  private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[]): GateApp[] {
+    const found = new Map<string, GateApp>();
+    const front = focus.app ? this.gateApp(focus.app) : null;
+    if (front) found.set(front.id, front);
+    for (const app of apps) {
+      if (!app.windows.some((window) => window.showing && !window.iconified)) continue;
+      const gate = this.gateApp(app);
+      if (gate) found.set(gate.id, gate);
+    }
+    return [...found.values()];
   }
 
   private async allowedIn(caller: Caller, app: GateApp, allowed: Set<string>): Promise<boolean> {
@@ -949,20 +1033,20 @@ export class DesktopService {
           if (step.action !== "click" || (step.button && step.button !== "left")) throw new DesktopError("bad_input", `${step.action} on an element is not possible: aim at its coordinates instead.`, "no");
           return this.elementStep(caller, { ...step, action: "press" }, deadline, context);
         }
-        return this.pointerStep(caller, step, batchCapture, deadline);
+        return this.pointerStep(caller, step, batchCapture, deadline, context);
       case "scroll":
         if (step.element) return this.elementStep(caller, step, deadline, context);
-        return this.pointerStep(caller, step, batchCapture, deadline);
+        return this.pointerStep(caller, step, batchCapture, deadline, context);
       case "move":
       case "drag":
-        return this.pointerStep(caller, step, batchCapture, deadline);
+        return this.pointerStep(caller, step, batchCapture, deadline, context);
       case "type":
       case "key":
         return this.keyboardStep(caller, step, deadline, context);
     }
   }
 
-  private async pointerStep(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline): Promise<Omit<StepOutcome, "index" | "action">> {
+  private async pointerStep(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
     const aimed = step.captureId ?? batchCapture;
     if (aimed && this.ledger.get(aimed)?.treeOnly) throw new DesktopError("observation_required", `${aimed} read elements only, without a screenshot: aim at its element ids, or look with a screenshot to aim at coordinates.`, "no");
     const session = await this.ensureSession(deadline);
@@ -982,14 +1066,16 @@ export class DesktopService {
     } else {
       node = (session.screens.find((screen) => screen.primary) ?? session.screens[0]!).node;
     }
-    if (POINTER_STEPS.has(step.action)) {
+    if (POINTER_STEPS.has(step.action) || step.action === "scroll") {
       const [focus, apps] = await Promise.all([
         this.call<FocusInfo>("a11y.focus", { text: false, documents: true }, deadline, { maxMs: 8_000 }),
         this.call<{ apps: HelperApp[] }>("a11y.apps", {}, deadline, { maxMs: 8_000 }),
       ]).catch((error: unknown) => {
-        throw new DesktopError("refused", `What is on the screen could not be checked (${fromHelper(error).message}), so the click was not sent.`, "no");
+        throw new DesktopError("refused", `What is on the screen could not be checked (${fromHelper(error).message}), so the ${step.action === "scroll" ? "scroll" : "click"} was not sent.`, "no");
       });
-      this.refuse(pointerFloor(focus, apps.apps, this.options.env));
+      if (POINTER_STEPS.has(step.action)) this.refuse(pointerFloor(focus, apps.apps, this.options.env));
+      // The desktop does not say which window a point is in: every sensitive app that shows may be where it lands.
+      for (const app of this.sensitiveShowing(focus, apps.apps)) await this.gate(caller, app, context.allowed);
     }
     if (step.action === "move") {
       await this.call("input.pointer", { display: node, x: at!.x, y: at!.y, action: "move" }, deadline, { effects: true, maxMs: 5_000 });
@@ -1053,9 +1139,14 @@ export class DesktopService {
     const beforeText = focus.focused?.text;
     const before = await this.frameState(node, deadline, 400).catch(() => null);
     let typed: { keysym: number; atspi: number; clipboard: number; untyped: number } | null = null;
+    let stopped: TypingStop | null = null;
     try {
       if (step.action === "key") await this.call("input.keys", { keys: step.keys, repeat: step.repeat ?? 1 }, deadline, { effects: true, maxMs: 10_000 });
-      else typed = (await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number } }>("input.text", { text }, deadline, { effects: true, maxMs: Math.min(60_000, 5_000 + text!.length * 40) })).typed;
+      else {
+        const answer = await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number }; stopped?: TypingStop | null }>("input.text", { text, ...(secretName ? { secret: true } : {}) }, deadline, { effects: true, maxMs: Math.min(60_000, 5_000 + text!.length * 60) });
+        typed = answer.typed;
+        stopped = answer.stopped ?? null;
+      }
     } catch (error) {
       const failure = fromHelper(error);
       // A secret's value never comes back, even in an error.
@@ -1063,6 +1154,19 @@ export class DesktopService {
       throw failure;
     } finally {
       this.lease.agentInput();
+    }
+    if (stopped === "secret_untypeable") {
+      throw new DesktopError("refused", `${secretName} has characters this keyboard layout cannot type, and the password field does not take text through accessibility, so nothing of it was typed (a secret never goes through the clipboard). Hand the field to your owner with desktop_handoff.`, "no", { rule: "secret_field" });
+    }
+    if (stopped) {
+      const done = typed ? typed.keysym + typed.atspi + typed.clipboard : 0;
+      const what = secretName ? `Typing ${secretName} stopped part way` : `Typing stopped after ${done} of ${text!.length} characters`;
+      if (stopped === "owner_input") {
+        this.lease.take("owner_input");
+        this.ledger.invalidateAll();
+        return { verdict: "partial", ran: "yes", detail: `${what}: your owner used the keyboard or mouse, so the computer is theirs until two minutes after their last input.` };
+      }
+      return { verdict: "partial", ran: "yes", detail: `${what}: the window in front changed, so the rest was not typed.` };
     }
     const after = await this.frameState(node, deadline, 1_000).catch(() => null);
     if (typed && typed.untyped > 0) return { verdict: "partial", ran: "yes", detail: `${typed.untyped} characters could not be typed on this keyboard layout.` };
@@ -1111,7 +1215,7 @@ export class DesktopService {
     const action = step.action === "set_text" || (typing && secret) ? "set_text" : typing ? "insert_text" : step.action === "focus" ? "focus" : step.action === "select" ? "select" : step.action === "toggle" ? "toggle" : step.action === "scroll" ? "scroll_to" : "press";
     let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[] };
     try {
-      done = await this.call("a11y.do", { tree_id: tree.id, element: element.id, action, ...(step.name ? { name: step.name } : {}), ...(text !== null ? { text } : {}) }, deadline, { effects: true, maxMs: 8_000 });
+      done = await this.call("a11y.do", { tree_id: tree.id, element: element.id, action, ...(step.name ? { name: step.name } : {}), ...(text !== null ? { text } : {}), ...(context.background ? { background: true } : {}) }, deadline, { effects: true, maxMs: 8_000 });
     } catch (error) {
       const failure = fromHelper(error);
       if (failure.code === "element_gone") this.ledger.invalidate(caller.key);
@@ -1175,11 +1279,11 @@ export class DesktopService {
     return this.runAs(caller, async (deadline) => {
       await this.guard(deadline, "look");
       const prior = this.recording;
-      if (prior && !prior.ended && !prior.lost) {
+      if (prior && prior.endedAt === null) {
         throw new DesktopError("recording_active", prior.owner === caller.key ? "Your recording is already running: save or discard it first." : "Another conversation is recording the screen.", "no");
       }
-      // Another conversation's finished recording waits a while to be saved before a new one replaces it.
-      if (prior && prior.owner !== caller.key && this.now() - prior.startedAt < 15 * 60_000 && !prior.lost) {
+      // Another conversation's finished recording waits its time to be saved before a new one replaces it.
+      if (prior && prior.owner !== caller.key && !prior.lost && this.now() < prior.endedAt! + RECORDING_SAVE_MS) {
         throw new DesktopError("recording_active", "Another conversation's recording waits to be saved; try again in a few minutes.", "no");
       }
       if (prior) await this.dropRecording(prior, deadline);
@@ -1189,20 +1293,24 @@ export class DesktopService {
       const temp = join(input.evidenceDir, `.desktop-recording-${randomBytes(6).toString("hex")}.part`);
       const maxSec = Math.min(600, Math.max(1, input.maxSec ?? 120));
       const started = await this.call<{ id: string; container: string; codec: string; mime: string }>("record.start", { display: screen.node, path: temp, max_ms: maxSec * 1000, fps: 30 }, deadline, { maxMs: 15_000 });
-      this.recording = { id: started.id, owner: caller.key, node: screen.node, temp, dir: input.evidenceDir, startedAt: this.now(), mime: started.mime, container: started.container, codec: started.codec, ended: null, lost: false, counter: this.lease.counter };
-      this.controllers.pin(caller.key, true);
+      const startedAt = this.now();
+      this.recording = { id: started.id, owner: caller.key, node: screen.node, temp, dir: input.evidenceDir, startedAt, maxMs: maxSec * 1000, mime: started.mime, container: started.container, codec: started.codec, ended: null, endedAt: null, lost: false, counter: this.lease.counter };
+      this.dropped.delete(caller.key);
+      this.controllers.pin(caller.key, startedAt + maxSec * 1000 + RECORDING_STOP_GRACE_MS + RECORDING_SAVE_MS);
       const index = session.screens.indexOf(screen);
       return { screen: this.screenName, id: started.id, display: displayId(screen, index), container: started.container, maxSec };
     });
   }
 
   async recordSave(caller: Caller, input: { name?: string }): Promise<SavedRecording> {
+    // A recording that was dropped needs no screen to say so.
+    if (this.dropped.has(caller.key) && this.recording?.owner !== caller.key) throw this.noRecording(caller.key, "");
     return this.runAs(caller, async (deadline) => {
       const recording = this.recording;
-      if (!recording || recording.owner !== caller.key) throw new DesktopError("no_recording", "You have no recording to save: start one first.", "no");
+      if (!recording || recording.owner !== caller.key) throw this.noRecording(caller.key, "You have no recording to save: start one first.");
       if (recording.lost) {
         this.recording = null;
-        this.controllers.pin(caller.key, false);
+        this.controllers.pin(caller.key, null);
         await rm(recording.temp, { force: true }).catch(() => undefined);
         throw new DesktopError("failed", "The recording was lost when the desktop helper stopped.", "no");
       }
@@ -1211,30 +1319,38 @@ export class DesktopService {
         stopped = await this.call<{ reason: string }>("record.stop", { id: recording.id }, deadline, { maxMs: 30_000 });
       } catch (error) {
         this.recording = null;
-        this.controllers.pin(caller.key, false);
+        this.controllers.pin(caller.key, null);
         await rm(recording.temp, { force: true }).catch(() => undefined);
         throw fromHelper(error);
       }
       this.recording = null;
-      this.controllers.pin(caller.key, false);
+      this.controllers.pin(caller.key, null);
       return this.finishRecording(recording, input.name, stopped.reason, deadline);
     });
   }
 
   async recordDiscard(caller: Caller): Promise<{ discarded: boolean }> {
+    if (this.dropped.has(caller.key) && this.recording?.owner !== caller.key) throw this.noRecording(caller.key, "");
     return this.runAs(caller, async (deadline) => {
       const recording = this.recording;
-      if (!recording || recording.owner !== caller.key) throw new DesktopError("no_recording", "You have no recording to discard.", "no");
+      if (!recording || recording.owner !== caller.key) throw this.noRecording(caller.key, "You have no recording to discard.");
       await this.dropRecording(recording, deadline);
       return { discarded: true };
     });
+  }
+
+  /** `no_recording`, saying why when the controller's recording was dropped. */
+  private noRecording(key: string, otherwise: string): DesktopError {
+    const why = this.dropped.get(key);
+    this.dropped.delete(key);
+    return new DesktopError("no_recording", why ?? otherwise, "no");
   }
 
   private async dropRecording(recording: RecordingState, deadline: Deadline): Promise<void> {
     if (!recording.lost) await this.call("record.discard", { id: recording.id }, deadline, { maxMs: 15_000 }).catch(() => undefined);
     await rm(recording.temp, { force: true }).catch(() => undefined);
     if (this.recording === recording) this.recording = null;
-    this.controllers.pin(recording.owner, false);
+    this.controllers.pin(recording.owner, null);
   }
 
   /** Checks the stopped recording by decoding it, then gives it its name without ever replacing a file. */
@@ -1323,13 +1439,14 @@ export class DesktopService {
     const caller: Caller = { key: `capture:${randomBytes(4).toString("hex")}`, label: "a capture", budgetMs: 30_000 };
     const started = await this.run(30_000, async (deadline) => {
       await this.guard(deadline, "look");
-      if (this.recording && !this.recording.ended && !this.recording.lost) throw new DesktopError("recording_active", "The screen is being recorded already.", "no");
+      if (this.recording && this.recording.endedAt === null) throw new DesktopError("recording_active", "The screen is being recorded already.", "no");
       const session = await this.ensureSession(deadline);
       const screen = this.pickScreen(session, input.display);
       await mkdir(input.evidenceDir, { recursive: true, mode: 0o700 });
       const temp = join(input.evidenceDir, `.desktop-recording-${randomBytes(6).toString("hex")}.part`);
-      const begun = await this.call<{ id: string; container: string; codec: string; mime: string }>("record.start", { display: screen.node, path: temp, max_ms: Math.ceil(input.seconds * 1000) + 5_000, fps: 30 }, deadline, { maxMs: 15_000 });
-      const state: RecordingState = { id: begun.id, owner: caller.key, node: screen.node, temp, dir: input.evidenceDir, startedAt: this.now(), mime: begun.mime, container: begun.container, codec: begun.codec, ended: null, lost: false, counter: this.lease.counter };
+      const maxMs = Math.ceil(input.seconds * 1000) + 5_000;
+      const begun = await this.call<{ id: string; container: string; codec: string; mime: string }>("record.start", { display: screen.node, path: temp, max_ms: maxMs, fps: 30 }, deadline, { maxMs: 15_000 });
+      const state: RecordingState = { id: begun.id, owner: caller.key, node: screen.node, temp, dir: input.evidenceDir, startedAt: this.now(), maxMs, mime: begun.mime, container: begun.container, codec: begun.codec, ended: null, endedAt: null, lost: false, counter: this.lease.counter };
       this.recording = state;
       return state;
     });
@@ -1452,8 +1569,10 @@ export class DesktopService {
     return this.recording?.owner === key;
   }
 
-  /** The end of a controller's work (a run ended): its claim, line place and recording go. */
+  /** The end of a controller's work (a run ended): a call of its going on is cancelled, and its claim, line place and recording go. */
   async release(key: string): Promise<void> {
+    if (this.current?.key === key) this.current.abort.abort();
+    this.dropped.delete(key);
     this.controllers.release(key);
     this.ledger.forget(key);
     const recording = this.recording;
@@ -1462,6 +1581,8 @@ export class DesktopService {
 
   async stop(): Promise<void> {
     if (this.stopped) return;
+    this.current?.abort.abort();
+    if (this.recordingTimer) clearTimeout(this.recordingTimer);
     const recording = this.recording;
     if (recording) await this.run(20_000, (deadline) => this.dropRecording(recording, deadline)).catch(() => undefined);
     this.stopped = true;

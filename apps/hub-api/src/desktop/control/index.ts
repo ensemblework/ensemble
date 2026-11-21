@@ -11,10 +11,11 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensembleDataHome } from "../../browser/paths.js";
+import { evidenceRoot } from "../../evidence/files.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
 import { HelperProcess, type HelperCommand } from "./helper-process.js";
 import { Desktops } from "./screens.js";
-import { DesktopService } from "./service.js";
+import { DesktopService, RECORDING_SAVE_MS, sweepRecordingParts } from "./service.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +79,12 @@ export function configureDesktop(options: typeof settings): void {
 /** Both screens' services. */
 export function desktops(): Desktops {
   if (shared) return shared;
+  // Recordings a stopped runtime never saved: older than the longest recording and its time to be saved.
+  void sweepRecordingParts(evidenceRoot(), 600_000 + RECORDING_SAVE_MS + 5 * 60_000)
+    .then((removed) => {
+      if (removed) settings.log?.(`desktop: removed ${removed} unsaved recording(s) a stopped runtime left`);
+    })
+    .catch(() => undefined);
   const owner = new DesktopService({ helper: new HelperProcess({ spawn: () => helperCommand(), log: settings.log }), captureDir: join(desktopDataDir(), "captures"), log: settings.log, secretValues: settings.secretValues });
   const idle = agentScreenIdleMs();
   shared = new Desktops(owner, () =>
