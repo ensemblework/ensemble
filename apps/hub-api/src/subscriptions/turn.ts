@@ -186,8 +186,11 @@ export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurn
   return { prompt: history ? `${history}\n\n---\n\n${input.prompt}` : input.prompt };
 }
 
-/** `ownTools`: the computer that ran the turn kept the agent's own tools (one too old for them runs it with Ensemble's only). */
-export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise<AgentTurnResult & { computer: string; computerId?: string; ownTools: boolean }> {
+/**
+ * `ownTools`: the computer that ran the turn kept the agent's own tools (one too old for them runs it with Ensemble's only).
+ * `sessionKept`: it ran in the chat's session there, so another message of the same turn can go on in it (assistant/agent.ts).
+ */
+export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise<AgentTurnResult & { computer: string; computerId?: string; ownTools: boolean; sessionKept: boolean }> {
   const label = SUBSCRIPTION_INFO[input.agent].label;
   const computer = await pickComputer(input.prisma ?? defaultPrisma, input.userId, input.agent, input.settings.models.computer ?? null);
   const turn = turnSession(computer, input);
@@ -259,7 +262,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
       output: result.text,
       meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}), ...(result.restart ? { restart: result.restart } : {}) },
     });
-    return { ...result, computer: computer.name, ...(computer.local ? {} : { computerId: computer.id }), ownTools };
+    return { ...result, computer: computer.name, ...(computer.local ? {} : { computerId: computer.id }), ownTools, sessionKept: Boolean(turn.session) };
   } catch (error) {
     logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
     if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);

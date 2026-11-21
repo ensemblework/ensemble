@@ -168,7 +168,8 @@ test("a DM turn keeps its trace, its reply names the turn, its routing is a deci
 
   const reply = (await read(mira, room.id)).find((row) => row.authorNodeId === node.id)!;
   assert.equal(reply.data.turnId, turn.id, "the reply opens its turn's trace");
-  assert.deepEqual(trace.report, { kind: "reply", chars: "Added “Trace the README”.".length, held: 0, messages: [{ id: reply.id, kind: "text" }] });
+  assert.deepEqual(trace.report, { kind: "reply", outcome: "done", chars: "Added “Trace the README”.".length, held: 0, messages: [{ id: reply.id, kind: "text" }], artifacts: [], verified: true });
+  assert.equal((trace.verification as { passed: boolean }).passed, true, "the reply it ended with passed the answer check");
   assert.ok(!JSON.stringify(trace).includes("Trace the README") && !JSON.stringify(trace).includes("trace the README"), "sizes and names, never the words or the tool's input");
 
   const { DEFAULT_NODE_HEURISTICS, heuristicsVersion } = await import("./heuristics.js");
@@ -284,6 +285,135 @@ test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's
   assert.deepEqual(trace.loop, { kind: "subscription", agent: "copilot-cli", computer: "Akash's laptop", computerId: laptop.id, session: { resumed: false, restart: "gone" }, outside: 1, calls: 1, ownTools: false }, "a computer before assistantTurns 5 ran it with Ensemble's tools only");
   assert.ok((trace.toolCount ?? 0) > 10 && trace.toolSchemaHash, "the tools its agent was given");
   assert.ok(!JSON.stringify(trace).includes("No conversation found"), "the agent's own words stay out");
+});
+
+type PlanSpec = { prompt: string; session?: { key: string; position?: number } | null };
+type PlanAnswer = { tools?: Array<{ name: string; input: Record<string, unknown> }>; text: string; resumed?: boolean };
+
+/** A node on its owner's GitHub Copilot plan, on a paired computer that keeps the chat's session (`assistantTurns` 3). */
+async function onPlan(name: string) {
+  const owner = await person(name);
+  const key = await h.asToken(owner, "device");
+  const copilot = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true, checkedAt: new Date().toISOString() };
+  const laptop = await h.prisma.device.create({ data: { userId: owner.id, name: `${name}'s laptop`, platform: "linux", appVersion: "cli-0.8.5", tokenId: key.id, lastSeenAt: new Date(), capabilities: { assistantTurns: 3, agents: [copilot] } } });
+  const { node, room } = await createNode(owner, "assistant");
+  await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
+  return { owner, key, laptop, node, room };
+}
+
+/** The owner's agent on that computer: each run the web hands it (in order) calls the tools `answer` names, then answers. */
+function agentOn(plan: Awaited<ReturnType<typeof onPlan>>, answer: (spec: PlanSpec, index: number) => PlanAnswer) {
+  const specs: PlanSpec[] = [];
+  const failures: unknown[] = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${plan.laptop.id}` || frame.event !== "assistant.turn") return;
+    const id = String((frame.data as { id?: unknown }).id);
+    setTimeout(
+      () =>
+        void (async () => {
+          const spec = (json(await plan.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })) as { spec: PlanSpec }).spec;
+          specs.push(spec);
+          const said = answer(spec, specs.length - 1);
+          for (const tool of said.tools ?? []) assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/tool`, payload: tool })).statusCode, 200);
+          const result = { text: said.text, model: "gpt-6.1-sol", tokensIn: 10, tokensOut: 2, costUsd: null, resumed: said.resumed ?? specs.length > 1 };
+          assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result } })).statusCode, 200);
+        })().catch((error: unknown) => failures.push(error)),
+      5,
+    );
+  });
+  return { specs, failures, stop };
+}
+
+test("on its owner's plan, an agent that did the work and wrote nothing is asked once in the same session; still nothing, and the reply says what it did, never an error", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Akash");
+  let agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "Added “Pay rent” to your tasks." } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Pay rent" }] } }], text: "", resumed: false }));
+  try {
+    await say(plan.owner, plan.room.id, "add a task to pay rent");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "the turn, then one more message in its session");
+  assert.equal(agent.specs[1]!.prompt, REPLY_PROMPT);
+  assert.equal(agent.specs[1]!.session?.key, agent.specs[0]!.session?.key, "the same native session");
+  assert.equal(agent.specs[0]!.session?.position, 0);
+  assert.equal(agent.specs[1]!.session?.position, undefined, "a message within the turn does not move the chat's place");
+  let rows = await read(plan.owner, plan.room.id);
+  assert.equal(rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)?.body, "Added “Pay rent” to your tasks.");
+  assert.ok(!rows.some((row) => row.kind === "error"), "no error in the chat");
+  let turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+  assert.equal(turn.outcome, "done");
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["reply"]);
+  assert.equal((turn.trace!.report as { emptyReply?: boolean }).emptyReply, undefined);
+
+  // Asked again it still writes nothing: the reply is what its tools did, and the turn is done.
+  agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "" } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Water the plants" }] } }], text: "" }));
+  try {
+    await say(plan.owner, plan.room.id, "and one to water the plants");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2);
+  rows = await read(plan.owner, plan.room.id);
+  const reply = rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.match(reply.body, /^Done: .*Water the plants/);
+  assert.equal(reply.data.tools[0].name, "hub_create_tasks");
+  assert.ok(!rows.some((row) => row.kind === "error"), "still no error in the chat");
+  turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+  assert.deepEqual([turn.status, turn.outcome, turn.error], ["done", "done", null]);
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.kind, report.outcome, report.emptyReply, report.verified], ["reply", "done", true, null]);
+  assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
+});
+
+test("on its owner's plan, a reply that says a screenshot is attached when none reached the chat goes back once; still false, the claim goes and a plain note says so", async () => {
+  const plan = await onPlan("Mira");
+  const agent = agentOn(plan, (spec, index) => (index === 0 ? { text: "Here is the screenshot of the status page." } : { text: spec.prompt.startsWith("You said the screenshot is attached") ? "Here's the screenshot." : "?" }));
+  try {
+    await say(plan.owner, plan.room.id, "send me a screenshot of the status page");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "one round to attach it or correct the reply");
+  assert.equal(agent.specs[1]!.prompt, "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "No screenshot was attached.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.outcome, report.falseClaims, report.artifacts], ["partial", 1, []]);
+  assert.equal(turn.trace!.verification, null, "no checklist model in this test: the answer check is skipped on the owner's plan");
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
+});
+
+test("on its owner's plan, the answer check runs after the turn when a checklist model is there: what is missing goes back to the same session, and its rounds are in the trace", async () => {
+  const { CHECKLIST_PROMPT } = await import("./deliverables.js");
+  process.env.ENSEMBLE_NODE_CHECKLIST_MODEL = "on";
+  const plan = await onPlan("Ravi");
+  script = (turn) => (turn.system === CHECKLIST_PROMPT ? { text: '{"checks":[{"kind":"screenshots","count":2}]}' } : { text: "ok" });
+  const agent = agentOn(plan, (spec) => (spec.prompt.startsWith("Not done yet:") ? { text: "I could not take the screenshots: the browser on this computer is off." } : { text: "Here are the two pages." }));
+  try {
+    await say(plan.owner, plan.room.id, "send me 2 screenshots: example.com and example.org");
+  } finally {
+    agent.stop();
+    process.env.ENSEMBLE_NODE_CHECKLIST_MODEL = "off";
+    script = () => ({ text: "ok" });
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(seen.filter((row) => row.system === CHECKLIST_PROMPT).length, 1, "one checklist call, to the fast model");
+  assert.equal(agent.specs.length, 2);
+  assert.match(agent.specs[1]!.prompt, /^Not done yet: 2 screenshots were asked for \(example\.com, example\.org\) and none will show with your reply\./);
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "I could not take the screenshots: the browser on this computer is off.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const verification = turn.trace!.verification as { checks: string[]; rounds: Array<{ round: number; problems: string | null }>; passed: boolean };
+  assert.deepEqual(verification.checks, ["screenshots"]);
+  assert.deepEqual(verification.rounds.map((row) => [row.round, Boolean(row.problems)]), [[0, true], [1, false]], "sent back once, then it passed");
+  assert.equal(verification.passed, true);
+  assert.equal((turn.trace!.report as { verified?: boolean }).verified, true);
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["check"]);
 });
 
 /** A paired computer that shares the "ensemble" folder and runs Claude Code and Codex, with Mira's default run profile on it. */

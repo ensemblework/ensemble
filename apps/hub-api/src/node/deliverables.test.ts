@@ -68,7 +68,7 @@ test("the answer check: counts, places, claims, and a shortfall the reply explai
   assert.deepEqual(problemsWith(place, evidence({ text: "Prices.", calls: [{ call: call("browser_shop", "ok", { query: "PS5", location: "Wisconsin" }), result: {} }] })), []);
   assert.deepEqual(problemsWith(place, evidence({ text: "Prices.", calls: [{ call: call("hub_web_search", "ok", { query: "PS5 price wisconsin" }), result: {} }] })), []);
   // Claims need tool results behind them, whatever the checklist.
-  assert.match(problemsWith([], evidence({ text: "I've attached the screenshot." }))[0]!, /says something is attached or shown/);
+  assert.deepEqual(problemsWith([], evidence({ text: "I've attached the screenshot." })), [], "a claim of something attached is the delivery check's (delivery-claims.ts), asked once on its own");
   assert.deepEqual(problemsWith([], evidence({ text: "The PDF you attached says 42." })), [], "the owner's own attachment is not a claim");
   assert.match(problemsWith([], evidence({ text: "Added it to your Ensemble Files." }))[0]!, /no hub_save_file call saved it/);
   assert.deepEqual(problemsWith([], evidence({ text: "Added it to your Ensemble Files.", savedFiles: 1 })), []);

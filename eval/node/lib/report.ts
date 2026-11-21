@@ -5,8 +5,8 @@
  */
 import type { CleanupEntry, RunResult, Saved } from "./types.js";
 
-/** A turn that failed because the agent ended without a reply. */
-export const NO_ANSWER = /returned no answer/i;
+/** A turn that failed because the agent ended without a reply or anything done (a turn that did work answers from its tool log); result files may hold the earlier wording. */
+export const NO_ANSWER = /returned no answer|ended its turn without replying/i;
 
 /** A result with its no-answer and error-message counts, read from its errors when an older file lacks them. */
 export function withMetrics(result: RunResult): RunResult {

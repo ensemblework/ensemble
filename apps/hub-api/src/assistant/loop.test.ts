@@ -1,8 +1,9 @@
 /**
  * Ensemble's own loop with a scripted model (docs/11, Turn limits): reads that run together, writes in
  * order, long results kept for read_tool_output, runaway detection, step budgets by model class and the
- * checkpoint of an uncapped turn, compaction, the history budget, and model calls asked again after a
- * failure the runtime does not retry itself.
+ * checkpoint of an uncapped turn, compaction, the history budget, model calls asked again after a
+ * failure the runtime does not retry itself, a turn that ends without words, and a reply's claims of
+ * what reached the chat.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -20,6 +21,7 @@ import { resetLoopConfigCache } from "./loop-config.js";
 import { readableText } from "./tool-output.js";
 import { CHARS_PER_TOKEN, compactMessages, estimateTokens, HISTORY_LEFT_OUT } from "./compaction.js";
 import { resultDigest, RunawayGuard } from "./runaway.js";
+import { checkDelivery, deliveredWith } from "../node/delivery-claims.js";
 
 type Call = { name: string; input?: Record<string, unknown> };
 type Reply = { calls?: Call[]; text?: string } | Error;
@@ -495,4 +497,62 @@ test("progress is what calls return: the same call with the same result repeats,
   assert.deepEqual(round(), { kind: "nudge", tool: "browser_click, browser_snapshot", times: 3, round: 2 });
   assert.equal(round(), null);
   assert.deepEqual(round(), { kind: "stop", why: "repeat", tool: "browser_click, browser_snapshot", times: 5, round: 2 });
+});
+
+test("a model that acts and then says nothing is asked once for its reply; still nothing, and the reply says what its tools did", async () => {
+  const save = defineTool({ name: "save_note", area: "tasks", description: "Save a note.", input: z.object({ title: z.string() }), isWrite: true, risk: "low", run: async (_ctx, input) => toolOk(`Created note “${input.title}”.`) });
+  const look = read("read_inbox", async () => toolOk("Read 3 emails.", { count: 3 }));
+  let seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }, { name: "save_note", input: { title: "Launch plan" } }] } : { text: "" }));
+  const result = await turn({ provider: "openai", tools: [look, save] });
+  assert.equal(seen.length, 3, "the work, the empty answer, and the one request for the reply");
+  assert.ok(seen[2]!.messages.some((message) => message.role === "user" && /you wrote nothing/.test(String(message.content))));
+  assert.equal(result.content, "Done: created note “Launch plan”.", "what it did, in plain words, never an error");
+  assert.equal(result.emptyReply, true);
+  assert.equal(result.failed, undefined);
+
+  // Only lookups: what it looked at.
+  seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }] } : { text: "" }));
+  assert.equal((await turn({ provider: "openai", tools: [look] })).content, "Looked at: read 3 emails.");
+
+  // Asked again, the model answers: that is the reply.
+  seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }] } : index === 1 ? { text: "" } : { text: "You have 3 new emails." }));
+  const answered = await turn({ provider: "openai", tools: [look] });
+  assert.equal(answered.content, "You have 3 new emails.");
+  assert.equal(answered.emptyReply, undefined);
+});
+
+test("a model that does nothing and says nothing fails, in plain words", async () => {
+  script(() => ({ text: "" }));
+  await assert.rejects(turn({ provider: "openai", tools: [] }), (error: Error) => error.message === "The model ended its turn without replying or doing anything. Try again, or choose another model.");
+});
+
+test("a reply that says something reached the chat when nothing did goes back once; still claimed, the claim is taken out with a plain note", async () => {
+  const look = read("read_page", async () => toolOk("Opened the status page.", { title: "Status" }));
+  const ask = (reply: (seen: Seen, index: number) => Reply) => {
+    const seen = script(reply);
+    const run = runAssistantTurn({
+      app: fakeApp(),
+      userId: "loop-user",
+      conversationId: "loop-conversation",
+      message: "Send me a screenshot of the status page.",
+      settings: DEFAULT_SETTINGS,
+      model: "test-model",
+      provider: "openai",
+      extraTools: [look],
+      claims: ({ text }) => checkDelivery(text, deliveredWith([], text)),
+      emit: () => undefined,
+    });
+    return { seen, run };
+  };
+  const stubborn = ask((_current, index) => (index === 0 ? { calls: [{ name: "read_page" }] } : { text: "Here is the screenshot. The page shows 3 services up." }));
+  const result = await stubborn.run;
+  assert.equal(stubborn.seen.length, 3, "the work, the claim, and one round to fix it");
+  assert.equal(String(stubborn.seen[2]!.messages.at(-1)!.content), "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  assert.equal(result.content, "The page shows 3 services up.\n\nNo screenshot was attached.");
+  assert.equal(result.falseClaims, 1);
+
+  const fixed = ask((_current, index) => (index === 0 ? { calls: [{ name: "read_page" }] } : index === 1 ? { text: "Here is the screenshot." } : { text: "I could not take a screenshot: no browser here. The page shows 3 services up." }));
+  const corrected = await fixed.run;
+  assert.equal(corrected.content, "I could not take a screenshot: no browser here. The page shows 3 services up.");
+  assert.equal(corrected.falseClaims, undefined);
 });

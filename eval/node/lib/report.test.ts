@@ -71,11 +71,11 @@ test("the report lists failed checks, false claims, unanswered cards and the cle
 });
 
 test("no-answer turns and error messages come from the metrics, or from the errors of an older file", () => {
-  const older = run("a", { errors: ["turn of @assistant failed: The model returned no answer. Recorded actions are available separately.", "error message in the chat: The model returned no answer.", "turn of @x failed: Rate limited."] });
-  assert.deepEqual([withMetrics(older).metrics.noAnswerTurns, withMetrics(older).metrics.errorMessages], [1, 1]);
+  const older = run("a", { errors: ["turn of @assistant failed: The model returned no answer. Recorded actions are available separately.", "error message in the chat: The model returned no answer.", "turn of @x failed: Rate limited.", "turn of @y failed: The model ended its turn without replying or doing anything. Try again, or choose another model."] });
+  assert.deepEqual([withMetrics(older).metrics.noAnswerTurns, withMetrics(older).metrics.errorMessages], [2, 1]);
   const newer = run("b", { metrics: { ...run("b").metrics, noAnswerTurns: 2, errorMessages: 0 } });
   assert.deepEqual([withMetrics(newer).metrics.noAnswerTurns, withMetrics(newer).metrics.errorMessages], [2, 0]);
-  assert.match(summaryTable([older, newer]).split("\n").at(-1)!, /\| 0 \| 3 \/ 1 \|/);
+  assert.match(summaryTable([older, newer]).split("\n").at(-1)!, /\| 0 \| 4 \/ 1 \|/);
 });
 
 test("the suite table has a row per suite, an overall row, and input tokens per task", () => {

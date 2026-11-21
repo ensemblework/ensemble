@@ -87,7 +87,7 @@ async function write(store: Store): Promise<void> {
 export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number };
 
 /**
- * The session to resume for this chat: the same agent, where the chat was when it last ran, and not
+ * The session to resume for this chat: the same agent, the chat not past where it left it, and not
  * past `ROTATE_MESSAGES`. `perTurn`: the agent takes the instructions with every turn (Claude Code's
  * system prompt, Codex's base instructions). For the others, a session whose instructions the store
  * has as text is resumed with an update (`instructionsUpdate`); an older entry with only a hash, on a
@@ -100,7 +100,8 @@ export async function findSession(key: string, agent: SubscriptionProvider, inst
 /**
  * Why the chat's session of this agent is not resumed (workspace/engines/session-restart.ts): unused for its
  * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), or
- * an older entry's instructions changed (`instructions`).
+ * an older entry's instructions changed (`instructions`). A session ahead of the chat is resumed: it took an
+ * exchange the chat keeps as failed (the agent answered, and the turn failed after), so it misses nothing.
  */
 export type Declined = "expired" | "moved" | "rotated" | "instructions";
 
@@ -111,7 +112,7 @@ export function lookSession(key: string, agent: SubscriptionProvider, instructio
     if (!entry || !entry.id || entry.agent !== agent) return { found: null };
     if (Date.now() - entry.at >= keepMs(entry)) return { found: null, declined: "expired" };
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
-    if (position !== undefined && entry.next !== undefined && entry.next !== position) return { found: null, declined: "moved" };
+    if (position !== undefined && entry.next !== undefined && position > entry.next) return { found: null, declined: "moved" };
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return { found: null, declined: "rotated" };
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return { found: null, declined: "instructions" };
     return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) } };
@@ -180,13 +181,15 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
     const retired = sameAgent ? [...(before?.retired ?? []), ...(retiring ? [before!.id] : [])].filter((one) => one && one !== id) : [];
     const continued = before && before.id === id;
     const from = continued ? before.from : opts.next === undefined ? undefined : Math.max(0, opts.next - 2);
+    // A message that went on in the same session within one turn (assistant/agent.ts) comes without a place in the chat: the session keeps its own.
+    const next = opts.next ?? (continued ? before.next : undefined);
     const dir = opts.folder ? undefined : (opts.dir ?? before?.dir);
     store[key] = {
       agent,
       id,
       instructions: instructionsHash(instructions),
       at: now,
-      ...(opts.next === undefined ? {} : { next: opts.next }),
+      ...(next === undefined ? {} : { next }),
       ...(from === undefined ? {} : { from }),
       // An agent that keeps the first message's instructions: the text, to send only what changes.
       ...(opts.perTurn ? {} : { text: instructions }),
@@ -208,15 +211,16 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
  * Notes how many prompts the chat's session holds after a turn that failed or was stopped there (`saveSession`
  * notes them after one that answered): a message the agent took before then is in the session all the same, and
  * the next turn reads only what comes after it (outside.ts). Null: the count is not known, so the next turn
- * brings nothing in. Only while the chat still has that session; the chat's position stays where it was.
+ * brings nothing in. Only while the chat still has that session. The chat's position there stays where it was,
+ * unless `next` moves it: a stopped turn's message and its "Stopped." stay in the chat (a failed one's do not).
  */
-export function notePrompts(key: string, id: string, prompts: number | null): Promise<void> {
+export function notePrompts(key: string, id: string, prompts: number | null, next?: number): Promise<void> {
   return serial(async () => {
     const store = await read();
     const entry = store[key];
-    if (!entry?.id || entry.id !== id || entry.prompts === (prompts ?? undefined)) return;
+    if (!entry?.id || entry.id !== id || (entry.prompts === (prompts ?? undefined) && (next === undefined || entry.next === next))) return;
     const { prompts: _before, ...rest } = entry;
-    store[key] = typeof prompts === "number" ? { ...rest, prompts } : rest;
+    store[key] = { ...(typeof prompts === "number" ? { ...rest, prompts } : rest), ...(next === undefined ? {} : { next }) };
     await write(store);
   });
 }

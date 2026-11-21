@@ -1018,9 +1018,9 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
  * count their prompts as they go and carry the count on what they throw (`withPrompts`); Claude Code's and Copilot's
  * transcripts are read. A turn whose message never went out (nothing carried, or the count the session had as the
  * turn began, `began`) leaves the count as it was, so what the person said in the agent's app before it still comes
- * in with the next turn. Never fails.
+ * in with the next turn. `next`: a stopped turn's place in the chat, which the session takes too. Never fails.
  */
-async function notePromptsAfter(input: { key: string; agent: SubscriptionProvider; session: string; folder: string; error: unknown; began: number | null }): Promise<void> {
+async function notePromptsAfter(input: { key: string; agent: SubscriptionProvider; session: string; folder: string; error: unknown; began: number | null; next?: number }): Promise<void> {
   let prompts: number | null;
   if (input.agent === "claude-code" || input.agent === "copilot-cli") {
     prompts = await sessionPrompts(input.agent, input.session, input.folder).catch(() => null);
@@ -1030,7 +1030,7 @@ async function notePromptsAfter(input: { key: string; agent: SubscriptionProvide
     if (!counted) return;
     prompts = counted.session === input.session ? counted.prompts : null;
   }
-  await notePrompts(input.key, input.session, prompts).catch(() => undefined);
+  await notePrompts(input.key, input.session, prompts, input.next).catch(() => undefined);
 }
 
 /** `later`: takes the note a turn that failed or was stopped in the chat's session starts (`notePromptsAfter`). */
@@ -1148,7 +1148,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
       // The chat's session went on but the turn failed or was stopped: its prompts are noted for the next turn, once
       // this error has gone back. A session the agent could not reopen, or an agent that keeps none, leaves nothing to note.
       if (key && earlier && !(error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported)) {
-        later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began }).catch(() => undefined));
+        // A stopped turn stays in the chat with its "Stopped.": the session's place in the chat moves with it (a failed turn's does not).
+        const next = io.signal.aborted && position !== undefined ? { next: position + 2 } : {};
+        later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began, ...next }).catch(() => undefined));
       }
       if (io.signal.aborted || !key) throw error;
       if (error instanceof SessionGone || error instanceof SessionBusy) {
