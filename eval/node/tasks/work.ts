@@ -148,9 +148,9 @@ test("parses DD/MM/YYYY", () => {
 });
 `;
 
-/** The branches of a bare repository, with their commits. */
+/** The branches of a bare repository, with their commits. Named with --git-dir: git may refuse to find a bare repository from its folder (safe.bareRepository). */
 async function branches(bare: string): Promise<Record<string, string>> {
-  const listed = await run("git", ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads"], { cwd: bare, timeoutMs: 30_000 });
+  const listed = await run("git", ["--git-dir", bare, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads"], { cwd: bare, timeoutMs: 30_000 });
   return Object.fromEntries(listed.output.split("\n").map((line) => line.trim().split(" ")).filter((parts) => parts.length === 2) as Array<[string, string]>);
 }
 
@@ -175,6 +175,7 @@ const assignVerify: Task = {
     ctx.data.bare = bare;
     ctx.data.work = work;
     ctx.data.main = (await branches(bare)).main ?? null;
+    if (!ctx.data.main) throw new Error("The remote has no main branch after the first push.");
     ctx.data.task = await seedTask(ctx, { title: "Fix parseDate in the parsers repo", notes: "parseDate swaps the day and the month. Fix it on a new branch with the tests passing, and push that branch to origin. Done only when the branch is pushed." });
     // This task's runs may push: the eval's run profile, with git unlimited.
     const { saveSettings } = await import("../../../apps/hub-api/src/lib/settings.js");
