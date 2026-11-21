@@ -99,7 +99,15 @@ export function appsText(lists: readonly AppsResult[]): string {
 
 export function openText(opened: OpenResult): string {
   const done = Object.entries(opened.stages).filter(([, ok]) => ok).map(([stage]) => stage);
-  const state = opened.stages.window ? (opened.focused ? "is open and in front" : "is open but not in front (click its window, or look first)") : opened.stages.accepted ? "was started but shows no window yet (look again in a moment)" : "did not start";
+  const state = opened.stages.window
+    ? opened.focused
+      ? "is open and in front"
+      : opened.via === "background"
+        ? "is open behind your owner's windows (read it with desktop_observe app and screenshot false, and act on its element ids)"
+        : "is open but not in front (click its window, or look first)"
+    : opened.stages.accepted
+      ? "was started but shows no window yet (look again in a moment)"
+      : "did not start";
   return `${opened.app.name} (${opened.app.id}) ${state} on ${SCREEN_WORDS[opened.screen]}. Reached: ${done.join(", ") || "nothing"}. Look with desktop_observe before acting.`;
 }
 

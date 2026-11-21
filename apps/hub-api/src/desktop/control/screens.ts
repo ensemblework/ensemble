@@ -3,7 +3,8 @@
  * a private headless desktop of the agent's own that nobody sees unless they watch it. Each has its own
  * service and helper. A call names its screen, or works where its capture id was taken (or where its
  * recording is), or where its controller last worked, else on the agent screen; it never moves to the
- * other screen by itself. Asking about the agent screen never starts it.
+ * other screen by itself. Asking about the agent screen never starts it. Where there is no agent screen
+ * (macOS), calls work on the owner's screen unless they name the agent screen, which then answers why not.
  */
 import type { AgentScreenReadiness } from "./readiness.js";
 import type { AppsResult, DesktopService, DesktopStatus, ScreenName } from "./service.js";
@@ -17,6 +18,8 @@ export class Desktops {
   constructor(
     readonly owner: DesktopService,
     private readonly makeAgent: () => DesktopService,
+    /** Where a call works when nothing else says: the agent screen, or the owner's where there is none. */
+    private readonly fallback: ScreenName = "agent",
   ) {}
 
   /** The agent screen's service, made on first use (its helper starts the screen on its first call). */
@@ -34,7 +37,7 @@ export class Desktops {
     return screen === "owner" ? this.owner : this.agent();
   }
 
-  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen. */
+  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen (the owner's on macOS). */
   pick(key: string, hints: { screen?: ScreenName; captureId?: string; recording?: boolean } = {}): ScreenName {
     if (hints.screen) return hints.screen;
     if (hints.captureId) {
@@ -45,7 +48,7 @@ export class Desktops {
       if (this.owner.hasRecording(key)) return "owner";
       if (this.agentService?.hasRecording(key)) return "agent";
     }
-    return this.last.get(key) ?? "agent";
+    return this.last.get(key) ?? this.fallback;
   }
 
   remember(key: string, screen: ScreenName): void {

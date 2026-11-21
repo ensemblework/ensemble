@@ -20,15 +20,20 @@ import { DESKTOP_TOOLS, desktopTimeoutMs } from "./tool-specs.js";
 
 const computer = z.string().max(120).optional().describe("The computer's name, when your owner has more than one.");
 
-/** The computer must answer desktop calls (`capabilities.desktop`) and, but for desktop_status, have a screen ready for them. */
+/**
+ * The computer must answer desktop calls (`capabilities.desktop`) and, but for desktop_status, have a screen
+ * ready for them, or (macOS) be able to read and press elements in the background.
+ */
 export function requireDesktop(device: Pick<Device, "name" | "capabilities">, tool = "desktop_observe"): void {
-  const caps = (device.capabilities ?? {}) as { desktop?: unknown; desktopReadiness?: { ready?: unknown; reason?: unknown; agentScreen?: { ready?: unknown; reason?: unknown } } | null };
+  const caps = (device.capabilities ?? {}) as { desktop?: unknown; desktopReadiness?: { ready?: unknown; reason?: unknown; background?: unknown; agentScreen?: { ready?: unknown; reason?: unknown } } | null };
   if (!(typeof caps.desktop === "number" && caps.desktop >= DESKTOP_API)) {
-    throw new ToolBlockedError(`Update Ensemble on ${device.name} to control its desktop: it is too old for it, or not on Linux.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use the browser tools and computer_run.");
+    // A system without desktop control in this version (Windows) says so in its readiness.
+    if (typeof caps.desktopReadiness?.reason === "string") throw new ToolBlockedError(`${device.name} cannot control its desktop: ${caps.desktopReadiness.reason}`, "Tell your owner in one line if they asked for it; use the browser tools and computer_run instead.");
+    throw new ToolBlockedError(`Update Ensemble on ${device.name} to control its desktop: it is too old for it, or not on Linux or macOS.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use the browser tools and computer_run.");
   }
   const ready = caps.desktopReadiness;
   // Either screen will do: the agent screen works without the owner's session, the owner's without GNOME Shell's headless mode.
-  if (tool !== "desktop_status" && ready && ready.ready === false && ready.agentScreen?.ready !== true && typeof ready.reason === "string") {
+  if (tool !== "desktop_status" && ready && ready.ready === false && ready.agentScreen?.ready !== true && ready.background !== true && typeof ready.reason === "string") {
     const agent = typeof ready.agentScreen?.reason === "string" ? ` The agent screen: ${ready.agentScreen.reason}` : "";
     throw new ToolBlockedError(`${device.name} cannot control its desktop yet: ${ready.reason}${agent}`, "Tell your owner in one line what it needs.");
   }

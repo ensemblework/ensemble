@@ -175,8 +175,8 @@ export async function computeCapabilities(probe: CapabilityProbe): Promise<Captu
     : tui
       ? { screenshot: true, video: false, tui: true, reason: "A terminal is captured as its screen (full-screen programs such as htop too) or its transcript, not as video." }
       : { screenshot: true, video: false, tui: false, reason: probe.platform === "win32" ? "A terminal is captured as its transcript (HTML or an image): full-screen programs need a pseudo-terminal, which Windows does not give Ensemble yet." : "A terminal is captured as its transcript (HTML or an image): full-screen programs need `script` (util-linux), which is not installed." };
-  const notHere: Availability = { screenshot: false, video: false, reason: "Capturing your real screen works on Linux, through the desktop portal." };
-  const desktop: Availability = probe.platform === "linux" && probe.desktop ? await probe.desktop().catch(() => ({ ...notHere, reason: "The desktop helper could not be checked." })) : notHere;
+  const notHere: Availability = { screenshot: false, video: false, reason: "Capturing your real screen works on Linux (through the desktop portal) and on macOS (in the Ensemble app)." };
+  const desktop: Availability = (probe.platform === "linux" || probe.platform === "darwin") && probe.desktop ? await probe.desktop().catch(() => ({ ...notHere, reason: "The desktop helper could not be checked." })) : notHere;
 
   return {
     platform: platformName(probe.platform),

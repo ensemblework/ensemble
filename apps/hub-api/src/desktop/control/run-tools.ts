@@ -14,7 +14,7 @@ import { inScope, savedSecretValues, secretScopeOf } from "../../lib/run-secrets
 import { allowOrRefuse, type JobContext } from "../../workspace/tools.js";
 import { secretFor } from "./secrets.js";
 import { withDesktopImages } from "./images.js";
-import { desktops, UNSUPPORTED_HERE } from "./index.js";
+import { desktops, desktopSystem, UNSUPPORTED_HERE, WINDOWS_UNSUPPORTED } from "./index.js";
 import { desktopReadiness } from "./readiness.js";
 import { GATE_WORDS } from "./sensitive.js";
 import { DesktopError, type Caller, type GateAnswer, type GateApp, type Observation, type ScreenName } from "./service.js";
@@ -24,9 +24,9 @@ import { DESKTOP_TOOLS, desktopTimeoutMs, isDesktopTool, type DesktopStep } from
 export const DESKTOP_RUN_TOOLS: readonly string[] = DESKTOP_TOOLS.map((tool) => tool.name);
 export { isDesktopTool };
 
-/** What a run's MCP server lists: the desktop tools on Linux, nothing elsewhere. */
+/** What a run's MCP server lists: the desktop tools on Linux and macOS, nothing elsewhere. */
 export function desktopToolDefinitions(platform: string = process.platform): Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> {
-  if (platform !== "linux") return [];
+  if (!desktopSystem(platform)) return [];
   return DESKTOP_TOOLS.map((spec) => ({ name: spec.name, description: spec.description, inputSchema: inputSchema(spec) }));
 }
 
@@ -38,7 +38,7 @@ const withImage = (text: string, observation: Observation | null | undefined) =>
 export async function runRunDesktopTool(ctx: JobContext, name: string, raw: unknown): Promise<{ ok: boolean; text: string }> {
   const spec = DESKTOP_TOOLS.find((item) => item.name === name);
   if (!spec) return { ok: false, text: `Unknown desktop tool ${name}.` };
-  if (process.platform !== "linux") return { ok: false, text: UNSUPPORTED_HERE };
+  if (!desktopSystem()) return { ok: false, text: process.platform === "win32" ? WINDOWS_UNSUPPORTED : UNSUPPORTED_HERE };
   const parsed = (spec.input as z.ZodTypeAny).safeParse(raw ?? {});
   if (!parsed.success) return { ok: false, text: parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ") };
   const input = parsed.data as Record<string, unknown>;

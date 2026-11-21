@@ -6,7 +6,7 @@
  */
 import { CaptureError, type MediaFile } from "../../capture/media.js";
 import type { DesktopCapture } from "../../capture/service.js";
-import { desktopService } from "./index.js";
+import { desktopService, desktopSystem } from "./index.js";
 import { DesktopError } from "./service.js";
 
 function captureError(error: unknown): unknown {
@@ -16,7 +16,7 @@ function captureError(error: unknown): unknown {
 }
 
 export function desktopCapture(): DesktopCapture | null {
-  if (process.platform !== "linux") return null;
+  if (!desktopSystem()) return null;
   return {
     async screenshot(evidenceDir: string, name?: string): Promise<MediaFile> {
       try {

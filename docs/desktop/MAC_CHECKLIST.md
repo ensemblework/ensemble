@@ -49,6 +49,20 @@ These steps pair an app kept local only from an earlier version; an app with an 
 
 - [ ] **Removal.** Signing out or `ensemble runner uninstall` ends remote access. With a packaged app, deleting its executable is noticed by a surviving runtime on its next heartbeat.
 
+## Desktop control
+
+Run these with the app's own runtime: when `ensemble runner status` says a runner is running, stop it (`ensemble runner stop`) and reopen the app ([25 §11.9](../25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#119-macos)).
+
+- [ ] **Driver.** `Ensemble.app/Contents/Resources/sidecar/bin/cua-driver` exists, with `cua-driver.LICENSE` beside it.
+- [ ] **Permissions off.** With Accessibility and Screen & System Audio Recording off for Ensemble, a node's `desktop_status` names each, with its System Settings › Privacy & Security fix, and no macOS dialog appears.
+- [ ] **Accessibility.** Turn on Ensemble under Accessibility (add it with + if it is not listed). Without quitting the app, `desktop_status` shows it on. `desktop_open` Reminders opens it behind the front window, and `desktop_observe` with app Reminders and screenshot false lists its elements.
+- [ ] **Screen Recording.** Turn on Ensemble under Screen & System Audio Recording, then quit and reopen the app if macOS asks. `desktop_observe` returns a screenshot of the main display, and a zoom of it is sharp.
+- [ ] **A reminder.** Ask a node to create a reminder in Apple Reminders. It works through elements in the background, and the reminder is in the list.
+- [ ] **An alarm.** Ask a node to set an alarm in Clock (macOS Ventura and later), under its Alarms tab. The alarm shows in Clock and is on.
+- [ ] **Your pointer.** A step with `foreground` asks once on a card; after allowing it, a click lands where the screenshot shows, and a click on Ensemble's own window is refused.
+- [ ] **Recording.** On macOS 15 and later `desktop_record` start and save gives an MP4 held for preview; on macOS 14 it says video needs macOS 15.
+- [ ] **After an update.** Install a newer build. If the permissions stop working, remove Ensemble from both lists with − and add it again.
+
 ## Settings
 
 - [ ] **Code folders.** Settings → Agents → Terminal and commits → Choose folder…: the Tauri dialog opens; the folder's git checkout appears in Code and can be reviewed.
