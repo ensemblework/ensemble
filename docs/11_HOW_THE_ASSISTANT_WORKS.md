@@ -295,7 +295,7 @@ Where there is a cap, its last request is a tools-off final answer. Included mod
 
 A held write is reported as proposed. A text-only reply that promises a lookup before any tool ran, or, after tools ran, writes a tool call as text or announces the next write ("Proceeding to create the task"; `leavesWorkUndone`), goes back once with a nudge to make the call.
 
-On an AI subscription the agent runs its own loop: `MAX_COMPUTER_CALLS` 24 tool calls per turn ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
+A turn on an AI subscription runs the agent's own loop, with no limit of Ensemble's on its calls or turns ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
 
 Error turns are saved but never enter model history as answers; without a valid final answer the UI shows the failure and Retry. A surface may pass a `verify` hook (Ensemble Node's answer check, [35 §6.1](35_ENSEMBLE_NODE.md#61-who-does-the-work)): on the model's final text it returns what is still missing, which goes back to the model as a user message, at most `MAX_VERIFY_ROUNDS` (2) per turn and only while a step with tools remains; if the model then fails, the answer it was sent back with stands.
 

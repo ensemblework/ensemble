@@ -77,6 +77,8 @@ const RULES: Rule[] = [
   ["POST", "/api/devices/:id/code", "personal"],
   ["POST", "/api/devices/:id/terminal", "personal"],
   ["GET", "/api/devices/:id/terminal/output", "personal"],
+  // A paired computer asks its node's owner about the agent's own call (subscriptions/routes.ts): the owner's card only.
+  ["POST", "/api/devices/self/assistant-turns/:id/ask", "owner"],
   ["*", "/api/web-terminal/*", "personal"],
   // Ensemble Node: the signed-in person's own nodes and rooms, whichever space is open (docs/35).
   // A turn's trace (node/trace-routes.ts) too: its handler answers only the node's owner.

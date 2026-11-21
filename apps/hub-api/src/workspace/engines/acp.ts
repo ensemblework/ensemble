@@ -35,7 +35,7 @@ import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
-import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
+import { judgeEngineCall, patchPaths, type EngineAnswer, type EngineCall } from "./judge.js";
 import { engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
@@ -64,6 +64,11 @@ export type AcpLaunchInput = {
   model?: string | null;
   /** Variables for Ensemble's MCP server and the run. */
   extraEnv?: Record<string, string>;
+  /**
+   * Only Ensemble's MCP server, none of the person's own (an assistant turn with Ensemble's tools only, or a node's):
+   * Gemini CLI and Qwen Code take `--allowed-mcp-server-names` for it; the other agents have no such switch.
+   */
+  ensembleMcpOnly?: boolean;
 };
 
 export type AcpAgent = {
@@ -104,16 +109,27 @@ export const OPENCODE_PERMISSIONS = {
   doom_loop: "ask",
 } as const;
 
-const geminiFlag = new Map<string, string>();
-/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code, built from it) from before it was renamed. */
-async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+const geminiHelp = new Map<string, Promise<string>>();
+/** A Gemini CLI's (or Qwen Code's, built from it) help, read once per program. */
+function geminiHelpText(found: HostLaunch): Promise<string> {
   const key = [found.program, ...found.args].join("\u0000");
-  const known = geminiFlag.get(key);
-  if (known) return known;
-  const help = await quickRun(found.program, [...found.args, "--help"], 15_000);
-  const flag = /--acp\b/.test(help.stdout) || !/--experimental-acp\b/.test(help.stdout) ? "--acp" : "--experimental-acp";
-  geminiFlag.set(key, flag);
-  return flag;
+  let known = geminiHelp.get(key);
+  if (!known) {
+    known = quickRun(found.program, [...found.args, "--help"], 15_000).then((help) => help.stdout);
+    geminiHelp.set(key, known);
+  }
+  return known;
+}
+
+/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code) from before it was renamed. */
+async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+  const help = await geminiHelpText(found);
+  return /--acp\b/.test(help) || !/--experimental-acp\b/.test(help) ? "--acp" : "--experimental-acp";
+}
+
+/** Only Ensemble's MCP server, where the turn asks for that and this Gemini CLI (or Qwen Code) takes the flag. */
+async function geminiMcpOnly(found: HostLaunch, input: AcpLaunchInput): Promise<string[]> {
+  return input.ensembleMcpOnly && /--allowed-mcp-server-names\b/.test(await geminiHelpText(found)) ? ["--allowed-mcp-server-names", "ensemble"] : [];
 }
 
 /** The agent's program on the trusted PATH (an npm shim on Windows as Node and its script), or null. */
@@ -167,7 +183,7 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["gemini-cli"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...(await geminiMcpOnly(found, input))], env: agentEnv(input.extraEnv), resume: "session/load" };
     },
   },
   antigravity: {
@@ -208,7 +224,7 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["qwen-code"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...(await geminiMcpOnly(found, input))], env: agentEnv(input.extraEnv), resume: "session/load" };
     },
   },
   "kimi-code": {
@@ -242,8 +258,9 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 /**
  * An ACP tool call in the judge's terms, one call per path it touches. Agents name things their own
  * way: a command in `rawInput.command` (a string or argv) or a backticked title, a path in
- * `locations`, a diff's `path` or `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`),
- * and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * `locations`, a diff's `path`, `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`) or
+ * the files a patch in it names, and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * A read or a change it cannot be located by carries what the agent said of it (`described`).
  */
 export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineCall[] {
   const raw = record(toolCall.rawInput);
@@ -259,10 +276,12 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
         str(raw.filePath),
         str(raw.fileName),
         str(raw.absolute_path),
+        ...Object.values(raw).flatMap((value) => patchPaths(value)),
         ...extra,
       ].filter((path): path is string => Boolean(path)),
     ),
   ];
+  const described = [title, JSON.stringify(raw)].filter((part) => part && part !== "{}").join(" ").slice(0, 1500);
   switch (toolCall.kind) {
     case "execute": {
       const argv = Array.isArray(raw.command) ? raw.command.filter((item): item is string => typeof item === "string") : [];
@@ -274,12 +293,16 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
     case "delete":
     case "move": {
       const paths = pathsFrom(quoted);
-      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: {} }];
+      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: { described } }];
     }
-    case "read":
+    case "read": {
+      const paths = pathsFrom();
+      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: { described } }];
+    }
+    // A search that names no folder looks in the agent's working folder.
     case "search": {
       const paths = pathsFrom();
-      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: {} }];
+      return [{ tool: "Grep", input: paths.length ? { paths } : {} }];
     }
     case "fetch":
       return [{ tool: "WebFetch", input: { url: str(raw.url) ?? quoted ?? title } }];

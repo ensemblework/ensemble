@@ -78,6 +78,8 @@ export const ROUTES = {
   /** A file attached to the turn's message (`assistantTurns` 2). */
   assistantFile: (turnId: string, fileId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/files/${encodeURIComponent(fileId)}`,
   assistantTool: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/tool`,
+  /** One of the agent's own calls in a node's turn that needs its owner's answer (`assistantTurns` 5): held until they answer, at most 90 seconds. */
+  assistantAsk: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/ask`,
   assistantStream: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/stream`,
   assistantDone: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/done`,
   /** This computer's part of its owner's AI activity log (lib/ai-activity.ts, `ActivityPost`): its agents' tool calls, runs, errors and log lines. */

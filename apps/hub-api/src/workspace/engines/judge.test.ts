@@ -527,6 +527,31 @@ test("a sandbox without a deny list never gets a writable root that holds a clos
   }
 });
 
+test("Copilot's searches and patches name every path they touch, so the hard floor sees each of them", async () => {
+  const chat = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
+  try {
+    const patch = ["*** Begin Patch", "*** Update File: src/app.ts", "@@", "-a", "+b", "*** Move to: src/main.ts", "*** Add File: docs/new.md", "+hi", "*** Delete File: old.md", "*** End Patch"].join("\n");
+    assert.deepEqual(hookCall("apply_patch", { value: patch }), { tool: "Write", input: { paths: ["src/app.ts", "src/main.ts", "docs/new.md", "old.md"] } }, "a patch Copilot sends as plain text");
+    assert.deepEqual(hookCall("apply_patch", { input: patch }).input.paths, ["src/app.ts", "src/main.ts", "docs/new.md", "old.md"]);
+    assert.deepEqual(hookCall("grep", { pattern: "BEGIN", paths: ["~/notes", "~/.ssh"] }), { tool: "Grep", input: { paths: ["~/notes", "~/.ssh"] } });
+    assert.deepEqual(hookCall("rg", { pattern: "x", paths: "~/notes" }), { tool: "Grep", input: { paths: ["~/notes"] } });
+    assert.deepEqual(hookCall("glob", { pattern: "**/*.md", path: "~/notes" }), { tool: "Glob", input: { paths: ["~/notes"], pattern: "**/*.md" } });
+    assert.deepEqual(hookCall("str_replace_editor", { command: "view", path: "~/notes/a.md" }), { tool: "Read", input: { paths: ["~/notes/a.md"] } });
+    assert.deepEqual(hookCall("move", { path: "a.md", destination: "~/.zshrc" }), { tool: "Write", input: { paths: ["a.md", "~/.zshrc"] } }, "where a move puts the file too");
+    const floor = async (name: string, input: Record<string, unknown>) => (await judgeFloor(chat, hookCall(name, input))).decision;
+    assert.equal(await floor("grep", { pattern: "BEGIN", paths: ["~/notes", "~/.ssh"] }), "deny", "every path a search names");
+    assert.equal(await floor("glob", { pattern: "~/.aws/*" }), "deny", "where a glob looks");
+    assert.equal(await floor("Glob", { pattern: "~/.ssh/**" }), "deny");
+    assert.equal(await floor("Grep", { pattern: "BEGIN", path: "~" }), "deny", "a search of a folder that holds keys reads them");
+    assert.equal(await floor("apply_patch", { value: "*** Begin Patch\n*** Add File: ~/.ssh/authorized_keys\n+ssh-ed25519 AAAA\n*** End Patch" }), "deny");
+    assert.equal(await floor("apply_patch", { value: "*** Begin Patch\n*** Update File: notes.md\n*** Move to: ~/.zshrc\n*** End Patch" }), "deny", "a patch that moves a file into a start-up file");
+    assert.equal(await floor("grep", { pattern: "TODO", paths: ["src"] }), "allow");
+    assert.equal(await floor("apply_patch", { value: patch }), "allow");
+  } finally {
+    rmSync(chat, { recursive: true, force: true });
+  }
+});
+
 test("an assistant turn's own tools run unasked; only the hard floor refuses", async () => {
   const chat = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
   try {

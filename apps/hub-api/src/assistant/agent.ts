@@ -63,7 +63,8 @@ import { loadConnections } from "./connections.js";
 import { isGuestIn } from "../sharing/context.js";
 import { advertisedTools, playbookText, findPlaybook, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
-import type { ToolAnswer } from "../subscriptions/bridge.js";
+import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "../subscriptions/bridge.js";
+import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
@@ -92,8 +93,6 @@ import type { Redis } from "ioredis";
 
 /** Bodies handed back to the model, so one long note cannot eat the window. */
 export const MAX_TOOL_RESULT_CHARS = 6000;
-/** Tool calls an agent on the person's own subscription may make in one turn (it runs its own loop). */
-export const MAX_COMPUTER_CALLS = 24;
 
 /**
  * Stop requested?
@@ -206,14 +205,37 @@ export interface AssistantTurnArgs {
   verify?: (state: VerifyState) => string | null | Promise<string | null>;
   /**
    * On the person's own AI plan (`isSubscriptionProvider`): an Ensemble Node's turn (`node`) has its
-   * project (`group`, whose folder its chats share), its sessions' keeping days and more tool calls
-   * (`maxCalls`); `ownWeb` (default on) lets the agent search and read the web on its plan.
+   * project (`group`, whose folder its chats share) and its sessions' keeping days; `ownWeb` (default on)
+   * lets the agent search and read the web on its plan. The agent keeps all its own tools (`ownTools`)
+   * in a chat, Ask Ensemble or a routine, and in a node's turn when the node says so, with `nodeTools`:
+   * how its calls are judged on the computer, how its owner is asked, and where its own calls are shown.
+   * Ensemble sets no limit on the agent's calls or turns.
    */
   /**
    * `sessionKey`: the agent session to run in instead of the chat's own, resumed whatever the chat's
    * length (an inline ask's page session, assistant/ask-sessions.ts).
    */
-  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string; history?: string; title?: string };
+  subscription?: {
+    node?: boolean;
+    group?: { id: string; name: string };
+    keepDays?: number;
+    ownWeb?: boolean;
+    ownTools?: boolean;
+    /** The node's stable instructions for a computer that runs the turn with Ensemble's tools only: they name no shell or files of the agent's own. */
+    stableWithoutOwnTools?: string;
+    nodeTools?: {
+      policy: NodeTurnPolicy;
+      ask: (request: OwnAsk, computer: { id: string; name: string }) => Promise<OwnAnswer>;
+      onOwnTool: (event: OwnToolEvent) => void;
+      /** What the turn waits for once it parks on its owner's answer: Ensemble's tools are refused from then, so the agent ends its turn. */
+      parking: () => string | null;
+      /** Parks the turn, after an ask its owner did not answer in time: it stops, and the agent's run on the computer with it. */
+      park: () => void;
+    };
+    sessionKey?: string;
+    history?: string;
+    title?: string;
+  };
   /** Filled in as the turn runs, for Ensemble Node's turn trace (node/trace.ts). Kept when the turn throws. */
   trace?: LoopTrace;
 }
@@ -286,6 +308,12 @@ function callTrace(outcome: CallOutcome, tool: AnyHubTool | undefined): ToolCall
     offloaded: outcome.offloaded ?? false,
     readOnly: readsOnly(tool),
   };
+}
+
+/** The messages with the system message `from` (a node's stable instructions) replaced by `to`. */
+function swapSystem(messages: readonly ModelMessage[], from: string | undefined, to: string | undefined): readonly ModelMessage[] {
+  if (from === undefined || to === undefined) return messages;
+  return messages.map((message) => (message.role === "system" && message.content === from ? { ...message, content: to } : message));
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -570,23 +598,22 @@ async function drive(
       }),
       USE_TOOL,
     ];
-    // A chat, Ask Ensemble or a routine keeps the agent's own tools too; a node's turn reaches the computer through Ensemble's tools, where its owner approves.
-    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true, ownTools: args.subscription?.node !== true };
-    // A node does long work on a computer (two steps per browser action); the relay takes at most 64 turns.
-    const maxCalls = Math.min(60, args.subscription?.maxCalls ?? MAX_COMPUTER_CALLS);
+    // A chat, Ask Ensemble or a routine keeps the agent's own tools; a node's turn keeps them with its node's policy (node/brain.ts).
+    const node = args.subscription?.node === true;
+    const nodeTools = node && args.subscription?.ownTools ? args.subscription.nodeTools : undefined;
+    const how = { ownWeb: args.subscription?.ownWeb !== false, node, ownTools: node ? Boolean(nodeTools) : args.subscription?.ownTools !== false };
     const conversation = agentConversation(messages, agent, how);
     const pendingProjectNames: string[] = [];
     let used = 0;
-    if (args.trace) args.trace.loop = () => ({ kind: "subscription", agent, calls: used, maxCalls, ownTools: how.ownTools });
+    if (args.trace) args.trace.loop = () => ({ kind: "subscription", agent, calls: used, ownTools: how.ownTools });
     // A call relayed from the computer arrives as its own request: it keeps this turn's AI activity context.
     const call = bindAiContext(async (name: string, input: unknown): Promise<ToolAnswer> => {
       if (stop.signal.aborted) return { text: JSON.stringify({ error: "The person stopped this turn." }), isError: true };
+      const waiting = nodeTools?.parking();
+      if (waiting) return { text: JSON.stringify({ error: `${waiting} Stop here: end your turn now without a reply. You go on when they answer.` }), isError: true };
+      used += 1;
       const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
       const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
-      used += 1;
-      if (used > maxCalls) {
-        return { text: JSON.stringify({ error: "This turn's tool budget is used up. Answer the person now from what you already have." }), isError: true };
-      }
       args.emit({ type: "status", text: statusFor([requested]) });
       await updateActivity(app.redis, userId, activityId, { label: "Assistant is working", detail: requested.name });
       const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName, known);
@@ -614,8 +641,9 @@ async function drive(
         model: args.model,
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
-        // A computer whose Ensemble is too old for the agent's own tools is told it has only Ensemble's.
-        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(messages, agent, { ...how, ownTools: false }).system } : {}),
+        // A computer whose Ensemble is too old for the agent's own tools (in a node's turn: for the node's policy) is told it has only
+        // Ensemble's, by its run notes and by the node's instructions for such a computer.
+        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(swapSystem(messages, args.nodeInstructions?.stable, args.subscription?.stableWithoutOwnTools), agent, { ...how, ownTools: false }).system } : {}),
         prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
@@ -632,9 +660,9 @@ async function drive(
             }
           : {}),
         tools: offeredSpecs,
-        maxTurns: Math.min(64, maxCalls + 4),
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
+        ...(nodeTools ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool: nodeTools.onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         // What a new session is called in the agent's own app: the chat's title (an ask: its page's).
@@ -663,7 +691,7 @@ async function drive(
       if (args.trace) {
         const session = { resumed: typeof done.resumed === "boolean" ? done.resumed : null, ...(done.restart ? { restart: done.restart.reason } : {}) };
         const outside = done.outside?.turns.length ?? 0;
-        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, maxCalls, ownTools: how.ownTools });
+        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, ownTools: done.ownTools });
       }
       await recordMetric(app.prisma, {
         userId,

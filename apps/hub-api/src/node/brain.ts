@@ -25,10 +25,13 @@ import { chatModelFor, fastChatModel, leadChatModel, type ChatModel } from "./mo
 import { canSee, postMessage, roomPeople, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { nodeTools, postAsNode, type Lineage } from "./tools.js";
-import { codeBuiltLog, nodeInstructions, packetSections, packetText } from "./instructions.js";
+import { codeBuiltLog, nodeInstructions, packetSections, packetText, type NodeInstructions } from "./instructions.js";
 import { recordMetric } from "../lib/metrics.js";
+import { helperFolders, helperGrant } from "./helpers.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
+import { missionOf, modeFor } from "./device-tools.js";
+import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
@@ -38,6 +41,8 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
+import type { OwnToolEvent } from "../subscriptions/bridge.js";
+import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 import { saveTrace, setPlacement, TurnTrace } from "./trace.js";
 import { inTurn } from "./turn-context.js";
 
@@ -374,29 +379,49 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
+  // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant) in a turn its owner started
+  // and only they read: the computer judges each call by the node's folder policy, and what that asks goes to the owner
+  // on a card here (node/own-tool-asks.ts). Any other turn (room-bound, another person's, a disclosure draft) can carry
+  // another person's instructions, which no check of a command's text can contain: it has Ensemble's tools only.
+  const ownTools = ownLoop && ownerOnly && !fromNonOwner && !bound && (!node.parentNodeId || helperGrant(node) === "computer");
+  const plan = turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null;
+  const ownPolicy: NodeTurnPolicy | null = ownTools
+    ? {
+        id: node.id,
+        slug: node.slug,
+        mission: missionOf({ plan, room, privateTo }),
+        // A routine's work, or a run profile that runs unattended: nobody watches, so everything above the floor runs.
+        attended: !(turn.planId && (await prisma.nodeMission.findUnique({ where: { id: turn.planId }, select: { routine: true } }))?.routine) && (await modeFor(prisma, node)).attended,
+        sudo: extraTools.some((tool) => tool.name === "computer_sudo"),
+        // A helper given folders works only in them; one given none works as its parent does (node/helpers.ts).
+        ...(node.parentNodeId && helperFolders(node).length ? { folders: helperFolders(node) } : {}),
+      }
+    : null;
   // A turn the room reads keeps its room-bound persona (node/audience.ts); any other is assembled from packages/prompts.
   const roomBound = bound ? await bound.persona() : null;
-  const instructions = roomBound
-    ? null
-    : await nodeInstructions(app, {
-        node,
-        room,
-        members,
-        ownerName,
-        fromNonOwner,
-        ownerOnly,
-        step: Boolean(step),
-        skills,
-        provider: choice.provider,
-        origin: room.kind === "task" && !node.parentNodeId ? await originLine(app, node, room) : null,
-        packet,
-      });
+  const instructionsInput = {
+    node,
+    room,
+    members,
+    ownerName,
+    fromNonOwner,
+    ownerOnly,
+    step: Boolean(step),
+    skills,
+    origin: room.kind === "task" && !node.parentNodeId ? await originLine(app, node, room) : null,
+    packet,
+  };
+  // With its own tools, also the stable tier for a computer that runs the turn with Ensemble's tools only (`stableWithoutOwnTools`).
+  const instructions = roomBound ? null : await nodeInstructions(app, { ...instructionsInput, provider: choice.provider, ownTools });
   const assembled = instructions?.log ?? codeBuiltLog(roomBound!.text, packet);
   trace.instructions = assembled;
   // Every section the turn was given, once per turn; each of its model calls names only their version and hashes.
   await recordMetric(prisma, { userId: owner, kind: "node.instructions", meta: { turnId: turn.id, nodeId: node.id, ...assembled } }).catch((error: unknown) =>
     app.log.error({ err: error }, "Could not record the node's instructions"),
   );
+  // A fallback model on another loop (Ensemble's, after the owner's plan) gets its own instructions: never the agent's own shell.
+  const instructionsFor = async (pick: ChatModel): Promise<NodeInstructions | null> =>
+    !instructions || isSubscriptionProvider(pick.provider) === ownLoop ? instructions : nodeInstructions(app, { ...instructionsInput, provider: pick.provider, ownTools: false });
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
@@ -417,6 +442,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> => {
     const effort = await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined);
     trace.sending(pick, effort);
+    const given = await instructionsFor(pick);
     return (bound ? bound.run : runAssistantTurn)({
       app,
       userId: spaceId,
@@ -430,17 +456,49 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       reasoningEffort: effort,
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
-      ...(instructions ? { nodeInstructions: instructions } : { agentPersona: roomBound!.text }),
-      instructionsRef: assembled,
-      extraRefs: instructions?.rooms ?? roomBound!.rooms,
+      ...(given ? { nodeInstructions: given } : { agentPersona: roomBound!.text }),
+      instructionsRef: given?.log ?? assembled,
+      extraRefs: given?.rooms ?? roomBound!.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
-      extraTools: extraTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
+      extraTools: (isSubscriptionProvider(pick.provider) ? extraTools : tiered).map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
-      ...(isSubscriptionProvider(pick.provider) ? { subscription: { node: true, group: { id: node.id, name: `${node.name} (Ensemble Node)` }, keepDays: NODE_SESSION_KEEP_DAYS, maxCalls: 60 } } : {}),
+      ...(isSubscriptionProvider(pick.provider)
+        ? {
+            subscription: {
+              node: true,
+              group: { id: node.id, name: `${node.name} (Ensemble Node)` },
+              keepDays: NODE_SESSION_KEEP_DAYS,
+              ...(ownPolicy && given?.withoutOwnTools
+                ? {
+                    ownTools: true,
+                    stableWithoutOwnTools: given.withoutOwnTools.stable,
+                    nodeTools: {
+                      policy: ownPolicy,
+                      ask: ownToolAsker(app, { node, room, privateTo, lineage, turnId: turn.id, plan }),
+                      onOwnTool(event: OwnToolEvent) {
+                        // From the first own call that can change something, the turn is not run again from the start.
+                        if (event.phase === "start") {
+                          if (event.acts) void markActed(app, turn.id).catch(() => undefined);
+                          return;
+                        }
+                        toolsRan += 1;
+                        const state = event.ok === false ? "failed" : "ok";
+                        void addReceipt(app, turn.id, { name: event.name, state, summary: event.summary || null }).catch(() => undefined);
+                        // The agent's own calls show to its owner only, like Ensemble's tool chips.
+                        publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, ...where, frame: { type: "tool", call: { id: event.id, name: event.name, state, ...(event.summary ? { summary: event.summary } : {}) } } });
+                      },
+                      parking: () => parkedFor(turn.id)[0] ?? null,
+                      park: () => parkIfAsked(turn.id),
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       trace: trace.loop,
       signal: deps.signal,
       async onToolStart(call) {
@@ -491,9 +549,10 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
     return { status: "skipped", error: "Taken away before it did anything." };
   }
-  if (deps.signal?.aborted && deps.signal.reason === "park") {
-    // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing. What it
-    // did and what it waits for stay in its conversation; the answer wakes it.
+  if ((deps.signal?.aborted && deps.signal.reason === "park") || parkedFor(turn.id).length) {
+    // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing (an agent on the
+    // owner's plan told to stop ends its turn by itself). What it did and what it waits for stay in its
+    // conversation; the answer wakes it.
     const done = failure ? null : result!;
     const calls = done?.toolCalls ?? [];
     const waits = parkedFor(turn.id).join("\n") || `Waiting for ${ownerName} to answer a card in this chat.`;

@@ -116,7 +116,7 @@ export async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mo
 }
 
 /** What a "This mission" answer covers: the plan the turn works for, else this conversation (its shared or private thread). */
-function missionOf(scope: Pick<NodeScope, "plan" | "room" | "privateTo">): string {
+export function missionOf(scope: Pick<NodeScope, "plan" | "privateTo"> & { room: Pick<NodeScope["room"], "id"> }): string {
   return scope.plan?.planId ?? `conversation:${scope.room.id}:${scope.privateTo ? "private" : "shared"}`;
 }
 

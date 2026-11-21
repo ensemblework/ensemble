@@ -375,6 +375,15 @@ export function parkedFor(turnId: string): string[] {
   return [...(live.get(turnId)?.park ?? [])];
 }
 
+/**
+ * The turn posted a card for its owner and waits for the answer: it is no longer merged into a newer
+ * message, so another person's message never cancels it; its owner's message ends the wait, and it parks.
+ */
+export function holdForCard(turnId: string): void {
+  const entry = live.get(turnId);
+  if (entry) entry.mergeable = false;
+}
+
 /** The turn just dispatched a tool that changes something: it is no longer aborted to coalesce, and a restart reconciles it. */
 export async function markActed(app: FastifyInstance, turnId: string): Promise<void> {
   const entry = live.get(turnId);

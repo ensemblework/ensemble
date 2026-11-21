@@ -281,7 +281,7 @@ test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's
   assert.deepEqual([trace.modelRequested, trace.modelSent, trace.modelReported, trace.provider], ["gpt-6.1-sol", "gpt-6.1-sol", "gpt-6.1-sol-2026", "copilot-cli"]);
   assert.deepEqual([trace.tokensIn, trace.tokensOut, trace.costUsd], [100, 2, null], "its plan pays: no cost is counted");
   assert.deepEqual((trace.calls as Array<{ name: string; state: string }>).map((call) => [call.name, call.state]), [["hub_list_tasks", "ok"]]);
-  assert.deepEqual(trace.loop, { kind: "subscription", agent: "copilot-cli", computer: "Akash's laptop", computerId: laptop.id, session: { resumed: false, restart: "gone" }, outside: 1, calls: 1, maxCalls: 60, ownTools: false });
+  assert.deepEqual(trace.loop, { kind: "subscription", agent: "copilot-cli", computer: "Akash's laptop", computerId: laptop.id, session: { resumed: false, restart: "gone" }, outside: 1, calls: 1, ownTools: false }, "a computer before assistantTurns 5 ran it with Ensemble's tools only");
   assert.ok((trace.toolCount ?? 0) > 10 && trace.toolSchemaHash, "the tools its agent was given");
   assert.ok(!JSON.stringify(trace).includes("No conversation found"), "the agent's own words stay out");
 });

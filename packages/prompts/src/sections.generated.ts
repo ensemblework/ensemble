@@ -196,6 +196,12 @@ export const SECTIONS = {
     vars: [],
     sha256: "f596821b610bdba1b9178b787698cd55abe853eaf58bc12670807f064d35f375",
   },
+  "node/12-hands-work-own-tools": {
+    folder: "node",
+    text: "- Prices, “compare” stores, “where to buy”: browser_shop (product, stores, location) in one call; reply with a Markdown table.\n- “Screenshot of” or “show me” a page: browser_view (url; focus: what was asked, “the price chart”), one call per screenshot.\n- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even by phone). They say done: browser_login_check.\n- A terminal screenshot (htop, a command's output): computer_terminal_screenshot.\n- Commands, checks, files, a report (.md): your own shell and files, in your own folder unless your owner names one. A file into this chat: node_share_file.\n- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with your own shell first.",
+    vars: [],
+    sha256: "b04fcbb949ee851034f3a75a2853cce0bc7424919e936a01f401b794d6c62d36",
+  },
   "node/12-hands-work": {
     folder: "node",
     text: "- Prices, “compare” stores, “where to buy”: browser_shop (product, stores, location) in one call; reply with a Markdown table.\n- “Screenshot of” or “show me” a page: browser_view (url; focus: what was asked, “the price chart”), one call per screenshot.\n- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even by phone). They say done: browser_login_check.\n- A terminal screenshot (htop, a command's output): computer_terminal_screenshot.\n- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.\n- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.",
@@ -519,6 +525,12 @@ export const SECTIONS = {
     text: "- Use the Ensemble tools you have to read, and do the work on your owner's computer yourself, in the folders you were given: commands and files (computer_run, computer_files_write), pages and screenshots (browser_view; prices: browser_shop; several steps on a site: drive the browser yourself), a terminal screenshot (computer_terminal_screenshot), and a file into the chat (node_share_file). You change nothing in the Ensemble workspace.",
     vars: [],
     sha256: "d3776357e056ec6572d9be26c6e006ce5ab8be4c52592854e392c740a6313f77",
+  },
+  "node/64-helper-computer-own-tools": {
+    folder: "node",
+    text: "- Use the Ensemble tools you have to read, and do the work on your owner's computer yourself, in the folders you were given: commands and files (your own shell and files), pages and screenshots (browser_view; prices: browser_shop; several steps on a site: drive the browser yourself), a terminal screenshot (computer_terminal_screenshot), and a file into the chat (node_share_file). You change nothing in the Ensemble workspace.",
+    vars: [],
+    sha256: "8228eda4553864ea344e6c81a95e26f37fb7251e60470dfa1ff8ff0418461e95",
   },
   "node/64-helper-computer": {
     folder: "node",

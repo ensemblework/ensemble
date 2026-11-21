@@ -46,6 +46,11 @@ export type NodeFacts = {
   ownLoop: boolean;
   /** ...and that agent searches the web itself (subscriptions/agents.ts `OWN_WEB_AGENTS`). */
   ownWeb: boolean;
+  /**
+   * ...and keeps its own shell and files, judged on the computer by the node's folder policy
+   * (subscriptions/node-own-tools.ts), where the computer that runs the turn can: they do its commands and files.
+   */
+  ownTools: boolean;
   /** The run profile its agent sessions use (node/sessions.ts `agentDefaults`). */
   runProfile: string;
   computerFiles: boolean;
@@ -84,7 +89,8 @@ export function nodeSections(facts: NodeFacts): SectionRequest[] {
     if (facts.charter) stable("node/61-helper-brief", { brief: facts.charter });
     stable(step ? "node/62-helper-step" : "node/62-helper-messages", { parent });
     stable(facts.ownWeb ? "node/63-helper-facts-own-web" : "node/63-helper-facts");
-    stable(grant === "sessions" ? "node/64-helper-sessions" : grant === "computer" ? (facts.ownLoop ? "node/64-helper-computer-own-loop" : "node/64-helper-computer") : "node/64-helper-read");
+    const computer = facts.ownTools ? "node/64-helper-computer-own-tools" : facts.ownLoop ? "node/64-helper-computer-own-loop" : "node/64-helper-computer";
+    stable(grant === "sessions" ? "node/64-helper-sessions" : grant === "computer" ? computer : "node/64-helper-read");
     stable("node/65-helper-cards");
     stable(step ? "node/66-helper-report" : "node/66-helper-reply", { parent });
     if (!step) stable("node/45-no-reply");
@@ -104,7 +110,7 @@ export function nodeSections(facts: NodeFacts): SectionRequest[] {
   stable(hands ? (facts.ownWeb ? "node/10-facts-hands-own-web" : "node/10-facts-hands") : facts.ownWeb ? "node/10-facts-own-web" : "node/10-facts");
   stable("node/11-owner-work");
   if (hands) {
-    stable("node/12-hands-work");
+    stable(facts.ownTools ? "node/12-hands-work-own-tools" : "node/12-hands-work");
     stable(facts.ownLoop ? "node/13-web-task-own-loop" : "node/13-web-task");
   }
   if (hands && dm) {
@@ -175,6 +181,11 @@ export type NodeInstructions = {
   /** The rooms named by id, so a reply that prints one shows its title. */
   rooms: AssistantRef[];
   log: InstructionsLog;
+  /**
+   * With the agent's own tools: the stable tier for a computer that runs the turn with Ensemble's tools only
+   * (before `assistantTurns` 5), which names no shell or files of the agent's own. The context tier is the same.
+   */
+  withoutOwnTools?: { stable: string; hash: string };
 };
 
 /** The node's tiers plus the turn packet, assembled once, so the log covers everything the model got. */
@@ -228,6 +239,8 @@ export type NodeTurnInput = {
   skills: string;
   /** The provider of the model the turn runs on. */
   provider: string;
+  /** The agent keeps its own tools where the computer that runs the turn can (node/brain.ts). */
+  ownTools?: boolean;
   /** A helper's room: where the node's reply goes (node/brain.ts `originLine`). */
   origin: string | null;
 };
@@ -240,7 +253,14 @@ export async function nodeInstructions(app: FastifyInstance, input: NodeTurnInpu
   const { facts, rooms } = await nodeFacts(app.prisma, input);
   const assembled = assembleNode(facts, input.packet);
   const { version, hash, hashes, sections, dropped } = assembled;
-  return { stable: assembled.tiers.stable, context: assembled.tiers.context, rooms, log: { version, hash, hashes, sections, dropped } };
+  const without = facts.ownTools ? assembleNode({ ...facts, ownTools: false }, input.packet) : null;
+  return {
+    stable: assembled.tiers.stable,
+    context: assembled.tiers.context,
+    rooms,
+    log: { version, hash, hashes, sections, dropped },
+    ...(without ? { withoutOwnTools: { stable: without.tiers.stable, hash: without.hashes.stable } } : {}),
+  };
 }
 
 async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput): Promise<{ facts: NodeFacts; rooms: AssistantRef[] }> {
@@ -256,6 +276,7 @@ async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput): Promise<{ 
     ownerOnly: input.ownerOnly,
     ownLoop,
     ownWeb: ownLoop && OWN_WEB_AGENTS.has(input.provider as SubscriptionProvider),
+    ownTools: ownLoop && input.ownTools === true,
     origin: input.origin,
     skills: input.skills,
   };

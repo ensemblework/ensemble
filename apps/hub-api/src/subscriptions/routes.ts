@@ -6,8 +6,8 @@
  * computer is this one.
  *
  * For a paired computer running an assistant turn the web handed it (device token only): read
- * the turn and the files attached to the message, call its tools, stream the reply text, say it
- * is done.
+ * the turn and the files attached to the message, call its tools, ask a node's owner about one of
+ * the agent's own calls, stream the reply text (and the agent's own calls), say it is done.
  */
 import { hostname } from "node:os";
 import type { FastifyInstance } from "fastify";
@@ -22,6 +22,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { appPresence, detectAgents } from "./detect.js";
 import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
+import { OwnAskShape, OwnToolEventShape } from "./bridge.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners } from "./turn.js";
 import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
@@ -61,8 +62,11 @@ const TAKEN = "This turn was picked up by another Ensemble on this computer.";
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
 const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
-/** `status`: a line for the chat while the computer waits on something (0.8.0); older computers send none. */
-const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional() });
+/**
+ * `status`: a line for the chat while the computer waits on something (0.8.0); `tools`: the agent's own calls in a
+ * node's turn (`assistantTurns` 5). Older computers send neither.
+ */
+const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional(), tools: z.array(OwnToolEventShape).max(50).optional() });
 const Done = z.object({
   result: z
     .object({
@@ -235,6 +239,40 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // One of the agent's own calls in a node's turn needs its owner: their card in the chat, and this request
+  // held until they answer, at most 90 seconds (node/own-tool-asks.ts), so a proxy in front never cuts it.
+  app.post("/api/devices/self/assistant-turns/:id/ask", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const turn = liveTurn((request.params as { id: string }).id, device.id);
+    if (!turn) return reply.code(410).send({ decision: "deny", message: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ decision: "deny", message: TAKEN });
+    if (!turn.ask) return reply.code(409).send({ decision: "deny", message: "This turn does not ask its owner about the agent's own calls." });
+    const body = OwnAskShape.parse(request.body);
+    heard(turn);
+    try {
+      const answer = await turn.ask(body);
+      // Not answered in time: the turn parks, and the agent's run stops once this answer has reached the computer.
+      const park = answer.decision === "deny" && answer.waiting ? turn.park : null;
+      if (park) {
+        let parked = false;
+        const after = () => {
+          if (parked) return;
+          parked = true;
+          park();
+        };
+        reply.raw.once("finish", after);
+        reply.raw.once("close", after);
+      }
+      return answer;
+    } catch (error) {
+      request.log.warn({ err: error }, "a node's ask about an agent's own call failed");
+      return { decision: "deny", message: "Ensemble could not ask your owner, so this call was not run. Say what you need." };
+    } finally {
+      heard(turn);
+    }
+  });
+
   app.post("/api/devices/self/assistant-turns/:id/stream", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
@@ -242,7 +280,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turn) return reply.code(410).send({ stop: true });
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ stop: true });
     const body = Stream.parse(request.body);
-    streamInto(turn, body.seq, body.text, body.status);
+    streamInto(turn, body.seq, body.text, body.status, body.tools);
     return { stop: false };
   });
 

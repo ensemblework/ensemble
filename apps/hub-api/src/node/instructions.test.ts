@@ -26,6 +26,7 @@ function facts(over: Partial<NodeFacts> = {}): NodeFacts {
     ownerOnly: true,
     ownLoop: false,
     ownWeb: false,
+    ownTools: false,
     runProfile: "GitHub Copilot · gpt-6.1-sol · medium thinking · 1M context (the run profile “Copilot”)",
     computerFiles: false,
     computerWorkAsks: false,
@@ -71,7 +72,8 @@ const ROWS: Row[] = [
   { row: "165 facts, own web search", when: (f) => factsRow(f, true, false), sections: ["node/10-facts-own-web"] },
   { row: "166 facts with hands, own web search", when: (f) => factsRow(f, true, true), sections: ["node/10-facts-hands-own-web"] },
   { row: "168 the owner's work", when: () => true, sections: ["node/11-owner-work"] },
-  { row: "169 hands", when: hands, sections: ["node/12-hands-work"] },
+  { row: "169 hands", when: (f) => hands(f) && !f.ownTools, sections: ["node/12-hands-work"] },
+  { row: "169 hands, the agent's own shell and files", when: (f) => hands(f) && f.ownTools, sections: ["node/12-hands-work-own-tools"] },
   { row: "169 web_task", when: (f) => hands(f) && !f.ownLoop, sections: ["node/13-web-task"] },
   { row: "169 the browser on the owner's plan", when: (f) => hands(f) && f.ownLoop, sections: ["node/13-web-task-own-loop"] },
   { row: "171 live terminal", when: (f) => hands(f) && kind(f, "dm"), sections: ["node/14-live"] },
@@ -109,9 +111,10 @@ const ROWS: Row[] = [
 
 function* everyTurn(): Generator<NodeFacts> {
   const loops = [
-    { ownLoop: false, ownWeb: false },
-    { ownLoop: true, ownWeb: false },
-    { ownLoop: true, ownWeb: true },
+    { ownLoop: false, ownWeb: false, ownTools: false },
+    { ownLoop: true, ownWeb: false, ownTools: false },
+    { ownLoop: true, ownWeb: true, ownTools: false },
+    { ownLoop: true, ownWeb: true, ownTools: true },
   ];
   for (const roomKind of ["dm", "crew", "task", "room"])
     for (const leadsHere of roomKind === "crew" ? [false, true] : [false])
@@ -134,7 +137,7 @@ test("every row of the routing table reaches the model under its condition, as i
     }
     for (const name of got) if (name.startsWith("node/6")) assert.fail(`${name} is a helper's section`);
   }
-  assert.equal(turns, 480);
+  assert.equal(turns, 640);
 });
 
 test("a helper's turn: its brief, its parent, its grant, and the agent's own browser on its owner's plan", () => {
@@ -156,6 +159,9 @@ test("a helper's turn: its brief, its parent, its grant, and the agent's own bro
   assert.doesNotMatch(ownPlan.tiers.stable, /web_task|hub_web_search first/);
   assert.match(ownPlan.tiers.stable, /several steps on a site: drive the browser yourself/);
   assert.match(ownPlan.tiers.stable, /your own web search first \(or hub_web_search\), then read the source page itself/);
+  const ownTools = assembleNode(helper({ helper: { parent: "assistant", parentName: "Assistant", grant: "computer" }, ownLoop: true, ownWeb: true, ownTools: true }));
+  assert.match(ownTools.tiers.stable, /commands and files \(your own shell and files\)/, "where the computer keeps the agent's own tools");
+  assert.doesNotMatch(ownTools.tiers.stable, /computer_run, computer_files_write/);
 });
 
 test("on the owner's AI plan the agent drives the browser itself, and searches the web itself where it can", () => {
