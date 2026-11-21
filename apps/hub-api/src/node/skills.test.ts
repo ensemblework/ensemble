@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SKILLS } from "@ensemble/prompts";
 import { DEFAULT_CONTEXT_CONFIG } from "../context/config.js";
-import { ADVANCED_TOOLS, BUNDLED_SKILLS, chooseSkills, skillTool, tieredTools, wantsAdvancedTools, type CatalogueSkill } from "./skills.js";
+import { ADVANCED_TOOLS, BUNDLED_SKILLS, chooseSkills, inlineGuidance, skillTool, tieredTools, wantsAdvancedTools, type CatalogueSkill } from "./skills.js";
 
 const config = DEFAULT_CONTEXT_CONFIG.skills;
 const every = () => true;
@@ -83,6 +83,74 @@ test("the six skills that were regexes are bundled skills with their guidance an
     assert.deepEqual(skill.tools, [tool], name);
     assert.match(skill.body, says, name);
   }
+});
+
+/** Every phrase the regexes of the old skills matched (node/skills.ts before the bundled skills), by skill. */
+const OLD_PHRASES: Record<string, string[]> = {
+  shopping: ["price", "prices", "pricing", "priced", "cost", "costs", "costing", "cheap", "cheapest", "cheaper", "deal", "deals", "discount", "discounts", "on sale", "for sale", "buy", "buying", "purchase", "shop", "shopping", "in stock", "out of stock", "msrp", "retailer", "retailers", "store", "stores"],
+  screenshots: ["screenshot", "screenshots", "screen shot", "screen shots", "screengrab", "screengrabs", "screen grab", "screen grabs", "screen capture", "screen captures", "snapshot", "snapshots", "chart", "charts", "graph", "graphs"],
+  "web-files": [
+    ...["paper", "papers", "pdf", "pdfs", "arxiv", "cvpr", "iccv", "eccv", "wacv", "neurips", "icml", "iclr", "acl", "emnlp", "naacl", "whitepaper", "whitepapers", "datasheet", "datasheets", "manual", "manuals", "ebook", "ebooks"],
+    ...["add the slides to my files", "save this in my ensemble files", "put the report into files", "upload it to files", "store the scan in my files", "save it into my ensemble files"],
+  ],
+  "sign-in": [
+    ...["login", "logins", "log in", "log ins", "log into", "logged in", "logged into", "sign in", "signin", "sign into", "signed in", "signed into", "sign-in", "account", "password", "passcode"],
+    ...["2fa", "two factor", "two-factor", "otp", "verification code", "captcha", "robot or human", "human check", "verify you am human", "verify i am human"],
+  ],
+  "web-task": ["dashboard", "dashboards", "console", "consoles", "portal", "portals", "admin", "fill in", "fill out", "form", "forms", "navigate", "click through", "billing", "usage", "invoice", "invoices", "order history", "my orders", "my account", "settings page"],
+  research: ["research", "look up", "find out", "latest", "news", "fact", "facts", "compare", "comparison", "vs", "vs.", "versus", "review", "reviews", "spec", "specs", "source", "sources", "cite", "explain"],
+};
+
+test("every phrase the old regex skills matched still selects the same skill, by its own words", () => {
+  for (const [skill, phrases] of Object.entries(OLD_PHRASES)) {
+    for (const phrase of phrases) {
+      for (const text of [phrase, `please ${phrase} for me`]) {
+        const chosen = choose(text).find((choice) => choice.skill.name === skill);
+        assert.ok(chosen, `${skill} for “${text}”: ${choose(text).map((choice) => choice.skill.name).join(", ")}`);
+        assert.ok(chosen.strength > 0, `${skill} for “${text}” by its keywords: ${chosen.why.join("; ")}`);
+      }
+    }
+  }
+  // Written as people write them.
+  assert.equal(first("log into my bank and download last month's statement"), "sign-in");
+  assert.equal(first("I logged into Azure but the page is blank"), "sign-in");
+  assert.equal(first("send me a screengrab of the pricing page"), "screenshots");
+  // The old tests' requests keep their skills, the strongest first.
+  const old: Array<[string, string[]]> = [
+    ["compare the PS5 prices in Wisconsin at Amazon, Walmart and Best Buy, with screenshots of each store and a table", ["shopping", "screenshots"]],
+    ["screenshot of the Google stock chart", ["screenshots"]],
+    ["4 screenshots: Microsoft, Amazon, Nvidia, Apple stock", ["screenshots"]],
+    ["fetch the BMD-45 CVPR paper from CVF and add it to my Ensemble files", ["web-files"]],
+    ["log in to my Azure console and check yesterday's resource usage", ["web-task", "sign-in"]],
+    ["Walmart says Robot or human? can you get past it", ["sign-in"]],
+    ["what's the latest news on the Fed and its sources?", ["research"]],
+  ];
+  for (const [text, names] of old) {
+    const chosen = choose(text).map((choice) => choice.skill.name);
+    assert.equal(chosen[0], names[0], `${text}: ${chosen.join(", ")}`);
+    for (const name of names) assert.ok(chosen.includes(name), `${name} for “${text}”: ${chosen.join(", ")}`);
+  }
+});
+
+test("the strongest skill's guidance comes in full when its own words call for it: one skill, within its budget", () => {
+  const inline = (text: string, over: Partial<typeof config.inline> = {}, skills: readonly CatalogueSkill[] = BUNDLED_SKILLS) =>
+    inlineGuidance(choose(text, { skills, config: { ...config, inline: { ...config.inline, ...over } } }), { ...config, inline: { ...config.inline, ...over } });
+  const debugging = inline("the build fails with this error");
+  assert.deepEqual(debugging && { name: debugging.name, text: debugging.text, cut: debugging.cut }, { name: "debugging", text: SKILLS.debugging.body, cut: false });
+  assert.equal(inline("log in to my Azure console and check yesterday's resource usage")?.name, "web-task");
+  assert.equal(inline("the cheapest PS5?")?.name, "shopping", "one of the old skills' words is enough, as before");
+  assert.equal(inline("hello"), null);
+  assert.equal(inline("would it change what we build?"), null, "words of a description alone are not enough");
+  assert.equal(inline("the build fails with this error", { minScore: 100 }), null, "the threshold is the config's");
+
+  const cut = inline("the build fails with this error", { chars: 300 })!;
+  assert.ok(cut.cut && cut.text.length <= 300, `${cut.text.length} characters`);
+  assert.ok(SKILLS.debugging.body.startsWith(cut.text.split("\n").slice(0, -1).join("\n")), "whole lines from the start");
+  assert.match(cut.text, /node_skill “debugging”/);
+
+  const mine: CatalogueSkill = { name: "Release notes style", source: "owner", id: "s1", description: "Short bullet points, newest first.", keywords: [], tools: [], priority: "p1", body: "Group changes by area.", text: "Group changes by area.\nNewest first." };
+  assert.deepEqual(inline("use the release notes style for 0.9", {}, [...BUNDLED_SKILLS, mine]), { name: "Release notes style", source: "owner", text: "Group changes by area.\nNewest first.", cut: false });
+  for (const skill of Object.values(SKILLS)) assert.ok(skill.body.length <= config.inline.chars, `${skill.name}'s guidance fits whole (${skill.body.length})`);
 });
 
 test("node_skill reads a skill in full by its name, and refuses one that does not exist", async () => {

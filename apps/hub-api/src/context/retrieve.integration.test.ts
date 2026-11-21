@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { createHttpHarness } from "../test/http.js";
 import type { RetrieveInput } from "./retrieve.js";
 
@@ -123,4 +124,60 @@ test("weights come from the versioned config: off, or a different budget, withou
   const off = await retrieveContext(h.prisma, input(owner.id, "passport", { config: ContextConfig.parse({ retrieval: { always: { overdue: 0 } } }).retrieval }));
   assert.ok(!off.items.some((item) => item.group === "overdue"));
   assert.ok(off.items.some((item) => item.group === "related" && item.title === "Renew the passport"), "found by its words instead");
+});
+
+test("a meeting note links only to its own account's notes session, found through an index", async () => {
+  const owner = await h.asUser();
+  const other = await h.asUser();
+  const note = await h.prisma.meetingNote.create({ data: { userId: owner.id, title: "Quarterly vendor review", answer: "The Northwind contract renewal was approved.", askedAt: daysAgo(30) } });
+  // Another account's session that names this note: never the link.
+  const theirs = await h.prisma.meetingSession.create({ data: { userId: other.id, meetingNoteId: note.id, title: "Their notes", startedAt: daysAgo(29), status: "ended" } });
+  const got = await retrieveContext(h.prisma, input(owner.id, "northwind contract renewal"));
+  const item = got.items.find((row) => row.id === note.id);
+  assert.ok(item, got.lines.join("\n"));
+  assert.equal(item.ref, null);
+  assert.ok(!got.lines.join("\n").includes(theirs.id), "no other account's session id");
+  assert.match(item.line, new RegExp(`hub_read_meeting_note ${note.id}`));
+  const ours = await h.prisma.meetingSession.create({ data: { userId: owner.id, meetingNoteId: note.id, title: "Quarterly vendor review", startedAt: daysAgo(30), status: "ended" } });
+  const linked = await retrieveContext(h.prisma, input(owner.id, "northwind contract renewal"));
+  assert.equal(linked.items.find((row) => row.id === note.id)?.ref, `ensemble://meeting/${ours.id}`);
+  const indexes = await h.prisma.$queryRaw<Array<{ indexdef: string }>>`SELECT indexdef FROM pg_indexes WHERE tablename = 'meeting_sessions'`;
+  assert.ok(indexes.some((row) => /\(meeting_note_id\)/.test(row.indexdef)), "meeting_sessions.meeting_note_id is indexed");
+});
+
+test("5,000 long tasks and an 11-word request: retrieval stays fast and never stalls the event loop", async (t) => {
+  const owner = await h.asUser();
+  const vocabulary = "alpha budget carrier delivery estimate forecast gateway harbor invoice journal kernel ledger margin network orbit pipeline quarter ratio supplier ticket upgrade vendor warehouse yield".split(" ");
+  let seed = 7;
+  const next = () => (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648);
+  const words = (chars: number) => {
+    const out: string[] = [];
+    for (let length = 0; length < chars; ) {
+      const word = vocabulary[next() % vocabulary.length]!;
+      out.push(word);
+      length += word.length + 1;
+    }
+    return out.join(" ");
+  };
+  for (let batch = 0; batch < 10; batch += 1) {
+    await h.prisma.task.createMany({
+      data: Array.from({ length: 500 }, (_, index) => ({ userId: owner.id, title: `Task ${batch * 500 + index}: ${words(40)}`, description: words(1_800), notes: words(1_800), status: "todo" as const, updatedAt: daysAgo((batch * 500 + index) % 365) })),
+    });
+  }
+  // Six words no task holds, then five they do: a word no row holds is the costly one to look for.
+  const request = "Find the northwind renewal paperwork for zephyr and kestrel: the vendor invoice ledger, harbor and quarter";
+  assert.equal(new Set(request.toLowerCase().split(/\W+/).filter((word) => vocabulary.includes(word))).size, 5);
+  await retrieveContext(h.prisma, input(owner.id, request));
+  const delay = monitorEventLoopDelay({ resolution: 5 });
+  delay.enable();
+  const started = performance.now();
+  const got = await retrieveContext(h.prisma, input(owner.id, request));
+  const took = performance.now() - started;
+  delay.disable();
+  const stall = delay.max / 1e6;
+  t.diagnostic(`retrieval ${Math.round(took)} ms, longest event-loop stall ${Math.round(stall)} ms, ${got.terms.length} words, ${got.items.length} items`);
+  assert.ok(got.items.some((item) => item.group === "related" && item.kind === "task"));
+  assert.ok(got.terms.length >= 11, got.terms.join(" "));
+  assert.ok(took < 1_000, `retrieval took ${Math.round(took)} ms`);
+  assert.ok(stall < 600, `the event loop stalled ${Math.round(stall)} ms`);
 });

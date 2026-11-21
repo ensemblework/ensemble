@@ -4,7 +4,7 @@ description: Use when your owner wants a paper, PDF, datasheet, manual or anothe
 license: FSL-1.1-MIT
 metadata:
   priority: p1
-  keywords: paper, papers, pdf, pdfs, arxiv, cvpr, iccv, eccv, wacv, neurips, icml, iclr, acl, emnlp, naacl, whitepaper, datasheet, datasheets, manual, manuals, ebook, my files, ensemble files, to my files
+  keywords: paper, papers, pdf, pdfs, arxiv, cvpr, iccv, eccv, wacv, neurips, icml, iclr, acl, emnlp, naacl, whitepaper, datasheet, datasheets, manual, manuals, ebook, my files, ensemble files, to my files, to files, in files
   tools: hub_save_file
   source: Ensemble Node's files from the web skill.
 ---

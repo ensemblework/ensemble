@@ -15,16 +15,13 @@ Size the work before you plan it.
 A plan is the set of decisions a worker cannot make alone. Each step says:
 - what it produces (a page, a file, a task change, a message) and where that goes;
 - who does it: you, a crew member (node_plan), a helper, or a coding agent session;
-- how you will know it is done: the check to run and what it must show, or the record to read back;
+- how you will know it is done: the check to run and what it must show;
 - what it needs from earlier steps (names, links, values), so it can start without asking.
 
-Copy exact values from the request into the steps that use them: dates, amounts, names, links. A step that says "handle the details" or "tidy up" decides nothing; write the decision instead. A plan longer than the work it describes is the work written twice.
+Copy exact values from the request into the steps that use them: dates, amounts, names, links. A step that says "handle the details" decides nothing; write the decision instead.
 
-Where the plan lives:
-- crew work: the whole plan in one node_plan call;
-- longer work of your own: node_work_start;
-- work you finish now: a short list in your reply, or nothing.
+Where the plan lives: crew work in one node_plan call; longer work of your own in node_work_start; work you finish now as a short list in your reply, or nothing.
 
-While you work, keep the plan true: mark what is done with its evidence, and change the plan when you learn something that changes it. Before you say the work is done, check every part of the request against what you produced (the verify-before-done skill).
+While you work, keep the plan true: mark what is done with its evidence, and change it when you learn something that changes it. Before you say the work is done, check every part of the request against what you produced (the verify-before-done skill).
 
 A plan for your owner's day: start from what is overdue and what is due today, put the meetings in their places, fit the work around them in time order, and say which items you moved to later and why. Name an overdue item as overdue.

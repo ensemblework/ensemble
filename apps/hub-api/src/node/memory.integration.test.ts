@@ -1,8 +1,9 @@
 /**
  * What a node remembers (node/memory.ts): a fact saved with a key revises the one before it (kept and linked,
- * never deleted), no node changes a pinned memory and the owner's own edits win, past 200 the oldest unused are
- * archived instead of deleted, a turn gets its pinned memories and the owner's preferences always and then those
- * its words call for, and the owner lists, adds, edits, pins and deletes them in Node.
+ * never deleted), no node changes a pinned memory and the owner's own edits win, past 200 the least recently used
+ * are archived instead of deleted (never the one just written), an archived memory's words bring it back, an
+ * owner-wide memory outlives its node, a turn gets its pinned memories and the owner's preferences always and
+ * then those its words call for, and the owner lists, adds, edits, pins and deletes them in Node.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -237,4 +238,101 @@ test("the owner's memory routes: list with scope, key, pin and archive; history;
   assert.deepEqual(json(await akash.inject({ method: "GET", url: `${url}?history=1` })).memories, [], "with its earlier revisions");
   const rows: NodeMemory[] = await h.prisma.nodeMemory.findMany({ where: { nodeId: node.id } });
   assert.equal(rows.length, 0);
+});
+
+/** `count` memories of a node, the first the oldest; each used `usedDaysAgo(index)` days ago (null: never). */
+async function fill(user: HttpUser, nodeId: string, count: number, usedDaysAgo: (index: number) => number | null) {
+  const start = Date.now() - 400 * 86_400_000;
+  await h.prisma.nodeMemory.createMany({
+    data: Array.from({ length: count }, (_, index) => {
+      const used = usedDaysAgo(index);
+      return { userId: user.id, nodeId, content: `Kept fact ${index}.`, createdAt: new Date(start + index * 60_000), updatedAt: new Date(start + index * 60_000), lastUsedAt: used === null ? null : new Date(Date.now() - used * 86_400_000) };
+    }),
+  });
+}
+
+test("at the cap a memory just written is never the one archived: the least recently used (or made) goes, and the answer says what the database holds", async () => {
+  const akash = await owner();
+  const { node, roomId } = await nodeOf(akash);
+  // Every memory used lately, the first ones longest ago: a new one has never been used.
+  await fill(akash, node.id, MAX_MEMORIES, (index) => 100 - index * 0.25);
+  const saved = await remember(node, roomId, "A brand new fact.");
+  assert.equal(saved.archived, 1);
+  assert.equal(saved.memory.archivedAt, null, "the answer is the row as saved");
+  assert.equal((await h.prisma.nodeMemory.findUniqueOrThrow({ where: { id: saved.memory.id } })).archivedAt, null, "the new memory stays live");
+  const archived = await h.prisma.nodeMemory.findMany({ where: { nodeId: node.id, archivedAt: { not: null } } });
+  assert.deepEqual(archived.map((row) => row.content), ["Kept fact 0."], "the one used longest ago");
+
+  // The owner adds one at the cap: the answer and the database agree.
+  const posted = await akash.inject({ method: "POST", url: `/api/node/nodes/${node.id}/memory`, payload: { content: "Another new fact." } });
+  assert.equal(posted.statusCode, 201, posted.body);
+  const body = json(posted);
+  const row = await h.prisma.nodeMemory.findUniqueOrThrow({ where: { id: body.memory.id } });
+  assert.deepEqual([body.memory.archived, row.archivedAt], [false, null]);
+  assert.equal(body.archived, 1);
+});
+
+test("saving the words and key of an archived memory brings it back instead of saying it is already there", async () => {
+  const akash = await owner();
+  const { node, roomId } = await nodeOf(akash);
+  const url = `/api/node/nodes/${node.id}/memory`;
+  const keyed = await remember(node, roomId, "Invoices go to finance@acme.example.", { key: "invoices" });
+  const plain = await remember(node, roomId, "Akash takes his coffee black.");
+  for (const id of [keyed.memory.id, plain.memory.id]) assert.equal((await akash.inject({ method: "PATCH", url: `${url}/${id}`, payload: { archived: true } })).statusCode, 200);
+
+  const again = await remember(node, roomId, "Invoices go to finance@acme.example.", { key: "invoices" });
+  assert.equal(again.status, "restored");
+  const back = await h.prisma.nodeMemory.findUniqueOrThrow({ where: { id: keyed.memory.id } });
+  assert.equal(back.archivedAt, null);
+  assert.ok(back.lastUsedAt, "it counts as used");
+  const twin = await remember(node, roomId, "akash takes his coffee black.");
+  assert.equal(twin.status, "restored");
+  assert.equal(twin.memory.id, plain.memory.id, "the same memory, not a second one");
+  assert.equal((await h.prisma.nodeMemory.findUniqueOrThrow({ where: { id: plain.memory.id } })).archivedAt, null);
+  assert.equal(await h.prisma.nodeMemory.count({ where: { nodeId: node.id } }), 2);
+});
+
+test("a key is one fact per scope for the owner's routes, and one fact per node for the node: moving it to another scope replaces the old one", async () => {
+  const akash = await owner();
+  const { node, roomId } = await nodeOf(akash);
+  const url = `/api/node/nodes/${node.id}/memory`;
+  const [alpha, beta] = await Promise.all(["Alpha", "Beta"].map((name) => h.prisma.project.create({ data: { userId: akash.id, name } })));
+  const first = json(await akash.inject({ method: "POST", url, payload: { content: "Alpha ships on 1 December.", key: "deadline", scope: "project", scopeId: alpha!.id } }));
+  const second = json(await akash.inject({ method: "POST", url, payload: { content: "Beta ships on 9 December.", key: "deadline", scope: "project", scopeId: beta!.id } }));
+  assert.equal(second.replaced, undefined, "another project's fact is another fact");
+  const general = json(await akash.inject({ method: "POST", url, payload: { content: "Deadlines are Fridays unless said otherwise.", key: "deadline" } }));
+  assert.equal(general.replaced, undefined, "and so is the node's own");
+  const live = await h.prisma.nodeMemory.findMany({ where: { userId: akash.id, supersededById: null } });
+  assert.equal(live.length, 3);
+  const third = json(await akash.inject({ method: "POST", url, payload: { content: "Alpha ships on 3 December.", key: "deadline", scope: "project", scopeId: alpha!.id } }));
+  assert.equal(third.replaced, first.memory.id, "the same project's fact is replaced");
+
+  // The node moves a fact of its own to the owner: its old one in the node's scope is replaced too.
+  const mine = await remember(node, roomId, "Akash wants coding work run with Copilot.", { key: "coding agent" });
+  const moved = await remember(node, roomId, "Akash wants coding work run with Claude Code.", { key: "coding agent", scope: "owner" });
+  assert.equal((await h.prisma.nodeMemory.findUniqueOrThrow({ where: { id: mine.memory.id } })).supersededById, moved.memory.id);
+  const turn = await memoriesForTurn(h.prisma, { node, roomId, projectId: null, words: "which coding agent?", config: DEFAULT_CONTEXT_CONFIG.memory });
+  assert.deepEqual(turn.lines.filter((line) => line.includes("coding")), ["Akash wants coding work run with Claude Code. (key “coding agent”)"]);
+});
+
+test("deleting a node keeps the owner-wide memories it wrote, and every node's memory page lists them as owner-wide", async () => {
+  const akash = await owner();
+  const writer = await nodeOf(akash);
+  const reader = await nodeOf(akash, "researcher");
+  const wide = await remember(writer.node, writer.roomId, "Akash's time zone is IST.", { key: "time zone", scope: "owner" });
+  const own = await remember(writer.node, writer.roomId, "Draft replies in British English.");
+  const listed = json(await akash.inject({ method: "GET", url: `/api/node/nodes/${reader.node.id}/memory` })).memories as Array<{ id: string; ownerWide: boolean; scope: string }>;
+  assert.deepEqual(listed.map((row) => [row.id, row.ownerWide]), [[wide.memory.id, true]], "another node's page lists it, marked owner-wide");
+
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/nodes/${writer.node.id}` })).statusCode, 204);
+  assert.ok(await h.prisma.nodeMemory.findUnique({ where: { id: wide.memory.id } }), "the owner's fact outlives the node that wrote it");
+  assert.equal(await h.prisma.nodeMemory.findUnique({ where: { id: own.memory.id } }), null, "the node's own facts go with it");
+  const after = await memoriesForTurn(h.prisma, { node: reader.node, roomId: reader.roomId, projectId: null, words: "what time is it?", config: DEFAULT_CONTEXT_CONFIG.memory });
+  assert.deepEqual(after.lines, ["Akash's time zone is IST. (key “time zone”)"]);
+  // Still editable from any node's page, and gone with the account.
+  const edited = await akash.inject({ method: "PATCH", url: `/api/node/nodes/${reader.node.id}/memory/${wide.memory.id}`, payload: { pinned: true } });
+  assert.equal(edited.statusCode, 200, edited.body);
+  const { deleteAccountData } = await import("../lib/account-data.js");
+  await deleteAccountData(h.prisma, akash.id);
+  assert.equal(await h.prisma.nodeMemory.count({ where: { userId: akash.id } }), 0);
 });

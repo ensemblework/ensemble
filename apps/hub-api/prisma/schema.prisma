@@ -269,6 +269,7 @@ model Task {
   @@index([meetingNoteId])
   @@index([userId, owner])
   @@index([userId, createdAt])
+  @@index([userId, updatedAt])
   @@index([userId, status, boardOrder])
   @@index([userId, due])
   @@index([assigneeAccountId])
@@ -1197,6 +1198,7 @@ model MeetingSession {
   @@index([userId, projectId])
   @@index([personIds], type: Gin)
   @@index([userId, seriesKey])
+  @@index([meetingNoteId])
   @@map("meeting_sessions")
 }
 
@@ -3132,7 +3134,10 @@ model NodePeerRequest {
 model NodeMemory {
   id              String    @id @default(uuid())
   userId          String    @map("user_id")
-  nodeId          String    @map("node_id")
+  /// The node whose memory it is; null for an owner-wide one (scope owner), which outlives the node that wrote it.
+  nodeId          String?   @map("node_id")
+  /// The node that wrote it (kept when that node is deleted); null when the owner wrote it in Node.
+  authorNodeId    String?   @map("author_node_id")
   content         String
   /// owner (about the owner: every node of theirs reads it) | node (this node's own) | room | project
   scope           String    @default("node")
@@ -3151,9 +3156,10 @@ model NodeMemory {
   archivedAt      DateTime? @map("archived_at")
   lastUsedAt      DateTime? @map("last_used_at")
   createdAt       DateTime  @default(now()) @map("created_at")
-  /// When its words, key, scope, pin or archive state last changed; reading it never moves it.
+  /// When its words, key, scope or pin last changed, or the owner archived or restored it: reading it, the cap's
+  /// archiving and a node bringing it back never move it.
   updatedAt       DateTime  @default(now()) @map("updated_at")
-  node            NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  node            NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([nodeId, createdAt])
   @@index([userId, scope])

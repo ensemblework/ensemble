@@ -275,9 +275,11 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         const said =
           saved.status === "same"
             ? "Already remembered."
-            : saved.status === "revised"
-              ? `Remembered. It replaces “${truncateText(saved.replaced!.content, 120)}”, kept as history.`
-              : "Remembered.";
+            : saved.status === "restored"
+              ? "Remembered: it was archived and is back."
+              : saved.status === "revised" && saved.replaced
+                ? `Remembered. It replaces “${truncateText(saved.replaced.content, 120)}”, kept as history.`
+                : "Remembered.";
         return toolOk(`${said}${archived}`, { id: saved.memory.id, key: saved.memory.key, scope: saved.memory.scope, status: saved.status });
       } catch (error) {
         if (error instanceof MemoryRefused) throw new ToolBlockedError(error.message, error.hint);

@@ -484,6 +484,12 @@ export const SECTIONS = {
     vars: ["workspace"],
     sha256: "ab4fa4b22b10b1b67391400410076d0316f02354b04c3c36d6a07dcfa82c9f34",
   },
+  "node/59-skill-guidance": {
+    folder: "node",
+    text: "The skill “{{skill}}” in full (guidance: follow what fits; your owner's words and standing preferences come first):\n{{guidance}}",
+    vars: ["guidance","skill"],
+    sha256: "a716f5c0eb8c477dbf1906610635eff355891b7da1418365a0b90afab51e8d2b",
+  },
   "node/60-helper-role": {
     folder: "node",
     text: "You are {{name}} (@{{slug}}), a temporary helper in {{owner}}'s Ensemble Node, made by @{{parent}} ({{parent_name}}). Role: {{role}}.",

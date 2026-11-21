@@ -33,9 +33,29 @@ export function tsQuery(terms: readonly string[], prefixFrom = 6): string | null
   return parts.size ? [...parts].join(" | ") : null;
 }
 
-/** ILIKE patterns that every match of the query also matches: a cheap filter before ranking. */
-export function likePatterns(terms: readonly string[], prefixFrom = 6): string[] {
-  return [...new Set(terms.map((term) => `%${prefixOf(term, prefixFrom) ?? term}%`))];
+const REGEX_SPECIAL = /[\\^$.*+?()[\]{}|]/g;
+
+/**
+ * One Postgres regular expression (`~*`) that every row the query matches also matches: a short word whole, a
+ * long one by its first letters, each from the start of a word, so one pass over a row's text tells.
+ */
+export function matchPattern(terms: readonly string[], prefixFrom = 6): string | null {
+  const whole = new Set<string>();
+  const starts = new Set<string>();
+  const anywhere = new Set<string>();
+  for (const term of terms) {
+    const prefix = prefixOf(term, prefixFrom);
+    const text = (prefix ?? term).replace(REGEX_SPECIAL, "\\$&");
+    // Word boundaries follow the database's locale, which may not count other scripts' letters as word letters.
+    if (/[^\x00-\x7f]/.test(text)) anywhere.add(text);
+    else (prefix ? starts : whole).add(text);
+  }
+  const parts = [
+    whole.size ? `\\m(?:${[...whole].join("|")})\\M` : "",
+    starts.size ? `\\m(?:${[...starts].join("|")})` : "",
+    anywhere.size ? `(?:${[...anywhere].join("|")})` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join("|") : null;
 }
 
 type Wanted = { term: string; prefix: string | null };

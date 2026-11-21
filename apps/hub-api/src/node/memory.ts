@@ -2,13 +2,18 @@
  * What a node remembers (docs/35 §5.6): facts and preferences its owner gave it, each with a scope, what it
  * is about (`key`), where it came from, and its earlier revisions kept as history.
  *
- * - Scopes: `owner` (about the owner: every node of theirs reads it), `node` (the node's own, the default),
- *   `room` (read only in that room), `project` (read when that project is open in a turn).
- * - Writes: a fact with the key of one the turn can read replaces it; the old row stays, linked to the new one
- *   (`supersededById`). No node changes a pinned memory, and an edit the owner made in Node after the turn
- *   began wins over the node's (compare-and-set on `updatedAt`). The owner's own edits replace a fact the
- *   same way and may change a pinned one.
- * - Past `MAX_MEMORIES` live memories a node keeps, the oldest unused (not pinned) are archived, never deleted.
+ * - Scopes: `owner` (about the owner: every node of theirs reads it, and it outlives the node that wrote it),
+ *   `node` (the node's own, the default), `room` (read only in that room), `project` (read when that project is
+ *   open in a turn).
+ * - A node's writes: a key is one fact per node. Its new words replace the memory with that key in the scope it
+ *   writes to, and the node's own memories with that key in the turn's other scopes; the old rows stay, linked to
+ *   the new one (`supersededById`). No node changes a pinned memory, and an edit the owner made in Node after the
+ *   turn began wins over the node's (compare-and-set on `updatedAt`). Saving what an archived memory says brings
+ *   it back.
+ * - The owner's writes: a key is one fact per scope (and room or project); their edits replace a fact the same
+ *   way and may change a pinned one.
+ * - Past `MAX_MEMORIES` live memories (a node's own, or the owner's owner-wide ones), the least recently used or
+ *   made (not pinned, never the one just written) are archived, never deleted.
  * - Reads (`memoriesForTurn`): pinned memories and the owner's preferences always (within `alwaysBytes`), then
  *   the rest by full-text rank for the turn's words, newest first among equals, within the token budget of the
  *   versioned config (context/config.ts). Each memory given is marked used.
@@ -19,7 +24,7 @@ import type { MemoryConfig } from "../context/config.js";
 import { queryTerms, tsQuery } from "../context/fulltext.js";
 import { truncateText } from "../lib/text.js";
 
-/** Live memories a node keeps; past it the oldest unused are archived. */
+/** Live memories a node keeps, and owner-wide ones an owner keeps; past it the least recently used are archived. */
 export const MAX_MEMORIES = 200;
 export const MEMORY_CHARS = 500;
 export const KEY_CHARS = 80;
@@ -52,25 +57,51 @@ export function visibleTo(node: Owner, roomId: string | null, projectId: string 
   };
 }
 
-const SPECIFIC: Record<string, number> = { room: 0, project: 1, node: 2, owner: 3 };
-
-/** The current memory with this key the turn can read (archived ones too), the most specific scope first. */
-async function byKey(db: Db, node: Owner, key: string, scope: MemoryScope | undefined, roomId: string | null, projectId: string | null): Promise<NodeMemory | null> {
-  const rows = await db.nodeMemory.findMany({ where: { AND: [visibleTo(node, roomId, projectId), { supersededById: null, key: { equals: key, mode: "insensitive" } }, scope ? { scope } : {}] }, orderBy: { updatedAt: "desc" } });
-  return rows.sort((a, b) => (SPECIFIC[a.scope] ?? 9) - (SPECIFIC[b.scope] ?? 9))[0] ?? null;
+/** What a node's memory page lists and edits: the node's own memories and its owner's owner-wide ones. */
+function onPage(node: Owner): Prisma.NodeMemoryWhereInput {
+  return { userId: node.userId, OR: [{ nodeId: node.id }, { scope: "owner" }] };
 }
 
-/** Archives the node's oldest unused memories (never a pinned one) past `MAX_MEMORIES` live ones; how many. */
-export async function archiveBeyondLimit(db: Db, nodeId: string, now = new Date(), max = MAX_MEMORIES): Promise<number> {
-  const live = await db.nodeMemory.findMany({ where: { nodeId, supersededById: null, archivedAt: null }, select: { id: true, pinned: true, lastUsedAt: true, createdAt: true } });
+/** The memories one fact of a scope lives among: the owner's for owner-wide ones, the room's or project's, else the node's. */
+function inScope(node: Owner, scope: MemoryScope, scopeId: string | null): Prisma.NodeMemoryWhereInput {
+  if (scope === "owner") return { userId: node.userId, scope };
+  if (scope === "node") return { userId: node.userId, scope, nodeId: node.id };
+  return { userId: node.userId, scope, scopeId };
+}
+
+/** The rows a cap counts: the owner's owner-wide memories, or the node's own. */
+function capOf(node: Owner, scope: string): Prisma.NodeMemoryWhereInput {
+  return scope === "owner" ? { userId: node.userId, scope: "owner" } : { nodeId: node.id };
+}
+
+/** Which node a row belongs to: none for an owner-wide memory, which outlives the node that wrote it. */
+const holder = (node: Owner, scope: string) => (scope === "owner" ? null : node.id);
+
+const SPECIFIC: Record<string, number> = { room: 0, project: 1, node: 2, owner: 3 };
+
+/** The current memories with this key the turn can read (archived ones too), the most specific scope first. */
+async function sameKey(db: Db, node: Owner, key: string, roomId: string | null, projectId: string | null): Promise<NodeMemory[]> {
+  const rows = await db.nodeMemory.findMany({ where: { AND: [visibleTo(node, roomId, projectId), { supersededById: null, key: { equals: key, mode: "insensitive" } }] }, orderBy: { updatedAt: "desc" } });
+  return rows.sort((a, b) => (SPECIFIC[a.scope] ?? 9) - (SPECIFIC[b.scope] ?? 9));
+}
+
+/** When a memory was last of use: its last use, else when it was made. */
+const lastOfUse = (row: { lastUsedAt: Date | null; createdAt: Date }) => (row.lastUsedAt ?? row.createdAt).getTime();
+
+/**
+ * Archives the least recently used (or made) memories of `group` past `max` live ones, never a pinned one or one
+ * of `keep` (the row being written); how many. Archiving is not an edit: `updatedAt` stays.
+ */
+export async function archiveBeyondLimit(db: Db, group: Prisma.NodeMemoryWhereInput, now = new Date(), keep: readonly string[] = [], max = MAX_MEMORIES): Promise<number> {
+  const live = await db.nodeMemory.findMany({ where: { AND: [group, { supersededById: null, archivedAt: null }] }, select: { id: true, pinned: true, lastUsedAt: true, createdAt: true } });
   const extra = live.length - max;
   if (extra <= 0) return 0;
   const oldest = live
-    .filter((row) => !row.pinned)
-    .sort((a, b) => (a.lastUsedAt?.getTime() ?? 0) - (b.lastUsedAt?.getTime() ?? 0) || a.createdAt.getTime() - b.createdAt.getTime())
+    .filter((row) => !row.pinned && !keep.includes(row.id))
+    .sort((a, b) => lastOfUse(a) - lastOfUse(b) || a.createdAt.getTime() - b.createdAt.getTime())
     .slice(0, extra);
   if (!oldest.length) return 0;
-  await db.nodeMemory.updateMany({ where: { id: { in: oldest.map((row) => row.id) } }, data: { archivedAt: now, updatedAt: now } });
+  await db.nodeMemory.updateMany({ where: { id: { in: oldest.map((row) => row.id) } }, data: { archivedAt: now } });
   return oldest.length;
 }
 
@@ -79,6 +110,9 @@ async function supersede(db: Db, current: NodeMemory, nextId: string, now: Date,
   const moved = await db.nodeMemory.updateMany({ where: { id: current.id, supersededById: null, updatedAt: current.updatedAt, ...guard }, data: { supersededById: nextId, updatedAt: now } });
   return moved.count === 1;
 }
+
+/** The row as the database holds it now. */
+const reread = async (db: Db, row: NodeMemory): Promise<NodeMemory> => (await db.nodeMemory.findUnique({ where: { id: row.id } })) ?? row;
 
 export type NodeRemember = {
   node: Owner;
@@ -97,7 +131,9 @@ export type NodeRemember = {
   now?: Date;
 };
 
-export type Remembered = { status: "saved" | "revised" | "same"; memory: NodeMemory; replaced: NodeMemory | null; archived: number };
+export type Remembered = { status: "saved" | "revised" | "same" | "restored"; memory: NodeMemory; replaced: NodeMemory | null; archived: number };
+
+const CHANGED = "That memory changed while you were saving; it was not replaced.";
 
 /** `node_remember`: a node saves what its owner told it (see the file's comment for the rules). */
 export async function rememberAsNode(prisma: PrismaClient, input: NodeRemember): Promise<Remembered> {
@@ -105,38 +141,67 @@ export async function rememberAsNode(prisma: PrismaClient, input: NodeRemember):
   const key = cleanKey(input.key);
   const now = input.now ?? new Date();
   const projectId = input.projectId ?? null;
+  const { node } = input;
+  const mine = (row: NodeMemory) => row.nodeId === node.id || row.authorNodeId === node.id;
   return prisma.$transaction(async (tx) => {
-    const current = key ? await byKey(tx, input.node, key, input.scope, input.roomId, projectId) : null;
-    if (current?.pinned) throw new MemoryRefused(`Your owner pinned this memory: “${current.content}”. Only they can change it.`, 409, "Tell your owner what you would change instead.");
-    if (current && !current.turnId && current.updatedAt > input.since) {
-      throw new MemoryRefused(`Your owner changed this memory themselves a moment ago: “${current.content}”. Their version stands.`, 409, "Tell your owner if you think it should change.");
+    const keyed = key ? await sameKey(tx, node, key, input.roomId, projectId) : [];
+    const scope: MemoryScope = input.scope ?? ((keyed[0]?.scope as MemoryScope | undefined) ?? "node");
+    const scopeId = scope === "room" ? input.roomId : scope === "project" ? projectId : null;
+    const current = keyed.find((row) => row.scope === scope && (scope === "owner" || (scope === "node" ? row.nodeId === node.id : row.scopeId === scopeId))) ?? null;
+    // A key is one fact per node: its own memories with the key in the turn's other scopes are replaced too.
+    let others = keyed.filter((row) => row !== current && mine(row));
+    let same = current && normal(current.content) === normal(content) ? current : null;
+    if (!key) {
+      // Without a key the words are the fact: the same words are that memory, or move it to the scope asked for.
+      const twin = await tx.nodeMemory.findFirst({
+        where: { AND: [visibleTo(node, input.roomId, projectId), { supersededById: null, content: { equals: content, mode: "insensitive" } }] },
+        orderBy: [{ archivedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "desc" }],
+      });
+      if (twin && (input.scope === undefined || twin.scope === input.scope)) same = twin;
+      else if (twin && mine(twin)) others = [twin];
     }
-    const scope: MemoryScope = input.scope ?? ((current?.scope as MemoryScope | undefined) ?? "node");
-    if (current && normal(current.content) === normal(content) && current.scope === scope) return { status: "same", memory: current, replaced: null, archived: 0 };
-    if (!current) {
-      const twin = await tx.nodeMemory.findFirst({ where: { AND: [visibleTo(input.node, input.roomId, projectId), { supersededById: null, archivedAt: null, content: { equals: content, mode: "insensitive" } }] } });
-      if (twin) return { status: "same", memory: twin, replaced: null, archived: 0 };
+    const changing = [...(current && current !== same ? [current] : []), ...others, ...(same?.archivedAt ? [same] : [])];
+    for (const row of changing) {
+      if (row.pinned) throw new MemoryRefused(`Your owner pinned this memory: “${row.content}”. Only they can change it.`, 409, "Tell your owner what you would change instead.");
+      if (!row.turnId && row.updatedAt > input.since) {
+        throw new MemoryRefused(`Your owner changed this memory themselves a moment ago: “${row.content}”. Their version stands.`, 409, "Tell your owner if you think it should change.");
+      }
+    }
+    const replaceAll = async (nextId: string) => {
+      for (const row of [...(current ? [current] : []), ...others]) {
+        if (row.id !== nextId && !(await supersede(tx, row, nextId, now, { pinned: false }))) throw new MemoryRefused(CHANGED, 409, "Read your memories again on your next turn.");
+      }
+    };
+    if (same) {
+      if (same.archivedAt) {
+        // Bringing it back is a use, not an edit: `updatedAt` stays.
+        const back = await tx.nodeMemory.updateMany({ where: { id: same.id, supersededById: null, updatedAt: same.updatedAt }, data: { archivedAt: null, lastUsedAt: now } });
+        if (back.count !== 1) throw new MemoryRefused(CHANGED, 409, "Read your memories again on your next turn.");
+      }
+      await replaceAll(same.id);
+      const archived = await archiveBeyondLimit(tx, capOf(node, same.scope), now, [same.id]);
+      const replaced = others.find((row) => row.id !== same!.id) ?? null;
+      return { status: same.archivedAt ? "restored" : replaced ? "revised" : "same", memory: await reread(tx, same), replaced, archived };
     }
     const memory = await tx.nodeMemory.create({
       data: {
         id: randomUUID(),
-        userId: input.node.userId,
-        nodeId: input.node.id,
+        userId: node.userId,
+        nodeId: holder(node, scope),
+        authorNodeId: node.id,
         content,
         key,
         scope,
-        scopeId: scope === "room" ? input.roomId : scope === "project" ? projectId : null,
+        scopeId,
         turnId: input.turnId,
         sourceMessageId: input.sourceMessageId,
         createdAt: now,
         updatedAt: now,
       },
     });
-    if (current && !(await supersede(tx, current, memory.id, now, { pinned: false }))) {
-      throw new MemoryRefused("That memory changed while you were saving; it was not replaced.", 409, "Read your memories again on your next turn.");
-    }
-    const archived = await archiveBeyondLimit(tx, input.node.id, now);
-    return { status: current ? "revised" : "saved", memory, replaced: current, archived };
+    await replaceAll(memory.id);
+    const archived = await archiveBeyondLimit(tx, capOf(node, scope), now, [memory.id]);
+    return { status: current || others.length ? "revised" : "saved", memory: await reread(tx, memory), replaced: current ?? others[0] ?? null, archived };
   });
 }
 
@@ -154,31 +219,25 @@ export async function checkScope(prisma: PrismaClient, node: Owner, scope: Memor
   return scopeId;
 }
 
-/** The owner adds a memory in Node; a key it already has replaces that memory (a pinned one stays pinned). */
+/**
+ * The owner adds a memory in Node (scope `node` unless they say); a key it already has in that scope (and room
+ * or project) replaces that memory, which keeps its pin.
+ */
 export async function rememberAsOwner(prisma: PrismaClient, node: Owner, input: OwnerMemory & { content: string }): Promise<{ memory: NodeMemory; replaced: NodeMemory | null; archived: number }> {
   const key = cleanKey(input.key);
   const now = new Date();
+  const scope: MemoryScope = input.scope ?? "node";
+  const scopeId = scope === "room" || scope === "project" ? (input.scopeId ?? null) : null;
   return prisma.$transaction(async (tx) => {
     const current = key
-      ? ((await tx.nodeMemory.findMany({ where: { userId: node.userId, supersededById: null, key: { equals: key, mode: "insensitive" }, OR: [{ nodeId: node.id }, { scope: "owner" }] }, orderBy: { updatedAt: "desc" } }))[0] ?? null)
+      ? ((await tx.nodeMemory.findMany({ where: { AND: [inScope(node, scope, scopeId), { supersededById: null, key: { equals: key, mode: "insensitive" } }] }, orderBy: { updatedAt: "desc" } }))[0] ?? null)
       : null;
-    const scope: MemoryScope = input.scope ?? ((current?.scope as MemoryScope | undefined) ?? "node");
     const memory = await tx.nodeMemory.create({
-      data: {
-        id: randomUUID(),
-        userId: node.userId,
-        nodeId: node.id,
-        content: input.content.trim(),
-        key,
-        scope,
-        scopeId: scope === "room" || scope === "project" ? (input.scopeId ?? (current?.scope === scope ? current.scopeId : null)) : null,
-        pinned: input.pinned ?? current?.pinned ?? false,
-        createdAt: now,
-        updatedAt: now,
-      },
+      data: { id: randomUUID(), userId: node.userId, nodeId: holder(node, scope), content: input.content.trim(), key, scope, scopeId, pinned: input.pinned ?? current?.pinned ?? false, createdAt: now, updatedAt: now },
     });
     if (current && !(await supersede(tx, current, memory.id, now, {}))) throw new MemoryRefused("That memory changed meanwhile; read it again.", 409);
-    return { memory, replaced: current, archived: await archiveBeyondLimit(tx, node.id, now) };
+    const archived = await archiveBeyondLimit(tx, capOf(node, scope), now, [memory.id]);
+    return { memory: await reread(tx, memory), replaced: current, archived };
   });
 }
 
@@ -189,12 +248,14 @@ export async function rememberAsOwner(prisma: PrismaClient, node: Owner, input: 
 export async function editAsOwner(prisma: PrismaClient, node: Owner, id: string, input: OwnerMemory): Promise<NodeMemory> {
   const now = new Date();
   return prisma.$transaction(async (tx) => {
-    const row = await tx.nodeMemory.findFirst({ where: { id, nodeId: node.id, userId: node.userId } });
+    const row = await tx.nodeMemory.findFirst({ where: { AND: [{ id }, onPage(node)] } });
     if (!row) throw new MemoryRefused("That memory is not available.", 404);
     if (row.supersededById) throw new MemoryRefused("A newer revision replaced this memory: edit that one.", 409);
     const key = input.key === undefined ? row.key : cleanKey(input.key);
     const scope = input.scope ?? (row.scope as MemoryScope);
     const scopeId = scope === "room" || scope === "project" ? (input.scopeId !== undefined ? input.scopeId : row.scope === scope ? row.scopeId : null) : null;
+    // An owner-wide memory is nobody's node's; one moved off it becomes this node's.
+    const nodeId = scope === "owner" ? null : scope === row.scope && row.nodeId ? row.nodeId : node.id;
     const pinned = input.pinned ?? row.pinned;
     const archivedAt = input.archived === undefined ? row.archivedAt : input.archived ? (row.archivedAt ?? now) : null;
     // Restored by the owner: used now, so it is not the next one archived.
@@ -203,20 +264,20 @@ export async function editAsOwner(prisma: PrismaClient, node: Owner, id: string,
     let saved: NodeMemory;
     if (content && content !== row.content) {
       saved = await tx.nodeMemory.create({
-        data: { id: randomUUID(), userId: node.userId, nodeId: node.id, content, key, scope, scopeId, pinned, archivedAt, lastUsedAt, createdAt: now, updatedAt: now },
+        data: { id: randomUUID(), userId: node.userId, nodeId, content, key, scope, scopeId, pinned, archivedAt, lastUsedAt, createdAt: now, updatedAt: now },
       });
       if (!(await supersede(tx, row, saved.id, now, {}))) throw new MemoryRefused("That memory changed meanwhile; read it again.", 409);
     } else {
-      saved = await tx.nodeMemory.update({ where: { id: row.id }, data: { key, scope, scopeId, pinned, archivedAt, lastUsedAt, updatedAt: now } });
+      saved = await tx.nodeMemory.update({ where: { id: row.id }, data: { nodeId, key, scope, scopeId, pinned, archivedAt, lastUsedAt, updatedAt: now } });
     }
-    await archiveBeyondLimit(tx, node.id, now);
-    return (await tx.nodeMemory.findUnique({ where: { id: saved.id } })) ?? saved;
+    await archiveBeyondLimit(tx, capOf(node, scope), now, [saved.id]);
+    return reread(tx, saved);
   });
 }
 
-/** Deletes a memory of this node with its earlier revisions; false when it is not there. */
+/** Deletes a memory of this node's page with its earlier revisions; false when it is not there. */
 export async function forgetMemory(prisma: PrismaClient, node: Owner, id: string): Promise<boolean> {
-  const row = await prisma.nodeMemory.findFirst({ where: { id, nodeId: node.id, userId: node.userId }, select: { id: true } });
+  const row = await prisma.nodeMemory.findFirst({ where: { AND: [{ id }, onPage(node)] }, select: { id: true } });
   if (!row) return false;
   const ids = new Set([row.id]);
   let frontier = [row.id];
@@ -238,22 +299,29 @@ export type MemoryView = {
   scopeId: string | null;
   /** The room's or the project's title, for a room or project memory. */
   scopeTitle: string | null;
+  /** About the owner, read by all their nodes and listed on each node's page. */
+  ownerWide: boolean;
   pinned: boolean;
   archived: boolean;
   archivedAt: string | null;
   /** The revision that replaced it (listed only with `history`). */
   supersededById: string | null;
-  /** Who wrote it: the node (from its owner's words) or the owner in Node. */
+  /** Who wrote it: a node (from its owner's words) or the owner in Node. */
   source: "node" | "owner";
+  /** The node that wrote it, when a node did (it may have been deleted since). */
+  authorNodeId: string | null;
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
 };
 
-/** The owner's view of a node's memories: live ones first (pinned, then newest), then archived; with `history`, replaced revisions too. */
+/**
+ * The owner's view of a node's memories and their owner-wide ones: live ones first (pinned, then newest), then
+ * archived; with `history`, replaced revisions too.
+ */
 export async function listMemories(prisma: PrismaClient, node: Owner, options: { history?: boolean } = {}): Promise<MemoryView[]> {
   const rows = await prisma.nodeMemory.findMany({
-    where: { nodeId: node.id, userId: node.userId, ...(options.history ? {} : { supersededById: null }) },
+    where: { AND: [onPage(node), options.history ? {} : { supersededById: null }] },
     orderBy: [{ archivedAt: { sort: "asc", nulls: "first" } }, { pinned: "desc" }, { updatedAt: "desc" }],
   });
   const titles = await scopeTitles(prisma, node, rows);
@@ -279,11 +347,13 @@ export function memoryView(row: NodeMemory, titles: ReadonlyMap<string, string> 
     scope: row.scope,
     scopeId: row.scopeId,
     scopeTitle: row.scopeId ? (titles.get(row.scopeId) ?? null) : null,
+    ownerWide: row.scope === "owner",
     pinned: row.pinned,
     archived: Boolean(row.archivedAt),
     archivedAt: row.archivedAt?.toISOString() ?? null,
     supersededById: row.supersededById,
     source: row.turnId ? "node" : "owner",
+    authorNodeId: row.authorNodeId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,

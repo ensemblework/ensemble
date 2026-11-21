@@ -305,7 +305,9 @@ test("a conversation turn offers the advanced browser and capture tools only for
   assert.match(azure, /Skills for this request \(guidance[^\n]*node_skill[^\n]*\):\n- web-task: Use when the work is several steps on a site/);
   assert.match(azure, /\n- sign-in: Use when a page needs your owner's account/);
   assert.doesNotMatch(azure, /- research: |- shopping: /, "only the skills its words call for");
-  assert.doesNotMatch(azure, /Dashboards, consoles and forms: web_task/, "a skill's full text only through node_skill");
+  // Its own words call for the best one strongly: its guidance comes in full, the others stay lines for node_skill.
+  assert.match(azure, /The skill “web-task” in full \([^\n]*\):\n- Dashboards, consoles and forms: web_task/);
+  assert.doesNotMatch(azure, /A page that needs your owner's account: browser_login_needed/, "one skill in full at most");
 });
 
 test("an owner's turn gets their overdue and due-today work, the memories and skills that fit, and the turn's record keeps what was chosen", async () => {
@@ -330,7 +332,7 @@ test("an owner's turn gets their overdue and due-today work, the memories and sk
   assert.ok(turn.context.includes(`- [Send the invoice to Acme](ensemble://task/${invoice.id}): due today`));
   assert.doesNotMatch(turn.stable, /Renew the company domain|deep work first|Skills for this request/, "never in the stable tier");
 
-  type Selected = { config: { version: string; hash: string }; skills: Array<{ name: string; source: string; score: number; why: string[] }>; memories: Array<{ why: string; pinned: boolean }>; context: Array<{ group: string; id: string; title: string }> };
+  type Selected = { config: { version: string; hash: string }; skills: Array<{ name: string; source: string; score: number; why: string[] }>; inline: { name: string; cut: boolean } | null; memories: Array<{ why: string; pinned: boolean }>; context: Array<{ group: string; id: string; title: string }> };
   const record = async () => {
     const rows = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" }, orderBy: { ts: "asc" } });
     return (rows.at(-1)!.payload as { selected: Selected }).selected;
@@ -340,6 +342,8 @@ test("an owner's turn gets their overdue and due-today work, the memories and sk
   assert.match(selected.config.hash, /^[0-9a-f]{12}$/);
   assert.equal(selected.skills[0]?.name, "planning");
   assert.ok(selected.skills[0]!.score > 0 && selected.skills[0]!.why.length > 0);
+  assert.deepEqual(selected.inline, { name: "planning", source: "bundled", chars: (await import("@ensemble/prompts")).SKILLS.planning.body.length, cut: false });
+  assert.match(turn.context, /The skill “planning” in full \([^\n]*\):\nSize the work before you plan it\./);
   assert.deepEqual(selected.memories.map((row) => [row.why, row.pinned]), [["pinned", true]]);
   assert.deepEqual(selected.context.filter((row) => row.group === "overdue").map((row) => row.id), [domain.id]);
   assert.deepEqual(selected.context.filter((row) => row.group === "today").map((row) => row.id), [invoice.id]);

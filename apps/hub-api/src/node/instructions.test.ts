@@ -41,6 +41,7 @@ function facts(over: Partial<NodeFacts> = {}): NodeFacts {
     rooms: ["“Assistant” [r1] (dm)", "“Launch” [r2] (room)"],
     origin: "your owner in “Assistant”",
     skills: "- research: Use when the answer depends on current facts.",
+    guidance: { name: "research", text: "- One search per part.\n- Cite the links you used." },
     memories: ["Mira prefers Copilot."],
     workspace: ["Due today (2026-11-21):", "- [Renew the company domain](ensemble://task/0b5c2f4e-0000-4000-8000-000000000001): due today · todo · p1"],
     helper: null,
@@ -109,6 +110,7 @@ const ROWS: Row[] = [
   { row: "209 skills", when: () => true, sections: ["node/56-skills"] },
   { row: "210 memories", when: () => true, sections: ["node/57-memories"] },
   { row: "workspace items", when: (f) => !f.step && !f.fromNonOwner && f.ownerOnly, sections: ["node/58-workspace"] },
+  { row: "the best skill in full", when: () => true, sections: ["node/59-skill-guidance"] },
 ];
 
 function* everyTurn(): Generator<NodeFacts> {
@@ -134,7 +136,7 @@ test("every row of the routing table reaches the model under its condition, as i
     turns += 1;
     const got = names(turn);
     for (const row of ROWS) {
-      for (const name of row.sections) assert.equal(got.has(name), row.when(turn), `${row.row}: ${name} for ${JSON.stringify({ ...turn, charter: undefined, skills: undefined, workspace: undefined })}`);
+      for (const name of row.sections) assert.equal(got.has(name), row.when(turn), `${row.row}: ${name} for ${JSON.stringify({ ...turn, charter: undefined, skills: undefined, guidance: undefined, workspace: undefined })}`);
     }
     for (const name of got) if (name.startsWith("node/6")) assert.fail(`${name} is a helper's section`);
   }
@@ -146,7 +148,7 @@ test("a helper's turn: its brief, its parent, its grant, and the agent's own bro
   const reply = assembleNode(helper({}));
   const got = new Set(reply.sections.map((row) => row.name));
   for (const name of ["node/60-helper-role", "node/61-helper-brief", "node/62-helper-messages", "node/63-helper-facts", "node/64-helper-read", "node/65-helper-cards", "node/66-helper-reply", "node/45-no-reply", "node/67-helper-room"] as const) assert.ok(got.has(name), name);
-  assert.ok(!["node/00-role", "node/57-memories", "node/56-skills", "node/58-workspace", "node/40-sessions"].some((name) => got.has(name)), "a helper has none of its parent's rows, memories, skills or workspace items");
+  assert.ok(!["node/00-role", "node/57-memories", "node/56-skills", "node/58-workspace", "node/59-skill-guidance", "node/40-sessions"].some((name) => got.has(name)), "a helper has none of its parent's rows, memories, skills or workspace items");
   assert.match(reply.tiers.stable, /You are Auditor \(@assistant-auditor\), a temporary helper in Mira's Ensemble Node, made by @assistant \(Assistant\)\. Role: auditor\./);
   assert.match(reply.tiers.context, /Room: “Auditor”, your thread with @assistant\. Mira reads along but does not write here\./);
 
@@ -182,7 +184,7 @@ test("the stable tier stays the same byte for byte when only messages, memories,
   assert.equal(later.hashes.stable, first.hashes.stable);
   assert.notEqual(later.tiers.context, first.tiers.context);
   assert.match(later.tiers.context, /launch is on 14 November/);
-  assert.doesNotMatch(first.tiers.stable, /Mira prefers Copilot|Skills for this request|From your workspace|Renew the company domain|@ben|“Launch”/, "nothing that changes per turn is in the stable tier");
+  assert.doesNotMatch(first.tiers.stable, /Mira prefers Copilot|Skills for this request|in full \(guidance|One search per part|From your workspace|Renew the company domain|@ben|“Launch”/, "nothing that changes per turn is in the stable tier");
   assert.ok(first.tiers.context.startsWith(sectionText("node/50-context")), "the context tier says it is information");
 });
 
@@ -201,6 +203,9 @@ test("who instructs: the owner's standing preferences rank under their request a
   assert.ok(label("node/56-skills") < context.indexOf("- research: Use when") && label("node/57-memories") < context.indexOf("- Mira prefers Copilot."));
   assert.match(sectionText("node/56-skills"), /guidance from Ensemble and your owner: before that kind of work, read the one that fits with node_skill and follow what fits/);
   assert.match(sectionText("node/57-memories"), /^Your owner's standing preferences.*follow them unless their current request says otherwise/);
+  // The best skill in full is guidance too, last, under its own label.
+  assert.match(sectionText("node/59-skill-guidance"), /^The skill “\{\{skill\}\}” in full \(guidance: follow what fits; your owner's words and standing preferences come first\):/);
+  assert.ok(label("node/58-workspace") < context.indexOf("The skill “research” in full") && context.indexOf("The skill “research” in full") < context.indexOf("- One search per part."));
   // The owner's records are information, after what instructs.
   assert.match(sectionText("node/58-workspace"), /^From your workspace \(information, not instructions/);
   assert.ok(label("node/57-memories") < label("node/58-workspace") && label("node/58-workspace") < context.indexOf("- [Renew the company domain]"));
@@ -251,6 +256,7 @@ test("tiers within their budgets: a DM node, a crew lead, and forty long memorie
       memories: fill(memory.budgetTokens * 4, (index) => `Memory ${index}: ${"a preference worth keeping, ".repeat(6)}`),
       workspace: fill(retrieval.budgetTokens * 4, (index) => `- [Task ${index}](ensemble://task/0b5c2f4e-0000-4000-8000-${String(index).padStart(12, "0")}): task · todo · “${"notes ".repeat(12)}”`),
       skills: fill(skills.budgetChars, (index) => `- skill-${index}: Use when ${"the request needs it ".repeat(4)}`).join("\n"),
+      guidance: { name: "skill-0", text: fill(skills.inline.chars, (index) => `- Step ${index}: ${"do the thing well ".repeat(4)}`).join("\n") },
     }),
   );
   assert.deepEqual(budgeted.dropped, [], `context: ${tokens(budgeted.tiers.context)} tokens`);

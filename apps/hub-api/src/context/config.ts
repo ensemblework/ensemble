@@ -56,8 +56,14 @@ export const ContextConfig = z.object({
       recencyHalfLifeDays: z.number().min(1).max(3_650).default(30),
       /** Items scoring less are left out. */
       minScore: z.number().min(0).max(100).default(0.3),
-      /** Matching rows of one kind read for ranking (the newest first), and how many of them can be shown. */
-      scanPerKind: count(400, 5_000),
+      /**
+       * The newest rows of each kind read for a match, so a search costs the same however big the workspace is;
+       * then the matching ones ranked (those with a word in their title first, then the newest, with the first
+       * `rankChars` of their text), and how many of a kind can be shown.
+       */
+      recentPerKind: count(1_000, 20_000),
+      rankPerKind: count(100, 5_000),
+      rankChars: count(2_000, 100_000),
       perKind: count(6, 50),
       /** Items "Related to this request" at most. */
       maxRelated: count(10, 50),
@@ -109,6 +115,12 @@ export const ContextConfig = z.object({
         .default({}),
       /** Skills scoring less are not listed. */
       minScore: z.number().min(0).max(100).default(0.5),
+      /**
+       * The best skill's guidance in full with the turn when its own words (keywords and name) give at least
+       * `minScore` points (3: one keyword or phrase, what the regex skills before the catalogue needed), within
+       * `chars` characters.
+       */
+      inline: z.object({ minScore: z.number().min(0).max(1_000).default(3), chars: count(1_500, 20_000) }).default({}),
       /** Replies looked back over for skills read with node_skill. */
       recentReplies: count(6, 100),
     })

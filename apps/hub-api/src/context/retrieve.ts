@@ -6,9 +6,11 @@
  *   (in a space the owner owns, from the calendars that feed it, calendar/read.ts); and the project open in
  *   this turn (the task's project, or one the owner's words name);
  * - then what relates to the request: tasks with their pages, projects, standalone pages, meeting notes,
- *   people, files and saved connected-app items, matched with Postgres full-text search (context/fulltext.ts,
- *   the same on PGlite) and ranked by `ts_rank`, recency, and whether the item belongs to the open project
- *   or the owner's words name it, with the weights of the versioned config (context/config.ts).
+ *   people, files and saved connected-app items. Of each kind only the newest rows are read (an indexed
+ *   column), matched in one pass by a regular expression of the request's words, and the matches ranked by
+ *   Postgres full-text `ts_rank` (context/fulltext.ts, the same on PGlite), the share of the request's words,
+ *   recency, and whether the item belongs to the open project or the owner's words name it, with the weights
+ *   of the versioned config (context/config.ts). So a search costs the same however big the workspace is.
  *
  * Everything fits a token budget: each item is one line with its link, its facts and a short excerpt, never
  * its whole text, so a reply names it by title and a tool reads the rest. A node runs this only in a turn
@@ -17,12 +19,13 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { refLink, type AssistantRef } from "@ensemble/shared-types";
 import { readCalendar } from "../calendar/read.js";
+import { desktopAdapter } from "../lib/desktop-db.js";
 import { addCalendarDays } from "../cowork/dates.js";
 import { zonedDateTimeToUtc, zonedParts } from "../lib/clock.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
 import { truncateText } from "../lib/text.js";
 import type { RetrievalConfig } from "./config.js";
-import { bestMatch, likePatterns, queryTerms, termsIn, tsQuery } from "./fulltext.js";
+import { bestMatch, matchPattern, queryTerms, termsIn, tsQuery } from "./fulltext.js";
 
 export type ItemKind = "task" | "project" | "page" | "meeting" | "person" | "file" | "app";
 export type ContextGroup = "overdue" | "today" | "calendar" | "project" | "related";
@@ -181,14 +184,19 @@ async function openProject(db: PrismaClient, input: RetrieveInput, text: string)
 
 type Source = {
   kind: ItemKind;
+  /** The kind's table and its alias. */
+  table: Prisma.Sql;
   id: Prisma.Sql;
+  where: Prisma.Sql;
+  /** An indexed column that orders the account's rows newest first: only the newest are read. */
+  newest: Prisma.Sql;
+  /** What the text needs besides the table (a task's page). */
+  joins: Prisma.Sql;
   title: Prisma.Sql;
   body: Prisma.Sql;
   at: Prisma.Sql;
   project: Prisma.Sql;
   extra: Prisma.Sql;
-  from: Prisma.Sql;
-  where: Prisma.Sql;
 };
 
 type Candidate = {
@@ -208,85 +216,100 @@ function sources(input: RetrieveInput): Source[] {
   const space = input.spaceId;
   const none = Prisma.sql`NULL::text`;
   const empty = Prisma.sql`'{}'::jsonb`;
+  const nothing = Prisma.empty;
   const list: Source[] = [
     {
       kind: "task",
+      table: Prisma.sql`tasks t`,
       id: Prisma.sql`t.id`,
-      title: Prisma.sql`t.title`,
+      where: Prisma.sql`t.user_id = ${space} AND t.deleted_at IS NULL AND t.source_ref NOT LIKE 'node:%' AND t.source_ref NOT LIKE 'code:%'`,
+      newest: Prisma.sql`t.updated_at`,
       // A task's page is searched with it: a hit names the task.
+      joins: Prisma.sql`LEFT JOIN task_pages p ON p.task_id = t.id AND p.deleted_at IS NULL`,
+      title: Prisma.sql`t.title`,
       body: Prisma.sql`concat_ws(' ', t.description, t.notes, p.search_text)`,
       at: Prisma.sql`t.updated_at`,
       project: Prisma.sql`t.project_id`,
       extra: Prisma.sql`jsonb_build_object('status', t.status::text, 'priority', t.priority::text, 'due', (EXTRACT(EPOCH FROM t.due) * 1000)::float8)`,
-      from: Prisma.sql`tasks t LEFT JOIN task_pages p ON p.task_id = t.id AND p.deleted_at IS NULL`,
-      where: Prisma.sql`t.user_id = ${space} AND t.deleted_at IS NULL AND t.source_ref NOT LIKE 'node:%' AND t.source_ref NOT LIKE 'code:%'`,
     },
     {
       kind: "project",
+      table: Prisma.sql`projects pr`,
       id: Prisma.sql`pr.id`,
+      where: Prisma.sql`pr.user_id = ${space} AND pr.deleted_at IS NULL`,
+      newest: Prisma.sql`pr.updated_at`,
+      joins: nothing,
       title: Prisma.sql`pr.name`,
       body: Prisma.sql`concat_ws(' ', array_to_string(pr.aliases, ' '), pr.summary, pr.notes)`,
       at: Prisma.sql`pr.updated_at`,
       project: Prisma.sql`pr.id`,
       extra: Prisma.sql`jsonb_build_object('status', pr.status::text)`,
-      from: Prisma.sql`projects pr`,
-      where: Prisma.sql`pr.user_id = ${space} AND pr.deleted_at IS NULL`,
     },
     {
       kind: "page",
+      table: Prisma.sql`task_pages pg`,
       id: Prisma.sql`pg.id`,
+      where: Prisma.sql`pg.user_id = ${space} AND pg.deleted_at IS NULL AND pg.task_id IS NULL`,
+      newest: Prisma.sql`pg.updated_at`,
+      joins: nothing,
       title: Prisma.sql`pg.title`,
       body: Prisma.sql`pg.search_text`,
       at: Prisma.sql`pg.updated_at`,
       project: none,
       extra: empty,
-      from: Prisma.sql`task_pages pg`,
-      where: Prisma.sql`pg.user_id = ${space} AND pg.deleted_at IS NULL AND pg.task_id IS NULL`,
     },
     {
       kind: "meeting",
+      table: Prisma.sql`meeting_notes mn`,
       id: Prisma.sql`mn.id`,
+      where: Prisma.sql`mn.user_id = ${space} AND mn.deleted_at IS NULL`,
+      newest: Prisma.sql`mn.asked_at`,
+      joins: nothing,
       title: Prisma.sql`mn.title`,
       body: Prisma.sql`concat_ws(' ', mn.answer, mn.comment, mn.prompt)`,
       at: Prisma.sql`coalesce(mn.occurred_at, mn.asked_at)`,
       project: Prisma.sql`mn.project_id`,
-      // The notes written in Ensemble for a meeting are its session: replies link that.
-      extra: Prisma.sql`jsonb_build_object('source', mn.source, 'session', (SELECT s.id FROM meeting_sessions s WHERE s.meeting_note_id = mn.id AND s.deleted_at IS NULL ORDER BY s.started_at DESC LIMIT 1))`,
-      from: Prisma.sql`meeting_notes mn`,
-      where: Prisma.sql`mn.user_id = ${space} AND mn.deleted_at IS NULL`,
+      // The notes written in Ensemble for a meeting are its session (the same account's): replies link that.
+      extra: Prisma.sql`jsonb_build_object('source', mn.source, 'session', (SELECT s.id FROM meeting_sessions s WHERE s.meeting_note_id = mn.id AND s.user_id = mn.user_id AND s.deleted_at IS NULL ORDER BY s.started_at DESC LIMIT 1))`,
     },
     {
       kind: "meeting",
+      table: Prisma.sql`meeting_sessions ms`,
       id: Prisma.sql`ms.id`,
+      where: Prisma.sql`ms.user_id = ${space} AND ms.deleted_at IS NULL AND ms.meeting_note_id IS NULL`,
+      newest: Prisma.sql`ms.started_at`,
+      joins: nothing,
       title: Prisma.sql`ms.title`,
       body: Prisma.sql`concat_ws(' ', ms.notes, ms.recap)`,
       at: Prisma.sql`ms.started_at`,
       project: Prisma.sql`ms.project_id`,
       extra: Prisma.sql`jsonb_build_object('session', ms.id)`,
-      from: Prisma.sql`meeting_sessions ms`,
-      where: Prisma.sql`ms.user_id = ${space} AND ms.deleted_at IS NULL AND ms.meeting_note_id IS NULL`,
     },
     {
       kind: "person",
+      table: Prisma.sql`people pe`,
       id: Prisma.sql`pe.id`,
+      where: Prisma.sql`pe.user_id = ${space} AND pe.deleted_at IS NULL`,
+      newest: Prisma.sql`pe.updated_at`,
+      joins: nothing,
       title: Prisma.sql`pe.name`,
       body: Prisma.sql`concat_ws(' ', pe.email, pe.role, pe.team, pe.relationship)`,
       at: Prisma.sql`pe.updated_at`,
       project: none,
       extra: Prisma.sql`jsonb_build_object('role', pe.role, 'team', pe.team, 'relationship', pe.relationship)`,
-      from: Prisma.sql`people pe`,
-      where: Prisma.sql`pe.user_id = ${space} AND pe.deleted_at IS NULL`,
     },
     {
       kind: "file",
+      table: Prisma.sql`context_documents d`,
       id: Prisma.sql`d.id`,
+      where: Prisma.sql`d.user_id = ${space} AND d.deleted_at IS NULL`,
+      newest: Prisma.sql`d.created_at`,
+      joins: nothing,
       title: Prisma.sql`d.filename`,
       body: Prisma.sql`d.summary`,
       at: Prisma.sql`d.updated_at`,
       project: Prisma.sql`d.project_ids[1]`,
       extra: empty,
-      from: Prisma.sql`context_documents d`,
-      where: Prisma.sql`d.user_id = ${space} AND d.deleted_at IS NULL`,
     },
   ];
   // Saved app items (mail, chat, documents, issues) are the space owner's: only in a space the owner owns.
@@ -294,67 +317,90 @@ function sources(input: RetrieveInput): Source[] {
   if (input.ownSpace) {
     list.push({
       kind: "app",
+      table: Prisma.sql`artifacts a`,
       id: Prisma.sql`a.id`,
+      where: Prisma.sql`a.user_id = ${space} AND a.deleted_at IS NULL AND a.kind::text <> 'event' AND NOT (a.kind::text = 'file' AND a.external_id LIKE 'file:%') AND NOT EXISTS (SELECT 1 FROM context_documents dd WHERE dd.artifact_id = a.id)`,
+      newest: Prisma.sql`a.ts`,
+      joins: nothing,
       title: Prisma.sql`a.title`,
       body: Prisma.sql`a.text`,
       at: Prisma.sql`a.ts`,
       project: Prisma.sql`a.project_id`,
       extra: Prisma.sql`jsonb_build_object('kind', a.kind::text, 'mine', a.authored_by_me)`,
-      from: Prisma.sql`artifacts a`,
-      where: Prisma.sql`a.user_id = ${space} AND a.deleted_at IS NULL AND a.kind::text <> 'event' AND NOT (a.kind::text = 'file' AND a.external_id LIKE 'file:%') AND NOT EXISTS (SELECT 1 FROM context_documents dd WHERE dd.artifact_id = a.id)`,
     });
   }
   return list;
 }
 
+const limit = (value: number) => Prisma.raw(String(Math.max(1, Math.floor(value))));
+
 /**
- * One kind's matches, best first: rows that contain a word of the request (a cheap filter, the newest
- * `scanPerKind`), ranked with `ts_rank` over the title (weight A) and the body (weight B), the length of
- * the body discounted.
+ * One kind's matches, best first. Its newest `recentPerKind` rows (by an indexed column) have their text built
+ * once; one regular expression of the request's words keeps the matching ones; `rankPerKind` of those (a word
+ * in the title first, then the newest) are ranked with `ts_rank` over the title (weight A) and the first
+ * `rankChars` of the body (weight B), the length of the text discounted; the facts are read for the best
+ * `perKind` only.
  */
-function rankedQuery(source: Source, query: string, patterns: string[], config: RetrievalConfig): Prisma.Sql {
-  const like = Prisma.join(patterns.map((pattern) => Prisma.sql`(${source.title} ILIKE ${pattern} OR ${source.body} ILIKE ${pattern})`), " OR ");
-  const scan = Prisma.raw(String(Math.max(1, Math.floor(config.scanPerKind))));
-  const take = Prisma.raw(String(Math.max(1, Math.floor(config.perKind))));
+function rankedQuery(source: Source, query: string, pattern: string, config: RetrievalConfig): Prisma.Sql {
   return Prisma.sql`
-    SELECT d.id, d.title, left(d.body, 20000) AS body, d.at, d.project_id AS "projectId", d.extra, ts_rank(d.doc, q.query, 1)::float8 AS rank
-    FROM (
-      SELECT c.*, setweight(to_tsvector('simple', c.title), 'A') || setweight(to_tsvector('simple', c.body), 'B') AS doc
-      FROM (
-        SELECT ${source.id} AS id, coalesce(${source.title}, '') AS title, coalesce(${source.body}, '') AS body,
-               (EXTRACT(EPOCH FROM ${source.at}) * 1000)::float8 AS at, ${source.project} AS project_id, ${source.extra} AS extra
-        FROM ${source.from}
-        WHERE ${source.where} AND (${like})
-        ORDER BY ${source.at} DESC
-        LIMIT ${scan}
-      ) c
-    ) d, (SELECT to_tsquery('simple', ${query}) AS query) q
-    WHERE d.doc @@ q.query
-    ORDER BY rank DESC, d.at DESC
-    LIMIT ${take}`;
+    WITH recent AS MATERIALIZED (
+      SELECT ${source.id} AS id, ${source.newest} AS newest
+      FROM ${source.table}
+      WHERE ${source.where}
+      ORDER BY ${source.newest} DESC
+      LIMIT ${limit(config.recentPerKind)}
+    ), texts AS MATERIALIZED (
+      SELECT r.id, r.newest, coalesce(${source.title}, '') AS title, coalesce(${source.body}, '') AS body
+      FROM recent r JOIN ${source.table} ON ${source.id} = r.id ${source.joins}
+    ), hits AS MATERIALIZED (
+      SELECT x.id, x.newest, x.title, x.body
+      FROM texts x
+      WHERE (x.title || ' ' || x.body) ~* ${pattern}
+      ORDER BY (x.title ~* ${pattern}) DESC, x.newest DESC
+      LIMIT ${limit(config.rankPerKind)}
+    ), ranked AS MATERIALIZED (
+      SELECT h.id, h.newest, h.title, h.body,
+             ts_rank(setweight(to_tsvector('simple', h.title), 'A') || setweight(to_tsvector('simple', left(h.body, ${limit(config.rankChars)})), 'B'), q.query, 1)::float8 AS rank
+      FROM hits h, (SELECT to_tsquery('simple', ${query}) AS query) q
+    )
+    SELECT k.id, k.title, left(k.body, 20000) AS body, (EXTRACT(EPOCH FROM ${source.at}) * 1000)::float8 AS at, ${source.project} AS "projectId", ${source.extra} AS extra, k.rank
+    FROM (SELECT * FROM ranked ORDER BY rank DESC, newest DESC LIMIT ${limit(config.perKind)}) k
+    JOIN ${source.table} ON ${source.id} = k.id
+    ORDER BY k.rank DESC, k.newest DESC`;
 }
+
+type Row = { id: string; title: string; body: string; at: number | null; projectId: string | null; extra: unknown; rank: number };
 
 async function candidates(db: PrismaClient, input: RetrieveInput, terms: string[]): Promise<Candidate[]> {
   const query = tsQuery(terms, input.config.prefixFrom);
-  if (!query) return [];
-  const patterns = likePatterns(terms, input.config.prefixFrom);
-  const found = await Promise.all(
-    sources(input).map(async (source) => {
-      const rows = await db.$queryRaw<Array<{ id: string; title: string; body: string; at: number | null; projectId: string | null; extra: unknown; rank: number }>>(rankedQuery(source, query, patterns, input.config));
-      return rows.map((row) => ({
-        kind: source.kind,
-        id: row.id,
-        title: row.title.replace(/\s+/g, " ").trim(),
-        body: row.body ?? "",
-        at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : null,
-        projectId: row.projectId,
-        extra: (typeof row.extra === "string" ? JSON.parse(row.extra) : (row.extra ?? {})) as Record<string, unknown>,
-        rank: Number(row.rank) || 0,
-        coverage: termsIn(`${row.title} ${row.body ?? ""}`, terms, input.config.prefixFrom).size / terms.length,
-      }));
-    }),
+  const pattern = matchPattern(terms, input.config.prefixFrom);
+  if (!query || !pattern) return [];
+  const read = (source: Source) => db.$queryRaw<Row[]>(rankedQuery(source, query, pattern, input.config));
+  const list = sources(input);
+  let found: Row[][];
+  if (desktopAdapter()) {
+    // The desktop's in-process database holds the event loop while a query runs: one kind at a time, with a break between.
+    found = [];
+    for (const source of list) {
+      found.push(await read(source));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  } else {
+    found = await Promise.all(list.map(read));
+  }
+  return found.flatMap((rows, index) =>
+    rows.map((row) => ({
+      kind: list[index]!.kind,
+      id: row.id,
+      title: row.title.replace(/\s+/g, " ").trim(),
+      body: row.body ?? "",
+      at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : null,
+      projectId: row.projectId,
+      extra: (typeof row.extra === "string" ? JSON.parse(row.extra) : (row.extra ?? {})) as Record<string, unknown>,
+      rank: Number(row.rank) || 0,
+      coverage: termsIn(`${row.title} ${row.body ?? ""}`, terms, input.config.prefixFrom).size / terms.length,
+    })),
   );
-  return found.flat();
 }
 
 const UNTITLED: Record<ItemKind, string> = { task: "Untitled task", project: "Untitled project", page: "Untitled page", meeting: "Meeting", person: "Someone", file: "A file", app: "An item" };

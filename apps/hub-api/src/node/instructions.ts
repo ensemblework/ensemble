@@ -24,7 +24,7 @@ import { turnOrigin } from "./peer-requests.js";
 import { NO_REPLY } from "./reply.js";
 import { agentDefaults, computerWorkAsks } from "./sessions.js";
 import { nodeSpace } from "./spaces.js";
-import { BUNDLED_SKILLS, chooseSkills, ownerSkills, recentSkillReads, type CatalogueSkill, type SkillChoice } from "./skills.js";
+import { BUNDLED_SKILLS, chooseSkills, inlineGuidance, ownerSkills, recentSkillReads, type CatalogueSkill, type SkillChoice, type SkillGuidance } from "./skills.js";
 import { roomSettings } from "./store.js";
 import { taskOfOperation } from "./task-assignment.js";
 import { charterOf } from "./templates.js";
@@ -76,6 +76,8 @@ export type NodeFacts = {
   origin: string | null;
   /** The skills catalogue for this request (node/skills.ts), one line per skill. */
   skills: string;
+  /** The best skill's guidance in full, when the request has its own words (node/skills.ts `inlineGuidance`). */
+  guidance?: { name: string; text: string };
   /** Its memories for this turn (node/memory.ts `memoriesForTurn`), most important first. */
   memories: string[];
   /** From the owner's workspace (context/retrieve.ts), in a turn the owner started and reads alone. */
@@ -177,6 +179,8 @@ export function nodeSections(facts: NodeFacts): SectionRequest[] {
   context("node/57-memories", 4, { memories: facts.memories.map((memory) => `- ${memory}`) }, "memories");
   // The owner's records, only where the owner started the turn and reads the answer alone.
   if (!step && !fromNonOwner && ownerOnly && facts.workspace?.length) context("node/58-workspace", 5, { workspace: facts.workspace }, "workspace");
+  // Last, and the first left out when the tier is full: the catalogue still names it for node_skill.
+  if (facts.skills && facts.guidance) context("node/59-skill-guidance", 6, { skill: facts.guidance.name, guidance: facts.guidance.text });
   return sections;
 }
 
@@ -191,6 +195,8 @@ export type Selected = {
   /** The words the memories and the workspace were searched with. */
   terms: string[];
   skills: Array<{ name: string; source: CatalogueSkill["source"]; score: number; why: string[] }>;
+  /** The skill whose guidance came in full, its characters and whether it was cut to the budget. */
+  inline: { name: string; source: CatalogueSkill["source"]; chars: number; cut: boolean } | null;
   memories: SelectedMemory[];
   context: Array<Pick<ContextItem, "group" | "kind" | "id" | "title" | "score" | "why">>;
   left: { memories: number; context: number };
@@ -402,6 +408,7 @@ async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput, config: Con
           .then(([own, recent]) => chooseSkills({ text: [text, input.turn?.note ?? ""].join("\n"), skills: [...BUNDLED_SKILLS, ...own], has: input.has ?? (() => true), recent, config: config.skills }))
           .catch(quietly(log, "skills", [] as SkillChoice[])),
   ]);
+  const guidance: SkillGuidance | null = inlineGuidance(catalogue, config.skills);
   const nodeById = new Map(nodes.map((row) => [row.id, row]));
   const personName = new Map(people.map((row) => [row.id, row.name?.trim() || row.email.split("@")[0]!]));
   const { responsibilities: duties, leadNodeIds } = roomSettings(room);
@@ -432,6 +439,7 @@ async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput, config: Con
       helpers: helpers.map((row) => `@${row.slug}`),
       rooms: open.map((row) => `“${row.room.title}” [${row.room.id}] (${row.room.kind})`),
       skills: catalogue.map((choice) => choice.line).join("\n"),
+      ...(guidance ? { guidance: { name: guidance.name, text: guidance.text } } : {}),
       memories: memories.lines,
       ...(workspace?.lines.length ? { workspace: workspace.lines } : {}),
       helper: null,
@@ -442,6 +450,7 @@ async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput, config: Con
       config: contextConfigRef(config),
       terms: workspace?.terms ?? [],
       skills: catalogue.map((choice) => ({ name: choice.skill.name, source: choice.skill.source, score: choice.score, why: choice.why })),
+      inline: guidance ? { name: guidance.name, source: guidance.source, chars: guidance.text.length, cut: guidance.cut } : null,
       memories: memories.selected,
       context: (workspace?.items ?? []).map(({ group, kind, id, title, score, why }) => ({ group, kind, id, title, score, why })),
       left: { memories: memories.left, context: workspace?.left ?? 0 },

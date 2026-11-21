@@ -6,7 +6,8 @@
  * a read in this conversation's last replies, and a small weight for the process skills), with the weights of
  * the versioned config (context/config.ts). The best few go into the turn's context, one line each with when
  * to use it (`node/56-skills`); a skill whose tools the turn lacks is not offered. The node reads one in full
- * with `node_skill`.
+ * with `node_skill`; when the request has the best one's own words, its guidance comes in full with the turn
+ * too (`inlineGuidance`, `node/56-skill-guidance`), as small models need.
  *
  * The tool tiers (which browser and capture tools a conversation turn offers) are here too: `tieredTools`.
  */
@@ -33,6 +34,8 @@ export type CatalogueSkill = {
   priority: string;
   /** The start of an owner's skill's instructions, which are scored too. */
   body?: string;
+  /** Its guidance in full, for `inlineGuidance`. */
+  text?: string;
 };
 
 export const BUNDLED_SKILLS: readonly CatalogueSkill[] = Object.values(SKILLS).map((skill) => ({
@@ -42,11 +45,32 @@ export const BUNDLED_SKILLS: readonly CatalogueSkill[] = Object.values(SKILLS).m
   keywords: skill.keywords,
   tools: skill.tools,
   priority: skill.priority,
+  text: skill.body,
 }));
 
-/** Words as the scorer compares them: lower case, apostrophes dropped, each reduced to its stem. */
+/** Ways of writing the same words: "log into" is "log in", "login" is "log in", "screengrab" is "screen grab". */
+const SAME_WORDS: Record<string, string> = {
+  into: "in",
+  onto: "on",
+  login: "log in",
+  logins: "log ins",
+  logon: "log on",
+  loggedin: "logged in",
+  signin: "sign in",
+  signins: "sign ins",
+  signon: "sign on",
+  signedin: "signed in",
+  screengrab: "screen grab",
+  screengrabs: "screen grabs",
+  screenshot: "screen shot",
+  screenshots: "screen shots",
+  webpage: "web page",
+  webpages: "web pages",
+};
+
+/** Words as the scorer compares them: lower case, apostrophes dropped, written one way (`SAME_WORDS`), each reduced to its stem. */
 export function stems(text: string): string[] {
-  return (text.toLowerCase().replace(/['’]/g, "").match(/[\p{L}\p{N}]+/gu) ?? []).map((word) => stem(word));
+  return (text.toLowerCase().replace(/['’]/g, "").match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((word) => (SAME_WORDS[word] ?? word).split(" ")).map((word) => stem(word));
 }
 
 /** Words every description has ("Use when your owner asks…"), which say nothing about the skill. */
@@ -72,11 +96,15 @@ export function prepareRequest(text: string): Request {
   return { words, meaningful: meaningful(words) };
 }
 
-/** Points for one skill against the request (config `weights`), with the signals that gave them. */
-export function scoreSkill(skill: CatalogueSkill, request: Request, recent: ReadonlySet<string>, config: SkillsConfig): { score: number; why: string[] } {
+/**
+ * Points for one skill against the request (config `weights`), with the signals that gave them; `strength` is
+ * the part its own words gave (its keywords and its name), which decides whether its guidance comes in full.
+ */
+export function scoreSkill(skill: CatalogueSkill, request: Request, recent: ReadonlySet<string>, config: SkillsConfig): { score: number; strength: number; why: string[] } {
   const { weights } = config;
   const why: string[] = [];
   let points = 0;
+  let strength = 0;
   const hits = new Set<string>();
   for (const keyword of skill.keywords) {
     const phrase = stems(keyword);
@@ -84,11 +112,13 @@ export function scoreSkill(skill: CatalogueSkill, request: Request, recent: Read
   }
   if (hits.size) {
     points += weights.keyword * hits.size;
+    strength += weights.keyword * hits.size;
     why.push(`keywords: ${[...hits].join(", ")}`);
   }
   const name = stems(skill.name);
   if (contains(request.words, name)) {
     points += weights.name;
+    strength += weights.name;
     why.push("name");
   } else if (skill.source === "owner") {
     const named = meaningful(name);
@@ -118,10 +148,10 @@ export function scoreSkill(skill: CatalogueSkill, request: Request, recent: Read
     points += weights.p0;
     why.push("process skill");
   }
-  return { score: Math.round(points * 1000) / 1000, why };
+  return { score: Math.round(points * 1000) / 1000, strength: Math.round(strength * 1000) / 1000, why };
 }
 
-export type SkillChoice = { skill: CatalogueSkill; score: number; why: string[]; line: string };
+export type SkillChoice = { skill: CatalogueSkill; score: number; strength: number; why: string[]; line: string };
 
 /** When to use a skill in at most `max` characters, cut at a word. */
 function when(text: string, max: number): string {
@@ -164,13 +194,39 @@ export function chooseSkills(input: { text: string; skills: readonly CatalogueSk
     if (chosen.length >= config.max) break;
     const line = catalogueLine(row.skill, config.lineChars);
     if (chars + line.length + 1 > config.budgetChars) continue;
-    chosen.push({ skill: row.skill, score: row.score, why: row.why, line });
+    chosen.push({ skill: row.skill, score: row.score, strength: row.strength, why: row.why, line });
     chars += line.length + 1;
   }
   return chosen;
 }
 
 const OWNER_BODY_SCORED = 1_000;
+const OWNER_TEXT_CHARS = 20_000;
+
+export type SkillGuidance = { name: string; source: CatalogueSkill["source"]; text: string; cut: boolean };
+
+/**
+ * The best skill's guidance in full, for the turn's context: only when its own words (keywords and name) give at
+ * least `inline.minScore`, at most `inline.chars` characters, whole lines from its start with where to read the
+ * rest when it is longer. One skill at most; the others stay catalogue lines for `node_skill`.
+ */
+export function inlineGuidance(choices: readonly SkillChoice[], config: SkillsConfig): SkillGuidance | null {
+  const top = choices[0];
+  const text = top?.skill.text?.trim();
+  if (!top || !text || top.strength < config.inline.minScore) return null;
+  const { name, source } = top.skill;
+  if (text.length <= config.inline.chars) return { name, source, text, cut: false };
+  const rest = `(The rest of this skill: node_skill “${name}”.)`;
+  const kept: string[] = [];
+  let chars = rest.length;
+  for (const line of text.split("\n")) {
+    if (chars + line.length + 1 > config.inline.chars) break;
+    kept.push(line);
+    chars += line.length + 1;
+  }
+  while (kept.length && !kept.at(-1)!.trim()) kept.pop();
+  return kept.length ? { name, source, text: [...kept, rest].join("\n"), cut: true } : null;
+}
 
 /** The owner's enabled personal skills (not one made for a feature), as catalogue entries. */
 export async function ownerSkills(prisma: PrismaClient, spaceId: string, modules: string | null | undefined): Promise<CatalogueSkill[]> {
@@ -192,6 +248,7 @@ export async function ownerSkills(prisma: PrismaClient, spaceId: string, modules
       tools: [],
       priority: "p1",
       body: row.body.slice(0, OWNER_BODY_SCORED),
+      text: row.body.slice(0, OWNER_TEXT_CHARS),
     }));
 }
 

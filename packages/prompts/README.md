@@ -11,7 +11,7 @@ folder (`SKILLS`, below).
 | Folder | What is there | Used by |
 | --- | --- | --- |
 | `sections/constitution/` | The shared rules: who Ensemble works for, whose word decides, how a task runs, acting, asking, permissions, tools, teamwork, knowledge, how replies read, and what counts as done | Every node turn gets all of them. The Hub assistant gets the ones whose note says "shared word for word" (`03-acting`, `09-look-up`, `10-sources`, `12-records`, `13-every-part`) |
-| `sections/node/` | A node's role and charter, the routing rows (who does the work), crew, lead and step rules, helpers, sessions, the variants for the owner's own AI plan, the context tier (`50` to `58`, `67`: the room and team, the skills catalogue, memories, workspace items) and the turn packet (`80` to `83`) | `node/instructions.ts` (`nodeSections` chooses them from the turn's facts), `node/plans.ts` (`21-step-rules`) |
+| `sections/node/` | A node's role and charter, the routing rows (who does the work), crew, lead and step rules, helpers, sessions, the variants for the owner's own AI plan, the context tier (`50` to `59`, `67`: the room and team, the skills catalogue, memories, workspace items, the best skill in full) and the turn packet (`80` to `83`) | `node/instructions.ts` (`nodeSections` chooses them from the turn's facts), `node/plans.ts` (`21-step-rules`) |
 | `sections/assistant/` | The Hub assistant's own lines: where it works, its scope, facts, dates, one space, playbooks and skills | `assistant/state.ts` (`assistantInstructions`) |
 | `sections/code/` | The Code tab's own sections: none yet (the `code` surface may use this folder and the constitution) | Nothing |
 

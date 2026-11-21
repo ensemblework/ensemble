@@ -4,7 +4,7 @@ description: Use when a page needs your owner's account, a password, a code or a
 license: FSL-1.1-MIT
 metadata:
   priority: p1
-  keywords: log in, login, logged in, sign in, signed in, sign-in, account, password, passcode, 2fa, two factor, otp, verification code, captcha, robot or human, human check, verify you are human
+  keywords: log in, login, logged in, sign in, signed in, sign-in, account, password, passcode, 2fa, two factor, otp, verification code, captcha, robot or human, human check, verify you are human, am human, not a robot
   tools: browser_login_needed
   source: Ensemble Node's sign-in skill.
 ---
