@@ -41,14 +41,18 @@ type Db = Pick<PrismaClient, "decisionRule">;
 /** The decision rule's tool name for a scope: one answer covers every tool in a folder, or every call to an address. */
 const ruleTool = (scope: NodeToolAsk["scope"]) => (scope === "origin" ? "origin" : "folder");
 
-export async function decide(prisma: Db, userId: string, input: PolicyInput, options: { weak: boolean; acceptWeb: boolean; askBeforeBrowsing?: boolean }): Promise<Verdict> {
+/**
+ * `lasting: false`: only answers for this mission count, never one for the folder from then on (an
+ * Ensemble Node's turn that someone other than its owner started asks once per folder per run).
+ */
+export async function decide(prisma: Db, userId: string, input: PolicyInput, options: { weak: boolean; acceptWeb: boolean; askBeforeBrowsing?: boolean; lasting?: boolean }): Promise<Verdict> {
   // An answer the owner gave before nothing asked any more is still marked used, so the web stops sending it.
   const settled = () => ({ kind: "allow" as const, grantsUsed: options.acceptWeb ? input.grants.filter((grant) => grant.target === input.target).map((grant) => grant.id) : [] });
   if (input.own && !(options.weak && input.capability === "run")) return settled();
   if (input.capability === "browse" && input.publicWeb && !options.askBeforeBrowsing) return settled();
   const toolName = ruleTool(input.scope);
   // "Always" is not enough for commands where the sandbox is weak: they ask once per mission.
-  const alwaysCounts = !(options.weak && input.capability === "run");
+  const alwaysCounts = options.lasting !== false && !(options.weak && input.capability === "run");
   const grantsUsed: string[] = [];
   if (options.acceptWeb) {
     for (const grant of input.grants) {

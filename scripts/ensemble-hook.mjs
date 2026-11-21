@@ -242,10 +242,12 @@ async function engineAsk(payload) {
 }
 
 /**
- * An assistant turn on the person's own agent (a chat, Ask Ensemble, a routine): the agent's own tools
- * run unless Ensemble's hard floor refuses them (keys, Ensemble's own data, privilege programs,
- * dangerous commands). Asked of the runtime running the turn, with the turn's own secret; it fails
- * closed like a run's hook.
+ * An assistant turn on the person's own agent: in a chat, Ask Ensemble or a routine the agent's own
+ * tools run unless Ensemble's hard floor refuses them (keys, Ensemble's own data, privilege programs,
+ * dangerous commands); in an Ensemble Node's turn the node's folder policy judges them, and a call
+ * can wait here for the owner's answer on a card. Asked of the runtime running the turn, with the
+ * turn's own secret (node:http waits as long as the agent's hook timeout lets it); it fails closed
+ * like a run's hook.
  */
 async function chatAsk(payload) {
   const base = process.env.ENSEMBLE_ENGINE_URL;

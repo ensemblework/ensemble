@@ -6,14 +6,15 @@
  */
 import { hostname } from "node:os";
 import type { Device } from "@prisma/client";
-import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
 import { AgentTurnError, OWN_WEB_AGENTS, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
-import type { ToolAnswer, ToolSpec } from "./bridge.js";
+import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer, ToolSpec } from "./bridge.js";
+import type { NodeTurnPolicy } from "./node-own-tools.js";
 import { runOnComputer } from "./relay.js";
 import type { TurnFile } from "./turn-files.js";
 
@@ -120,13 +121,23 @@ export type SubscriptionTurnInput = {
   title?: string;
   /** The agent's own web search and page reading, on the person's plan. */
   ownWeb?: boolean;
-  /** All the agent's own tools (its shell, files and web), judged only by Ensemble's hard floor: a chat, Ask Ensemble or a routine. */
+  /**
+   * All the agent's own tools (its shell, files and web): judged only by Ensemble's hard floor in a chat, Ask
+   * Ensemble or a routine; by the node's folder policy in an Ensemble Node's turn (`node`).
+   */
   ownTools?: boolean;
+  /** An Ensemble Node's turn: how its agent's own calls are judged on the computer (node-own-tools.ts). */
+  node?: NodeTurnPolicy;
   /** The instructions for a computer too old to keep the agent's own tools (they say it has only Ensemble's). */
   systemWithoutOwnTools?: string;
   tools: ToolSpec[];
+  /** The most turns the agent takes (a one-off completion's); absent, no limit where the computer takes none. */
   maxTurns?: number;
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
+  /** A node's turn: asks its owner about one of the agent's own calls on `computer` (node/own-tool-asks.ts). */
+  ask?: (request: OwnAsk, computer: { id: string; name: string }) => Promise<OwnAnswer>;
+  /** A node's turn: each of the agent's own calls as it starts and ends. */
+  onOwnTool?: (event: OwnToolEvent) => void;
   onDelta?: (text: string) => void;
   onStatus?: (text: string) => void;
   signal?: AbortSignal;
@@ -175,7 +186,11 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const label = SUBSCRIPTION_INFO[input.agent].label;
   const computer = await pickComputer(input.prisma ?? defaultPrisma, input.userId, input.agent, input.settings.models.computer ?? null);
   const turn = turnSession(computer, input);
-  const ownTools = input.ownTools === true && (computer.local || computer.turns >= ASSISTANT_TURN_OWN_TOOLS);
+  // A node's turn keeps the agent's own tools only where the computer judges them by the node's policy and asks its owner.
+  const capable = computer.local || computer.turns >= ASSISTANT_TURN_NODE_TOOLS;
+  const ownTools = input.ownTools === true && (computer.local || computer.turns >= (input.node ? ASSISTANT_TURN_NODE_TOOLS : ASSISTANT_TURN_OWN_TOOLS));
+  // No turn limit of Ensemble's own; an older computer takes at most ASSISTANT_TURN_MAX_TURNS.
+  const maxTurns = capable ? input.maxTurns : Math.min(input.maxTurns ?? ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_MAX_TURNS);
   const spec: AgentTurnSpec = {
     agent: input.agent,
     model: input.model && input.model !== "default" ? input.model : null,
@@ -184,13 +199,17 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     ...turnFiles(computer, turn.prompt, input.files),
     ...(turn.session ? { session: turn.session } : {}),
     tools: input.tools,
-    maxTurns: input.maxTurns ?? 16,
+    ...(maxTurns ? { maxTurns } : {}),
     ...(input.ownWeb && OWN_WEB_AGENTS.has(input.agent) ? { ownWeb: true } : {}),
     ...(ownTools ? { ownTools: true } : {}),
+    ...(ownTools && input.node ? { node: input.node } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
   const onDelta = input.onDelta ?? (() => undefined);
+  const where = { id: computer.local ? "local" : computer.id, name: computer.name };
+  const asker = input.ask;
+  const node = spec.node ? { ...(asker ? { ask: (request: OwnAsk) => asker(request, where) } : {}), ...(input.onOwnTool ? { onOwnTool: input.onOwnTool } : {}) } : {};
   input.onStatus?.(`Asking ${label} on ${computer.name}…`);
   // What the turn sent the agent and what it answered, in the person's AI activity (lib/ai-activity.ts).
   // The agent's tool calls are logged where they run: Ensemble's by the caller, its own on the computer.
@@ -204,8 +223,8 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   };
   try {
     const result = computer.local
-      ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...(spec.files ? { readFile: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) })
-      : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...(spec.files ? { read: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) });
+      ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...node, ...(spec.files ? { readFile: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) })
+      : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...node, ...(spec.files ? { read: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) });
     logAi({
       ...logged,
       model: result.model ?? spec.model,
@@ -248,19 +267,33 @@ export function agentConversation(messages: ReadonlyArray<Record<string, unknown
 
 /**
  * How the turn runs on the person's agent: with its own web tools (`ownWeb`), with all its own tools
- * (`ownTools`: a chat, Ask Ensemble or a routine), and whether it is an Ensemble Node's turn.
+ * (`ownTools`: a chat, Ask Ensemble, a routine, or an Ensemble Node's turn on a computer that judges them
+ * by the node's policy), and whether it is an Ensemble Node's turn.
  */
 export type RunHow = { ownWeb?: boolean; ownTools?: boolean; node?: boolean };
 
 /**
  * What differs on the person's own agent: Ensemble's tools, and its own (all of them in a chat, Ask
- * Ensemble or a routine, judged only by Ensemble's hard floor; else just its web tools, when on).
+ * Ensemble or a routine, judged only by Ensemble's hard floor; in a node's turn, by its folder policy,
+ * asking its owner where that says so; else just its web tools, when on).
  */
 export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string {
   const label = SUBSCRIPTION_INFO[agent].label;
   // Said only where the turn really turns them on.
-  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent), ownTools: how.ownTools === true && how.node !== true };
+  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent), ownTools: how.ownTools === true };
   const tools = `Ensemble's tools (the "ensemble" MCP server, so hub_list_tasks may appear as mcp__ensemble__hub_list_tasks)`;
+  const goesOn = "This conversation goes on from one message to the next: what you did and found earlier is above, so build on it instead of doing it again.";
+  if (how.ownTools && how.node) {
+    return [
+      `You run on their own ${label} subscription, on their computer, with ${tools} and all your own tools: your shell, files and web, which their plan pays for. Use your own tools for commands, files and reading the web, as you judge best.`,
+      "Your working folder is this node's own folder on their computer: work there unless your owner names another. Some commands and changes ask your owner first, once per folder, on a card in this chat, and the call waits for their answer. When a call says your owner has not answered yet, stop there and end your turn without a reply: you go on when they answer.",
+      "Ensemble's tools add what yours cannot do: their browser (browser_*: a site that needs clicking, a sign-in or a shop; drive it one step at a time, reading the page after each), screenshots and recordings (capture_*), a file into this chat (node_share_file), a command as the administrator (computer_sudo: your owner types their password on a card; your shell has no terminal for one), coding-agent sessions (node_session_start / node_session_send) and their Ensemble workspace.",
+      "Real coding in one of their repositories can go to a coding-agent session when your owner wants to review it there; otherwise do it yourself.",
+      "Ensemble refuses only keys and sign-ins, the system's files and its own data and code; if a call is refused, say so in a few words and carry on.",
+      "A tool you need but cannot see: call hub_use_tool with its name and input.",
+      goesOn,
+    ].join(" ");
+  }
   if (how.ownTools) {
     return [
       `You run on their own ${label} subscription, on their computer, with ${tools} and all your own tools: your shell, files and web search, which their plan pays for.`,
@@ -283,7 +316,7 @@ export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string
         ? "Their computer is reached only through Ensemble's tools: its browser (browser_*: a site that needs clicking, a sign-in or a shop; drive it one step at a time yourself, reading the page after each), its terminal and files (computer_*). Plain reading of public pages: your own web tools."
         : "Their computer is reached only through Ensemble's tools: its browser (browser_*: drive it one step at a time yourself, reading the page after each), its terminal and files (computer_*).",
       "Real coding in a repository goes to a coding-agent session (node_session_start / node_session_send); everything else (looking up, browsing, commands, files, reports) you do yourself in this conversation.",
-      "This conversation goes on from one message to the next: what you did and found earlier is above, so build on it instead of doing it again.",
+      goesOn,
     );
   }
   return lines.join(" ");

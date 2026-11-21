@@ -1,18 +1,21 @@
 /**
  * The computer's side of an assistant turn the web handed it (docs/25 §4.8): it reads the turn,
  * runs the agent, sends the reply text in order, passes tool calls through, stops when the web
- * says so, and always says how the turn ended.
+ * says so, and always says how the turn ended. In a node's turn it also asks the web about the
+ * agent's own calls and sends those calls with the reply.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentTurnError, type AgentTurnIO, type AgentTurnSpec } from "../subscriptions/agents.js";
 import { answerAssistantTurn, MAX_TURNS_AT_ONCE, stopAssistantTurn } from "./assistant.js";
+import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
 import type { HostedClient } from "./client.js";
 
 const SPEC: AgentTurnSpec = { agent: "claude-code", model: "haiku", effort: null, system: "You are the Ensemble assistant.", prompt: "hello", tools: [{ name: "hub_list_tasks", description: "List", inputSchema: { type: "object" } }], maxTurns: 8 };
 
 function fakeClient(options: { spec?: unknown; stopAfter?: number } = {}) {
-  const streamed: Array<{ seq: number; text: string }> = [];
+  const streamed: Array<{ seq: number; text: string; tools?: OwnToolEvent[] }> = [];
+  const asked: OwnAsk[] = [];
   const tools: Array<{ name: string; input: unknown }> = [];
   const done: unknown[] = [];
   const downloads: Array<{ fileId: string; maxBytes: number; signal: AbortSignal }> = [];
@@ -26,7 +29,11 @@ function fakeClient(options: { spec?: unknown; stopAfter?: number } = {}) {
       tools.push(body);
       return { text: `{"ok":true,"name":"${body.name}"}` };
     },
-    assistantStream: async (_id: string, body: { seq: number; text: string }) => {
+    assistantAsk: async (_id: string, body: OwnAsk) => {
+      asked.push(body);
+      return { decision: "allow", grant: { id: "decision-1", scope: "mission", target: body.target } };
+    },
+    assistantStream: async (_id: string, body: { seq: number; text: string; tools?: OwnToolEvent[] }) => {
       streamed.push(body);
       return { stop: options.stopAfter !== undefined && streamed.length >= options.stopAfter };
     },
@@ -34,7 +41,7 @@ function fakeClient(options: { spec?: unknown; stopAfter?: number } = {}) {
       done.push(body);
     },
   } as unknown as HostedClient;
-  return { client, streamed, tools, done, downloads };
+  return { client, streamed, tools, done, downloads, asked };
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -130,4 +137,39 @@ test("the files on the turn are read from the web, each only up to the size the 
   });
   assert.deepEqual(seen!.files, files);
   assert.deepEqual(fake.downloads.map((row) => [row.fileId, row.maxBytes, row.signal.aborted]), [["file-1", 3 + 64 * 1024, false]]);
+});
+
+test("a node's turn has no turn limit; the agent's own calls ask the web when its policy says so, and go with the reply", async () => {
+  const node = { id: "node-1", slug: "ada", mission: "conversation:room-1:shared", attended: true, trusted: true, sudo: true };
+  const { maxTurns: _limit, ...uncapped } = SPEC;
+  const fake = fakeClient({ spec: { ...uncapped, ownTools: true, node } });
+  const ask: OwnAsk = { capability: "files", target: "/home/mira/notes", label: "~/notes", scope: "folder", operation: "Change: ~/notes/today.md", what: "change today.md" };
+  let seen: AgentTurnSpec | null = null;
+  await answerAssistantTurn(fake.client, { id: "turn-node" }, async (spec, io) => {
+    seen = spec;
+    assert.deepEqual(await io.ask?.(ask), { decision: "allow", grant: { id: "decision-1", scope: "mission", target: "/home/mira/notes" } });
+    io.onOwnTool?.({ id: "edit-1", name: "Edit", summary: "~/notes/today.md", phase: "start", acts: true });
+    io.onOwnTool?.({ id: "edit-1", name: "Edit", summary: "~/notes/today.md", phase: "end", ok: true, acts: true });
+    io.onDelta("Done.");
+    await pause(260);
+    return { text: "Done.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+  });
+  assert.equal(seen!.maxTurns, undefined, "no limit of Ensemble's own");
+  assert.deepEqual(seen!.node, node);
+  assert.deepEqual(fake.asked, [ask]);
+  assert.deepEqual(fake.streamed.flatMap((row) => row.tools ?? []).map((event) => [event.id, event.phase, event.ok]), [["edit-1", "start", undefined], ["edit-1", "end", true]]);
+  assert.equal(fake.streamed.map((row) => row.text).join(""), "Done.");
+
+  // A chat's turn neither asks nor sends its own calls; a longer limit than an older server's is taken as it is.
+  const chat = fakeClient({ spec: { ...SPEC, ownTools: true, maxTurns: 200 } });
+  await answerAssistantTurn(chat.client, { id: "turn-chat" }, async (spec, io) => {
+    assert.equal(spec.maxTurns, 200);
+    assert.equal(io.ask, undefined);
+    io.onOwnTool?.({ id: "bash-1", name: "Shell", summary: "ls", phase: "end", ok: true, acts: true });
+    io.onDelta("ok");
+    await pause(260);
+    return { text: "ok", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+  });
+  assert.ok(chat.streamed.every((row) => !row.tools));
+  assert.deepEqual(chat.done, [{ result: { text: "ok", model: null, tokensIn: null, tokensOut: null, costUsd: null } }]);
 });

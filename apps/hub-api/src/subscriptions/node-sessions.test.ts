@@ -2,7 +2,8 @@
  * An Ensemble Node (or any chat) on the person's own AI plan keeps one session: changed instructions go in
  * the next message as the lines that changed, a session long in use starts over, and a replaced session is
  * dropped from the store (turn-sessions.ts). The turn's agent gets its own web tools when asked (agents.ts),
- * and a node is told how it runs there (turn.ts howYouRun).
+ * and a node is told how it runs there (turn.ts howYouRun): with all its own tools on a computer that judges
+ * them by the node's folder policy, with its own web only on an older one.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -71,12 +72,18 @@ test("the agent's own web tools: on when asked, otherwise closed", () => {
   assert.deepEqual(copilot(false).slice(copilot(false).indexOf("url") - 1, copilot(false).indexOf("url") + 3), ["--deny-tool", "url", "--excluded-tools", "web_search"]);
 });
 
-test("a node on its owner's plan is told what it has: its own web, the computer through Ensemble, coding to sessions", () => {
-  const node = howYouRun("copilot-cli", { ownWeb: true, node: true });
-  assert.match(node, /your own web search and page reading, which their plan pays for/);
+test("a node on its owner's plan is told what it has: its own shell, files and web, what Ensemble adds, coding to sessions", () => {
+  const node = howYouRun("copilot-cli", { ownWeb: true, node: true, ownTools: true });
+  assert.match(node, /all your own tools: your shell, files and web, which their plan pays for/);
   assert.match(node, /browser_\*/);
   assert.match(node, /node_session_start/);
   assert.match(node, /build on it instead of doing it again/);
+  assert.doesNotMatch(node, /\u2014|--/, "no long dashes in what the agent reads");
+  // An older computer gives a node its own web only: the computer is reached through Ensemble's tools.
+  const older = howYouRun("copilot-cli", { ownWeb: true, node: true });
+  assert.match(older, /your own web search and page reading, which their plan pays for/);
+  assert.match(older, /reached only through Ensemble's tools/);
+  assert.match(older, /node_session_start/);
   assert.match(howYouRun("codex"), /no shell, files or web of your own/);
   assert.match(agentConversation([{ role: "system", content: "S" }, { role: "user", content: "hi" }], "claude-code", { ownWeb: true }).system, /^S\n\nYou run on their own Claude subscription/);
 });
@@ -94,5 +101,18 @@ test("a node on an AI plan drives the browser itself, and looks facts up with it
   assert.match(copilot, /your own web search first \(or hub_web_search\), then read the source page itself/);
   const kimi = ownLoopPersona(persona, "kimi-code");
   assert.doesNotMatch(kimi, /web_task/);
-  assert.match(kimi, /hub_web_search first/, "an agent whose own tools are refused in a turn uses Ensemble's search");
+  assert.match(kimi, /hub_web_search first/, "an agent without its own web search uses Ensemble's");
+});
+
+test("a node with its own tools does commands and files with them; sudo still goes to its owner's card", async () => {
+  const { ownLoopPersona } = await import("../node/brain.js");
+  const persona = [
+    "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
+    "- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.",
+  ].join("\n");
+  const own = ownLoopPersona(persona, "claude-code", true);
+  assert.match(own, /your own shell and files, in your own folder unless your owner names one/);
+  assert.match(own, /computer_sudo \(your owner types their password on a card here; you never see it\)\. Download with your own shell first\./);
+  assert.doesNotMatch(own, /computer_run|computer_files_write/);
+  assert.equal(ownLoopPersona(persona, "claude-code"), persona, "an older computer keeps Ensemble's computer tools");
 });

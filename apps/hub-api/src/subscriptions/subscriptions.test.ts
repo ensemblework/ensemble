@@ -20,7 +20,7 @@ import { agentEnv, claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexP
 import { LOGIN_ARGS, setupCommand } from "./signin.js";
 import { withoutHostSession } from "./host-session.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
-import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings } from "./own-tools.js";
+import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings, floorJudge, ownToolShape } from "./own-tools.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
@@ -470,26 +470,44 @@ test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, an
   // Codex: commands and file changes go ahead unless the floor refuses them.
   const folder = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
   try {
+    const judge = floorJudge(folder, "codex");
     const changes = new Map([["item-1", [join(folder, "notes.md")]], ["item-2", [join(process.env.HOME ?? "/", ".ssh", "config")]]]);
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: ["bash", "-lc", "printf hi > notes.md"], cwd: folder }, changes), { decision: "accept" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "cat ~/.ssh/id_rsa", cwd: folder }, changes), { decision: "decline" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-1" }, changes), { decision: "accept" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-2" }, changes), { decision: "decline" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "curl https://example.com", networkApprovalContext: { host: "example.com" } }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: ["bash", "-lc", "printf hi > notes.md"], cwd: folder }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: "cat ~/.ssh/id_rsa", cwd: folder }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/fileChange/requestApproval", { itemId: "item-1" }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/fileChange/requestApproval", { itemId: "item-2" }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: "curl https://example.com", networkApprovalContext: { host: "example.com" } }, changes), { decision: "accept" });
     // Cursor's agent and the ACP agents: allowed once, or refused once by the floor.
     const options = [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }];
-    const ran = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "execute", title: "Run `ls -la`", rawInput: { command: "ls -la" } } });
+    const ran = await answerAcpOwnTools(floorJudge(folder, "acp"), "session/request_permission", { options, toolCall: { kind: "execute", title: "Run `ls -la`", rawInput: { command: "ls -la" } } });
     assert.deepEqual(ran, { outcome: { outcome: "selected", optionId: "allow-once" } });
-    const key = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "read", title: "Read id_rsa", rawInput: { path: join(process.env.HOME ?? "/", ".ssh", "id_rsa") } } });
+    const key = await answerAcpOwnTools(floorJudge(folder, "acp"), "session/request_permission", { options, toolCall: { kind: "read", title: "Read id_rsa", rawInput: { path: join(process.env.HOME ?? "/", ".ssh", "id_rsa") } } });
     assert.deepEqual(key, { outcome: { outcome: "selected", optionId: "reject-once" } });
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
-  // The agent is told what it has, as a suggestion, not a rule; a node's turn keeps reaching the computer through Ensemble.
+  // The agent is told what it has, as a suggestion, not a rule.
   const told = howYouRun("claude-code", { ownTools: true, ownWeb: true });
   assert.match(told, /all your own tools: your shell, files and web search/);
   assert.match(told, /hub_assign_to_agent/);
-  assert.doesNotMatch(howYouRun("claude-code", { ownTools: true, node: true }), /all your own tools/);
+  // A node's turn keeps them too: its own shell and files, and what Ensemble's tools add.
+  const node = howYouRun("claude-code", { ownTools: true, node: true });
+  assert.match(node, /all your own tools: your shell, files and web/);
+  assert.match(node, /this node's own folder/);
+  assert.match(node, /once per folder, on a card in this chat/);
+  for (const tool of ["browser_\\*", "capture_\\*", "node_share_file", "computer_sudo", "node_session_start"]) assert.match(node, new RegExp(tool));
+  assert.match(node, /can go to a coding-agent session when your owner wants to review it/);
+  assert.doesNotMatch(node, /reached only through Ensemble's tools|hub_assign_to_agent/);
+});
+
+test("the agent's own calls reach a node's chat by what they do, the same for every agent", () => {
+  assert.deepEqual(ownToolShape("Bash", { command: "npm   test\n" }), { name: "Shell", summary: "npm test", acts: true });
+  assert.deepEqual(ownToolShape("Edit", { file_path: `${process.env.HOME}/projects/site/index.html` }), { name: "Edit", summary: "~/projects/site/index.html", acts: true });
+  assert.deepEqual(ownToolShape("commandExecution", { command: "ls -la" }), { name: "Shell", summary: "ls -la", acts: true }, "Codex's items");
+  assert.deepEqual(ownToolShape("view", { path: "/srv/app/README.md" }), { name: "Read", summary: "/srv/app/README.md", acts: false }, "Copilot's tools");
+  assert.deepEqual(ownToolShape("web_fetch", { url: "https://example.com/docs" }), { name: "Web page", summary: "https://example.com/docs", acts: false });
+  assert.deepEqual(ownToolShape("Run `ls`", {}, { tool: "Bash", input: { command: "ls" } }), { name: "Shell", summary: "ls", acts: true }, "an ACP agent's call, as its request named it");
+  assert.deepEqual(ownToolShape("TodoWrite", { todos: [] }), { name: "TodoWrite", summary: "", acts: false });
 });
 
 test("Claude Code runs with Ensemble's prompt and tools only, and none of the person's settings", () => {
@@ -517,6 +535,8 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "default", effort: null }).includes("--model"), "the plan's default sends no model");
   const long = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "claude-sonnet-4-6", effort: "high", context: "long_context" });
   assert.equal(long[long.indexOf("--model") + 1], "claude-sonnet-4-6[1m]", "a tier on the 1M window gets it");
+  assert.equal(after("--max-turns"), "28", "a turn limit only when the turn has one");
+  assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", model: null, effort: null }).includes("--max-turns"), "no limit of Ensemble's own");
 });
 
 test("Copilot CLI denies its shell, writes and fetches, and Windows gets a prompt that fits its command line", () => {
@@ -638,11 +658,13 @@ test("a turn's bridge answers only its own secret, and a changed tool list repla
   assert.equal(bridgeFor(opened.credential), null, "a closed turn is gone");
 });
 
-test("a relayed turn waiting on one long tool call is working, not quiet", async () => {
-  const { quiet } = await import("./relay.js");
-  const longAgo = Date.now() - 6 * 60_000;
-  assert.equal(quiet({ picked: true, busy: 1, heard: longAgo }), false, "a browser task running for minutes keeps the turn");
+test("a relayed turn ends only when the computer goes quiet: a long tool call or ask is working, and working has no time limit", async () => {
+  const { quiet, QUIET_MS } = await import("./relay.js");
+  assert.equal(QUIET_MS, 10 * 60_000);
+  const longAgo = Date.now() - 11 * 60_000;
+  assert.equal(quiet({ picked: true, busy: 1, heard: longAgo }), false, "a browser task or a card waiting for its owner keeps the turn");
   assert.equal(quiet({ picked: true, busy: 0, heard: longAgo }), true);
+  assert.equal(quiet({ picked: true, busy: 0, heard: Date.now() - 9 * 60_000 }), false, "nine minutes without a word is not yet quiet");
   assert.equal(quiet({ picked: false, busy: 0, heard: longAgo }), false, "not picked up yet is the pick-up timer's to judge");
 });
 

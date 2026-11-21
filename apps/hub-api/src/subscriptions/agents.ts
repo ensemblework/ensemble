@@ -3,8 +3,10 @@
  * subscription (docs/30 §8). The agent is told it is the Ensemble assistant (the system prompt
  * Ensemble built for the turn) and gets Ensemble's tools. A chat, Ask Ensemble or a routine
  * (`spec.ownTools`) keeps the agent's own tools too (its shell, files and web), each call judged
- * only by Ensemble's hard floor (own-tools.ts); any other turn (a node's, a one-off completion)
- * gets Ensemble's tools alone, as below. Ensemble's tool calls go through the bridge (bridge.ts) to
+ * only by Ensemble's hard floor (own-tools.ts); an Ensemble Node's turn keeps them as well, each
+ * call judged by the node's folder policy and asked of its owner where that says so (`spec.node`,
+ * node-own-tools.ts). A one-off completion, and a node's turn on a computer too old for that, gets
+ * Ensemble's tools alone, as below. Ensemble's tool calls go through the bridge (bridge.ts) to
  * wherever the turn's data is; writes there wait for Apply exactly as with a model key. Files
  * attached to the person's message are downloaded into the turn's folder and given to the agent in
  * its own input form (turn-files.ts).
@@ -36,12 +38,13 @@ import { acpCalls, ACP_AGENTS, configChoices, type ConfigOption, optionValues, p
 import { antigravityAuthLink } from "./antigravity.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
-import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
+import { openBridge, type OwnAnswer, type OwnAsk, type OwnJudge, type OwnToolEvent, type ToolAnswer, type ToolSpec } from "./bridge.js";
 import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
-import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
+import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, floorJudge, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
+import type { NodeTurnPolicy } from "./node-own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { acpPrompts, acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside, type OutsideTurn } from "./outside.js";
 import { promptsOf, withPrompts } from "../workspace/outside-runs.js";
@@ -58,7 +61,8 @@ export type AgentTurnSpec = {
   system: string;
   prompt: string;
   tools: ToolSpec[];
-  maxTurns: number;
+  /** The most turns the agent takes (Claude Code's `--max-turns`): a one-off completion's; absent, no limit. */
+  maxTurns?: number;
   /** A model's long context window where the agent offers one (GitHub Copilot's `--context long_context`). */
   context?: "default" | "long_context" | null;
   /** Files attached to the person's message, fetched with `AgentTurnIO.readFile`. */
@@ -77,11 +81,14 @@ export type AgentTurnSpec = {
    */
   ownWeb?: boolean;
   /**
-   * The agent keeps all its own tools (its shell, files and web), each call judged only by Ensemble's
-   * hard floor in the turn's folder (own-tools.ts): a chat, Ask Ensemble or a routine. Older computers
-   * ignore it and the agent has only Ensemble's tools.
+   * The agent keeps all its own tools (its shell, files and web), each call judged by Ensemble in the
+   * turn's folder (own-tools.ts): by the hard floor alone in a chat, Ask Ensemble or a routine, by the
+   * node's folder policy in an Ensemble Node's turn (`node`). Older computers ignore it and the agent has
+   * only Ensemble's tools.
    */
   ownTools?: boolean;
+  /** An Ensemble Node's turn with the agent's own tools (`assistantTurns` 5): how they are judged here (node-own-tools.ts). */
+  node?: NodeTurnPolicy;
 };
 
 /**
@@ -113,6 +120,10 @@ export type AgentTurnIO = {
   readFile?: (id: string) => Promise<Uint8Array | null>;
   /** A line for the chat while the turn waits on something (the ChatGPT app holding the chat's thread). */
   onStatus?: (text: string) => void;
+  /** Asks the node's owner about one of the agent's own calls (a node's turn: node-own-tools.ts). */
+  ask?: (request: OwnAsk) => Promise<OwnAnswer>;
+  /** Each of the agent's own calls as it starts and ends (`OwnToolLog`). */
+  onOwnTool?: (event: OwnToolEvent) => void;
 };
 
 export type AgentTurnProblem = "not_installed" | "signed_out" | "limit" | "failed";
@@ -143,7 +154,8 @@ type TurnSession = { id: string; resume: boolean; usage?: SessionUsage; since?: 
  */
 /** `prompts`: how many prompts the session holds after this turn, from a driver that counted them as it reopened it. */
 type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string | null; totals?: SessionUsage | null; prompts?: number | null };
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<DriverResult>;
+/** `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). */
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge }) => Promise<DriverResult>;
 
 /**
  * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
@@ -202,7 +214,7 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string; name?: string | null }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns?: number | null; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string; name?: string | null }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
@@ -232,8 +244,7 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     ...(input.session ? (input.session.resume ? ["--resume", input.session.id] : ["--session-id", input.session.id]) : ["--no-session-persistence"]),
     // A new session's name in Claude's own lists, in place of its first message (Ensemble's instructions).
     ...(input.session && !input.session.resume && input.name ? ["--name", input.name] : []),
-    "--max-turns",
-    String(input.maxTurns),
+    ...(input.maxTurns ? ["--max-turns", String(input.maxTurns)] : []),
     ...(launch.model ? ["--model", launch.model] : []),
     ...(launch.effort ? ["--effort", launch.effort] : []),
   ];
@@ -246,7 +257,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
   const title = sessionTitle(spec.session?.title);
   const name = session && !session.resume && title && (await helpHas(bin, ["--help"], "--name", agentEnv({}))) ? title : null;
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude"), name }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns ?? null, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude"), name }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
@@ -269,7 +280,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   // and a later answer set apart from the earlier one as it streams.
   let spend: ClaudeSpend | null = null;
   let answered = false;
-  const tools = new OwnToolLog("claude-code");
+  const tools = new OwnToolLog("claude-code", io.onOwnTool);
   try {
     for await (const line of createInterface({ input: child.stdout! })) {
       if (!line.trim()) continue;
@@ -312,7 +323,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
         failure =
           message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")
             ? message.subtype === "error_max_turns"
-              ? `it used all ${spec.maxTurns} steps without a final answer`
+              ? `it used all ${spec.maxTurns ?? "its"} steps without a final answer`
               : result.text || String(message.subtype ?? "an error")
             : null;
       }
@@ -354,7 +365,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: codexEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -369,8 +380,8 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
   // With its own tools, the paths each file change touches, for its approval (own-tools.ts).
   const changes = new Map<string, string[]>();
-  const tools = new OwnToolLog("codex");
-  server.onRequest = (method, params) => (spec.ownTools ? answerCodexOwnTools(folder, method, params, changes) : answerCodexTurn(method, params));
+  const tools = new OwnToolLog("codex", io.onOwnTool);
+  server.onRequest = (method, params) => (judge ? answerCodexOwnTools(judge, method, params, changes) : answerCodexTurn(method, params));
   server.onNotification = (method, params) => {
     if (method === "item/started" || method === "item/completed") {
       const item = (params.item ?? {}) as { type?: string; id?: string; changes?: Array<{ path: string }>; command?: string; server?: string; tool?: string; arguments?: unknown; query?: string; aggregatedOutput?: string | null; exitCode?: number | null; status?: string; result?: unknown; error?: unknown };
@@ -579,7 +590,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge }) => {
   const model = chosen(spec.model);
   const child = spawn(bin, ["--sandbox", spec.ownTools ? "disabled" : "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
@@ -605,8 +616,8 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   let overflow = false;
   /** The message this turn sent to the agent, which the session holds however the turn then ends. */
   let sent = 0;
-  const tools = new OwnToolLog("cursor-agent");
-  rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, "cursor-agent") : answerCursorTurn(method, params));
+  const tools = new OwnToolLog("cursor-agent", io.onOwnTool);
+  rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update") return;
     if (replaying) {
@@ -806,7 +817,7 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   child.stdin.end(stdin ? prompt : undefined, "utf8");
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
-  const tools = new OwnToolLog("copilot-cli");
+  const tools = new OwnToolLog("copilot-cli", io.onOwnTool);
   const output = copilotOutput(chosen(spec.model), io.onDelta, tools);
   let stderr = "";
   createInterface({ input: child.stdout }).on("line", line => output.line(line));
@@ -847,7 +858,7 @@ export function answerAcpTurn(method: string, params: Record<string, unknown>): 
 /** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
 const runAcpTurn =
   (id: AcpEngine): Driver =>
-  async ({ spec, io, folder, mcp, files, session }) => {
+  async ({ spec, io, folder, mcp, files, session, judge }) => {
     const model = chosen(spec.model);
     const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
@@ -863,8 +874,8 @@ const runAcpTurn =
     let overflow = false;
     /** The message this turn sent to the agent, which the session holds however the turn then ends. */
     let sent = 0;
-    const tools = new OwnToolLog(id);
-    rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, id) : answerAcpTurn(method, params));
+    const tools = new OwnToolLog(id, io.onOwnTool);
+    rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
       if (method !== "session/update") return;
       if (replaying) {
@@ -1021,8 +1032,10 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
   // The turn's own files and settings stay out of a shared folder: one folder per chat beside it.
   const own = group ? sessionFolder(key!) : folder;
   if (group) await mkdir(own, { recursive: true });
-  // With its own tools, each of the agent's calls is judged by the hard floor from the turn's folder.
-  const bridge = openBridge(spec.tools, io.call, spec.ownTools ? { folder } : {});
+  // With its own tools, each of the agent's calls is judged from the turn's folder: by the hard floor, or a node's folder
+  // policy (loaded only for a node's turn: it reads this computer's own settings and rules).
+  const judge = !spec.ownTools ? undefined : spec.node ? (await import("./node-own-tools.js")).nodeOwnJudge({ folder, node: spec.node, app: spec.agent, ...(io.ask ? { ask: io.ask } : {}) }) : floorJudge(folder, spec.agent);
+  const bridge = openBridge(spec.tools, io.call, judge ? { judge } : {});
   let handedOff = false;
   const mcp: McpServer = {
     command: process.execPath,
@@ -1067,6 +1080,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         mcp,
         session,
         own,
+        ...(judge ? { judge } : {}),
       });
     let result: DriverResult;
     let resumed = Boolean(earlier);

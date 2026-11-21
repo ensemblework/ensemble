@@ -306,6 +306,7 @@ export const subscriptionRouteCoverage: Readonly<Record<string, readonly RouteCh
   "GET /api/devices/self/assistant-turns/:id": ["happy-path", "isolation"],
   "GET /api/devices/self/assistant-turns/:id/files/:fileId": ["happy-path", "isolation", "unknown-id"],
   "POST /api/devices/self/assistant-turns/:id/tool": ["happy-path", "isolation"],
+  "POST /api/devices/self/assistant-turns/:id/ask": ["happy-path", "isolation"],
   "POST /api/devices/self/assistant-turns/:id/stream": ["happy-path"],
   "POST /api/devices/self/assistant-turns/:id/done": ["happy-path"],
 };

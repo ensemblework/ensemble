@@ -24,12 +24,14 @@ import { chatModelFor, fastChatModel, leadChatModel, type ChatModel } from "./mo
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
-import { helperGrant } from "./helpers.js";
+import { helperFolders, helperGrant } from "./helpers.js";
 import { agentDefaults, computerWorkAsks } from "./sessions.js";
 import { findCrew } from "./crew.js";
 import { charterOf } from "./templates.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
+import { missionOf, modeFor } from "./device-tools.js";
+import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
@@ -40,6 +42,8 @@ import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
 import { OWN_WEB_AGENTS } from "../subscriptions/agents.js";
+import type { OwnToolEvent } from "../subscriptions/bridge.js";
+import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 
 /** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
 const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
@@ -219,14 +223,21 @@ export const NODE_SESSION_KEEP_DAYS = 7;
 const WEB_TASK_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.";
 const OWN_LOOP_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): drive the browser yourself (browser_open, browser_snapshot, browser_click, browser_type…), reading the page after each step; sign-ins go to your owner's card, not Connections.";
 
+const COMMANDS_ROW = "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.";
+const OWN_COMMANDS_ROW = "- Commands, checks, files, a report (.md): your own shell and files, in your own folder unless your owner names one. A file into this chat: node_share_file.";
+const SUDO_ROW = "- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.";
+const HELPER_HANDS = "commands and files (computer_run, computer_files_write)";
+
 /**
  * The persona on the owner's AI plan: the agent drives the browser itself (no web_task), and where its own web
  * search is on (Claude Code, Codex, Copilot) facts come from that first, as its run notes say (subscriptions/turn.ts).
+ * With its own tools (`ownTools`) its commands and files are its own shell's.
  */
-export function ownLoopPersona(text: string, provider: string): string {
+export function ownLoopPersona(text: string, provider: string, ownTools = false): string {
   const own = isSubscriptionProvider(provider) && OWN_WEB_AGENTS.has(provider);
   const looked = text.replace(WEB_TASK_ROW, OWN_LOOP_ROW).replace("several steps on a site: web_task", "several steps on a site: drive the browser yourself");
-  return own ? looked.replace(/hub_web_search first \(the live web, with sources\)/g, "your own web search first (or hub_web_search), then read the source page itself; cite it") : looked;
+  const handed = ownTools ? looked.replace(COMMANDS_ROW, OWN_COMMANDS_ROW).replace(SUDO_ROW, SUDO_ROW.replace("Download with computer_run first.", "Download with your own shell first.")).replace(HELPER_HANDS, "commands and files (your own shell and files)") : looked;
+  return own ? handed.replace(/hub_web_search first \(the live web, with sources\)/g, "your own web search first (or hub_web_search), then read the source page itself; cite it") : handed;
 }
 
 /** What a node does itself on its owner's computer: the rows of its routing table that need its hands there. */
@@ -236,8 +247,8 @@ const HANDS = [
   WEB_TASK_ROW,
   "- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even by phone). They say done: browser_login_check.",
   "- A terminal screenshot (htop, a command's output): computer_terminal_screenshot.",
-  "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
-  "- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.",
+  COMMANDS_ROW,
+  SUDO_ROW,
 ];
 
 /** Live terminals and live views (node/live-views.ts). */
@@ -550,7 +561,25 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
   const built = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
-  const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider) } : built;
+  // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant): the computer judges each
+  // call by the node's folder policy, and what that asks goes to the owner on a card here (node/own-tool-asks.ts).
+  // The owner's own turn (they started it and only they read it) works in the node's folders without asking.
+  const ownTools = ownLoop && (!node.parentNodeId || helperGrant(node) === "computer");
+  const trusted = ownerOnly && !fromNonOwner && !bound;
+  const plan = turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null;
+  const ownPolicy: NodeTurnPolicy | null = ownTools
+    ? {
+        id: node.id,
+        slug: node.slug,
+        mission: missionOf({ plan, room, privateTo }),
+        // A routine's work, or a run profile that runs unattended: nobody watches, so everything above the floor runs.
+        attended: !(turn.planId && (await prisma.nodeMission.findUnique({ where: { id: turn.planId }, select: { routine: true } }))?.routine) && (await modeFor(prisma, node)).attended,
+        trusted,
+        sudo: extraTools.some((tool) => tool.name === "computer_sudo"),
+        ...(node.parentNodeId ? { folders: helperFolders(node) } : {}),
+      }
+    : null;
+  const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider, ownTools) } : built;
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
@@ -590,7 +619,37 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
-      ...(isSubscriptionProvider(pick.provider) ? { subscription: { node: true, group: { id: node.id, name: `${node.name} (Ensemble Node)` }, keepDays: NODE_SESSION_KEEP_DAYS, maxCalls: 60 } } : {}),
+      ...(isSubscriptionProvider(pick.provider)
+        ? {
+            subscription: {
+              node: true,
+              group: { id: node.id, name: `${node.name} (Ensemble Node)` },
+              keepDays: NODE_SESSION_KEEP_DAYS,
+              ...(ownPolicy
+                ? {
+                    ownTools: true,
+                    nodeTools: {
+                      policy: ownPolicy,
+                      ask: ownToolAsker(app, { node, room, privateTo, lineage, turnId: turn.id, plan, trusted }),
+                      onOwnTool(event: OwnToolEvent) {
+                        // From the first own call that can change something, the turn is not run again from the start.
+                        if (event.phase === "start") {
+                          if (event.acts) void markActed(app, turn.id).catch(() => undefined);
+                          return;
+                        }
+                        toolsRan += 1;
+                        const state = event.ok === false ? "failed" : "ok";
+                        void addReceipt(app, turn.id, { name: event.name, state, summary: event.summary || null }).catch(() => undefined);
+                        // The agent's own calls show to its owner only, like Ensemble's tool chips.
+                        publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, ...where, frame: { type: "tool", call: { id: event.id, name: event.name, state, ...(event.summary ? { summary: event.summary } : {}) } } });
+                      },
+                      parking: () => parkedFor(turn.id)[0] ?? null,
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       signal: deps.signal,
       async onToolStart(call) {
         // From the first tool that changes something, the turn is not aborted to merge a newer message.
@@ -638,9 +697,10 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
     return { status: "skipped", error: "Taken away before it did anything." };
   }
-  if (deps.signal?.aborted && deps.signal.reason === "park") {
-    // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing. What it
-    // did and what it waits for stay in its conversation; the answer wakes it.
+  if ((deps.signal?.aborted && deps.signal.reason === "park") || parkedFor(turn.id).length) {
+    // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing (an agent on the
+    // owner's plan told to stop ends its turn by itself). What it did and what it waits for stay in its
+    // conversation; the answer wakes it.
     const done = failure ? null : result!;
     const calls = done?.toolCalls ?? [];
     const waits = parkedFor(turn.id).join("\n") || `Waiting for ${ownerName} to answer a card in this chat.`;

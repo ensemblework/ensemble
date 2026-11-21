@@ -369,3 +369,176 @@ test("an agent's app there without the agent is listed with the computer, and Se
     frames.stop();
   }
 });
+
+// ── an Ensemble Node's turn on its owner's plan ────────────────────────────────────────────────
+
+type NodeSpec = {
+  system: string;
+  prompt: string;
+  maxTurns?: number;
+  ownTools?: boolean;
+  node?: { id: string; slug: string; mission: string; attended: boolean; trusted: boolean; sudo: boolean };
+  session?: { key: string; position?: number } | null;
+};
+type RoomMessage = { id: string; kind: string; body: string; authorNodeId: string | null; data: Record<string, any> | null };
+
+/** A node of `user` on their Claude plan, with its direct chat. */
+async function nodeOnPlan(user: HttpUser) {
+  const made = await user.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } });
+  assert.equal(made.statusCode, 201, made.body);
+  const { node, room } = made.json() as { node: { id: string; slug: string }; room: { id: string } };
+  await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "claude-code", model: "haiku" } });
+  return { node, room };
+}
+
+async function postTo(user: HttpUser, roomId: string, body: string) {
+  const response = await user.inject({ method: "POST", url: `/api/node/rooms/${roomId}/messages`, payload: { body } });
+  assert.equal(response.statusCode, 201, response.body);
+}
+
+async function roomMessages(user: HttpUser, roomId: string): Promise<RoomMessage[]> {
+  return (await user.inject({ method: "GET", url: `/api/node/rooms/${roomId}/messages` })).json().messages as RoomMessage[];
+}
+
+async function until<T>(check: () => Promise<T | null | undefined | false>, what: string, ms = 15_000): Promise<T> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+const finished = (text: string) => ({ result: { text, model: "claude-haiku-5-5", tokensIn: 1, tokensOut: 1, costUsd: null } });
+
+test("a node's turn on its owner's plan keeps the agent's own tools where the computer judges them, with no turn limit; an older computer keeps Ensemble's tools and 64 turns", async () => {
+  const { settleTurns } = await import("../node/queue.js");
+  const mira = await harness.asUser();
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE], nodeTools: 1 });
+  const { node, room } = await nodeOnPlan(mira);
+  const specs: NodeSpec[] = [];
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
+  });
+  try {
+    await postTo(mira, room.id, "Tidy the notes folder");
+    await settleTurns();
+    assert.deepEqual(simulated.failures, []);
+    const spec = specs[0]!;
+    assert.equal(spec.ownTools, true, "its shell, files and web stay on");
+    assert.equal(spec.maxTurns, undefined, "no turn limit of Ensemble's own");
+    assert.deepEqual(spec.node, { id: node.id, slug: node.slug, mission: `conversation:${room.id}:shared`, attended: true, trusted: true, sudo: true });
+    assert.match(spec.system, /all your own tools: your shell, files and web/);
+    assert.match(spec.system, /once per folder, on a card in this chat/);
+    assert.match(spec.system, /computer_sudo: your owner types their password on a card/);
+    assert.doesNotMatch(spec.system, /reached only through Ensemble's tools/);
+
+    await harness.prisma.device.update({ where: { id: device.id }, data: { capabilities: { assistantTurns: 4, agents: [CLAUDE], nodeTools: 1 } } });
+    await postTo(mira, room.id, "And the drafts folder");
+    await settleTurns();
+    const older = specs[1]!;
+    assert.deepEqual([older.ownTools, older.node, older.maxTurns], [undefined, undefined, 64], "Ensemble's tools only, and the most turns it takes");
+    assert.match(older.system, /reached only through Ensemble's tools/);
+    assert.deepEqual(simulated.failures, []);
+  } finally {
+    simulated.stop();
+  }
+});
+
+test("an own call the node's policy asks about waits for its owner's card: answered in time it goes on; not answered, the turn parks and the answer resumes the same session", async () => {
+  const { settleTurns } = await import("../node/queue.js");
+  const waitSetting = process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
+  const mira = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: mira.id }, data: { name: "Mira" } });
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE], nodeTools: 1 });
+  const theirs = await pairedComputer(await harness.asUser(), "Their Mac", { assistantTurns: 5, agents: [CLAUDE] });
+  const { node, room } = await nodeOnPlan(mira);
+  const site = { capability: "files", target: "/home/mira/projects/site", label: "~/projects/site", scope: "folder", operation: "Change: ~/projects/site/index.html", what: "change index.html" };
+  const blog = { ...site, target: "/home/mira/projects/blog", label: "~/projects/blog", operation: "Change: ~/projects/blog/post.md", what: "change post.md" };
+  const specs: NodeSpec[] = [];
+  const answers: Array<{ decision: string; message?: string; waiting?: boolean; grant?: unknown }> = [];
+  const frames: Array<{ frame: { type: string; call?: { name: string; state: string; summary?: string } } }> = [];
+  const listen = sseHub.onFrame(({ userId, frame }) => {
+    if (userId === `node:${mira.id}` && frame.event === "node.frame") frames.push(frame.data as (typeof frames)[number]);
+  });
+  // The agent's first two turns each want to change a file outside the node's folder; then it says what it did.
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
+    const turn = specs.length;
+    if (turn === 1) {
+      const forged = await theirs.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/ask`, payload: site });
+      assert.equal(forged.statusCode, 410, "another computer cannot ask on this turn");
+      claim("POST /api/devices/self/assistant-turns/:id/ask", "isolation");
+    }
+    if (turn <= 2) {
+      const asked = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/ask`, payload: turn === 1 ? site : blog });
+      assert.equal(asked.statusCode, 200, asked.body);
+      claim("POST /api/devices/self/assistant-turns/:id/ask", "happy-path");
+      answers.push(asked.json());
+      if (answers.at(-1)!.decision !== "allow") {
+        await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("I will wait for your answer.") });
+        return;
+      }
+    }
+    const tools = [{ id: `edit-${turn}`, name: "Edit", summary: turn === 1 ? "~/projects/site/index.html" : "~/projects/blog/post.md", phase: "end", ok: true, acts: true }];
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/stream`, payload: { seq: 1, text: "", tools } });
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
+  });
+  const replies = async () => (await roomMessages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text");
+  const pendingCard = () => until(async () => (await roomMessages(mira, room.id)).find((row) => row.kind === "approval" && row.data?.type === "computer" && row.data?.status === "pending"), "the owner's card");
+  try {
+    await postTo(mira, room.id, "Fix the title on my site");
+    const card = await pendingCard();
+    assert.deepEqual([card.data!.options, card.data!.call, card.data!.label, card.data!.capability], [["Allow", "Allow for this run"], site.operation, site.label, "files"], "one press, with exactly what would change");
+    assert.match(card.body, /@assistant wants to change files in ~\/projects\/site on Mira's laptop/);
+    assert.deepEqual((await harness.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [mira.id], "for the owner only");
+    const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow for this run" } });
+    assert.equal(decided.statusCode, 200, decided.body);
+    await settleTurns();
+    assert.deepEqual(simulated.failures, []);
+    assert.deepEqual(answers[0], { decision: "allow", grant: { id: card.data!.decisionId, scope: "mission", target: site.target } });
+    assert.equal((await replies()).at(-1)!.body, "Done.");
+    const shown = frames.find((row) => row.frame.type === "tool" && row.frame.call?.name === "Edit");
+    assert.deepEqual(shown?.frame.call, { id: "edit-1", name: "Edit", state: "ok", summary: "~/projects/site/index.html" }, "the agent's own call reaches its owner's chat");
+    await until(async () => {
+      const first = await harness.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+      return (first.receipts as Array<{ name: string; state: string }>).some((row) => row.name === "Edit" && row.state === "ok");
+    }, "the call in the turn's receipts");
+
+    process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = "300";
+    await postTo(mira, room.id, "Now write the blog post");
+    await settleTurns();
+    assert.deepEqual([answers[1]!.decision, answers[1]!.waiting], ["deny", true]);
+    assert.match(answers[1]!.message!, /^Waiting for Mira to answer the card about change post\.md in ~\/projects\/blog\. Stop here: end your turn now without a reply\./);
+    assert.equal((await replies()).length, 1, "the parked turn posts nothing");
+    const conversation = (await harness.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).conversationId!;
+    const note = await harness.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: conversation, role: "assistant" }, orderBy: { createdAt: "desc" } });
+    assert.equal(note.content, "Waiting for Mira to answer the card about change post.md in ~/projects/blog.");
+
+    const later = await pendingCard();
+    assert.equal(later.data!.call, blog.operation);
+    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${later.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow" } });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    await until(async () => specs.length === 3, "the node to be woken");
+    await settleTurns();
+    const woken = specs[2]!;
+    assert.match(woken.prompt, /Allowed: change post\.md in ~\/projects\/blog\. Do it now\./);
+    assert.equal(woken.session?.key, specs[1]!.session?.key, "in the same agent session");
+    assert.equal(woken.session?.position, specs[1]!.session!.position! + 2, "where the parked turn left it");
+    assert.equal((await replies()).at(-1)!.body, "Done.");
+    const settled = (await roomMessages(mira, room.id)).find((row) => row.id === later.id)!;
+    assert.deepEqual([settled.data!.status, settled.data!.answer], ["allowed", "Allow"]);
+    assert.deepEqual(simulated.failures, []);
+  } finally {
+    if (waitSetting === undefined) delete process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
+    else process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = waitSetting;
+    listen();
+    simulated.stop();
+  }
+});

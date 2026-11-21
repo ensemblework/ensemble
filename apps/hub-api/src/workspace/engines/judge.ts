@@ -246,9 +246,10 @@ async function questions(ctx: JobContext, input: Record<string, unknown>, withdr
  * they would in the person's own agent, without asking. Refused whatever the request: the dangerous
  * commands, the privilege, persistence and system-settings programs, and, outside the turn's own folder,
  * what no run may reach (keys and sign-ins, Ensemble's own data and code, start-up items, the system's
- * files, other accounts: `outsideRefusal`).
+ * files, other accounts: `outsideRefusal`). `neverPrograms: false` leaves those programs to the caller
+ * (an Ensemble Node's turn asks its owner about them: subscriptions/node-own-tools.ts).
  */
-export async function judgeFloor(root: string, call: EngineCall): Promise<EngineAnswer> {
+export async function judgeFloor(root: string, call: EngineCall, options: { neverPrograms?: boolean } = {}): Promise<EngineAnswer> {
   const input = call.input ?? {};
   const guarded = async (path: string, write: boolean): Promise<EngineAnswer | null> => {
     const real = await realOutside(resolve(root, expandHome(path)));
@@ -263,7 +264,7 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
     if (hit) return { decision: "deny", message: dangerousMessage(hit) };
     // Run where the agent says (Codex names its working folder), else in the turn's folder.
     const parsed = parseShell(command, str(input.cwd) ? resolve(root, expandHome(str(input.cwd)!)) : root);
-    for (const segment of parsed) {
+    for (const segment of options.neverPrograms === false ? [] : parsed) {
       const program = segment.argv[0];
       if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
     }
@@ -293,14 +294,17 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
 
 /**
  * A tool call as an agent's hook names it (Claude Code's own names, GitHub Copilot CLI's), in the
- * judge's terms: shells as Bash, file reads as Read, file changes as Write; anything else as it is.
+ * judge's terms: shells as Bash, file reads as Read, file changes as Write, web pages as WebFetch and
+ * searches as WebSearch; anything else as it is.
  */
 export function hookCall(name: string, input: Record<string, unknown>): EngineCall {
   const path = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path) ?? str(input.filePath);
-  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "" } };
+  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "", ...(str(input.cwd) ? { cwd: str(input.cwd) } : {}) } };
   if (READS.has(name) || WRITES.has(name) || SHELLS.has(name)) return { tool: name, input };
   if (/^(view|read|read_file|glob|grep|rg|ls|list_dir|search)$/i.test(name)) return { tool: "Read", input: path ? { file_path: path } : {} };
   if (/^(create|edit|write|str_replace|str_replace_editor|apply_patch|delete|move)$/i.test(name)) return { tool: "Write", input: path ? { file_path: path } : {} };
+  if (/^(web_?fetch|fetch|url)$/i.test(name)) return { tool: "WebFetch", input: { url: str(input.url) ?? "" } };
+  if (/^web_?search$/i.test(name)) return { tool: "WebSearch", input: { query: str(input.query) ?? "" } };
   return { tool: name, input };
 }
 

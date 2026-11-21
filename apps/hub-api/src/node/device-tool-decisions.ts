@@ -12,6 +12,9 @@
  * conversation or step parked on it (`watchDecision`), with the exact call to make again. The answer
  * reaches the computer with the node's next call there (the computer keeps "this mission" and "always"
  * as its own rules).
+ *
+ * The agent's own calls in a node's turn on its owner's plan ask the same way (node/own-tool-asks.ts),
+ * with one press: Allow (the folder from then on), Allow for this run, or Don't allow (`own`).
  */
 import { EventEmitter } from "node:events";
 import type { AgentDecision, NodeMessage, Prisma, PrismaClient } from "@prisma/client";
@@ -37,6 +40,8 @@ const PERMISSION_WAIT_MS = 180_000;
 const WAIT_RECHECK_MS = 3_000;
 
 export const CHOICES = { once: "Once", mission: "This mission", folder: "Always for this folder", origin: "Always for this address" } as const;
+/** The answers to a question about one of the agent's own calls (node/own-tool-asks.ts); Don't allow is the card's own. */
+export const OWN_CHOICES = { always: "Allow", run: "Allow for this run" } as const;
 
 /** How long a tool call waits for its owner's answer (`ENSEMBLE_NODE_PERMISSION_WAIT_MS`). */
 export function permissionWaitMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -80,6 +85,8 @@ export type NodeToolCard = {
   target: string;
   label: string;
   scope: NodeToolAsk["scope"];
+  /** A question about one of the agent's own calls (its shell, files, web): what it wants to do, in a few words. */
+  own?: { what: string };
   /** The conversations and steps whose turn parked waiting on this question: its answer wakes each (absent on older questions: the one that asked). */
   parked?: ParkedLane[];
   /** The computer has used the answer (it keeps "this mission" and "always" itself). */
@@ -103,22 +110,24 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "detail">): NodeToolGrant["scope"] | null {
   if (row.decision !== "allow") return null;
   const reason = (row.reason ?? "").trim();
-  if (reason === CHOICES.mission) return "mission";
-  if (reason === CHOICES.folder || reason === CHOICES.origin) return "always";
+  if (reason === CHOICES.mission || reason === OWN_CHOICES.run) return "mission";
+  if (reason === CHOICES.folder || reason === CHOICES.origin || reason === OWN_CHOICES.always) return "always";
   return "once";
 }
 
 const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
-function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName">): string {
+function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target">): string {
+  if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
   if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
   return `@${card.nodeSlug} wants to ${VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
 }
 
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */
-export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName">): string {
+export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName" | "target">): string {
+  if (card.target.startsWith("program:")) return `on ${card.deviceName}`;
   return card.scope === "origin" ? `${card.label} on ${card.deviceName}` : `in ${card.label} on ${card.deviceName}`;
 }
 
@@ -136,8 +145,8 @@ export async function askOwner(app: Pick<FastifyInstance, "prisma">, owner: stri
     return known && known.nodeId === card.nodeId && known.deviceId === card.deviceId && known.target === card.target && known.mission === card.mission;
   });
   if (same) return { row: same, created: false };
-  // Where the computer's sandbox is weak, "always" would not cover commands there: it is not offered.
-  const options = [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
+  // Where the computer's sandbox is weak, "always" would not cover commands there: it is not offered. The agent's own call: one press.
+  const options = card.own ? [OWN_CHOICES.always, OWN_CHOICES.run] : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
   const row = await prisma.agentDecision.create({
     data: {
       userId: owner,
@@ -239,6 +248,7 @@ function answerOf(row: AgentDecision): string | null {
   const scope = grantScope(row);
   if (row.status !== "decided") return null;
   if (!scope) return "No";
+  if (detailOf(row).nodeTool?.own) return scope === "mission" ? OWN_CHOICES.run : OWN_CHOICES.always;
   if (scope === "mission") return CHOICES.mission;
   if (scope === "always") return detailOf(row).nodeTool?.scope === "origin" ? CHOICES.origin : CHOICES.folder;
   return CHOICES.once;
@@ -396,9 +406,20 @@ export async function awaitAnswer(app: FastifyInstance, id: string, signal: Abor
   }
 }
 
+/** Where the agent's own call would act, for the note that wakes its turn: " in ~/projects/site", or nothing for a program or an address. */
+export function ownPlace(tool: Pick<NodeToolCard, "scope" | "label" | "target">): string {
+  return tool.scope === "folder" && !tool.target.startsWith("program:") ? ` in ${tool.label}` : "";
+}
+
 /** The note that wakes a conversation or step parked on an answered question: the answer, and the call to make again. */
 function wakeNote(row: AgentDecision, tool: NodeToolCard, again: string | null): string {
   const scope = grantScope(row);
+  if (tool.own) {
+    const what = `${tool.own.what}${ownPlace(tool)}`;
+    if (row.status !== "decided") return `Your owner did not answer the card about ${what}, and it closed. Go on without it, or ask again later if it is still needed.`;
+    if (!scope) return `Not allowed: ${what}. Your owner chose not to allow it: go on without it, or say what cannot be done without it.`;
+    return `Allowed: ${what}. Do it now.`;
+  }
   const where = placeOf(tool);
   if (row.status !== "decided") return `Your owner did not answer the card about your computer tools ${where}, and it closed. Go on without them, or ask again later if they are still needed.`;
   if (!scope) return `Your owner chose not to allow your computer tools ${where}. Go on without them, or say what cannot be done without them.`;

@@ -11,19 +11,26 @@ import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, runInScope } from "../sharing/context.js";
 import type { AgentTurnResult, AgentTurnSpec } from "./agents.js";
-import type { ToolAnswer } from "./bridge.js";
+import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "./bridge.js";
 
 /** How long a computer has to pick a turn up before the person is told it did not. */
 export const PICKUP_MS = 20_000;
-/** A turn the computer stopped talking about for this long has ended. */
-const QUIET_MS = 5 * 60_000;
-const LONGEST_MS = 20 * 60_000;
+/**
+ * A turn the computer stopped talking about for this long has ended: no reply text, status, tool call
+ * or own call of the agent's (a computer keeps a long own call alive, remote/assistant.ts). A turn that
+ * keeps working has no time limit.
+ */
+export const QUIET_MS = 10 * 60_000;
 
 type Live = {
   id: string;
   deviceId: string;
   spec: AgentTurnSpec;
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
+  /** A node's turn: asks its owner about one of the agent's own calls (node/own-tool-asks.ts). */
+  ask: ((request: OwnAsk) => Promise<OwnAnswer>) | null;
+  /** A node's turn: each of the agent's own calls as it starts and ends, for the chat. */
+  onOwnTool: ((event: OwnToolEvent) => void) | null;
   /** The bytes of one of `spec.files`, read as the person who asked. */
   read: ((fileId: string) => Promise<Uint8Array | null>) | null;
   onDelta: (text: string) => void;
@@ -34,7 +41,7 @@ type Live = {
   pickedBy: string | null;
   seq: number;
   heard: number;
-  /** Tool calls running now: a long one (a browser task, a sign-in) is work, not silence. */
+  /** Tool calls and asks running now: a long one (a browser task, a sign-in, a card waiting for the owner) is work, not silence. */
   busy: number;
   stopped: boolean;
   settle: (outcome: { result: AgentTurnResult } | { error: Error }) => void;
@@ -88,13 +95,14 @@ export function errorFromComputer(problem: string | undefined, message: string |
   return new RuntimeError(text, 502);
 }
 
-/** Streamed text in order, with the computer's status line when it sent one; a repeated batch (a retried post) is dropped. */
-export function streamInto(turn: Live, seq: number, text: string, status?: string): void {
+/** Streamed text in order, with the computer's status line and the agent's own calls when it sent them; a repeated batch (a retried post) is dropped. */
+export function streamInto(turn: Live, seq: number, text: string, status?: string, tools?: readonly OwnToolEvent[]): void {
   heard(turn);
   if (seq <= turn.seq) return;
   turn.seq = seq;
   if (status) turn.onStatus?.(status);
   if (text) turn.onDelta(text);
+  for (const event of tools ?? []) turn.onOwnTool?.(event);
 }
 
 export function runOnComputer(input: {
@@ -105,13 +113,17 @@ export function runOnComputer(input: {
   signal: AbortSignal;
   read?: (fileId: string) => Promise<Uint8Array | null>;
   onStatus?: (text: string) => void;
+  ask?: (request: OwnAsk) => Promise<OwnAnswer>;
+  onOwnTool?: (event: OwnToolEvent) => void;
 }): Promise<AgentTurnResult> {
   const id = randomUUID();
-  // Tool calls and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
+  // Tool calls, asks and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
   const scope = currentScope();
   const call = scope ? (name: string, args: unknown) => runInScope(scope, () => input.call(name, args)) : input.call;
   const reader = input.read;
   const read = reader ? (scope ? (fileId: string) => runInScope(scope, () => reader(fileId)) : reader) : null;
+  const asker = input.ask;
+  const ask = asker ? (scope ? (request: OwnAsk) => runInScope(scope, () => asker(request)) : asker) : null;
   return new Promise<AgentTurnResult>((resolve, reject) => {
     const timers: NodeJS.Timeout[] = [];
     const turn: Live = {
@@ -127,6 +139,18 @@ export function runOnComputer(input: {
           heard(turn);
         }
       },
+      ask: ask
+        ? async (request) => {
+            turn.busy += 1;
+            try {
+              return await ask(request);
+            } finally {
+              turn.busy -= 1;
+              heard(turn);
+            }
+          }
+        : null,
+      onOwnTool: input.onOwnTool ?? null,
       read,
       onDelta: input.onDelta,
       ...(input.onStatus ? { onStatus: input.onStatus } : {}),
@@ -164,12 +188,11 @@ export function runOnComputer(input: {
           });
         }
       }, PICKUP_MS),
-      setTimeout(() => turn.settle({ error: new RuntimeError(`${input.device.name} took longer than ${LONGEST_MS / 60_000} minutes, so the turn was stopped.`, 504) }), LONGEST_MS),
     );
     const watch = setInterval(() => {
       if (quiet(turn)) {
         publishDeviceFrame(input.device.id, "assistant.stop", { id });
-        turn.settle({ error: new RuntimeError(`${input.device.name} stopped answering. Try again.`, 504) });
+        turn.settle({ error: new RuntimeError(`${input.device.name} sent nothing for ${QUIET_MS / 60_000} minutes (no reply text and no tool call), so the turn was stopped. Try again.`, 504) });
       }
     }, 10_000);
     watch.unref?.();

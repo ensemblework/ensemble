@@ -9,7 +9,7 @@ import { withAiContext } from "../lib/ai-activity.js";
 import { z } from "zod";
 import { SUBSCRIPTION_PROVIDERS } from "@ensemble/shared-types";
 import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
-import type { ToolAnswer } from "../subscriptions/bridge.js";
+import { OwnAnswerShape, type OwnAnswer, type OwnToolEvent, type ToolAnswer } from "../subscriptions/bridge.js";
 import { TURN_FILES_MAX, TurnFileShape } from "../subscriptions/turn-files.js";
 import { SESSION_KEY } from "../subscriptions/turn-sessions.js";
 import { RemoteError, type HostedClient } from "./client.js";
@@ -17,6 +17,8 @@ import { RemoteError, type HostedClient } from "./client.js";
 /** Turns at once on one computer; more are refused with a reason. */
 export const MAX_TURNS_AT_ONCE = 3;
 const FLUSH_MS = 200;
+/** While one of the agent's own calls runs (a long build), the web hears from the turn this often: a call that runs is not silence. */
+const KEEPALIVE_MS = 60_000;
 /** A download may run this far past the size the turn gave. */
 const FILE_SLACK = 64 * 1024;
 
@@ -28,7 +30,8 @@ const Spec = z.object({
   system: z.string().max(400_000),
   prompt: z.string().max(400_000),
   tools: z.array(ToolSpecShape).max(300),
-  maxTurns: z.number().int().min(1).max(64),
+  /** The most turns the agent takes; absent, no limit (`assistantTurns` 5). Older servers send at most 64. */
+  maxTurns: z.number().int().min(1).optional(),
   /** GitHub Copilot's long context window, when the tier chose it. Older servers omit it. */
   context: z.enum(["default", "long_context"]).nullish(),
   /** Files attached to the person's message (`assistantTurns` 2). Older servers omit it. */
@@ -50,6 +53,18 @@ const Spec = z.object({
   ownWeb: z.boolean().optional(),
   /** All the agent's own tools, judged by the hard floor (0.7.15, own-tools.ts). Older servers omit it. */
   ownTools: z.boolean().optional(),
+  /** An Ensemble Node's turn with the agent's own tools: its folder policy here (`assistantTurns` 5, node-own-tools.ts). Older servers omit it. */
+  node: z
+    .object({
+      id: z.string().min(1).max(80),
+      slug: z.string().max(80),
+      mission: z.string().min(1).max(200),
+      attended: z.boolean(),
+      trusted: z.boolean(),
+      sudo: z.boolean(),
+      folders: z.array(z.string().min(1).max(4096)).max(20).optional(),
+    })
+    .optional(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 
@@ -92,15 +107,22 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
     let pending = "";
     // A status line goes with the next batch, in order with the text (a server before 0.8.0 ignores it).
     let status: string | null = null;
+    // A node's chat shows the agent's own calls: they go with the batches too (a server before `assistantTurns` 5 ignores them).
+    const ownCalls: OwnToolEvent[] = [];
+    let openCalls = 0;
+    let posted = Date.now();
     let flushing: Promise<void> | null = null;
     const flush = async () => {
-      if (!pending && !status) return;
+      const keepalive = openCalls > 0 && Date.now() - posted >= KEEPALIVE_MS;
+      if (!pending && !status && !ownCalls.length && !keepalive) return;
       const text = pending;
       const line = status;
+      const calls = ownCalls.splice(0, 50);
       pending = "";
       status = null;
       seq += 1;
-      const answer = await client.assistantStream(id, { seq, text, ...(line ? { status: line } : {}) });
+      posted = Date.now();
+      const answer = await client.assistantStream(id, { seq, text, ...(line ? { status: line } : {}), ...(calls.length ? { tools: calls } : {}) });
       if (answer.stop) controller.abort();
     };
     const flushOnce = () => (flushing ??= flush().catch(() => undefined).finally(() => (flushing = null)));
@@ -119,6 +141,18 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
         onStatus(text) {
           status = text;
         },
+        onOwnTool(event) {
+          openCalls = Math.max(0, openCalls + (event.phase === "start" ? 1 : -1));
+          if (spec.node && ownCalls.length < 500) ownCalls.push(event);
+        },
+        ...(spec.node
+          ? {
+              async ask(request): Promise<OwnAnswer> {
+                const answer = OwnAnswerShape.safeParse(await client.assistantAsk(id, request));
+                return answer.success ? answer.data : { decision: "deny", message: "Ensemble's answer could not be read, so this call was not run." };
+              },
+            }
+          : {}),
         signal: controller.signal,
         async readFile(fileId) {
           const file = spec.files?.find((row) => row.id === fileId);
