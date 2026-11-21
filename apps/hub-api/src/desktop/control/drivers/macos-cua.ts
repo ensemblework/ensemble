@@ -64,6 +64,10 @@ const TYPING_CHUNK = 8;
 const TYPING_PAUSE_MS = 120;
 /** Idle time this much shorter than the time since the last key means someone else's input. */
 const OWNER_INPUT_MARGIN_MS = 40;
+/** Between chunks the window on top is checked; every this many chunks also the app in front. */
+const TYPING_FULL_CHECK = 4;
+/** Typing stops while this much more than one chunk's time is left, to answer before the request's end. */
+const TYPING_RESERVE_MS = 500;
 /** How long macOS is not asked again for the same missing grants. */
 const ASK_AGAIN_MS = 10 * 60_000;
 /** Cua Driver 0.56.6's private LaunchServices permission host (cli.rs `permissions grant`). */
@@ -180,6 +184,8 @@ type Tree = { pid: number; windowId: number; app: string; tokens: Map<string, st
 type Recording = { id: string; dir: string; path: string; active: boolean; reason: string | null; video: string | null; timer: NodeJS.Timeout | null; startedAt: number };
 type Ctx = { until: number };
 type Front = { apps: RunningApp[]; wins: Win[]; app: RunningApp | null; top: Win | null; prompt: Win | null };
+/** Why typing ended before the end of the text (the service says each in its words). */
+type TypingStop = "focus_moved" | "owner_input" | "out_of_time";
 
 /** An app from `list_apps`: an installed app that is not running has pid 0. */
 function appOf(item: Record<string, unknown>): RunningApp | null {
@@ -208,6 +214,14 @@ function winOf(item: Record<string, unknown>): Win | null {
   };
 }
 
+/** A failure once typing began: it ran, and says how much went in (at least that much when a chunk was in flight). */
+function typingFailed(error: unknown, typed: number, total: number, inFlight: boolean): HelperError {
+  const known = error instanceof HelperError ? error : null;
+  const why = (known?.message ?? (error instanceof Error ? error.message : "Typing failed.")).slice(0, 300);
+  const count = `${inFlight ? "at least " : ""}${typed} of ${total} characters`;
+  return new HelperError(known?.kind ?? "input_failed", `Typing stopped after ${count} (the rest was not typed): ${why}`, "yes", false, { ...known?.data, typed: { keysym: typed, atspi: 0, clipboard: 0, untyped: 0 }, total, stopped: known?.kind ?? "failed" });
+}
+
 /** One account for text typed in chunks: confirmed when every chunk was, a mix of taken and not taken is partial. */
 function overall(effects: readonly string[]): string {
   if (!effects.length) return "unverifiable";
@@ -219,6 +233,10 @@ function overall(effects: readonly string[]): string {
 
 /** Front first; a window whose order is unknown goes last. */
 const byFront = (a: Win, b: Win) => (b.z ?? -Infinity) - (a.z ?? -Infinity);
+
+/** The window on top of all others that show (the one the keyboard goes to unless an app without windows is in front). */
+const topWindow = (wins: readonly Win[]) => wins.filter((win) => win.layer === 0 && win.onScreen && !win.minimized).sort(byFront)[0] ?? null;
+const sameWindow = (a: Win | null, b: Win | null) => (a === null || b === null ? a === b : a.id === b.id && a.pid === b.pid);
 
 function textOf(result: McpResult | null | undefined): string | null {
   const text = (result?.content ?? [])
@@ -567,10 +585,17 @@ export class MacosCuaDriver extends EventEmitter {
 
   private async idle(): Promise<{ locked: boolean | null; idle_ms: number | null }> {
     const exec = this.options.exec ?? runCommand;
-    const [hid, root] = await Promise.all([exec("/usr/sbin/ioreg", ["-r", "-c", "IOHIDSystem", "-d", "1"], 3_000).catch(() => ""), exec("/usr/sbin/ioreg", ["-n", "Root", "-d", "1"], 3_000).catch(() => "")]);
-    const idle = /"HIDIdleTime"\s*=\s*(\d+)/.exec(hid);
+    const [idle_ms, root] = await Promise.all([this.idleMs(), exec("/usr/sbin/ioreg", ["-n", "Root", "-d", "1"], 3_000).catch(() => "")]);
     const locked = /"CGSSessionScreenIsLocked"\s*=\s*Yes/.test(root) ? true : /IOConsoleUsers/.test(root) ? false : null;
-    return { locked, idle_ms: idle ? Math.floor(Number(idle[1]) / 1_000_000) : null };
+    return { locked, idle_ms };
+  }
+
+  /** How long ago anyone last used the keyboard or mouse (`HIDIdleTime`). */
+  private async idleMs(): Promise<number | null> {
+    const exec = this.options.exec ?? runCommand;
+    const hid = await exec("/usr/sbin/ioreg", ["-r", "-c", "IOHIDSystem", "-d", "1"], 3_000).catch(() => "");
+    const idle = /"HIDIdleTime"\s*=\s*(\d+)/.exec(hid);
+    return idle ? Math.floor(Number(idle[1]) / 1_000_000) : null;
   }
 
   private async notice(params: Record<string, unknown>): Promise<{ shown: boolean }> {
@@ -701,8 +726,9 @@ export class MacosCuaDriver extends EventEmitter {
     return out;
   }
 
-  private async windows(ctx: Ctx, pid?: number): Promise<Win[]> {
-    const { data } = await this.tool("list_windows", pid !== undefined ? { pid } : {}, ctx);
+  private async windows(ctx: Ctx, pid?: number, onScreenOnly = false): Promise<Win[]> {
+    const args = { ...(pid !== undefined ? { pid } : {}), ...(onScreenOnly && this.mcp.takes("list_windows", "on_screen_only") ? { on_screen_only: true } : {}) };
+    const { data } = await this.tool("list_windows", args, ctx);
     return arr(data.windows)
       .map(winOf)
       .filter((win): win is Win => win !== null);
@@ -1052,45 +1078,65 @@ export class MacosCuaDriver extends EventEmitter {
   }
 
   /**
-   * Typing into the app in front, a few characters at a time. Between chunks it stops when the window in front
-   * changed (or now falls under the floor, or a password prompt opened), and when the owner used the keyboard or
-   * mouse since the last key (macOS's idle time is shorter than the time since it), like the Linux helper.
+   * Typing into the app in front, a few characters at a time, like the Linux helper. Between chunks it stops
+   * when the window on top changed, a password prompt opened or the floor now refuses the window (`focus_moved`;
+   * every few chunks also when another app came to the front), when the owner used the keyboard or mouse since
+   * the last key (`owner_input`: macOS's idle time is shorter than the time since it), and while one more chunk
+   * would not fit in the request's time (`out_of_time`). Once anything was typed, a failure says how much.
    */
   private async text(params: Record<string, unknown>, ctx: Ctx): Promise<Record<string, unknown>> {
     await this.inputReady(ctx);
     if (params.secret === true && this.recording) throw this.noSecretWhileRecording();
     const chars = [...(typeof params.text === "string" ? params.text : "")];
     const start = await this.front(ctx);
-    const where = (front: Front) => `${front.app?.pid ?? "-"}:${front.top?.id ?? "-"}`;
+    const startTop = topWindow(start.wins);
     const effects: string[] = [];
     let typed = 0;
-    let stopped: "focus_moved" | "owner_input" | null = null;
-    for (let at = 0; at < chars.length; at += TYPING_CHUNK) {
-      if (at > 0) {
-        const now = await this.front(ctx);
-        if (where(now) !== where(start) || now.prompt || keyboardFloor(this.focusOf(now, true))) {
-          stopped = "focus_moved";
-          break;
+    let typing = false;
+    let slowest = 0;
+    const answer = (stopped: TypingStop | null) => ({ typed: { keysym: typed, atspi: 0, clipboard: 0, untyped: 0 }, stopped, ...(typed ? this.sent({ effect: overall(effects) }) : { effect: "unverifiable" }) });
+    try {
+      for (let at = 0, chunk = 0; at < chars.length; at += TYPING_CHUNK, chunk += 1) {
+        const began = this.now();
+        if (at > 0) {
+          if (ctx.until - began < slowest + TYPING_RESERVE_MS) return answer("out_of_time");
+          if (await this.focusMoved(start, startTop, chunk % TYPING_FULL_CHECK === 0, ctx)) return answer("focus_moved");
         }
+        typing = true;
+        const { data } = await this.tool("type_text", { text: chars.slice(at, at + TYPING_CHUNK).join(""), ...this.desktop("type_text") }, ctx, true);
+        typing = false;
+        const lastKeyAt = this.now();
+        typed += Math.min(TYPING_CHUNK, chars.length - at);
+        effects.push(str(data.effect) ?? "unverifiable");
+        if (at + TYPING_CHUNK >= chars.length) break;
+        // A pause after the last key: input during it is not the driver's. The clock is read before macOS is
+        // asked, so a slow answer never looks like input.
+        await this.sleep(TYPING_PAUSE_MS);
+        const checkedAt = this.now();
+        const idle = await this.idleMs();
+        if (idle !== null && idle + OWNER_INPUT_MARGIN_MS < checkedAt - lastKeyAt) return answer("owner_input");
+        slowest = Math.max(slowest, this.now() - began);
       }
-      const chunk = chars.slice(at, at + TYPING_CHUNK).join("");
-      const { data } = await this.tool("type_text", { text: chunk, ...this.desktop("type_text") }, ctx, true).catch((error: unknown) => {
-        if (typed > 0 && error instanceof HelperError && error.ran === "no") throw new HelperError(error.kind, `${error.message} (after ${typed} of ${chars.length} characters were typed)`, "yes", error.retryable, error.data);
-        throw error;
-      });
-      const lastKeyAt = this.now();
-      typed += Math.min(TYPING_CHUNK, chars.length - at);
-      effects.push(str(data.effect) ?? "unverifiable");
-      if (at + TYPING_CHUNK >= chars.length) break;
-      // A pause after the last key: input during it is not the driver's.
-      await this.sleep(TYPING_PAUSE_MS);
-      const idle = (await this.idle()).idle_ms;
-      if (idle !== null && idle + OWNER_INPUT_MARGIN_MS < this.now() - lastKeyAt) {
-        stopped = "owner_input";
-        break;
-      }
+    } catch (error) {
+      if (typed === 0) throw error;
+      throw typingFailed(error, typed, chars.length, typing && !(error instanceof HelperError && error.ran === "no"));
     }
-    return { typed: { keysym: typed, atspi: 0, clipboard: 0, untyped: 0 }, stopped, ...this.sent({ effect: overall(effects) }) };
+    return answer(null);
+  }
+
+  /**
+   * Whether the keyboard may no longer reach where typing began: another window on top, a password prompt, or the
+   * floor refusing the window now (its title can change); with `full`, also another app in front.
+   */
+  private async focusMoved(start: Front, startTop: Win | null, full: boolean, ctx: Ctx): Promise<boolean> {
+    if (full) {
+      const now = await this.front(ctx);
+      return now.app?.pid !== start.app?.pid || !sameWindow(topWindow(now.wins), startTop) || now.prompt !== null || keyboardFloor(this.focusOf(now, true)) !== null;
+    }
+    const wins = await this.windows(ctx, undefined, true);
+    const top = topWindow(wins);
+    if (!sameWindow(top, startTop) || wins.some((win) => win.onScreen && PROMPT_APPS.test(win.app))) return true;
+    return keyboardFloor(this.focusOf({ ...start, wins, top: top && top.pid === start.app?.pid ? top : start.top, prompt: null }, true)) !== null;
   }
 
   // ── recording ────────────────────────────────────────────────────────────

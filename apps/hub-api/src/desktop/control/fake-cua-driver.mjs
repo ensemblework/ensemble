@@ -5,7 +5,9 @@
 // start, and again on every call for what tests change on the fly (effects, refusals, slow tools, failures).
 // Like macOS, the permissions are read once per process: Cua Driver's own (`accessibility`, `screen_recording`),
 // or with `--embedded` the launching app's (`host_accessibility`, `host_screen_recording`). `noise` writes lines
-// that are not MCP messages before each answer. FAKE_CUA_LOG gets one JSON line per tool call.
+// that are not MCP messages before each answer. `frontAfterTypes` brings an app to the front (its windows on top
+// unless `raise` is false) after that many typed chunks; `failAfterTypes` makes one tool fail from then on.
+// FAKE_CUA_LOG gets one JSON line per tool call.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -201,9 +203,13 @@ const tools = {
   type_text: (args, live) => {
     if (args.element_token && !element(args.element_token)) return failed("Refused: the element token is stale.", { status: "refused", refusal: { code: "stale_element_token", message: "stale" } });
     if (!args.element_token && args.scope !== "desktop") return failed("type_text needs a pid, an element_token or scope desktop.", { code: "invalid_arguments" });
-    // `frontAfterTypes`: after that many typed chunks another app comes to the front.
     typed += 1;
-    if (live.frontAfterTypes && typed === live.frontAfterTypes.count) for (const app of world.apps) app.active = app.pid === live.frontAfterTypes.pid;
+    const front = live.frontAfterTypes;
+    if (front && typed === front.count) {
+      for (const app of world.apps) app.active = app.pid === front.pid;
+      const top = Math.max(0, ...world.windows.map((win) => win.z_index ?? 0));
+      if (front.raise !== false) for (const win of world.windows) if (win.pid === front.pid) win.z_index = top + 1;
+    }
     return ok(action(live.effects?.type_text ?? "confirmed", { route: args.element_token ? "accessibility" : "synthetic_events" }));
   },
   press_key: (args, live) => ok(action(live.effects?.press_key ?? "unverifiable", { route: "synthetic_events" })),
@@ -250,6 +256,7 @@ async function callTool(name, args) {
   const unknown = Object.keys(args).filter((key) => !(key in schema));
   if (unknown.length) return failed(`${name}: unknown argument ${unknown.join(", ")}`, { code: "invalid_arguments" });
   if (live.slow?.[name]) await sleep(live.slow[name]);
+  if (live.failAfterTypes && typed >= live.failAfterTypes.count && name === live.failAfterTypes.tool) return failed(`${name} failed: WindowServer did not answer`, { code: "internal_error" });
   return refusal(name, live) ?? tools[name](args, live);
 }
 

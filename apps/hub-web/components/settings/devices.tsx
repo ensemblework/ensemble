@@ -8,7 +8,7 @@ import { ConnectComputerButton } from "./connect-computer";
 import { useToast } from "@/components/toast";
 import { InfoTip, SectionCard, Spinner, cx } from "@/components/ui";
 import { api } from "@/lib/api";
-import { platformLabel } from "@/lib/device-copy";
+import { desktopNote, platformLabel } from "@/lib/device-copy";
 import { computerOpensPullRequests, repositoryLabels } from "@/lib/pull-request";
 import { relative } from "@/lib/format";
 
@@ -69,6 +69,12 @@ export function DevicesSection() {
                   {repositoryLabels(device.capabilities).length ? (
                     <span className="min-w-0 truncate text-[12px] text-muted" title="Shared as repositories: each run works in its own clone.">
                       Repositories: {repositoryLabels(device.capabilities).join(", ")}
+                    </span>
+                  ) : null}
+                  {desktopNote(device.capabilities) ? (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] text-muted" data-desktop-note="">
+                      Cua Driver also runs outside Ensemble
+                      <InfoTip text={desktopNote(device.capabilities)!} />
                     </span>
                   ) : null}
                   {device.sealKeyMismatch ? (

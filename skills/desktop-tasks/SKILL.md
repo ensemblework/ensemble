@@ -24,7 +24,7 @@ On a Mac there is no agent screen: you work on your owner's screen, through acce
 - Coordinates, and type or key without an element, need foreground true (your owner is asked once). Mac keys: cmd+n, cmd+s, Return, Escape.
 - A step's verdict is the app's own answer: confirmed means its value or state changed; unknown means it was sent but not proven, so read the elements again before you say it worked.
 - When a tool says Accessibility or Screen Recording is off for Cua Driver (the desktop driver Ensemble starts), give your owner its System Settings fix word for word, and stop there. Never ask them to turn either on for Ensemble itself.
-- Typing without an element goes a few characters at a time and stops when the window in front changes or your owner uses the computer: look again before you go on.
+- Typing without an element goes a few characters at a time and stops when the window in front changes, your owner uses the computer or the call runs out of time; it says how many characters went in. Look again, then type only the rest.
 - Browser windows are off limits, also minimised ones: use your browser tools for web pages.
 - Apple Reminders (app "Reminders"): press the add button (+, New Reminder), set_text the new row's title, key Return on that field, then read the list again and check the reminder is there.
 - Clock (app "Clock", macOS Ventura and later): alarms live under its Alarms tab. Press the Alarms tab, press add (+), set the time in its fields, press Save, then read the list again and check the alarm is there and on.

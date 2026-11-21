@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,8 @@ const { DesktopError, DesktopService } = await import("./service.js");
 const { HelperProcess } = await import("./helper-process.js");
 const { Desktops } = await import("./screens.js");
 const { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, helperCommand, macosMajor, NO_AGENT_SCREEN_MAC, WINDOWS_UNSUPPORTED } = await import("./index.js");
-const { macReadiness, probeHost, probeMac } = await import("./readiness.js");
+const { macReadiness, probeHost, probeMac, socketAnswers } = await import("./readiness.js");
+const { DESKTOP_TRANSPORT_MS, desktopTimeoutMs, typingMs } = await import("./tool-specs.js");
 const { ensembleWindow } = await import("./floor.js");
 type Service = InstanceType<typeof DesktopService>;
 type Driver = InstanceType<typeof MacosCuaDriver>;
@@ -60,7 +62,7 @@ const drivers: Driver[] = [];
 const services: Service[] = [];
 let counter = 0;
 
-function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null; handlers?: string[] } = {}) {
+function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null; handlers?: string[]; clock?: boolean } = {}) {
   const dir = join(root, `mac-${(counter += 1)}`);
   mkdirSync(dir, { recursive: true });
   const state = join(dir, "state.json");
@@ -81,10 +83,13 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
   const temp = join(dir, "user-temp");
   mkdirSync(temp, { recursive: true });
   const execs: Array<{ program: string; args: string[] }> = [];
+  // With `clock` the driver's time is a stand-in that only its pauses and `ioreg` move, so long typing runs fast.
+  const clock = { now: 1_000_000 };
   const exec = async (program: string, args: string[]) => {
     execs.push({ program, args });
     if (program.endsWith("ioreg")) {
-      const typed = calls().filter((call) => call.tool === "type_text").length;
+      if (options.clock) clock.now += 10;
+      const typed = idle.afterTypes ? calls().filter((call) => call.tool === "type_text").length : 0;
       const ms = idle.afterTypes && typed >= idle.afterTypes.count ? idle.afterTypes.ms : idle.ms;
       return args.includes("IOHIDSystem") ? `  |   "HIDIdleTime" = ${ms * 1_000_000}\n` : `  "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes${idle.locked ? ',"CGSSessionScreenIsLocked"=Yes' : ""}})\n`;
     }
@@ -97,7 +102,8 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
     }
     return "";
   };
-  const driver = new MacosCuaDriver({ spawn: () => command(), version: "0.56.6", workDir: join(dir, "cua"), appPath: APP, macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000 });
+  const timing = options.clock ? { now: () => clock.now, sleep: async (ms: number) => void (clock.now += ms) } : {};
+  const driver = new MacosCuaDriver({ spawn: () => command(), version: "0.56.6", workDir: join(dir, "cua"), appPath: APP, macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000, ...timing });
   const service = new DesktopService({ helper: driver, captureDir: join(dir, "captures"), platform: "darwin", secretValues: async () => ["saved-value-123"] });
   drivers.push(driver);
   services.push(service);
@@ -198,6 +204,18 @@ test("readiness: an Ensemble app holding Accessibility or Screen Recording itsel
   assert.match(leaking.reason!, /Ensemble itself is allowed/);
   assert.match(leaking.reason!, /turn Ensemble off under Accessibility and under Screen & System Audio Recording/);
   assert.equal(macReadiness(await probeMac(h.command(), "0.56.6", 10_000), null, "stopped", 15, { accessibility: false, screenRecording: false }, APP).ready, true);
+});
+
+test("readiness notes Cua Driver's own daemon when something answers on its socket, and not for a file left behind", async () => {
+  const path = join(root, "daemon.sock");
+  assert.equal(await socketAnswers(path), false);
+  const server = createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  assert.equal(await socketAnswers(path), true);
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  rmSync(path, { force: true });
+  writeFileSync(path, "");
+  assert.equal(await socketAnswers(path), false);
 });
 
 test("the service asks for each grant with its fix, has macOS ask for Cua Driver once, and takes the grant once given (a fresh driver reads it again)", async () => {
@@ -422,26 +440,79 @@ test("browsers are told apart by LaunchServices (apps that open https links) and
 
 test("typing goes in short chunks and stops when the window in front changes or the owner types", async () => {
   const text = "The quick brown fox jumps over the lazy dog";
+  const typedBy = (h: ReturnType<typeof mac>) =>
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => String(call.args.text));
+  // Safari comes to the front with its window on top after two chunks: the window on top is checked after each.
   const moved = mac({ world: { frontAfterTypes: { count: 2, pid: 104 } } });
   const first = await moved.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
-  assert.equal(first.steps[0]!.verdict, "partial");
-  assert.match(first.steps[0]!.detail!, /window in front changed/);
-  const chunks = moved.calls().filter((call) => call.tool === "type_text");
-  assert.equal(chunks.length, 2);
-  assert.equal(chunks.map((call) => call.args.text).join(""), text.slice(0, 16));
+  assert.deepEqual([first.steps[0]!.verdict, first.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(first.steps[0]!.detail!, /Typing stopped after 16 of 43 characters: the window in front changed/);
+  assert.deepEqual(typedBy(moved), ["The quic", "k brown "]);
+
+  // An app with no window to raise takes the front after one chunk: the app in front is checked every fourth.
+  const windowless = mac({ world: { frontAfterTypes: { count: 1, pid: 104, raise: false } } });
+  const quiet = await windowless.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.match(quiet.steps[0]!.detail!, /after 32 of 43 characters: the window in front changed/);
+  assert.equal(typedBy(windowless).length, 4);
 
   const touched = mac();
   touched.idle.afterTypes = { count: 1, ms: 20 };
   const second = await touched.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
   assert.equal(second.steps[0]!.verdict, "partial");
   assert.match(second.steps[0]!.detail!, /your owner used the keyboard or mouse/);
-  assert.equal(touched.calls().filter((call) => call.tool === "type_text").length, 1);
+  assert.equal(typedBy(touched).length, 1);
   assert.equal(touched.service.lease.holder, "owner");
 
   const whole = mac();
   const third = await whole.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
   assert.equal(third.steps[0]!.verdict, "confirmed");
-  assert.equal(whole.calls().filter((call) => call.tool === "type_text").map((call) => call.args.text).join(""), text);
+  assert.equal(typedBy(whole).join(""), text);
+});
+
+test("the longest text a type step takes finishes in its time; with less time it stops between chunks and says how much went in", async () => {
+  const text = Array.from({ length: 5_000 }, (_, index) => "abcdefghijklmnopqrstuvwxyz0123456789 "[index % 37]).join("");
+  // The call's time covers typing all of it, with the look after it and the way to the computer and back.
+  assert.ok(typingMs(text.length) + 8_000 + DESKTOP_TRANSPORT_MS <= desktopTimeoutMs("desktop_act", { steps: [{ action: "type", text }] }));
+  const typedBy = (h: ReturnType<typeof mac>) =>
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => String(call.args.text))
+      .join("");
+  const long = mac({ clock: true });
+  const done = await long.service.act(caller("node:n1:m1", { budgetMs: desktopTimeoutMs("desktop_act", { steps: [{ action: "type", text }] }) - DESKTOP_TRANSPORT_MS }), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["confirmed", "yes"]);
+  assert.equal(typedBy(long), text);
+
+  const short = mac({ clock: true });
+  const cut = await short.service.act(caller("node:n1:m1", { budgetMs: 40_000 }), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([cut.steps[0]!.verdict, cut.steps[0]!.ran], ["partial", "yes"]);
+  const told = /Typing stopped after (\d+) of 5000 characters: this call ran out of time, so the rest was not typed\. Look, then type the rest \(from character (\d+)\) in another step\./.exec(cut.steps[0]!.detail!);
+  assert.ok(told, cut.steps[0]!.detail);
+  const count = Number(told[1]);
+  assert.ok(count > 0 && count < 5_000 && count % 8 === 0, String(count));
+  assert.equal(Number(told[2]), count + 1);
+  assert.equal(typedBy(short), text.slice(0, count), "exactly what it says went in");
+});
+
+test("a failure after some chunks went in says the step ran, with how much was typed, so it is not typed again", async () => {
+  const text = "The quick brown fox jumps over the lazy dog";
+  const h = mac({ world: { failAfterTypes: { count: 3, tool: "list_windows" } } });
+  const done = await h.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["unknown", "yes"]);
+  assert.match(done.steps[0]!.detail!, /^Typing stopped after 24 of 43 characters \(the rest was not typed\): list_windows failed/);
+  assert.equal(done.ran, 1);
+  assert.deepEqual(
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => call.args.text)
+      .join(""),
+    text.slice(0, 24),
+  );
 });
 
 test("lines from cua-driver that are not MCP messages are ignored: null, arrays, numbers, a 10 MB line, bytes that are not UTF-8", async () => {

@@ -34,7 +34,7 @@ import { newCaptureId, ObservationLedger, type Capture, type ScreenRef } from ".
 import { boxToRegion, imageToLogical, MAX_LONG_EDGE, type Region } from "./mapping.js";
 import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
 import { GATE_WORDS, sensitiveApp, type GateCategory } from "./sensitive.js";
-import type { DesktopStep, StepAction } from "./tool-specs.js";
+import { typingMs, type DesktopStep, type StepAction } from "./tool-specs.js";
 
 export type DesktopCode =
   | "busy"
@@ -301,8 +301,11 @@ const INPUT_STEPS = new Set<StepAction>(["click", "double_click", "right_click",
 type Session = { epoch: number; screens: ScreenRef[] };
 const NO_SCREEN: ScreenRef = { node: -1, x: 0, y: 0, width: 0, height: 0, name: null, primary: false };
 type StepContext = { secrets: readonly string[]; allowed: Set<string>; background: boolean; idleMs: number | null };
-/** Why the helper stopped typing before the end: the owner's input, the window in front changing, or a secret it could not type whole. */
-type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable";
+/**
+ * Why the helper stopped typing before the end: the owner's input, the window in front changing, a secret it could
+ * not type whole, or (macOS) no time for another chunk.
+ */
+type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable" | "out_of_time";
 type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; maxMs: number; mime: string; container: string; codec: string; ended: string | null; endedAt: number | null; lost: boolean; counter: number };
 
 class Deadline {
@@ -1183,7 +1186,7 @@ export class DesktopService {
     try {
       if (step.action === "key") effect = (await this.call<{ effect?: unknown } | null>("input.keys", { keys: step.keys, repeat: step.repeat ?? 1 }, deadline, { effects: true, maxMs: 10_000 }))?.effect;
       else {
-        const answer = await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number }; stopped?: TypingStop | null; effect?: unknown }>("input.text", { text, ...(secretName ? { secret: true } : {}) }, deadline, { effects: true, maxMs: Math.min(60_000, 5_000 + text!.length * 60) });
+        const answer = await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number }; stopped?: TypingStop | null; effect?: unknown }>("input.text", { text, ...(secretName ? { secret: true } : {}) }, deadline, { effects: true, maxMs: typingMs(text!.length) });
         typed = answer.typed;
         stopped = answer.stopped ?? null;
         effect = answer.effect;
@@ -1201,12 +1204,13 @@ export class DesktopService {
     }
     if (stopped) {
       const done = typed ? typed.keysym + typed.atspi + typed.clipboard : 0;
-      const what = secretName ? `Typing ${secretName} stopped part way` : `Typing stopped after ${done} of ${text!.length} characters`;
+      const what = secretName ? `Typing ${secretName} stopped part way` : `Typing stopped after ${done} of ${[...text!].length} characters`;
       if (stopped === "owner_input") {
         this.lease.take("owner_input");
         this.ledger.invalidateAll();
         return { verdict: "partial", ran: "yes", detail: `${what}: your owner used the keyboard or mouse, so the computer is theirs until two minutes after their last input.` };
       }
+      if (stopped === "out_of_time") return { verdict: "partial", ran: "yes", detail: `${what}: this call ran out of time, so the rest was not typed.${secretName ? "" : ` Look, then type the rest (from character ${done + 1}) in another step.`}` };
       return { verdict: "partial", ran: "yes", detail: `${what}: the window in front changed, so the rest was not typed.` };
     }
     const told = effectOutcome(effect);

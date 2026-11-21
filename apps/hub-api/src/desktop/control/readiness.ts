@@ -14,6 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { DESKTOP_API } from "../../remote/contract.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
@@ -39,6 +40,8 @@ export type DesktopReadiness = {
   permissions?: { accessibility: boolean; screenRecording: boolean; screenshot: boolean };
   /** macOS: elements can be read and pressed in the background (Accessibility works), even when screenshots cannot be taken. */
   background?: boolean;
+  /** macOS: something the owner should know that does not stop desktop control (Cua Driver's own daemon running). */
+  note?: string;
 };
 
 export type MacProbe = { accessibility: boolean; screenRecording: boolean; screenshot: boolean; error: string | null };
@@ -98,6 +101,29 @@ async function macProbe(command: HelperCommand, host: HelperCommand | null): Pro
   const grants = host ? await probeHost(host, version) : null;
   macChecked = { at: Date.now(), value, host: grants };
   return macChecked;
+}
+
+/** Where Cua Driver's own daemon (`cua-driver serve`) listens unless told otherwise. */
+export function cuaDaemonSocket(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = env.HOME?.trim();
+  return home ? join(home, "Library", "Caches", "cua-driver", "cua-driver.sock") : null;
+}
+
+export const CUA_DAEMON_NOTE = "Cua Driver's own daemon (cua-driver serve) is running on this Mac, started by another program: it uses the same grants as desktop control, outside Ensemble's floor and asks.";
+
+/** Whether a process answers on the Unix socket at `path` (the connection is closed at once). */
+export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
+  if (!existsSync(path)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const socket = connect({ path });
+    const done = (answered: boolean) => {
+      socket.destroy();
+      resolve(answered);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.setTimeout(timeoutMs, () => done(false));
+  });
 }
 
 /**
@@ -192,7 +218,9 @@ export async function desktopReadiness(platform: string = process.platform, env:
     const command = cuaDriverCommand(env);
     if ("unavailable" in command) return macReadiness(null, command.unavailable, helper);
     const { value, host } = await macProbe(command, cuaDriverHostProbeCommand(env));
-    return macReadiness(value, null, helper, macosMajor(), host, findCuaDriver(env)?.app ?? null);
+    const readiness = macReadiness(value, null, helper, macosMajor(), host, findCuaDriver(env)?.app ?? null);
+    const socket = cuaDaemonSocket(env);
+    return socket && (await socketAnswers(socket)) ? { ...readiness, note: CUA_DAEMON_NOTE } : readiness;
   }
   if (platform !== "linux") {
     const reason = platform === "win32" ? WINDOWS_UNSUPPORTED : UNSUPPORTED_HERE;
@@ -240,6 +268,7 @@ export async function desktopCapabilities(timeoutMs = 5_000): Promise<Record<str
           ...(readiness.reason ? { reason: readiness.reason.slice(0, 400) } : {}),
           ...(readiness.permissions ? { permissions: readiness.permissions } : {}),
           ...(readiness.background !== undefined ? { background: readiness.background } : {}),
+          ...(readiness.note ? { note: readiness.note.slice(0, 300) } : {}),
           agentScreen: { ready: readiness.agentScreen.ready, version: readiness.agentScreen.version, ...(readiness.agentScreen.reason ? { reason: readiness.agentScreen.reason.slice(0, 300) } : {}) },
         }
       : null,
