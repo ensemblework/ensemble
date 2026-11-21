@@ -310,6 +310,55 @@ test("a conversation turn offers the advanced browser and capture tools only for
   assert.doesNotMatch(azure, /A page that needs your owner's account: browser_login_needed/, "one skill in full at most");
 });
 
+test("the eval's day plan, far from UTC: yesterday's task comes in as overdue, today's task and the meetings left today come in, a task due in five days does not", async () => {
+  const { zonedDateTimeToUtc, zonedParts } = await import("../lib/clock.js");
+  const { addCalendarDays } = await import("../cowork/dates.js");
+  const { setCalendarFeedFetchForTests } = await import("../calendar/feeds.js");
+  const akash = await person("Akash");
+  await laptopFor(akash);
+  const { node, room } = await createNode(akash, "assistant");
+  // Past midnight in Auckland while it is still yesterday in UTC, and the other way round in Los Angeles: each day is the owner's own.
+  for (const zone of ["Pacific/Auckland", "America/Los_Angeles"]) {
+    await saveSettings(h.prisma, akash.id, { timezone: zone });
+    const today = zonedParts(zone, new Date()).date;
+    const at = (offset: number, time: string) => zonedDateTimeToUtc(addCalendarDays(today, offset), time, zone);
+    await h.prisma.task.deleteMany({ where: { userId: akash.id } });
+    const domain = await h.prisma.task.create({ data: { userId: akash.id, title: "Renew the company domain", status: "todo", due: at(-1, "17:00") } });
+    const budget = await h.prisma.task.create({ data: { userId: akash.id, title: "Review the Q4 budget", status: "todo", due: at(0, "23:30") } });
+    await h.prisma.task.create({ data: { userId: akash.id, title: "Prepare the board deck", status: "todo", due: at(5, "17:00") } });
+    const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const meeting = (uid: string, title: string, time: string) => ["BEGIN:VEVENT", `UID:${uid}`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(at(0, time))}`, `DTEND:${stamp(new Date(at(0, time).getTime() + 30 * 60_000))}`, `SUMMARY:${title}`, "END:VEVENT"];
+    const feed = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ensemble test//EN", ...meeting(`standup-${zone}`, "Standup", "23:00"), ...meeting(`design-${zone}`, "Design review", "23:20"), "END:VCALENDAR", ""].join("\r\n");
+    const url = `https://calendar.example.test/${encodeURIComponent(zone)}.ics`;
+    setCalendarFeedFetchForTests(async () => feed);
+    try {
+      const added = await akash.inject({ method: "POST", url: "/api/calendar/feeds", payload: { url, name: "Work" } });
+      assert.ok(added.statusCode < 300, added.body);
+    } finally {
+      setCalendarFeedFetchForTests(null);
+    }
+    seen.length = 0;
+    script = () => [];
+    await say(akash, room.id, "Plan my day for today.");
+    const turn = seen.find((row) => row.slug === node.slug);
+    assert.ok(turn, `${zone}: a turn ran (${seen.map((row) => row.slug).join(", ")})`);
+    const context = turn.context;
+    assert.match(context, new RegExp(`- \\[Renew the company domain\\]\\(ensemble://task/${domain.id}\\): due ${addCalendarDays(today, -1)} 17:00 \\(1 day overdue\\)`), `${zone}: the overdue task reaches the context tier\n${context}`);
+    assert.ok(context.includes(`- [Review the Q4 budget](ensemble://task/${budget.id}): due today 23:30`), `${zone}: today's task`);
+    assert.ok(context.indexOf("Renew the company domain") < context.indexOf("Review the Q4 budget"), "overdue first");
+    assert.match(context, /- 23:00 to 23:30: Standup/);
+    assert.match(context, /- 23:20 to 23:50: Design review/);
+    assert.doesNotMatch(context, /Prepare the board deck/, "not due yet");
+    // Asked for today alone, hub_list_due takes the owner's day and names what is overdue.
+    const { getTool } = await import("../assistant/registry.js");
+    const { Settings } = await import("@ensemble/shared-types");
+    const listDue = getTool("hub_list_due")!;
+    const due = await listDue.run({ app: { log: { warn() {}, error() {} } }, prisma: h.prisma, userId: akash.id, actor: "agent", settings: Settings.parse({ timezone: zone }) } as never, listDue.input.parse({ from: today, to: today }));
+    assert.deepEqual((due.data as { tasks: Array<{ title: string }> }).tasks.map((task) => task.title), ["Review the Q4 budget"], `${zone}: today's task on the owner's day`);
+    assert.match(due.summary, new RegExp(`^1 task\\(s\\), 0 deliverable\\(s\\), 0 reminder\\(s\\) due ${today} to ${today}\\. 1 more task\\(s\\) overdue: “Renew the company domain” \\(due ${addCalendarDays(today, -1)}\\)\\.$`), due.summary);
+  }
+});
+
 test("an owner's turn gets their overdue and due-today work, the memories and skills that fit, and the turn's record keeps what was chosen", async () => {
   const akash = await person("Akash");
   await laptopFor(akash);
@@ -332,7 +381,7 @@ test("an owner's turn gets their overdue and due-today work, the memories and sk
   assert.ok(turn.context.includes(`- [Send the invoice to Acme](ensemble://task/${invoice.id}): due today`));
   assert.doesNotMatch(turn.stable, /Renew the company domain|deep work first|Skills for this request/, "never in the stable tier");
 
-  type Selected = { config: { version: string; hash: string }; skills: Array<{ name: string; source: string; score: number; why: string[] }>; inline: { name: string; cut: boolean } | null; memories: Array<{ why: string; pinned: boolean }>; context: Array<{ group: string; id: string; title: string }> };
+  type Selected = { config: { version: string; hash: string }; skills: Array<{ skill: string; source: string; score: number; why: string[] }>; inline: { skill: string; cut: boolean } | null; memories: Array<{ why: string; pinned: boolean }>; context: Array<{ group: string; id: string }> };
   const record = async () => {
     const rows = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" }, orderBy: { ts: "asc" } });
     return (rows.at(-1)!.payload as { selected: Selected }).selected;
@@ -340,9 +389,12 @@ test("an owner's turn gets their overdue and due-today work, the memories and sk
   const selected = await record();
   assert.equal(selected.config.version, (await import("../context/config.js")).DEFAULT_CONTEXT_CONFIG.version);
   assert.match(selected.config.hash, /^[0-9a-f]{12}$/);
-  assert.equal(selected.skills[0]?.name, "planning");
+  assert.equal(selected.skills[0]?.skill, "planning");
   assert.ok(selected.skills[0]!.score > 0 && selected.skills[0]!.why.length > 0);
-  assert.deepEqual(selected.inline, { name: "planning", source: "bundled", chars: (await import("@ensemble/prompts")).SKILLS.planning.body.length, cut: false });
+  assert.ok(selected.skills[0]!.why.some((why) => /^keywords \d+$/.test(why)), "a reason without the words that gave it");
+  assert.deepEqual(selected.inline, { skill: "planning", source: "bundled", chars: (await import("@ensemble/prompts")).SKILLS.planning.body.length, cut: false });
+  const kept = JSON.stringify(selected);
+  for (const words of ["plan my day", "Renew the company domain", "Send the invoice", "day plans", "deep work", "\"terms\"", "\"title\""]) assert.ok(!kept.includes(words), `the record keeps ids, kinds, scores and reasons, never ${words}`);
   assert.match(turn.context, /The skill “planning” in full \([^\n]*\):\nSize the work before you plan it\./);
   assert.deepEqual(selected.memories.map((row) => [row.why, row.pinned]), [["pinned", true]]);
   assert.deepEqual(selected.context.filter((row) => row.group === "overdue").map((row) => row.id), [domain.id]);
@@ -354,5 +406,5 @@ test("an owner's turn gets their overdue and due-today work, the memories and sk
   assert.equal(read?.summary, "Read the planning skill.", "node_skill answered with the skill");
   await say(akash, room.id, "and after lunch?");
   const again = await record();
-  assert.ok(again.skills.some((row) => row.name === "planning" && row.why.includes("read in this conversation")), JSON.stringify(again.skills));
+  assert.ok(again.skills.some((row) => row.skill === "planning" && row.why.includes("read in this conversation")), JSON.stringify(again.skills));
 });

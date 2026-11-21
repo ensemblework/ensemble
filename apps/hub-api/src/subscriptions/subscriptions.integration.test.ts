@@ -440,7 +440,8 @@ test("a node's turn on its owner's plan keeps the agent's own tools where the co
     assert.match(spec.system, /all your own tools: your shell, files and web/);
     assert.match(spec.system, /your own shell and files, in your own folder/, "its persona sends commands and files to its own shell");
     assert.match(spec.system, /once per folder, on a card in this chat/);
-    assert.match(spec.system, /computer_sudo: your owner types their password on a card/);
+    assert.match(spec.system, /administrator commands \(computer_sudo\)/);
+    assert.match(spec.system, /computer_sudo \(your owner types their password on a card/, "its persona says how");
     assert.doesNotMatch(spec.system, /reached only through Ensemble's tools/);
 
     await harness.prisma.device.update({ where: { id: device.id }, data: { capabilities: { assistantTurns: 4, agents: [CLAUDE], nodeTools: 1 } } });
@@ -500,7 +501,8 @@ test("an own call the node's policy asks about waits for its owner's card: answe
       answers.push(asked.json());
       if (answers.at(-1)!.decision !== "allow") return;
     }
-    const tools = [{ id: `edit-${turn}`, name: "Edit", summary: turn === 1 ? "~/projects/site/index.html" : "~/projects/blog/post.md", phase: "end", ok: true, acts: true }];
+    // The first comes from a computer that says how long it ran, its sizes and how it was answered; the others from an older one.
+    const tools = [{ id: `edit-${turn}`, name: "Edit", summary: turn === 1 ? "~/projects/site/index.html" : "~/projects/blog/post.md", phase: "end", ok: true, acts: true, ...(turn === 1 ? { ms: 120, inChars: 80, outChars: 12, verdict: "asked" } : {}) }];
     await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/stream`, payload: { seq: 1, text: "", tools } });
     await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
   });
@@ -524,6 +526,9 @@ test("an own call the node's policy asks about waits for its owner's card: answe
       const first = await harness.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
       return (first.receipts as Array<{ name: string; state: string }>).some((row) => row.name === "Edit" && row.state === "ok");
     }, "the call in the turn's receipts");
+    const firstTurn = await harness.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+    const traced = (await harness.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: firstTurn.id } })).calls as Array<Record<string, unknown>>;
+    assert.deepEqual(traced.filter((call) => call.kind === "own"), [{ kind: "own", name: "Edit", ms: 120, state: "ok", inChars: 80, outChars: 12, verdict: "asked" }], "the agent's own call in the turn's trace, with how it was answered");
 
     process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = "300";
     await postTo(mira, room.id, "Now write the blog post");
@@ -551,6 +556,9 @@ test("an own call the node's policy asks about waits for its owner's card: answe
     assert.equal((await replies()).at(-1)!.body, "Done.");
     const settled = (await roomMessages(mira, room.id)).find((row) => row.id === later.id)!;
     assert.deepEqual([settled.data!.status, settled.data!.answer], ["allowed", "Allow changes and commands"]);
+    const lastTurn = await harness.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
+    const older = (await harness.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: lastTurn.id } })).calls as Array<Record<string, unknown>>;
+    assert.deepEqual(older.filter((call) => call.kind === "own"), [{ kind: "own", name: "Edit", ms: null, state: "ok", inChars: "unknown", outChars: "unknown", verdict: "unknown" }], "what an older computer does not say is not known");
     assert.deepEqual(simulated.failures, []);
   } finally {
     if (waitSetting === undefined) delete process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;

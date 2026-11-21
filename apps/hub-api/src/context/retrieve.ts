@@ -80,7 +80,7 @@ const PRIORITY_ORDER: Record<string, number> = { critical: 0, p0: 1, p1: 2, p2: 
 const ENDED = ["done", "dropped"];
 
 /** Date-only due dates are stored at midnight UTC (lib/clock.ts `parseDue`); a due with a time is an instant. */
-function dueDay(due: Date, timeZone: string): string {
+export function dueDay(due: Date, timeZone: string): string {
   const midnight = due.getUTCHours() === 0 && due.getUTCMinutes() === 0 && due.getUTCSeconds() === 0 && due.getUTCMilliseconds() === 0;
   return midnight ? due.toISOString().slice(0, 10) : zonedParts(timeZone, due).date;
 }

@@ -75,7 +75,7 @@ test("the six skills that were regexes are bundled skills with their guidance an
     "web-files": { tool: "hub_save_file", says: /openaccess\.thecvf\.com/ },
     "sign-in": { tool: "browser_login_needed", says: /Never ask for passwords or codes in chat/ },
     "web-task": { tool: "web_task", says: /After a sign-in it goes on/ },
-    research: { tool: "hub_web_search", says: /one search per part, all in the same reply/ },
+    research: { tool: "hub_web_search", says: /one search per thing, all in the same reply/ },
   };
   for (const [name, { tool, says }] of Object.entries(guidance)) {
     const skill = SKILLS[name as keyof typeof SKILLS];
@@ -176,4 +176,29 @@ test("conversation turns offer the advanced browser and capture tools only for a
   }
   for (const words of ["log in to my Azure console and check yesterday's resource usage", "compare PS5 prices in a table", "what are my medical records?"]) assert.ok(!wantsAdvancedTools(words), words);
   assert.ok(wantsAdvancedTools("and then?", ["browser_open", "capture_video"]), "the conversation's last tools stay");
+});
+
+test("the desktop, crew, session, terminal and maker tools come with their kind of work, a recent use or the node's situation", () => {
+  const tools = ["browser_open", "computer_run", "node_session_start", "node_secret_request", "desktop_status", "desktop_act", "node_plan", "node_delegate", "node_session_adopt", "terminal_open", "live_view", "node_create", "node_routines"].map((name) => ({ name }));
+  const names = (words: string, recent: string[] = [], situation: Parameters<typeof tieredTools>[3] = {}) => tieredTools(tools, words, recent, situation).map((tool) => tool.name);
+  // Secrets are asked for and used by reference whatever the words ("I need STRIPE_KEY", "check my balance"): never tiered.
+  const core = ["browser_open", "computer_run", "node_session_start", "node_secret_request"];
+  // The eval's plain requests: none of them is sent these tools' descriptions.
+  for (const words of [
+    "What is the newest Node.js LTS release line, its latest version number, and the date its support ends? Cite your source with a link.",
+    "Plan my day for today.",
+    "Create three tasks for the launch: Book the venue, due Saturday 28 November. Then make a page called Launch checklist.",
+    "Briefly compare SQLite and PostgreSQL for a small team's internal web app, and cite at least two sources.",
+    "Find the official release date of Python 3.14 on the web and put it in the notes of my todo Draft the Q4 plan. Don't ask me anything.",
+    "Make a Markdown report of the 3 largest files in ~/data on my computer and share the file with me here.",
+  ])
+    assert.deepEqual(names(words), core, words);
+  for (const words of ["Open the Calculator app on my computer, compute 7 times 6 and send me a screenshot of it", "Record a short video of the Calculator app", "what is on my screen?"]) assert.ok(names(words).includes("desktop_act"), words);
+  assert.ok(names("and then?", ["desktop_observe"]).includes("desktop_status"), "a recent desktop call keeps them");
+  assert.ok(names("use desktop_act to press Enter").includes("desktop_act"), "a tool named in the words comes with its tier");
+  assert.ok(names("ask @developer to fix the build").includes("node_plan"));
+  assert.ok(names("hello", [], { crew: true }).includes("node_delegate"), "a crew's lead plans whatever the words");
+  assert.ok(names("open a terminal and run htop").includes("terminal_open"));
+  assert.ok(names("every morning send me the news").includes("node_routines"));
+  assert.ok(names("adopt the Claude session I started").includes("node_session_adopt"));
 });
