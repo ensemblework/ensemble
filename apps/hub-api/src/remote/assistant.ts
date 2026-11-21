@@ -66,6 +66,8 @@ const Spec = z.object({
       folders: z.array(z.string().min(1).max(4096)).max(20).optional(),
     })
     .optional(),
+  /** A turn someone other than the person can steer: none of their own MCP servers, or not run (`assistantTurns` 7). Older servers omit it. */
+  others: z.boolean().optional(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 

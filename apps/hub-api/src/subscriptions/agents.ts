@@ -20,7 +20,9 @@
  * Codex: `codex app-server`, a thread with Ensemble's instructions as its base instructions, a
  * read-only sandbox, no environment, every approval declined; `thread/resume` for the next turn.
  * Cursor's agent and the ACP agents: every permission refused except Ensemble's own tools;
- * `session/load` (Antigravity: `session/resume`) when the agent offers it.
+ * `session/load` (Antigravity: `session/resume`) when the agent offers it. In a turn someone else
+ * can steer (`spec.others`) none of the person's own MCP servers load on any agent, through a switch
+ * or a folder of Ensemble's (agent-mcp.ts), and an agent that cannot leave them out refuses the turn.
  * Copilot CLI: `copilot -p`, shell, file writes and URL fetches denied, no built-in MCP servers;
  * `--session-id` starts and resumes the chat's session.
  * With `ownTools`: Claude Code with its own tools and a hook on each; Codex without its sandbox and
@@ -39,7 +41,7 @@ import { antigravityAuthLink } from "./antigravity.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type OwnAnswer, type OwnAsk, type OwnJudge, type OwnToolEvent, type ToolAnswer, type ToolSpec } from "./bridge.js";
-import { codexMcpServers, copilotMcpServers, type AgentMcpServer } from "./agent-mcp.js";
+import { codexMcpServers, copilotMcpServers, cursorWithoutOwnMcp, othersHome, type AgentMcpServer } from "./agent-mcp.js";
 import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
@@ -92,6 +94,12 @@ export type AgentTurnSpec = {
   ownTools?: boolean;
   /** An Ensemble Node's turn with the agent's own tools (`assistantTurns` 5): how they are judged here (node-own-tools.ts). */
   node?: NodeTurnPolicy;
+  /**
+   * A turn someone other than the person can steer (`assistantTurns` 7): another person's message, a room others read,
+   * a room-bound turn or a draft of an answer to someone else (an Ensemble Node's, node/brain.ts). It has Ensemble's tools
+   * only and runs with none of the person's own MCP servers on any agent (agent-mcp.ts), or not at all.
+   */
+  others?: boolean;
 };
 
 /**
@@ -204,6 +212,15 @@ export function agentProblem(agent: SubscriptionProvider, detail: string): Agent
     return new AgentTurnError("limit", `${label} says your plan's limit is reached${text ? `: ${text}` : "."}`);
   }
   return new AgentTurnError("failed", `${label} stopped${text ? `: ${text}` : "."}`);
+}
+
+/**
+ * Why a turn someone else can steer (`others`) does not run on this agent here: it would load the person's own MCP
+ * servers. `cause`: what the agent would need, when it is something the person can fix.
+ */
+export function othersRefused(agent: SubscriptionProvider, cause?: string): AgentTurnError {
+  const label = SUBSCRIPTION_INFO[agent].label;
+  return new AgentTurnError("failed", `${cause ?? `${label} on this computer cannot leave out your own MCP servers`}, so it does not answer other people or in rooms they read. ${cause ? "Fix that" : `Update ${label}`}, or give this node another agent.`);
 }
 
 function stopChild(child: ChildProcess): void {
@@ -612,9 +629,17 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
 
 const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts }) => {
   const model = chosen(spec.model);
+  const env = agentEnv(mcp.env);
+  // A turn someone else can steer: Cursor's data folder is Ensemble's, with each of the person's own MCP servers off there.
+  if (spec.others) {
+    const off = await cursorWithoutOwnMcp(folder);
+    if (!off) throw othersRefused("cursor-agent", "Cursor's agent could not read your ~/.cursor/mcp.json");
+    delete env.CURSOR_PRIVATE_INFERENCE_CONFIG;
+    Object.assign(env, off);
+  }
   const child = spawn(bin, ["--sandbox", spec.ownTools ? "disabled" : "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
-    env: agentEnv(mcp.env),
+    env,
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -889,8 +914,12 @@ const runAcpTurn =
   (id: AcpEngine): Driver =>
   async ({ spec, io, folder, mcp, files, session, judge, verdicts }) => {
     const model = chosen(spec.model);
-    const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env, ensembleMcpOnly: !spec.ownTools || Boolean(spec.node) });
+    // A turn someone else can steer runs with none of the person's own MCP servers (acp.ts), or not at all.
+    const home = spec.others ? othersHome(id) : null;
+    if (home) await mkdir(home, { recursive: true, mode: 0o700 });
+    const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env, ensembleMcpOnly: !spec.ownTools || Boolean(spec.node), ...(home ? { othersHome: home } : {}) });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
+    if (home && !launch.ownMcpOff) throw othersRefused(id);
     const child = spawn(launch.program, launch.args, { cwd: folder, env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
     child.stdin.on("error", () => undefined);
     const rpc = new RpcConnection((line) => child.stdin.writable && void child.stdin.write(line), { jsonrpc: true });
@@ -1051,7 +1080,8 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
   const levels = agent?.models.find((row) => row.id === spec.model)?.efforts ?? agent?.efforts ?? [];
   const thinking = checkEffort(spec.agent, spec.model ?? "default", spec.effort, { efforts: levels });
   if (!thinking.ok) throw new AgentTurnError("failed", thinking.message);
-  spec = { ...spec, effort: thinking.send };
+  // A turn someone else can steer never keeps the agent's own tools, whatever else it carries.
+  spec = { ...spec, effort: thinking.send, ...(spec.others ? { ownTools: false, node: undefined } : {}) };
   // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in), named after
   // the chat (turn-sessions.ts chatFolder); a node's chats share its project's folder, where its apps list them together.
   const group = key && spec.session?.group ? await groupFolder(spec.session.group) : null;

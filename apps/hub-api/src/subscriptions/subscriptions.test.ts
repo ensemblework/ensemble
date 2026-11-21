@@ -1,4 +1,4 @@
-import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_SESSIONS, parseAgentApps } from "@ensemble/shared-types";
+import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_OTHERS, ASSISTANT_TURN_SESSIONS, parseAgentApps } from "@ensemble/shared-types";
 /**
  * The person's own AI subscriptions (docs/30 §8): how each agent is found and read, the command
  * lines that keep an agent to Ensemble's tools, the answers to its own requests, which computer
@@ -19,7 +19,7 @@ import { claudeLimits } from "./claude-control.js";
 import { agentEnv, claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS, setupCommand } from "./signin.js";
 import { withoutHostSession } from "./host-session.js";
-import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
+import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, runSubscriptionTurn, turnFiles, turnSession } from "./turn.js";
 import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings, floorJudge, ownToolShape } from "./own-tools.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
@@ -762,6 +762,26 @@ test("the computer for a turn: online, new enough, with the agent signed in; oth
     assert.equal(chosen.local ? "" : chosen.id, "d2", "the computer the person chose");
     const missing = await pickComputer(two, "u1", "claude-code", "d9");
     assert.equal(missing.local ? "" : missing.id, "d1", "a chosen computer that is gone falls back");
+  } finally {
+    if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;
+    else process.env.ENSEMBLE_DESKTOP = previous;
+  }
+});
+
+test("a turn someone else can steer goes to no computer whose Ensemble would load the person's own MCP servers (Claude Code never does)", async () => {
+  const previous = process.env.ENSEMBLE_DESKTOP;
+  delete process.env.ENSEMBLE_DESKTOP;
+  const cursor = { id: "cursor-agent", via: "cli", version: "2026.11.19", signedIn: true, models: [{ id: "default", label: "Default" }], checkedAt: "now" };
+  const computer = (turns: number) => fakePrisma([{ id: "d1", userId: "u1", name: "Studio Mac", lastSeenAt: new Date(), capabilities: { assistantTurns: turns, agents: [cursor, claudeSignedIn] }, revokedAt: null }]);
+  const tier = { provider: "included", model: "fast" };
+  const settings = { models: { computer: null, easy: tier, medium: tier, high: tier, max: tier } } as never;
+  // Stopped from the start: a turn the computer may take ends as soon as it is handed over.
+  const turn = (agent: "cursor-agent" | "claude-code", turns: number) =>
+    runSubscriptionTurn({ userId: "u1", settings, agent, model: null, system: "Ensemble", prompt: "Hello from Ben.", tools: [], others: true, prisma: computer(turns), call: async () => ({ text: "{}" }), signal: AbortSignal.abort() });
+  try {
+    await assert.rejects(turn("cursor-agent", 6), /Update Ensemble on Studio Mac: the version there would give Cursor your own MCP servers when it answers other people/);
+    await assert.rejects(turn("claude-code", 6), /Stopped/, "Claude Code goes ahead: it never loads them");
+    await assert.rejects(turn("cursor-agent", ASSISTANT_TURN_OTHERS), /Stopped/, "a computer that leaves them out takes it");
   } finally {
     if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;
     else process.env.ENSEMBLE_DESKTOP = previous;

@@ -255,6 +255,8 @@ export interface AssistantTurnArgs {
     sessionKey?: string;
     history?: string;
     title?: string;
+    /** A turn someone other than the person can steer (an Ensemble Node's, node/brain.ts): none of their own MCP servers on their computer. */
+    others?: boolean;
   };
   /** Filled in as the turn runs, for Ensemble Node's turn trace (node/trace.ts). Kept when the turn throws. */
   trace?: LoopTrace;
@@ -743,6 +745,7 @@ async function drive(
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
         ...(nodeTools && onOwnTool ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
+        ...(args.subscription?.others ? { others: true } : {}),
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         // What a new session is called in the agent's own app: the chat's title (an ask: its page's).
