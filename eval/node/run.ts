@@ -233,7 +233,7 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   trace.write("metrics", { ...outcome.metrics, models: outcome.models, tools: outcome.tools, agentTools: outcome.agentToolNames });
   trace.write("cleanup", { sessions: done.map((row) => ({ id: row.id, kind: row.kind, deleted: row.deleted })) });
   // The evidence a regrade reads: the last line of the trace.
-  appendFileSync(tracePath, `${JSON.stringify({ kind: "evidence", data: ctx.data, ev: redact.deep(ev, 6000) })}\n`);
+  appendFileSync(tracePath, `${JSON.stringify({ kind: "evidence", data: redact.deep(ctx.data, 6000), ev: redact.deep(ev, 6000) })}\n`);
   if (drive.notes.length) outcome.errors.push(...drive.notes.map((note) => `note: ${note}`));
   return outcome;
 }

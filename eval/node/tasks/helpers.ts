@@ -102,14 +102,10 @@ export function filesIn(dir: string, prefix = ""): string[] {
 
 export const readText = (path: string, max = 20_000): string | null => (existsSync(path) && statSync(path).isFile() ? readFileSync(path, "utf8").slice(0, max) : null);
 
-/** A coding run for the owner is running now (what a timed message waits for). */
-export async function codingRunning(ctx: TaskContext): Promise<string | null> {
-  const job = await ctx.world.prisma.workspaceJob.findFirst({ where: { userId: ctx.owner.id, status: "running" }, select: { id: true, provider: true } });
-  return job ? `${job.provider} run ${job.id.slice(0, 8)} is running` : null;
-}
-
-/** A plan step is being worked on by a member (a turn of a plan step is running). */
-export async function stepWorking(ctx: TaskContext): Promise<string | null> {
-  const step = await ctx.world.prisma.nodeStep.findFirst({ where: { mission: { userId: ctx.owner.id }, status: "working" }, select: { id: true, handle: true } });
-  return step ? `step ${step.id} of @${step.handle} is working` : null;
+/** A coding run for the owner that has been running at least `seconds`, so its agent is at work (what a timed message waits for). */
+export function codingRunningFor(seconds: number): (ctx: TaskContext) => Promise<string | null> {
+  return async (ctx) => {
+    const job = await ctx.world.prisma.workspaceJob.findFirst({ where: { userId: ctx.owner.id, status: "running", startedAt: { lte: new Date(Date.now() - seconds * 1000) } }, select: { id: true, provider: true } });
+    return job ? `${job.provider} run ${job.id.slice(0, 8)} has been running for ${seconds} s` : null;
+  };
 }

@@ -9,7 +9,7 @@ import { check, norm } from "../lib/grade.js";
 import { run } from "../lib/grade.js";
 import { shareFolder, writeFiles } from "../lib/fixtures.js";
 import type { Evidence, Task, TaskContext } from "../lib/types.js";
-import { codingRunning, filesIn, hiddenTests, lastAnswer, nodeTests, readText, sha256, stepWorking } from "./helpers.js";
+import { codingRunningFor, filesIn, hiddenTests, lastAnswer, nodeTests, readText, sha256 } from "./helpers.js";
 
 const CREW_MS = 25 * 60_000;
 
@@ -30,8 +30,6 @@ async function crew(ctx: TaskContext, label: string, files: Record<string, strin
 const PACKAGE = (name: string) => JSON.stringify({ name, version: "1.0.0", type: "module", scripts: { test: "node --test" } }, null, 2);
 const slugs = (data: Record<string, unknown>) => data.slugs as { lead: string; builder: string; reviewer: string };
 const leadSaid = (ev: Evidence, lead: string) => ev.messages.filter((row) => row.author === `node:${lead}` && row.kind === "text" && !row.type).map((row) => row.body);
-/** Something is under way: a coding run, or a member's step. */
-const working = async (ctx: TaskContext) => (await codingRunning(ctx)) ?? (await stepWorking(ctx));
 
 const TIP_HIDDEN = (module: string) => `import assert from "node:assert/strict";
 import test from "node:test";
@@ -204,7 +202,7 @@ const midRunAmendment: Task = {
     },
     {
       room: "crew",
-      before: { what: "the build is under way", until: working, timeoutMs: 10 * 60_000 },
+      before: { what: "a coding run is building it", until: codingRunningFor(20), timeoutMs: 10 * 60_000 },
       say: "Change of plan: greet.js should also take --shout, which prints the greeting in capitals (HELLO, MIRA!). Keep everything else as I said.",
     },
   ],
@@ -254,7 +252,7 @@ const stopWithChildren: Task = {
       say: (ctx) =>
         `In the todoapp folder on my computer (${ctx.data.project as string}), build a small todo web app: index.html, app.js and styles.css, with add, complete, delete and a filter (all, active, done), kept in localStorage, and tests for the list logic in test/todo.test.js that run with node --test. Then have the tester check it.`,
     },
-    { room: "crew", before: { what: "the build is under way", until: working, timeoutMs: 10 * 60_000 }, say: "stop", quietMs: 3 * 60_000, holdMs: 60_000 },
+    { room: "crew", before: { what: "a coding run is building it", until: codingRunningFor(20), timeoutMs: 10 * 60_000 }, say: "stop", quietMs: 3 * 60_000, holdMs: 60_000 },
   ],
   collect: async (ctx) => {
     const prisma = ctx.world.prisma;

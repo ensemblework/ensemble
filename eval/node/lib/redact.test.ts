@@ -13,6 +13,7 @@ test("redacts keys, tokens, cookies and assignments, keeping the name", () => {
 test("names the home and scratch folders by placeholders, the longest first", () => {
   const { text } = redactor({ "/home/mira/work/run-1": "<work>" }, "/home/mira");
   assert.equal(text("/home/mira/work/run-1/tasks/a and /home/mira/.copilot"), "<work>/tasks/a and ~/.copilot");
+  assert.equal(text("runs commands in ~/work/run-1/tasks/a"), "runs commands in <work>/tasks/a");
 });
 
 test("deep redaction walks objects and arrays and cuts long strings", () => {
