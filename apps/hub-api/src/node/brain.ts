@@ -41,7 +41,7 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
-import { OWN_WEB_AGENTS } from "../subscriptions/agents.js";
+import { OWN_READS_JUDGED, OWN_WEB_AGENTS } from "../subscriptions/agents.js";
 import type { OwnToolEvent } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 
@@ -563,9 +563,10 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const built = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
   // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant): the computer judges each
   // call by the node's folder policy, and what that asks goes to the owner on a card here (node/own-tool-asks.ts).
-  // The owner's own turn (they started it and only they read it) works in the node's folders without asking.
-  const ownTools = ownLoop && (!node.parentNodeId || helperGrant(node) === "computer");
+  // The owner's own turn (they started it and only they read it) works in the node's folders without asking. Any other
+  // turn asks before it reads their files too, so there only an agent whose every read comes to that judge keeps them.
   const trusted = ownerOnly && !fromNonOwner && !bound;
+  const ownTools = ownLoop && (!node.parentNodeId || helperGrant(node) === "computer") && (trusted || (isSubscriptionProvider(choice.provider) && OWN_READS_JUDGED.has(choice.provider)));
   const plan = turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null;
   const ownPolicy: NodeTurnPolicy | null = ownTools
     ? {
@@ -644,6 +645,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
                         publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, ...where, frame: { type: "tool", call: { id: event.id, name: event.name, state, ...(event.summary ? { summary: event.summary } : {}) } } });
                       },
                       parking: () => parkedFor(turn.id)[0] ?? null,
+                      park: () => parkIfAsked(turn.id),
                     },
                   }
                 : {}),

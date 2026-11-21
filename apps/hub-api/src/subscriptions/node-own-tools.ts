@@ -18,7 +18,8 @@
  *   with a note to stop here, every later call of the turn too, and the turn parks until the answer.
  *
  * A turn someone other than the owner started, or that others read (`trusted` false), asks about every
- * command and file change, once per folder per run: no folder is its own and only this run's answers count.
+ * command and file change, and about reading the owner's files outside the node's own folders and the
+ * temporary ones, once per folder per run: only this run's answers count. Public web pages stay open to it.
  */
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -83,6 +84,8 @@ const SIGN_INS = "That reads the computer's saved passwords and keys, which neve
 
 const WRITES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const SHELLS = new Set(["Bash", "PowerShell"]);
+/** File reads as the judge names them (hookCall maps the other agents' reads to Read). */
+const READS = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
 
 /** Ensemble's MCP tools as each agent names them: judged where they run, on the web. */
 const ensembleTool = (name: string) => /^(?:mcp__ensemble__|ensemble[-_./:])/.test(name);
@@ -147,6 +150,12 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     return (await ownFolders()).some((folder) => within(folder, path)) || (await isEnsembleWorkFolder(path));
   };
 
+  /** Where a turn reads without asking: anywhere above the floor in the owner's own turn; else the node's folders and temporary ones. */
+  const readable = async (path: string): Promise<boolean> => {
+    if (node.trusted || harmlessPath(path) || inTemp(path)) return true;
+    return (await ownFolders()).some((folder) => within(folder, path));
+  };
+
   /** A saved answer whose folder holds this one: its target, so the policy finds it. */
   const covering = async (need: Need): Promise<string> => {
     if (!need.folder) return need.target;
@@ -184,7 +193,19 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     return { capability, target: exact ?? real, label: shown(exact ? real : dirname(real)), scope: "folder", operation, what: what(dirname(real)), folder: false };
   };
 
-  /** The programs and folders a command acts on, one answer each: the folder it runs in and the ones it names to write. */
+  /** What reading a path asks about, unless the turn reads there without asking: its folder, or the path itself at the home folder or the top of the disk. */
+  const readNeed = async (path: string, operation: string, what: (folder: string) => string): Promise<Need | null> => {
+    const real = await realOutside(path);
+    if (await readable(real)) return null;
+    const folder = await folderOf(real);
+    if (folder) return { capability: "read", target: folder, label: shown(folder), scope: "folder", operation, what: what(folder), folder: true };
+    return { capability: "read", target: real, label: shown(real), scope: "folder", operation, what: what(dirname(real)), folder: false };
+  };
+
+  /**
+   * The programs and folders a command acts on, one answer each: the folder it runs in and the ones it names
+   * to write, and, in a turn that is not trusted, those it reads.
+   */
   const commandNeeds = async (command: string, cwd: string): Promise<Need[] | EngineAnswer> => {
     const parsed = parseShell(command, cwd);
     const needs: Need[] = [];
@@ -209,8 +230,9 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       for (const redirect of segment.redirects) {
         const full = at(segment.cwd, redirect.path);
         if (redirect.write && !harmlessPath(full)) add(await folderNeed(full, "files", operation, () => what));
+        else if (!redirect.write) add(await readNeed(full, operation, () => what));
       }
-      if (writes) for (const path of outsideArgs(segment.cwd, segment.argv, segment.cwd)) add(await folderNeed(path, "run", operation, () => what));
+      for (const path of outsideArgs(segment.cwd, segment.argv, segment.cwd)) add(writes ? await folderNeed(path, "run", operation, () => what) : await readNeed(path, operation, () => what));
     }
     return needs;
   };
@@ -229,6 +251,22 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       if (!Array.isArray(needs)) return needs;
       for (const need of needs) {
         const answer = await answerFor(need);
+        if (answer.decision !== "allow") return answer;
+      }
+      return ALLOW;
+    }
+    if (READS.has(call.tool)) {
+      const paths = [given.file_path, given.path, given.notebook_path, given.filePath].map(text).filter(Boolean);
+      // A glob that names where it looks (`~/notes/**/*.md`): the folder before its first wildcard.
+      const pattern = text(given.pattern);
+      if (call.tool === "Glob" && !paths.length && /^(?:~|\/|[A-Za-z]:[\\/])/.test(pattern)) paths.push(pattern.split(/[*?[{]/)[0]!.replace(/[^\\/]*$/, "") || "/");
+      for (const path of paths) {
+        const full = at(input.folder, path);
+        const need = await readNeed(full, `Read: ${shown(full)}`, (folder) => {
+          const rel = relative(folder, full);
+          return `read ${rel && !rel.startsWith("..") ? rel.split(/[\\/]/).join("/") : shown(full)}`;
+        });
+        const answer = need ? await answerFor(need) : ALLOW;
         if (answer.decision !== "allow") return answer;
       }
       return ALLOW;
@@ -258,7 +296,7 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       }
       return answerFor({ capability: "http", target: origin, label: origin, scope: "origin", operation: `Open: ${url.slice(0, 2000)}`, what: `open ${url.slice(0, 200)}`, folder: false });
     }
-    // Reads above the floor, web searches, and the agent's own bookkeeping (its to-dos; its sub-agents, whose calls come here too).
+    // Web searches, and the agent's own bookkeeping (its to-dos; its sub-agents, whose calls come here too).
     return ALLOW;
   };
 

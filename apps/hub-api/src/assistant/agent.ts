@@ -207,6 +207,8 @@ export interface AssistantTurnArgs {
       onOwnTool: (event: OwnToolEvent) => void;
       /** What the turn waits for once it parks on its owner's answer: Ensemble's tools are refused from then, so the agent ends its turn. */
       parking: () => string | null;
+      /** Parks the turn, after an ask its owner did not answer in time: it stops, and the agent's run on the computer with it. */
+      park: () => void;
     };
     sessionKey?: string;
     history?: string;
@@ -480,7 +482,7 @@ async function drive(
         tools: toolSpecs(),
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
-        ...(nodeTools ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool: nodeTools.onOwnTool } : {}),
+        ...(nodeTools ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool: nodeTools.onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         // What a new session is called in the agent's own app: the chat's title (an ask: its page's).

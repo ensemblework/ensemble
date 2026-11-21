@@ -12,10 +12,10 @@ import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
-import { AgentTurnError, OWN_WEB_AGENTS, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
+import { AgentTurnError, OWN_WEB_AGENTS, PARK_STOP, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
 import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer, ToolSpec } from "./bridge.js";
 import type { NodeTurnPolicy } from "./node-own-tools.js";
-import { runOnComputer } from "./relay.js";
+import { PARK_GRACE_MS, runOnComputer } from "./relay.js";
 import type { TurnFile } from "./turn-files.js";
 
 type Prismaish = Pick<typeof defaultPrisma, "device">;
@@ -138,6 +138,10 @@ export type SubscriptionTurnInput = {
   ask?: (request: OwnAsk, computer: { id: string; name: string }) => Promise<OwnAnswer>;
   /** A node's turn: each of the agent's own calls as it starts and ends. */
   onOwnTool?: (event: OwnToolEvent) => void;
+  /** A node's turn whose ask was not answered in time: parks it once the agent has that answer (its run then stops). */
+  onPark?: () => void;
+  /** Whether the node's turn parked: stopping its run then keeps the agent's session for the turn the answer wakes. */
+  parked?: () => boolean;
   onDelta?: (text: string) => void;
   onStatus?: (text: string) => void;
   signal?: AbortSignal;
@@ -209,7 +213,17 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const onDelta = input.onDelta ?? (() => undefined);
   const where = { id: computer.local ? "local" : computer.id, name: computer.name };
   const asker = input.ask;
-  const node = spec.node ? { ...(asker ? { ask: (request: OwnAsk) => asker(request, where) } : {}), ...(input.onOwnTool ? { onOwnTool: input.onOwnTool } : {}) } : {};
+  const onPark = input.onPark;
+  // Not answered in time, the turn parks once the agent has the answer: here, a moment after the call returns; on
+  // another computer, once the answer has reached it (subscriptions/routes.ts).
+  const ask = asker
+    ? async (request: OwnAsk) => {
+        const answer = await asker(request, where);
+        if (computer.local && onPark && answer.decision === "deny" && answer.waiting) setTimeout(onPark, PARK_GRACE_MS);
+        return answer;
+      }
+    : null;
+  const node = spec.node ? { ...(ask ? { ask } : {}), ...(input.onOwnTool ? { onOwnTool: input.onOwnTool } : {}) } : {};
   input.onStatus?.(`Asking ${label} on ${computer.name}…`);
   // What the turn sent the agent and what it answered, in the person's AI activity (lib/ai-activity.ts).
   // The agent's tool calls are logged where they run: Ensemble's by the caller, its own on the computer.
@@ -223,8 +237,19 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   };
   try {
     const result = computer.local
-      ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...node, ...(spec.files ? { readFile: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) })
-      : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...node, ...(spec.files ? { read: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) });
+      ? await runHere(spec, { call: input.call, onDelta, signal, ...node, ...(spec.files ? { readFile: input.files!.read } : {}), ...(input.onStatus ? { onStatus: input.onStatus } : {}) }, input.parked)
+      : await runOnComputer({
+          device: { id: computer.id, name: computer.name },
+          spec,
+          call: input.call,
+          onDelta,
+          signal,
+          ...node,
+          ...(spec.node && onPark ? { onPark } : {}),
+          ...(input.parked ? { parked: input.parked } : {}),
+          ...(spec.files ? { read: input.files!.read } : {}),
+          ...(input.onStatus ? { onStatus: input.onStatus } : {}),
+        });
     logAi({
       ...logged,
       model: result.model ?? spec.model,
@@ -263,6 +288,19 @@ export function agentConversation(messages: ReadonlyArray<Record<string, unknown
     prompt: last,
     history: earlier ? `This chat so far, oldest first:\n\n${earlier}` : "",
   };
+}
+
+/** A turn on this computer's own agent. Stopped because its node's turn parked, it keeps its session (agents.ts PARK_STOP). */
+async function runHere(spec: AgentTurnSpec, io: Parameters<typeof runAgentTurn>[1], parked?: () => boolean): Promise<AgentTurnResult> {
+  const run = new AbortController();
+  const stop = () => run.abort(parked?.() ? PARK_STOP : undefined);
+  if (io.signal.aborted) stop();
+  else io.signal.addEventListener("abort", stop, { once: true });
+  try {
+    return await runAgentTurn(spec, { ...io, signal: run.signal });
+  } finally {
+    io.signal.removeEventListener("abort", stop);
+  }
 }
 
 /**

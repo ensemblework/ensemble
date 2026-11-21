@@ -213,6 +213,12 @@ function aborted(): Error {
   return new DOMException("Stopped", "AbortError");
 }
 
+/**
+ * Why a turn's run is stopped when its Ensemble Node parks on its owner's answer (the web's `assistant.stop`
+ * with `park`): the chat's session is kept as after a turn that ended, so the turn their answer wakes goes on in it.
+ */
+export const PARK_STOP = "park";
+
 /** The arguments for Claude Code (exported for tests). */
 export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns?: number | null; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string; name?: string | null }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
@@ -574,6 +580,15 @@ async function reopen(rpc: RpcConnection, method: "session/load" | "session/resu
  * get every tool of their own refused in a turn, so they read the web through Ensemble's tools.
  */
 export const OWN_WEB_AGENTS: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "codex", "copilot-cli"]);
+
+/**
+ * The agents whose every own call, file reads included, comes to Ensemble's judge before it runs: Claude Code
+ * (its PreToolUse hook) and Copilot CLI (its preToolUse plugin). Codex runs the commands it considers safe
+ * (`cat`, `ls`, `rg`…) without asking, and Cursor's agent and the ACP agents read without asking, so in a
+ * node's turn that must ask its owner before reading their files (one its owner did not start, or that
+ * others read) those agents work with Ensemble's tools.
+ */
+export const OWN_READS_JUDGED: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "copilot-cli"]);
 
 /** Cursor's own requests during an assistant turn: only Ensemble's tools may run. */
 export function answerCursorTurn(method: string, params: Record<string, unknown>): unknown {
@@ -1070,18 +1085,41 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
     if (found && update === null) restart = restartOf("instructions");
     const earlier = found && update !== null ? found.id : null;
-    const run = (session: TurnSession) =>
-      DRIVERS[spec.agent]({
-        spec: { ...spec, prompt: session?.resume ? (update ? `${update}\n\n---\n\n${spec.prompt}` : spec.prompt) : history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt },
-        io,
-        bin: found_.path,
-        folder,
-        files,
-        mcp,
-        session,
-        own,
-        ...(judge ? { judge } : {}),
-      });
+    // Stopped because the node's turn parked: the chat keeps this session, now holding the message and the wait for the
+    // owner, as after a turn that ended. Claude Code and Copilot run in the session they are given; the others say theirs.
+    const keepParked = async (session: TurnSession, error: unknown): Promise<void> => {
+      if (!key || io.signal.reason !== PARK_STOP) return;
+      const given = spec.agent === "claude-code" || spec.agent === "copilot-cli";
+      const native = given ? session?.id : promptsOf(error)?.session;
+      if (!native) return;
+      await saveSession(key, spec.agent, native, spec.system, {
+        ...(position === undefined ? {} : { next: position + 2 }),
+        ...(group ? { folder: group } : {}),
+        ...(named ? { dir: named.dir } : {}),
+        ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
+        perTurn,
+        usage: session?.resume ? (found?.usage ?? null) : null,
+        prompts: given ? await sessionPrompts(spec.agent, native, folder).catch(() => null) : (promptsOf(error)?.prompts ?? null),
+      }).catch(() => undefined);
+    };
+    const run = async (session: TurnSession): Promise<DriverResult> => {
+      try {
+        return await DRIVERS[spec.agent]({
+          spec: { ...spec, prompt: session?.resume ? (update ? `${update}\n\n---\n\n${spec.prompt}` : spec.prompt) : history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt },
+          io,
+          bin: found_.path,
+          folder,
+          files,
+          mcp,
+          session,
+          own,
+          ...(judge ? { judge } : {}),
+        });
+      } catch (error) {
+        await keepParked(session, error);
+        throw error;
+      }
+    };
     let result: DriverResult;
     let resumed = Boolean(earlier);
     try {

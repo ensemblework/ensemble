@@ -449,7 +449,7 @@ test("a node's turn on its owner's plan keeps the agent's own tools where the co
   }
 });
 
-test("an own call the node's policy asks about waits for its owner's card: answered in time it goes on; not answered, the turn parks and the answer resumes the same session", async () => {
+test("an own call the node's policy asks about waits for its owner's card: answered in time it goes on; not answered, the turn parks, its run is stopped, and the answer resumes the same session", async () => {
   const { settleTurns } = await import("../node/queue.js");
   const waitSetting = process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
   const mira = await harness.asUser();
@@ -460,15 +460,24 @@ test("an own call the node's policy asks about waits for its owner's card: answe
   const site = { capability: "files", target: "/home/mira/projects/site", label: "~/projects/site", scope: "folder", operation: "Change: ~/projects/site/index.html", what: "change index.html" };
   const blog = { ...site, target: "/home/mira/projects/blog", label: "~/projects/blog", operation: "Change: ~/projects/blog/post.md", what: "change post.md" };
   const specs: NodeSpec[] = [];
+  const turnIds: string[] = [];
   const answers: Array<{ decision: string; message?: string; waiting?: boolean; grant?: unknown }> = [];
+  const stops: Array<{ data: Record<string, unknown>; done: number }> = [];
   const frames: Array<{ frame: { type: string; call?: { name: string; state: string; summary?: string } } }> = [];
   const listen = sseHub.onFrame(({ userId, frame }) => {
     if (userId === `node:${mira.id}` && frame.event === "node.frame") frames.push(frame.data as (typeof frames)[number]);
   });
-  // The agent's first two turns each want to change a file outside the node's folder; then it says what it did.
+  // The agent's first two turns each want to change a file outside the node's folder; then it says what it did. Told it
+  // waits for its owner, it keeps going (as Codex and the ACP agents do, whose declines carry no words) until it is stopped.
   const simulated = computer(device.id, async (event, data) => {
+    if (event === "assistant.stop") {
+      const done = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${String(data.id)}/done`, payload: { error: { problem: "failed", message: "Stopped." } } });
+      stops.push({ data, done: done.statusCode });
+      return;
+    }
     if (event !== "assistant.turn") return;
     const id = String(data.id);
+    turnIds.push(id);
     specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
     const turn = specs.length;
     if (turn === 1) {
@@ -481,10 +490,7 @@ test("an own call the node's policy asks about waits for its owner's card: answe
       assert.equal(asked.statusCode, 200, asked.body);
       claim("POST /api/devices/self/assistant-turns/:id/ask", "happy-path");
       answers.push(asked.json());
-      if (answers.at(-1)!.decision !== "allow") {
-        await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("I will wait for your answer.") });
-        return;
-      }
+      if (answers.at(-1)!.decision !== "allow") return;
     }
     const tools = [{ id: `edit-${turn}`, name: "Edit", summary: turn === 1 ? "~/projects/site/index.html" : "~/projects/blog/post.md", phase: "end", ok: true, acts: true }];
     await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/stream`, payload: { seq: 1, text: "", tools } });
@@ -516,6 +522,8 @@ test("an own call the node's policy asks about waits for its owner's card: answe
     await settleTurns();
     assert.deepEqual([answers[1]!.decision, answers[1]!.waiting], ["deny", true]);
     assert.match(answers[1]!.message!, /^Waiting for Mira to answer the card about change post\.md in ~\/projects\/blog\. Stop here: end your turn now without a reply\./);
+    await until(async () => stops.length > 0, "the parked run to be stopped");
+    assert.deepEqual(stops, [{ data: { id: turnIds[1], park: true }, done: 410 }], "the agent's run is stopped once it has the answer, keeping its session; the turn has ended here");
     assert.equal((await replies()).length, 1, "the parked turn posts nothing");
     const conversation = (await harness.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).conversationId!;
     const note = await harness.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: conversation, role: "assistant" }, orderBy: { createdAt: "desc" } });
@@ -527,6 +535,7 @@ test("an own call the node's policy asks about waits for its owner's card: answe
     assert.equal(allowed.statusCode, 200, allowed.body);
     await until(async () => specs.length === 3, "the node to be woken");
     await settleTurns();
+    assert.equal(stops.length, 1, "only the parked run was stopped");
     const woken = specs[2]!;
     assert.match(woken.prompt, /Allowed: change post\.md in ~\/projects\/blog\. Do it now\./);
     assert.equal(woken.session?.key, specs[1]!.session?.key, "in the same agent session");
@@ -539,6 +548,51 @@ test("an own call the node's policy asks about waits for its owner's card: answe
     if (waitSetting === undefined) delete process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
     else process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = waitSetting;
     listen();
+    simulated.stop();
+  }
+});
+
+test("a turn another person started must ask before the agent reads its owner's files, so only an agent whose every read Ensemble sees keeps its own tools there", async () => {
+  const { settleTurns } = await import("../node/queue.js");
+  const mira = await harness.asUser();
+  const ben = await harness.asUser();
+  for (const [user, name] of [[mira, "Mira"], [ben, "Ben"]] as const) await harness.prisma.user.update({ where: { id: user.id }, data: { name, emailVerifiedAt: new Date() } });
+  const CODEX = { ...CLAUDE, id: "codex", plan: "plus", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE, CODEX], nodeTools: 1 });
+  const { node } = await nodeOnPlan(mira);
+  const bens = (await ben.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } })).json().node as { id: string };
+  await harness.prisma.nodeAgent.update({ where: { id: bens.id }, data: { status: "paused" } });
+  const specs: NodeSpec[] = [];
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("(no reply)") });
+  });
+  try {
+    const made = await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch", nodeIds: [node.id], leadNodeId: node.id, invite: [ben.email] } });
+    assert.equal(made.statusCode, 201, made.body);
+    const room = made.json().room as { id: string };
+    const invite = ((await ben.inject({ method: "GET", url: "/api/node/invites" })).json().invites as Array<{ id: string; room: { id: string } }>).find((row) => row.room.id === room.id)!;
+    const joined = await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bens.id], leadNodeId: bens.id } });
+    assert.equal(joined.statusCode, 201, joined.body);
+    await settleTurns();
+    const handle = (await harness.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).handle;
+
+    specs.length = 0;
+    await postTo(ben, room.id, `@${handle} what is in Mira's notes folder?`);
+    await settleTurns();
+    assert.equal(specs.length, 1, "the node answers Ben in the room");
+    assert.deepEqual([specs[0]!.ownTools, specs[0]!.node?.trusted], [true, false], "Claude Code's every read comes to the judge: its own tools stay, and reading Mira's files asks her");
+
+    await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "codex", model: "gpt-5.5" } });
+    await postTo(ben, room.id, `@${handle} and her documents?`);
+    await settleTurns();
+    assert.equal(specs.length, 2);
+    assert.deepEqual([specs[1]!.ownTools, specs[1]!.node], [undefined, undefined], "Codex reads with commands it runs without asking: Ensemble's tools only here");
+    assert.match(specs[1]!.system, /reached only through Ensemble's tools/);
+    assert.deepEqual(simulated.failures, []);
+  } finally {
     simulated.stop();
   }
 });

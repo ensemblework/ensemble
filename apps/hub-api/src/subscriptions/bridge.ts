@@ -25,7 +25,8 @@ export type OwnJudge = (calls: EngineCall[]) => Promise<EngineAnswer>;
  * a program that changes the system, or a web address's origin) and exactly what would run.
  */
 export const OwnAskShape = z.object({
-  capability: z.enum(["run", "files", "http"]),
+  /** `read`: reading the owner's files, asked only in a node's turn that is not its owner's own. */
+  capability: z.enum(["run", "files", "read", "http"]),
   target: z.string().min(1).max(4096),
   label: z.string().min(1).max(300),
   scope: z.enum(["folder", "origin"]),

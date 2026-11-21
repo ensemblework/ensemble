@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentTurnError, type AgentTurnIO, type AgentTurnSpec } from "../subscriptions/agents.js";
+import { AgentTurnError, PARK_STOP, type AgentTurnIO, type AgentTurnSpec } from "../subscriptions/agents.js";
 import { answerAssistantTurn, MAX_TURNS_AT_ONCE, stopAssistantTurn } from "./assistant.js";
 import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
 import type { HostedClient } from "./client.js";
@@ -96,6 +96,19 @@ test("Stop from the web ends the agent's run, by frame or by the server's answer
   stopAssistantTurn({ id: "turn-5" });
   await running;
   assert.deepEqual(byFrame.done, [{ error: { problem: "failed", message: "Stopped." } }]);
+
+  // A node's turn that parked on its owner's answer: the run hears why, so the chat keeps its session (agents.ts).
+  const parked = fakeClient();
+  let why: unknown = null;
+  const parking = answerAssistantTurn(parked.client, { id: "turn-parked" }, async (_spec, io) => {
+    await new Promise<void>((resolve) => io.signal.addEventListener("abort", () => resolve(), { once: true }));
+    why = io.signal.reason;
+    throw new DOMException("Stopped", "AbortError");
+  });
+  await pause(20);
+  stopAssistantTurn({ id: "turn-parked", park: true });
+  await parking;
+  assert.equal(why, PARK_STOP);
 
   const byAnswer = fakeClient({ stopAfter: 1 });
   await answerAssistantTurn(byAnswer.client, { id: "turn-6" }, async (_spec, io) => {

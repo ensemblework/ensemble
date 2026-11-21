@@ -116,13 +116,15 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
 }
 
 const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
+/** The agent's own calls read files to read them, not to share them. */
+const OWN_VERBS: Partial<Record<NodeToolAsk["capability"], string>> = { read: "read files" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
-function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target">): string {
+function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target" | "own">): string {
   if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
   if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
-  return `@${card.nodeSlug} wants to ${VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
+  return `@${card.nodeSlug} wants to ${(card.own ? OWN_VERBS[card.capability] : undefined) ?? VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
 }
 
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */

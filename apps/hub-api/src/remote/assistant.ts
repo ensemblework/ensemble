@@ -8,7 +8,7 @@
 import { withAiContext } from "../lib/ai-activity.js";
 import { z } from "zod";
 import { SUBSCRIPTION_PROVIDERS } from "@ensemble/shared-types";
-import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
+import { AgentTurnError, PARK_STOP, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
 import { OwnAnswerShape, type OwnAnswer, type OwnToolEvent, type ToolAnswer } from "../subscriptions/bridge.js";
 import { TURN_FILES_MAX, TurnFileShape } from "../subscriptions/turn-files.js";
 import { SESSION_KEY } from "../subscriptions/turn-sessions.js";
@@ -176,9 +176,13 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
   }
 }
 
-/** The person pressed Stop on the web, or the turn ended there. */
+/**
+ * The person pressed Stop on the web, or the turn ended there. `park`: an Ensemble Node's turn parked on its
+ * owner's answer, so the chat keeps the agent's session for the turn their answer wakes (agents.ts PARK_STOP).
+ */
 export function stopAssistantTurn(data: unknown): void {
-  running.get(turnId(data))?.abort();
+  const park = typeof data === "object" && data !== null && (data as { park?: unknown }).park === true;
+  running.get(turnId(data))?.abort(park ? PARK_STOP : undefined);
 }
 
 export function stopAllAssistantTurns(): void {

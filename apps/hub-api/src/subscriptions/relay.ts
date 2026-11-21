@@ -21,6 +21,11 @@ export const PICKUP_MS = 20_000;
  * keeps working has no time limit.
  */
 export const QUIET_MS = 10 * 60_000;
+/**
+ * A node's turn that parked on its owner's answer to one of the agent's own calls: its run is stopped this long
+ * after the computer has the answer, so the agent hears it first (an agent told to stop may end its turn itself).
+ */
+export const PARK_GRACE_MS = 2_000;
 
 type Live = {
   id: string;
@@ -31,6 +36,8 @@ type Live = {
   ask: ((request: OwnAsk) => Promise<OwnAnswer>) | null;
   /** A node's turn: each of the agent's own calls as it starts and ends, for the chat. */
   onOwnTool: ((event: OwnToolEvent) => void) | null;
+  /** A node's turn whose ask was not answered in time: parks it, `PARK_GRACE_MS` from now. */
+  park: (() => void) | null;
   /** The bytes of one of `spec.files`, read as the person who asked. */
   read: ((fileId: string) => Promise<Uint8Array | null>) | null;
   onDelta: (text: string) => void;
@@ -115,6 +122,10 @@ export function runOnComputer(input: {
   onStatus?: (text: string) => void;
   ask?: (request: OwnAsk) => Promise<OwnAnswer>;
   onOwnTool?: (event: OwnToolEvent) => void;
+  /** Parks the node's turn (its run here is then stopped through `signal`). */
+  onPark?: () => void;
+  /** Whether the node's turn parked: its stop then keeps the agent's session on the computer. */
+  parked?: () => boolean;
 }): Promise<AgentTurnResult> {
   const id = randomUUID();
   // Tool calls, asks and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
@@ -151,6 +162,11 @@ export function runOnComputer(input: {
           }
         : null,
       onOwnTool: input.onOwnTool ?? null,
+      park: input.onPark
+        ? () => {
+            setTimeout(input.onPark!, PARK_GRACE_MS);
+          }
+        : null,
       read,
       onDelta: input.onDelta,
       ...(input.onStatus ? { onStatus: input.onStatus } : {}),
@@ -172,7 +188,7 @@ export function runOnComputer(input: {
       },
     };
     const onAbort = () => {
-      publishDeviceFrame(input.device.id, "assistant.stop", { id });
+      publishDeviceFrame(input.device.id, "assistant.stop", { id, ...(input.parked?.() ? { park: true } : {}) });
       turn.settle({ error: new DOMException("Stopped", "AbortError") });
     };
     live.set(id, turn);

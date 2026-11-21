@@ -251,7 +251,20 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const body = OwnAskShape.parse(request.body);
     heard(turn);
     try {
-      return await turn.ask(body);
+      const answer = await turn.ask(body);
+      // Not answered in time: the turn parks, and the agent's run stops once this answer has reached the computer.
+      const park = answer.decision === "deny" && answer.waiting ? turn.park : null;
+      if (park) {
+        let parked = false;
+        const after = () => {
+          if (parked) return;
+          parked = true;
+          park();
+        };
+        reply.raw.once("finish", after);
+        reply.raw.once("close", after);
+      }
+      return answer;
     } catch (error) {
       request.log.warn({ err: error }, "a node's ask about an agent's own call failed");
       return { decision: "deny", message: "Ensemble could not ask your owner, so this call was not run. Say what you need." };

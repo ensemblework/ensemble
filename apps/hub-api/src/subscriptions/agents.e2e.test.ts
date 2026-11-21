@@ -13,7 +13,7 @@ import test, { after } from "node:test";
 import Fastify from "fastify";
 import { engineRoutes } from "../routes/engine.js";
 import { localApiUrl, setLocalPort } from "../workspace/engines/registry.js";
-import { runAgentTurn } from "./agents.js";
+import { PARK_STOP, runAgentTurn } from "./agents.js";
 
 const FAKE_CLAUDE = String.raw`#!/usr/bin/env node
 const { spawn } = require("node:child_process");
@@ -159,6 +159,8 @@ if (process.env.STANDIN_SESSIONS) {
 }
 // Copilot keeps each session it saves as a folder in its home's session-state.
 if (process.env.COPILOT_HOME && args.includes('--session-id')) require('node:fs').mkdirSync(require('node:path').join(process.env.COPILOT_HOME, 'session-state', args[args.indexOf('--session-id') + 1]), { recursive: true });
+// An agent still at work when its turn is stopped (STANDIN_HANG in the message).
+if (process.env.STANDIN_HANG && prompt.includes(process.env.STANDIN_HANG)) { setInterval(() => undefined, 1000); return; }
 if (process.env.STANDIN_LOG) {
   const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
   const server = JSON.parse(readFileSync(args[args.indexOf('--additional-mcp-config') + 1].slice(1), 'utf8')).mcpServers.ensemble;
@@ -382,6 +384,51 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
     assert.equal((await turn("After", "Instructions.", gone, 4)).resumed, true, "and the new session is resumed after");
   } finally {
     setNativeDropForTests(null);
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn stopped because its node parked on its owner's answer keeps its session, so the turn their answer wakes goes on in it; a plain stop does not", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-parked-turn-"));
+  const log = join(root, "calls.jsonl");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, STANDIN_HANG: process.env.STANDIN_HANG, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_SESSIONS = log;
+  process.env.STANDIN_HANG = "Change the blog post";
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
+  const calls = (): Array<{ cwd: string; session: string | null; prompt: string }> => {
+    try {
+      return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    } catch {
+      return [];
+    }
+  };
+  const turn = (prompt: string, key: string, position: number, signal: AbortSignal) =>
+    runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], session: { key, history: "This chat so far, oldest first:\n\nPerson: hi", position } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal });
+  try {
+    for (const [chat, reason, resumes] of [["5d6e7f80-1a2b-4c3d-8e4f-5a6b7c8d9e0f", PARK_STOP, true], ["6e7f8091-2b3c-4d4e-9f50-6b7c8d9e0f1a", undefined, false]] as const) {
+      const stop = new AbortController();
+      const running = turn("Change the blog post", chat, 0, stop.signal);
+      const ran = () => calls().find((row) => row.cwd.endsWith(`chat-${chat.slice(0, 8)}`));
+      for (let wait = 0; wait < 250 && !ran(); wait += 1) await new Promise((done) => setTimeout(done, 20));
+      const started = ran()!.session!;
+      stop.abort(reason);
+      await assert.rejects(running, { name: "AbortError" });
+      const next = await turn("Allowed: change post.md in ~/projects/blog. Do it now.", chat, 2, new AbortController().signal);
+      const last = calls().at(-1)!;
+      if (resumes) {
+        assert.equal(next.resumed, true, "the answer's turn goes on in the parked turn's session");
+        assert.deepEqual([last.session, last.prompt], [started, "Allowed: change post.md in ~/projects/blog. Do it now."]);
+      } else {
+        assert.equal(next.resumed, false, "a turn stopped by its person keeps no session");
+        assert.notEqual(last.session, started);
+      }
+    }
+  } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(root, { recursive: true, force: true });
   }

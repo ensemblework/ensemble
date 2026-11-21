@@ -6,8 +6,9 @@
  * run too; otherwise one owner-only card in the chat where the node is talking (node/device-tool-decisions.ts:
  * one question per node, computer, folder and run, answered with one press) and the call waits for it, at
  * most 90 seconds, so a proxy in front of the web never cuts the request. Not answered by then: the call
- * is refused with a note to stop, the turn parks, and the answer wakes the same conversation in the same
- * agent session ("Allowed: … Do it now.").
+ * is refused with a note to stop, and once that has reached the computer the turn parks and the agent's
+ * run there is stopped, keeping its session (subscriptions/routes.ts, relay.ts). The answer wakes the same
+ * conversation in that session ("Allowed: … Do it now.").
  */
 import type { AgentDecision, NodeAgent, NodeRoom, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
