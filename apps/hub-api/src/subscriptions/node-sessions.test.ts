@@ -2,7 +2,8 @@
  * An Ensemble Node (or any chat) on the person's own AI plan keeps one session: changed instructions go in
  * the next message as the lines that changed, a session long in use starts over, and a replaced session is
  * dropped from the store (turn-sessions.ts). The turn's agent gets its own web tools when asked (agents.ts),
- * and a node is told how it runs there (turn.ts howYouRun).
+ * a node is told how it runs there (turn.ts howYouRun), and its own instructions (node/instructions.ts) stay
+ * the same while its room and memories change.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -82,17 +83,59 @@ test("a node on its owner's plan is told what it has: its own web, the computer 
 });
 
 test("a node on an AI plan drives the browser itself, and looks facts up with its own web search where it has one", async () => {
-  const { ownLoopPersona } = await import("../node/brain.js");
-  const persona = [
-    "- Facts, news, “look up”: hub_web_search first (the live web, with sources).",
-    "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.",
-    "- … pages and screenshots (browser_view; prices: browser_shop; several steps on a site: web_task), …",
-  ].join("\n");
-  const copilot = ownLoopPersona(persona, "copilot-cli");
+  const { assembleNode } = await import("../node/instructions.js");
+  const copilot = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true })).tiers.stable;
   assert.doesNotMatch(copilot, /web_task/);
   assert.match(copilot, /drive the browser yourself \(browser_open/);
   assert.match(copilot, /your own web search first \(or hub_web_search\), then read the source page itself/);
-  const kimi = ownLoopPersona(persona, "kimi-code");
+  const kimi = assembleNode(nodeFacts({ ownLoop: true, ownWeb: false })).tiers.stable;
   assert.doesNotMatch(kimi, /web_task/);
   assert.match(kimi, /hub_web_search first/, "an agent whose own tools are refused in a turn uses Ensemble's search");
+  const helper = assembleNode(nodeFacts({ ownLoop: true, ownWeb: true, room: { title: "Auditor", kind: "task" }, helper: { parent: "ada", parentName: "Ada", grant: "computer" } })).tiers.stable;
+  assert.match(helper, /several steps on a site: drive the browser yourself/);
+  assert.doesNotMatch(helper, /web_task/);
 });
+
+test("a node's instructions on an AI plan stay the same while its room, skills and memories change: no update for its session", async () => {
+  const { assembleNode } = await import("../node/instructions.js");
+  const system = (facts: Parameters<typeof nodeFacts>[0]) =>
+    agentConversation([{ role: "system", content: "You're helping Mira in Ensemble." }, { role: "system", content: assembleNode(nodeFacts(facts)).tiers.stable }, { role: "user", content: "hi" }], "copilot-cli", { ownWeb: true, node: true }).system;
+  const first = system({ ownLoop: true, ownWeb: true });
+  const later = system({ ownLoop: true, ownWeb: true, memories: ["Mira's launch is on 14 November."], skills: "Research and facts:\n- One search per part.", roster: ["- @mira: Mira (your owner)", "- @ada: you", "- @ben: Ben"] });
+  assert.equal(later, first);
+  assert.equal(instructionsUpdate(first, later), "");
+});
+
+/** A node's facts for its instructions (node/instructions.ts), in a DM its owner reads alone. */
+function nodeFacts(over: Record<string, unknown> = {}) {
+  return {
+    owner: "Mira",
+    name: "Ada",
+    slug: "ada",
+    role: "assistant",
+    charter: "",
+    room: { title: "Ada", kind: "dm" },
+    roster: ["- @mira: Mira (your owner)", "- @ada: you"],
+    step: false,
+    fromNonOwner: false,
+    ownerOnly: true,
+    ownLoop: false,
+    ownWeb: false,
+    runProfile: "a coding agent signed in on the computer, on its default model (the run profile “Default”)",
+    computerFiles: false,
+    computerWorkAsks: false,
+    leadsHere: false,
+    lead: "the lead",
+    crewOutside: [],
+    crewTitle: null,
+    crewMates: [],
+    crewOthers: [],
+    helpers: [],
+    rooms: [],
+    origin: null,
+    skills: "",
+    memories: [],
+    helper: null,
+    ...over,
+  } as import("../node/instructions.js").NodeFacts;
+}

@@ -126,6 +126,9 @@ function checkImports(engineLibrary) {
     "await import('fastify');",
     ...prisma,
     "await import('@electric-sql/pglite');",
+    // Instructions come from the generated module, never from the section files at run time.
+    "const { SECTIONS } = await import('@ensemble/prompts');",
+    "if (!SECTIONS['constitution/00-identity']) throw new Error('@ensemble/prompts has no sections.');",
     // A node's terminal screenshots replay the screen in it (capture/screen.ts loads it only then).
     "await import('@xterm/headless');",
     "console.log('sidecar-import-ok')",

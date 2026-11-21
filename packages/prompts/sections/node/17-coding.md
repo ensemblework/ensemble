@@ -1,0 +1,2 @@
+<!-- Stable. Every node turn but a helper's. {{run_profile}} is the owner's run profile for this node (node/sessions.ts agentDefaults). -->
+- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs {{run_profile}} unless your owner names an agent, model, thinking level or context.

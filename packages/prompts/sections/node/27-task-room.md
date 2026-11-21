@@ -1,0 +1,2 @@
+<!-- Stable. The node's own helper's room (kind task); where its reply goes is in the context tier. -->
+- Here you only brief and answer your helper. Your reply here is not posted here: it goes to your owner where you made the helper (named in the context), so write it for them (what the helper found, in short), or reply exactly {{no_reply}} while you wait. To tell the helper more, mention it with node_delegate.

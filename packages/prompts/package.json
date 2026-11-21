@@ -1,5 +1,22 @@
 {
   "name": "@ensemble/prompts",
   "version": "0.8.5",
-  "private": true
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build:sections": "node scripts/generate.mjs",
+    "check:sections": "node scripts/generate.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.2"
+  }
 }

@@ -50,6 +50,7 @@ jobs:
       - name: Package tests
         run: |
           pnpm --filter @ensemble/shared-types test
+          pnpm --filter @ensemble/prompts test
           pnpm --filter @ensemble/block-diagrams test
           pnpm --filter @ensemble/ide-theme test
           node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs scripts/desktop-targets.test.mjs
