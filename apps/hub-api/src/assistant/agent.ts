@@ -23,7 +23,7 @@ import { fileOriginal } from "../files/attached.js";
 import { keepRecentAttachments, withPictures, type ContentPart } from "../files/model-input.js";
 import { attachmentsRefused, documentsFor, hasAttachments, modelReadsImages, narrowAttachments, partsAtStage, type AttachStage } from "../lib/vision.js";
 import type { FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   personaBlock,
   personaFor,
@@ -214,6 +214,78 @@ export interface AssistantTurnArgs {
    * length (an inline ask's page session, assistant/ask-sessions.ts).
    */
   subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string; history?: string; title?: string };
+  /** Filled in as the turn runs, for Ensemble Node's turn trace (node/trace.ts). Kept when the turn throws. */
+  trace?: LoopTrace;
+}
+
+/** One tool call as a turn's trace records it: how long it ran and how big its result was, never its input or output. */
+export interface ToolCallTrace {
+  name: string;
+  ms: number;
+  state: string;
+  /** Characters of the whole result (its summary and data), of the preview for a held write, or of the error. */
+  resultChars: number;
+  /** Characters of what the model was told the call returned. */
+  shownChars: number;
+  /** The whole result was kept for read_tool_output: the model saw its start and end. */
+  offloaded: boolean;
+  /** The call only looked (registry.ts `readsOnly`). */
+  readOnly: boolean;
+}
+
+/**
+ * What a turn offered the model and how it ran, in sizes, counts and settings only: the tools of its first
+ * model call (a hash of their specs and how many), each tool call, tokens and cost across its model
+ * calls, and `loop`, how the loop ran so far (Ensemble's, or the agent's on the person's own plan).
+ */
+export interface LoopTrace {
+  tools: { hash: string; count: number } | null;
+  calls: ToolCallTrace[];
+  modelCalls: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  loop: (() => Record<string, unknown>) | null;
+}
+
+export function loopTrace(): LoopTrace {
+  return { tools: null, calls: [], modelCalls: 0, tokensIn: null, tokensOut: null, costUsd: null, loop: null };
+}
+
+/** The tools a model is offered, as a short fingerprint of their specs (names, descriptions and parameters) and their count. */
+export function toolsFingerprint(specs: readonly unknown[]): { hash: string; count: number } {
+  return { hash: createHash("sha256").update(JSON.stringify(specs)).digest("hex").slice(0, 16), count: specs.length };
+}
+
+/** A model call's usage added to the trace; a count stays null until a call reports one. */
+function traceUsage(trace: LoopTrace | undefined, tokensIn: number | null | undefined, tokensOut: number | null | undefined, usd: number | null | undefined): void {
+  if (!trace) return;
+  trace.modelCalls += 1;
+  const add = (total: number | null, value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? (total ?? 0) + value : total);
+  trace.tokensIn = add(trace.tokensIn, tokensIn);
+  trace.tokensOut = add(trace.tokensOut, tokensOut);
+  trace.costUsd = add(trace.costUsd, usd);
+}
+
+const jsonChars = (value: unknown): number => {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
+
+function callTrace(outcome: CallOutcome, tool: AnyHubTool | undefined): ToolCallTrace {
+  const { call } = outcome;
+  return {
+    name: call.name,
+    ms: outcome.ms ?? 0,
+    state: call.state ?? "ok",
+    resultChars: outcome.resultChars ?? (call.state === "failed" ? (call.error ?? "").length : (call.summary ?? "").length),
+    shownChars: jsonChars(outcome.forModel),
+    offloaded: outcome.offloaded ?? false,
+    readOnly: readsOnly(tool),
+  };
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -471,6 +543,23 @@ async function drive(
   let paused = false;
 
   const maxSteps = isSubscriptionProvider(args.provider) ? 0 : limits.steps;
+  /** How Ensemble's own loop ran (loop-config.ts): its config, steps against the cap, and what it did on its own. */
+  const loopSummary = () => ({
+    config: `${loop.version}:${loopConfigHash(loop)}`,
+    modelClass: limits.modelClass,
+    steps: tally.steps,
+    cap: Number.isFinite(maxSteps) ? maxSteps : null,
+    parallel: tally.parallel,
+    offloaded: outputs.count,
+    retries: tally.retries,
+    nudges: tally.nudges,
+    compactions: tally.compactions,
+    rowsLeftOut: tally.rowsLeftOut,
+    resultsShortened: tally.resultsShortened,
+    runaway,
+    paused: paused && !stop.signal.aborted,
+  });
+  if (args.trace && !subscription) args.trace.loop = () => ({ kind: "ensemble", ...loopSummary() });
   if (isSubscriptionProvider(args.provider)) {
     // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
     const agent = args.provider;
@@ -488,6 +577,7 @@ async function drive(
     const conversation = agentConversation(messages, agent, how);
     const pendingProjectNames: string[] = [];
     let used = 0;
+    if (args.trace) args.trace.loop = () => ({ kind: "subscription", agent, calls: used, maxCalls, ownTools: how.ownTools });
     // A call relayed from the computer arrives as its own request: it keeps this turn's AI activity context.
     const call = bindAiContext(async (name: string, input: unknown): Promise<ToolAnswer> => {
       if (stop.signal.aborted) return { text: JSON.stringify({ error: "The person stopped this turn." }), isError: true };
@@ -506,6 +596,7 @@ async function drive(
       if (settled!.call.state === "awaiting_approval") args.emit({ type: "pending", call: settled!.call, preview: settled!.call.summary ?? "" });
       else args.emit({ type: "tool", call: settled!.call });
       calls.push(settled!.call);
+      args.trace?.calls.push(callTrace(settled!, byName.get(settled!.call.name)));
       learn(settled!.call.refs);
       if (settled!.call.state === "ok" && settled!.call.isWrite) mutated = true;
       const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
@@ -514,6 +605,8 @@ async function drive(
       return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
     });
     try {
+      const offeredSpecs = toolSpecs();
+      if (args.trace) args.trace.tools = toolsFingerprint(offeredSpecs);
       const done = await runSubscriptionTurn({
         userId,
         settings,
@@ -538,7 +631,7 @@ async function drive(
               },
             }
           : {}),
-        tools: toolSpecs(),
+        tools: offeredSpecs,
         maxTurns: Math.min(64, maxCalls + 4),
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
@@ -565,6 +658,13 @@ async function drive(
       text = done.text.trim();
       answered = done.model || args.model;
       credits = null;
+      // The person's own plan pays: no cost is counted, as in the metric below.
+      traceUsage(args.trace, done.tokensIn, done.tokensOut, null);
+      if (args.trace) {
+        const session = { resumed: typeof done.resumed === "boolean" ? done.resumed : null, ...(done.restart ? { restart: done.restart.reason } : {}) };
+        const outside = done.outside?.turns.length ?? 0;
+        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, maxCalls, ownTools: how.ownTools });
+      }
       await recordMetric(app.prisma, {
         userId,
         kind: "model.call",
@@ -677,6 +777,7 @@ async function drive(
       }
     };
     try {
+      if (args.trace && !args.trace.tools) args.trace.tools = toolsFingerprint(finalAnswer ? [] : chatTools);
       turn = await ask();
     } catch (error) {
       const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");
@@ -685,6 +786,8 @@ async function drive(
         if (streamed) text = streamed.trim();
         const known = usageKnown(error);
         const model = known.model || args.model;
+        const cost = callCost(args.provider, model, known.tokensIn, known.tokensOut);
+        if (known.tokensIn !== null || known.tokensOut !== null) traceUsage(args.trace, known.tokensIn, known.tokensOut, cost.estimatedUsd);
         try {
           await recordMetric(app.prisma, {
             userId,
@@ -695,7 +798,7 @@ async function drive(
               purpose: args.purpose ?? "Hub chat",
               tokensIn: known.tokensIn,
               tokensOut: known.tokensOut,
-              ...callCost(args.provider, model, known.tokensIn, known.tokensOut),
+              ...cost,
               title: truncateText(args.message, 80),
               cancelled: true,
               ...instructionsMeta,
@@ -742,6 +845,8 @@ async function drive(
       // A small model copies the history's "(You did: …)" note; that note is never part of a reply.
       text = withoutEcho(turn.text).trim();
     }
+    const cost = callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits);
+    traceUsage(args.trace, turn.tokensIn, turn.tokensOut, cost.estimatedUsd);
     try {
       await recordMetric(app.prisma, {
         userId,
@@ -752,7 +857,7 @@ async function drive(
           purpose: args.purpose ?? "Hub chat",
           tokensIn: turn.tokensIn,
           tokensOut: turn.tokensOut,
-          ...callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits),
+          ...cost,
           title: truncateText(args.message, 80),
           ...instructionsMeta,
         },
@@ -865,6 +970,7 @@ async function drive(
         args.emit({ type: "tool", call: outcome.call });
       }
       calls.push(outcome.call);
+      args.trace?.calls.push(callTrace(outcome, byName.get(outcome.call.name)));
       results.push({ call: outcome.call, result: outcome.forModel });
       learn(outcome.call.refs);
       if (outcome.call.state === "ok" && outcome.call.isWrite) mutated = true;
@@ -956,25 +1062,7 @@ async function drive(
         model: answered,
         typedWords: args.message.trim().split(/\s+/).filter(Boolean).length,
         // How Ensemble's own loop ran (loop-config.ts): its config, steps against the cap, and what it did on its own.
-        ...(subscription
-          ? {}
-          : {
-              loop: {
-                config: `${loop.version}:${loopConfigHash(loop)}`,
-                modelClass: limits.modelClass,
-                steps: tally.steps,
-                cap: Number.isFinite(maxSteps) ? maxSteps : null,
-                parallel: tally.parallel,
-                offloaded: outputs.count,
-                retries: tally.retries,
-                nudges: tally.nudges,
-                compactions: tally.compactions,
-                rowsLeftOut: tally.rowsLeftOut,
-                resultsShortened: tally.resultsShortened,
-                runaway,
-                paused: paused && !stopped,
-              },
-            }),
+        ...(subscription ? {} : { loop: loopSummary() }),
       },
     });
   } catch (error) {
@@ -992,6 +1080,10 @@ interface CallOutcome {
   forModel: unknown;
   /** Pictures and files the tool opened, for the model only (never stored with the call). */
   pictures?: ContentPart[];
+  /** How long the call took, how big its whole result was, and whether that was kept for read_tool_output (a turn's trace). */
+  ms?: number;
+  resultChars?: number;
+  offloaded?: boolean;
 }
 
 /** A step's calls in the model's order: each run of reads together (registry.ts `runsInParallel`), anything else alone. */
@@ -1049,18 +1141,19 @@ async function runOne(
 ): Promise<CallOutcome> {
   const started = Date.now();
   const outcome = await runTool(base, args, requested, offered, known, outputs);
+  const ms = Date.now() - started;
   logAi({
     kind: "tool.call",
     userId: base.userId,
     app: "ensemble",
     name: requested.name,
     ok: outcome.call.state !== "failed",
-    durationMs: Date.now() - started,
+    durationMs: ms,
     input: outcome.call.input ?? requested.arguments,
     output: outcome.forModel,
     meta: { state: outcome.call.state, area: outcome.call.area, ...(outcome.call.isWrite ? { write: true } : {}), ...(outcome.pictures?.length ? { pictures: outcome.pictures.length } : {}) },
   });
-  return outcome;
+  return { ...outcome, ms };
 }
 
 async function runTool(
@@ -1167,7 +1260,8 @@ async function runTool(
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
     const summary = withPastScheduleWarning(formatEntityText(result.summary, [...refs, ...known.values()], { plain: true }), input, ctx.settings.timezone);
-    const forModel = { ok: true, ...(space ? { space: space.name } : {}), summary, ...trim(result.data, outputs, tool.name) };
+    const trimmed = trim(result.data, outputs, tool.name);
+    const forModel = { ok: true, ...(space ? { space: space.name } : {}), summary, ...trimmed.shown };
     const call: AssistantToolCall = {
       id: requested.id,
       name: tool.name,
@@ -1197,7 +1291,7 @@ async function runTool(
         });
       await (space ? space.run(acted) : acted());
     }
-    return { call, forModel, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
+    return { call, forModel, resultChars: summary.length + trimmed.chars, offloaded: trimmed.offloaded, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
   } catch (error) {
     const call = failed(requested, tool.area, describe(error), tool.isWrite);
     return { call, forModel: { error: call.error } };
@@ -1264,22 +1358,28 @@ const firstLine = (text: string): string => {
  * Oversized results are handed back as a *string* preview rather than as
  * repaired JSON. A truncated string is honest and always parses. In Ensemble's
  * own loop (`outputs`) the whole result is kept for read_tool_output, and the
- * budget is the model class's; elsewhere the rest is gone.
+ * budget is the model class's; elsewhere the rest is gone. `chars` is the
+ * whole payload's size and `offloaded` says it was kept, for the turn's trace.
  */
-function trim(data: unknown, outputs?: TurnOutputs, tool = ""): Record<string, unknown> {
-  if (data === undefined || data === null) return {};
+function trim(data: unknown, outputs?: TurnOutputs, tool = ""): { shown: Record<string, unknown>; chars: number; offloaded: boolean } {
+  if (data === undefined || data === null) return { shown: {}, chars: 0, offloaded: false };
   const json = JSON.stringify(data);
-  if (json === undefined) return {};
+  if (json === undefined) return { shown: {}, chars: 0, offloaded: false };
+  const chars = json.length;
   const limit = outputs?.inlineChars ?? MAX_TOOL_RESULT_CHARS;
-  if (json.length <= limit) return { data };
+  if (json.length <= limit) return { shown: { data }, chars, offloaded: false };
   const fitted = fitList(data, limit);
-  if (fitted) return fitted;
+  if (fitted) return { shown: fitted, chars, offloaded: false };
   // Reading a kept output never keeps another.
-  if (outputs && tool !== READ_TOOL_OUTPUT) return outputs.offload(tool, readableText(data));
+  if (outputs && tool !== READ_TOOL_OUTPUT) return { shown: outputs.offload(tool, readableText(data)), chars, offloaded: true };
   return {
-    truncated: true,
-    note: "The full result was too long to return. This is its start and its end, as text, with the middle cut out. Narrow your query and call again if you need the rest.",
-    preview: headAndTail(json, limit),
+    shown: {
+      truncated: true,
+      note: "The full result was too long to return. This is its start and its end, as text, with the middle cut out. Narrow your query and call again if you need the rest.",
+      preview: headAndTail(json, limit),
+    },
+    chars,
+    offloaded: false,
   };
 }
 
