@@ -9,7 +9,7 @@
 import { hostname } from "node:os";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { CompletionSchema, parseCompletion } from "./completion.js";
+import { CompletionSchema, parseCompletion, saveCompletion, type Completion } from "./completion.js";
 import { steerPrompt } from "./engine-watch.js";
 import { codingSkills, skillsToWrite, writeSkillFolder, type SkillFolder } from "./engines/skill-folders.js";
 import { buildHandoff, HandoffRecord, renderHandoff, saveHandoff, writeHandoffFile, type HandoffReason } from "./handoff-record.js";
@@ -89,11 +89,17 @@ export type CodeTurnInput = {
   /** Tests give the facts; otherwise the claim's (a paired computer) or this computer's records. */
   source?: PacketSource;
   now?: Date;
+  /** Where a part of the harness that could not be made is logged (the turn goes on without it). */
+  warn?: (error: unknown, message: string) => void;
 };
 
 /** Everything the turn sends with the owner's message, and how its session starts. Writes the skills and the handoff record. */
-export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "userId" | "root" | "secretEnv">, input: CodeTurnInput): Promise<CodeTurn> {
+export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "userId" | "root" | "secretEnv" | "accessMode">, input: CodeTurnInput): Promise<CodeTurn> {
   const { prisma, job } = ctx;
+  const skipped = (message: string) => (error: unknown) => {
+    input.warn?.(error, message);
+    return null;
+  };
   const parent = job.continueFromJobId ? await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: LINK }) : null;
   let operation = sessionOperation(job, parent);
   let reason: HandoffReason | null = operation === "handoff" ? handoffReasonOf(job, parent!) : operation === "fork" ? "fork" : null;
@@ -105,7 +111,7 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
   const resumed = operation === "resume" && Boolean(input.resume);
   const source = input.source ?? parsePacketSource((job.context as { codePacket?: unknown } | null)?.codePacket) ?? (await packetSource(prisma, ctx.userId, job));
 
-  const written = await writeSkillFolder(ctx.root, job.provider ?? "", skillsToWrite(codingSkills(), source.skills)).catch(() => null);
+  const written = await writeSkillFolder(ctx.root, job.provider ?? "", skillsToWrite(codingSkills(), source.skills), { readOnly: ctx.accessMode === "review" }).catch(skipped("could not write the skills for the agent"));
   const skills = written?.skills.length ? written : null;
 
   let handoff: CodeTurn["handoff"] = null;
@@ -119,10 +125,10 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
       head: input.head,
       secrets: Object.values(ctx.secretEnv ?? {}),
       now: input.now,
-    }).catch(() => null);
+    }).catch(skipped("could not make the handoff record"));
     if (record) {
       await saveHandoff(prisma, record, { userId: ctx.userId, jobId: job.id, sourceJobId: parent.id, reason });
-      const file = await writeHandoffFile(ctx.root, record).catch(() => null);
+      const file = await writeHandoffFile(ctx.root, record).catch(skipped("could not write the handoff record to the folder"));
       handoff = { record, reason, file };
     }
   }
@@ -139,7 +145,8 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
     timezone: source.timezone ?? input.timezone,
     now: input.now,
     handoff: handoff ? { id: handoff.record.id, text: renderHandoff(handoff.record) } : null,
-    message: steer && resumed ? steerPrompt(steer.update) : job.instructions,
+    // The message as queued, with what it mentions read in full (`withMentionedContent`), not the composer's words alone.
+    message: steer && resumed ? steerPrompt(job.instructions) : job.instructions,
     previous: resumed ? await lastDelivered(prisma, job, job.continueFromJobId) : null,
   });
   return { prompt: built.prompt, record: { ...built.record, operation }, operation, handoff, skills };
@@ -193,10 +200,10 @@ export async function codeTurnResultOf(db: Db, job: { id: string; runId: string 
 
 /** Keeps what a computer sent about a Code tab turn on the web's run, and its handoff record with the web's ids. */
 export async function keepCodeTurnResult(db: Db, job: { id: string; userId: string; taskId: string; continueFromJobId: string | null }, runId: string, result: CodeTurnResult): Promise<void> {
+  if (result.completion) await saveCompletion(db, runId, result.completion as Completion);
   await db.run.update({
     where: { id: runId },
     data: {
-      ...(result.completion ? { completion: result.completion as unknown as Prisma.InputJsonValue } : {}),
       ...(result.packet ? { packet: result.packet as unknown as Prisma.InputJsonValue, promptVersion: result.packet.version } : {}),
       ...(result.skillIds ? { skillIds: result.skillIds } : {}),
       ...(result.skills ? { skillSignatures: result.skills as Prisma.InputJsonValue } : {}),

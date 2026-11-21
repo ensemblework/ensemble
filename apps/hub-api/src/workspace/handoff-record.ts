@@ -38,7 +38,9 @@ const REASONS: Record<HandoffReason, string> = {
   session_gone: "the agent no longer had its earlier session",
 };
 
-const text = (max: number) => z.string().max(max);
+const clip = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value);
+/** A bounded field: a longer text (a long check command, a value made longer by hiding a secret) is cut to fit, never refused. */
+const text = (max: number) => z.preprocess((value) => (typeof value === "string" ? clip(value, max) : value), z.string().max(max));
 const AcceptanceItem = z.object({ id: text(20), text: text(600), state: z.enum(["verified", "failed", "unverified"]), evidence: text(600) });
 
 export const HandoffRecord = z.object({
@@ -84,7 +86,6 @@ export function parseHandoff(value: unknown): HandoffRecord | null {
   return parsed.success ? parsed.data : null;
 }
 
-const clip = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value);
 const agentName = (agent: string) => ENGINE_LABELS[agent as CodeEngine] ?? agent;
 
 export function handoffId(now = new Date()): string {
@@ -300,7 +301,7 @@ export async function buildHandoff(db: Db, input: HandoffInput): Promise<Handoff
   const nextStep = blockers.length
     ? "Find out why the last turn stopped (the blockers below), check the folder, then carry on with the owner's message."
     : failing
-      ? `Fix what makes the check ${failing.name} fail (${failing.command}), then carry on with the owner's message.`
+      ? clip(`Fix what makes the check ${clip(failing.name, 120)} fail (${clip(failing.command, 400)}), then carry on with the owner's message.`, 800)
       : open.length
         ? `Check ${open.join(", ")} (not verified yet), then carry on with the owner's message.`
         : "Carry on with the owner's message that follows.";

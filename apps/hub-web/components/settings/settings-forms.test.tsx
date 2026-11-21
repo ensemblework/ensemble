@@ -9,7 +9,7 @@ import { ToastProvider } from "../toast.js";
 import { Segmented } from "../ui.js";
 import { AppearanceSection } from "./appearance.js";
 import { NumberField } from "./number-field.js";
-import { IdentitySection, QuickCaptureSection, RemindersSection } from "./sections.js";
+import { IdentitySection, QuickCaptureSection, RemindersSection, TaskLimitsSection } from "./sections.js";
 import { SettingsTabs } from "./settings-tabs.js";
 import type { SettingsTab } from "./url-state.js";
 
@@ -79,6 +79,36 @@ test("a limit left empty is no limit: it saves null and shows what empty means",
     await act(async () => typeInput(input, ""));
     assert.deepEqual(saved, [90, null]);
     assert.equal(view.host.querySelector('[role="alert"]'), null);
+  } finally {
+    await view.done();
+  }
+});
+
+test("task limits: the old saved defaults show as no limit, a limit the owner types is theirs, and clearing it saves none", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  function Harness() {
+    const [settings, setSettings] = useState(() => Settings.parse({ orchestration: { maxMinutes: 60, maxTurns: 40 } }));
+    return (
+      <TaskLimitsSection
+        settings={settings}
+        patch={(value) => {
+          patches.push(value);
+          setSettings((current) => ({ ...current, orchestration: { ...current.orchestration, ...(value.orchestration ?? {}) } }));
+        }}
+      />
+    );
+  }
+  const view = await render(<Harness />);
+  try {
+    const minutes = view.host.querySelector<HTMLInputElement>('input[aria-label="Minutes per task"]')!;
+    const turns = view.host.querySelector<HTMLInputElement>('input[aria-label="Model turns per task"]')!;
+    assert.deepEqual([minutes.value, turns.value], ["", ""], "60 minutes and 40 turns saved before are Ensemble's old defaults, not limits");
+    await act(async () => typeInput(minutes, "60"));
+    assert.deepEqual(patches.at(-1), { orchestration: { maxMinutes: 60, ownLimits: ["maxMinutes"] } });
+    assert.deepEqual([minutes.value, turns.value], ["60", ""], "the owner's own 60 stays");
+    await act(async () => typeInput(minutes, ""));
+    assert.deepEqual(patches.at(-1), { orchestration: { maxMinutes: null, ownLimits: ["maxMinutes"] } });
+    assert.equal(minutes.value, "");
   } finally {
     await view.done();
   }

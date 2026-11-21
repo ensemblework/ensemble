@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Cloud, FolderOpen, GitBranch, GitPullRequest, Hand, Lock, MessageCircleQuestion, Monitor, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ENGINE_LABELS, isCodeEngine, type CodeEngine, type RunProfile } from "@ensemble/shared-types";
+import { ENGINE_LABELS, isCodeEngine, runLimits, type CodeEngine, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type EarlierRun, type HandoffApp } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
@@ -1258,9 +1258,9 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                 <Label>Limits</Label>
                 <div className="grid grid-cols-3 gap-3">
                   {([
-                    ["maxMinutes", maxMinutes, setMaxMinutes, settings.data?.settings.orchestration.maxMinutes ?? "No limit"],
+                    ["maxMinutes", maxMinutes, setMaxMinutes, (settings.data ? runLimits(settings.data.settings.orchestration).maxMinutes : null) ?? "No limit"],
                     ["maxToolCalls", maxToolCalls, setMaxToolCalls, 80],
-                    ["maxTurns", maxTurns, setMaxTurns, settings.data?.settings.orchestration.maxTurns ?? "No limit"],
+                    ["maxTurns", maxTurns, setMaxTurns, (settings.data ? runLimits(settings.data.settings.orchestration).maxTurns : null) ?? "No limit"],
                   ] as const).map(([key, value, set, fallback]) => (
                     <label key={key} className="block">
                       <span className="text-[12px] text-muted">{LIMITS[key].label}</span>

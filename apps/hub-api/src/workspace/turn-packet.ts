@@ -145,6 +145,19 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 const HANDLE = /ensemble:\/\/[a-z_]+\/[0-9a-f-]{36}/i;
 
 /**
+ * Each fact under a key of its own: a fact whose key an earlier one has (two lines with the same label,
+ * two records' own lines) gets its occurrence after it (`…#2`), so it is not taken for the other.
+ */
+export function uniqueKeys(items: readonly ContextItem[]): ContextItem[] {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const count = (seen.get(item.key) ?? 0) + 1;
+    seen.set(item.key, count);
+    return count === 1 ? item : { ...item, key: `${item.key.slice(0, 590)}#${count}` };
+  });
+}
+
+/**
  * A Context DB packet (`workContext`) as facts: the record's own lines as one fact, then each line of
  * its lists, keyed by the record, the list and the line's handle (or its label), so a renamed task is
  * the same fact changed, not a new one. Pagination hints and notes about the packet are left out.
@@ -172,7 +185,7 @@ export function contextItems(text: string, focus: string): ContextItem[] {
       items.push({ key: clip(`${focus}|${heading}|${label}`, 600), section, text: clip(line, 2000) });
     }
   }
-  return items;
+  return uniqueKeys(items);
 }
 
 export type Criterion = { id: string; text: string };
@@ -384,7 +397,7 @@ export function buildPacket(input: PacketInput): BuiltPacket {
   const profile = input.profile?.trim() ? clip(input.profile.trim(), 4000) : null;
   const project = input.source.project;
   const projectText = project ? clip(`${project.name}\n${project.brief}`, PROJECT_CHARS) : null;
-  const facts = input.source.items;
+  const facts = uniqueKeys(input.source.items);
   const rulesHash = hash(input.rules.join("\n"));
   const skills = skillLines(input.skills);
   const criteria = input.acceptance.map((row) => `- ${row.id}: ${row.text}`);

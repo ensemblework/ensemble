@@ -65,7 +65,7 @@ import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
-import { verifyCodeTurn, type Completion } from "./completion.js";
+import { saveCompletion, verifyCodeTurn, type Completion } from "./completion.js";
 import { LOCAL_ACCOUNT_NAME } from "../lib/desktop-user.js";
 import { purposeOf } from "../lib/skill-purpose.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -896,6 +896,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let engineTrace: EngineTrace | null = null;
   /** A Code tab turn's packet and session start, kept on the run once the agent has it. */
   let codeTurn: CodeTurn | null = null;
+  const harnessWarn = (failure: unknown, message: string) => app.log.warn({ err: failure, jobId: job.id }, message);
   let codeTurnKept = false;
   /** While the engine works: notes its session's prompts should the engine not return (outside-runs.ts). */
   let notePrompts: (() => Promise<void>) | null = null;
@@ -1015,7 +1016,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         earlierSummary = earlier.summary;
         if (codeAgent) {
           // The whole packet for a new session (with a handoff record when it takes over from another), else what changed.
-          codeTurn = await prepareCodeTurn(ctx, { owner: personName(user?.name), rules: engineRules(ctx), resume, head: initialHead || null, timezone: settings.timezone || "UTC" });
+          codeTurn = await prepareCodeTurn(ctx, { owner: personName(user?.name), rules: engineRules(ctx), resume, head: initialHead || null, timezone: settings.timezone || "UTC", warn: harnessWarn });
           if (codeTurn.operation !== "resume") resume = null;
           enginePromptText = codeTurn.prompt;
           await ctx.event("code_turn", { operation: codeTurn.operation, mode: codeTurn.record.mode, version: codeTurn.record.version, chars: codeTurn.record.chars, handoff: codeTurn.handoff?.record.id ?? null, skills: codeTurn.record.skills.length });
@@ -1156,7 +1157,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
             if (failure instanceof SessionBusyError) await ctx.progress("The ChatGPT app kept the earlier conversation open, so Codex starts a new one with the earlier task's summary.");
             session = null;
             if (codeAgent) {
-              codeTurn = await prepareCodeTurn(ctx, { owner: personName(user?.name), rules: engineRules(ctx), resume: null, sessionGone: true, head: initialHead || null, timezone: settings.timezone || "UTC" });
+              codeTurn = await prepareCodeTurn(ctx, { owner: personName(user?.name), rules: engineRules(ctx), resume: null, sessionGone: true, head: initialHead || null, timezone: settings.timezone || "UTC", warn: harnessWarn });
               prompt = codeTurn.prompt;
             } else prompt = chat ? chatPrompt(ctx, job.instructions, { resumed: false, earlier: earlierSummary }) : fullPrompt;
             continue;
@@ -1617,9 +1618,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       outcome: outcome === "success" ? "success" : outcome === "cancelled" || outcome === "interrupted" ? "cancelled" : outcome === "blocked" ? "needs_info" : "failed",
       error,
       result: truncateText(summary, 20_000) || null,
-      ...(completion ? { completion: completion as unknown as Prisma.InputJsonValue } : {}),
     },
   });
+  if (completion) await saveCompletion(prisma, run.id, completion).catch((failure: unknown) => app.log.warn({ err: failure }, "could not keep the turn's completion record"));
   // The note on the session's prompts lands before the run ends: the next run in the session starts only then.
   await promptsNote;
   await prisma.workspaceJob.update({

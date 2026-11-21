@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, delimiter, join } from "node:path";
+import test, { after } from "node:test";
 import type { StepReport } from "../node/report.js";
-import { completionOf, rerunChecks, rerunVerdict, testCounts } from "./completion.js";
+import { agentCommandEnv, completionOf, rerunChecks, rerunVerdict, testCounts } from "./completion.js";
 import type { JobContext } from "./tools.js";
 
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-completion-")));
+after(() => rmSync(scratch, { recursive: true, force: true }));
+const folder = (name: string) => {
+  mkdirSync(join(scratch, name), { recursive: true });
+  return join(scratch, name);
+};
+const fieldnote = folder("fieldnote");
+mkdirSync(join(fieldnote, "web"));
+
 const ctx = (over: Partial<JobContext> = {}) =>
-  ({ root: "/work/fieldnote", userId: "u1", sandboxed: false, network: false, accessMode: "read-write", secretEnv: {}, job: { id: "job-1" }, ...over }) as unknown as JobContext;
+  ({ root: fieldnote, userId: "u1", sandboxed: false, network: false, accessMode: "read-write", secretEnv: {}, job: { id: "job-1" }, ...over }) as unknown as JobContext;
+const signal = new AbortController().signal;
+const allow = async () => ({ decision: "allow" as const });
 
 const result = (exitCode: number, output: string) => ({ exitCode, output, truncated: false, timedOut: false, killed: false, ms: 12 });
 
@@ -53,7 +67,7 @@ test("Ensemble runs each reported check again under the run's rules: a claimed p
     },
   });
   assert.deepEqual(judged, ["npm test -- export", "npm run build", "sudo systemctl restart web"]);
-  assert.deepEqual(ran.map((row) => row.cwd), ["/work/fieldnote", "/work/fieldnote/web"]);
+  assert.deepEqual(ran.map((row) => row.cwd), [fieldnote, join(fieldnote, "web")]);
   assert.ok(ran.every((row) => row.timeoutMs === 5000));
   assert.deepEqual(runs.map((row) => [row.name, row.claimed, row.verdict]), [["export test", "pass", "fail"], ["build", "pass", "pass"], ["deploy", "pass", "not_run"]]);
   assert.match(runs[2]!.reason ?? "", /did not allow/);
@@ -76,4 +90,86 @@ test("checks pass only when every reported check ran again and passed", () => {
   assert.equal(completionOf({ outcome: "success", files: [], report: null, runs: [], pr: none }).checks.state, "none");
   const stopped = completionOf({ outcome: "cancelled", files: [], report: null, runs: [], pr: { state: "opened", url: "https://github.com/a/b/pull/3", source: "observed" } });
   assert.deepEqual([stopped.conversation.state, stopped.files.state, stopped.pr.state], ["stopped", "none", "opened"]);
+});
+
+test("a check runs again where the run may work: its folder, or one it was let into; never through a link out, nor in a folder that holds keys", async () => {
+  const root = folder("cwd/run");
+  mkdirSync(join(root, "web"));
+  const sibling = folder("cwd/sibling");
+  const granted = folder("cwd/granted");
+  const readable = folder("cwd/readable");
+  symlinkSync(sibling, join(root, "out"));
+  const check = (name: string, cwd: string) => ({ name, verdict: "pass" as const, rerun: { command: "npm test", cwd, expects: "exit_0" as const } });
+  const report: StepReport = {
+    outcome: "pass",
+    summary: "Done.",
+    checks: [check("web", "web"), check("sibling", `../${basename(sibling)}`), check("link", "out"), check("missing", "gone"), check("granted", granted), check("readable", readable), check("home", "~")],
+  };
+  const ran: Array<{ cwd: string; readWrite?: string[]; readOnly?: string[] }> = [];
+  const runs = await rerunChecks(ctx({ root, grants: [granted, homedir()], readGrants: [readable] }), report, {
+    signal,
+    judge: allow,
+    run: async (options) => {
+      ran.push({ cwd: options.cwd, readWrite: options.readWrite, readOnly: options.readOnly });
+      return result(0, "ok");
+    },
+  });
+  assert.deepEqual(runs.map((row) => [row.name, row.verdict]), [["web", "pass"], ["sibling", "not_run"], ["link", "not_run"], ["missing", "not_run"], ["granted", "pass"], ["readable", "pass"], ["home", "not_run"]]);
+  assert.deepEqual(ran, [
+    { cwd: join(root, "web"), readWrite: [root], readOnly: [] },
+    { cwd: granted, readWrite: [root, granted], readOnly: [] },
+    { cwd: readable, readWrite: [root], readOnly: [readable] },
+  ]);
+  assert.match(runs[1]!.reason ?? "", /outside the run's folder/);
+  assert.match(runs[6]!.reason ?? "", /keys|sign-ins/);
+});
+
+test("a check runs again with the PATH and HOME the agent's own commands had, without key variables; a program missing here is not run, not failed", async () => {
+  const engine = { PATH: ["/home/mira/.cargo/bin", join(fieldnote, "node_modules", ".bin"), "/usr/bin"].join(delimiter), HOME: "/home/mira", CARGO_HOME: "/home/mira/.cargo", ANTHROPIC_API_KEY: "sk-ant-api03-not-for-checks", DATABASE_URL: "postgres://ensemble" };
+  assert.deepEqual(agentCommandEnv(fieldnote, engine), { PATH: ["/home/mira/.cargo/bin", "/usr/bin"].join(delimiter), HOME: "/home/mira", CARGO_HOME: "/home/mira/.cargo" });
+
+  const report: StepReport = { outcome: "pass", summary: "Done.", checks: [{ name: "cargo", verdict: "pass", rerun: { command: "cargo test", expects: "exit_0" } }] };
+  const seen: Array<{ engineEnv?: Record<string, string>; extraEnv?: Record<string, string> }> = [];
+  const runs = await rerunChecks(ctx({ secretEnv: { ANTHROPIC_API_KEY: "sk-ant-api03-not-for-checks", FIELDNOTE_REGION: "eu" } }), report, {
+    signal,
+    judge: allow,
+    run: async (options) => {
+      seen.push({ engineEnv: options.engineEnv, extraEnv: options.extraEnv });
+      return result(127, "sh: 1: cargo: not found\n");
+    },
+  });
+  assert.deepEqual(seen[0]!.engineEnv, agentCommandEnv(fieldnote));
+  assert.equal(seen[0]!.engineEnv?.HOME, process.env.HOME ?? homedir());
+  assert.deepEqual(seen[0]!.extraEnv, { FIELDNOTE_REGION: "eu" });
+  assert.deepEqual([runs[0]!.verdict, runs[0]!.exitCode], ["not_run", 127]);
+  assert.match(runs[0]!.reason ?? "", /cargo: not found/);
+  assert.equal(completionOf({ outcome: "success", files: [], report, runs, pr: { state: "none", url: null, source: null } }).checks.state, "unverified");
+  // A command that could not start here at all is not run either.
+  const unstarted = await rerunChecks(ctx(), report, { signal, judge: allow, run: async () => Promise.reject(new Error("sh is not installed on this computer.")) });
+  assert.deepEqual([unstarted[0]!.verdict, unstarted[0]!.reason], ["not_run", "Ensemble could not start it here: sh is not installed on this computer."]);
+});
+
+test("no check runs after the owner discards the turn's changes", async () => {
+  const report: StepReport = {
+    outcome: "pass",
+    summary: "Done.",
+    checks: [
+      { name: "unit", verdict: "pass", rerun: { command: "npm test", expects: "exit_0" } },
+      { name: "e2e", verdict: "pass", rerun: { command: "npm run e2e", expects: "exit_0" } },
+    ],
+  };
+  let discarded = false;
+  const ran: string[] = [];
+  const runs = await rerunChecks(ctx(), report, {
+    signal,
+    judge: allow,
+    stopped: async () => (discarded ? "The owner discarded the turn's changes." : null),
+    run: async (options) => {
+      ran.push(options.argv.at(-1)!);
+      discarded = true;
+      return result(0, "ok");
+    },
+  });
+  assert.deepEqual(ran, ["npm test"]);
+  assert.deepEqual(runs.map((row) => [row.name, row.verdict, row.reason]), [["unit", "pass", null], ["e2e", "not_run", "The owner discarded the turn's changes."]]);
 });

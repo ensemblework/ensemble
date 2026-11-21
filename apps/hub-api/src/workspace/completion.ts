@@ -4,18 +4,22 @@
  * and a pull request opened. A finished conversation is not done work, and a check the agent says
  * passed is a claim: Ensemble runs each check's `rerun` command from report_result again, in the run's
  * folder, under the run's own rules (the hard floor, the folder policy and the mode's asks), one at a
- * time with a time limit each, and the checks state is what those runs showed.
+ * time with a time limit each, with the PATH and HOME the agent's own commands had, and the checks
+ * state is what those runs showed.
  */
+import { realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { parseReport, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
-import { expandHome, within } from "./guard.js";
+import { agentEnv } from "../subscriptions/detect.js";
+import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
 import { judgeEngineCall } from "./engines/judge.js";
 import { runCommand, type RunResult } from "./runner.js";
 import type { ChangedFile } from "./changed-files.js";
 import type { JobContext } from "./tools.js";
-import { resolve } from "node:path";
 
 export const COMPLETION_SCHEMA = "ensemble.completion.v1";
 /** One check's rerun stops here and counts as failed. */
@@ -70,12 +74,22 @@ export function outputShows(pattern: string, output: string): boolean {
 
 type Expects = NonNullable<Check["rerun"]>["expects"];
 
-/** A rerun's verdict: what it expects, failures a test runner reported, and a time limit that ran out. */
-export function rerunVerdict(result: Pick<RunResult, "exitCode" | "timedOut" | "killed" | "output">, expects: Expects): { verdict: "pass" | "fail"; reason: string | null; counts: TestCounts | null } {
+/** The shell's line for a program it could not find (`sh: 1: cargo: not found`, PowerShell's "is not recognized"). */
+const NOT_FOUND = /^.*(?:command not found|: not found|is not recognized as (?:the name of )?a cmdlet).*$/m;
+
+/**
+ * A rerun's verdict: what it expects, failures a test runner reported, and a time limit that ran out.
+ * A program the shell did not find here (exit 127) says nothing about the agent's work: not run.
+ */
+export function rerunVerdict(result: Pick<RunResult, "exitCode" | "timedOut" | "killed" | "output">, expects: Expects): { verdict: "pass" | "fail" | "not_run"; reason: string | null; counts: TestCounts | null } {
   const counts = testCounts(result.output);
   if (result.timedOut) return { verdict: "fail", reason: `It did not finish within ${CHECK_TIMEOUT_MS / 60_000} minutes.`, counts };
   if (result.killed) return { verdict: "fail", reason: "It was stopped before it finished.", counts };
   if (counts && counts.failed > 0) return { verdict: "fail", reason: `${counts.failed} of ${counts.total ?? (counts.passed ?? 0) + counts.failed} tests failed${result.exitCode === 0 ? ", though the command exited 0" : ""}.`, counts };
+  const missing = NOT_FOUND.exec(result.output)?.[0].trim();
+  if (result.exitCode === 127 || (process.platform === "win32" && result.exitCode !== 0 && missing)) {
+    return { verdict: "not_run", reason: `A program it needs was not found here${missing ? ` (${missing.slice(0, 200)})` : ` (exit ${result.exitCode})`}.`, counts };
+  }
   if (expects === "exit_0") return result.exitCode === 0 ? { verdict: "pass", reason: null, counts } : { verdict: "fail", reason: `It exited ${result.exitCode}.`, counts };
   return outputShows(expects.outputMatches, result.output) ? { verdict: "pass", reason: null, counts } : { verdict: "fail", reason: "Its output did not show what the check expects.", counts };
 }
@@ -104,10 +118,67 @@ export type RerunOptions = {
   progress?: (text: string) => Promise<void>;
   /** Saved secret values to hide in the output kept. */
   secrets?: readonly string[];
+  /** Asked before each check: a reason to run no more (the owner discarded the turn's changes), else null. */
+  stopped?: () => Promise<string | null>;
   /** Tests replace the judge and the command runner. */
   judge?: typeof judgeEngineCall;
   run?: typeof runCommand;
 };
+
+/** Variables that say where a toolchain lives, which the agent's commands had with its PATH. */
+const TOOLCHAIN_ENV = ["CARGO_HOME", "RUSTUP_HOME", "PYENV_ROOT", "NVM_DIR", "PNPM_HOME", "BUN_INSTALL", "VOLTA_HOME", "DENO_INSTALL", "GOPATH", "GOROOT", "JAVA_HOME", "ASDF_DIR", "ASDF_DATA_DIR", "SDKMAN_DIR"];
+
+/**
+ * The PATH and HOME (and toolchain folders) the agent's own commands ran with (`agentEnv`), in place
+ * of the fixed PATH and scratch HOME of Ensemble's own commands: `cargo test`, nvm's npm, pnpm, bun
+ * and pyenv's python are found as the agent found them. Folders inside the run's folder are left out.
+ */
+export function agentCommandEnv(root: string, source: NodeJS.ProcessEnv = agentEnv()): Record<string, string> {
+  const out: Record<string, string> = {};
+  const path = (source.PATH ?? source.Path ?? "").split(delimiter).filter((dir) => dir && isAbsolute(dir) && !within(root, dir)).join(delimiter);
+  if (path) out.PATH = path;
+  out.HOME = source.HOME || homedir();
+  if (process.platform === "win32" && source.USERPROFILE) out.USERPROFILE = source.USERPROFILE;
+  for (const key of TOOLCHAIN_ENV) if (source[key]) out[key] = source[key]!;
+  return out;
+}
+
+/**
+ * Where a check runs again: the run's folder or a folder in it (never through a link out of it), or a
+ * folder the run was already let into (its grants, read-only ones read-only). Never a folder that holds
+ * keys, Ensemble's data or its code. Anything else is not run, with why.
+ */
+export async function rerunFolder(ctx: Pick<JobContext, "root" | "grants" | "readGrants" | "accessMode">, cwd: string | null): Promise<{ cwd: string; readWrite: string[]; readOnly: string[] } | { refused: string }> {
+  const root = await realpath(ctx.root).catch(() => null);
+  if (!root) return { refused: "The run's folder is gone." };
+  const review = ctx.accessMode === "review";
+  const full = resolve(root, expandHome(cwd ?? "."));
+  let real: string;
+  if (within(root, full)) {
+    try {
+      real = await jailPath(root, full, true);
+    } catch (error) {
+      return { refused: error instanceof Error ? error.message : String(error) };
+    }
+  } else {
+    const found = await realpath(full).catch(() => null);
+    if (!found) return { refused: `${cwd} does not exist.` };
+    real = found;
+  }
+  if (holdsProtected(real)) return { refused: `${cwd} holds keys, sign-ins or Ensemble's own files.` };
+  const own = { readWrite: review ? [] : [root], readOnly: review ? [root] : [] };
+  if (within(root, real)) return { cwd: real, ...own };
+  const covers = async (folders: readonly string[] | undefined) => {
+    for (const folder of folders ?? []) {
+      if (holdsProtected(folder)) continue;
+      if (within(folder, real) || within(await realpath(folder).catch(() => folder), real)) return true;
+    }
+    return false;
+  };
+  if (!review && (await covers(ctx.grants))) return { cwd: real, readWrite: [...own.readWrite, real], readOnly: own.readOnly };
+  if ((await covers(ctx.readGrants)) || (review && (await covers(ctx.grants)))) return { cwd: real, readWrite: own.readWrite, readOnly: [...own.readOnly, real] };
+  return { refused: `${cwd} is outside the run's folder, and the run was not let into it.` };
+}
 
 /** The shell a check's command line runs in: the one the agent's own shell commands use here. */
 function shellArgv(command: string): string[] {
@@ -122,46 +193,62 @@ function keep(output: string, secrets: readonly string[]): string {
 
 /**
  * Runs each check of the report that has a `rerun` again, as the agent's own command would run: judged
- * first (refused by the hard floor, asked about where the mode asks), then in the run's folder or its
- * sandbox, with a time limit each. Checks without a rerun are listed as the agent's claims only.
+ * first (refused by the hard floor, asked about where the mode asks), then in the run's folder or one it
+ * was let into (`rerunFolder`), with the agent's PATH and HOME and a time limit each. Checks without a
+ * rerun are listed as the agent's claims only; after a discard (`stopped`) no more are run.
  */
 export async function rerunChecks(ctx: JobContext, report: StepReport, options: RerunOptions): Promise<CheckRun[]> {
   const judge = options.judge ?? judgeEngineCall;
   const run = options.run ?? runCommand;
   const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS;
+  const engineEnv = agentCommandEnv(ctx.root);
+  // The run's saved secrets, as the agent had them: never the keys no agent gets.
+  const allowed = agentEnv(ctx.secretEnv ?? {});
+  const extraEnv = Object.fromEntries(Object.entries(ctx.secretEnv ?? {}).filter(([key]) => allowed[key] !== undefined));
   const runs: CheckRun[] = [];
+  let stop: string | null = null;
   for (const check of report.checks ?? []) {
     if (!check.rerun) continue;
     const base = { name: check.name, id: check.id ?? null, command: check.rerun.command, cwd: check.rerun.cwd ?? null, expects: check.rerun.expects, claimed: check.verdict, exitCode: null, ms: 0, counts: null, output: "" };
-    if (options.signal.aborted) {
-      runs.push({ ...base, verdict: "not_run", reason: "The run was stopped before this check ran." });
+    stop ??= options.signal.aborted ? "The run was stopped before this check ran." : ((await options.stopped?.().catch(() => null)) ?? null);
+    if (stop) {
+      runs.push({ ...base, verdict: "not_run", reason: stop });
       continue;
     }
-    const cwd = check.rerun.cwd ? resolve(ctx.root, expandHome(check.rerun.cwd)) : ctx.root;
+    const where = await rerunFolder(ctx, check.rerun.cwd ?? null);
+    if ("refused" in where) {
+      runs.push({ ...base, verdict: "not_run", reason: where.refused });
+      continue;
+    }
     await options.progress?.(`Checking: ${check.name}`.slice(0, 200));
-    const answer = await judge(ctx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: check.rerun.command, ...(cwd !== ctx.root ? { cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
+    const answer = await judge(ctx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: check.rerun.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
     if (answer.decision !== "allow") {
       runs.push({ ...base, verdict: "not_run", reason: answer.message ?? "The run's rules did not let it run." });
       continue;
     }
-    const review = ctx.accessMode === "review";
-    const outside = !within(ctx.root, cwd);
-    const result = await run({
-      userId: ctx.userId,
-      argv: shellArgv(check.rerun.command),
-      cwd,
-      root: ctx.root,
-      sandboxed: ctx.sandboxed,
-      network: ctx.network,
-      useCredentials: false,
-      who: "agent",
-      readOnly: review ? [ctx.root, ...(outside ? [cwd] : [])] : [],
-      readWrite: review ? [] : [ctx.root, ...(outside ? [cwd] : [])],
-      timeoutMs,
-      signal: options.signal,
-      group: ctx.job.id,
-      extraEnv: ctx.secretEnv,
-    }).catch((error: unknown) => ({ exitCode: -1, output: error instanceof Error ? error.message : String(error), truncated: false, timedOut: false, killed: false, ms: 0 }));
+    let result: RunResult;
+    try {
+      result = await run({
+        userId: ctx.userId,
+        argv: shellArgv(check.rerun.command),
+        cwd: where.cwd,
+        root: ctx.root,
+        sandboxed: ctx.sandboxed,
+        network: ctx.network,
+        useCredentials: false,
+        who: "agent",
+        readOnly: where.readOnly,
+        readWrite: where.readWrite,
+        timeoutMs,
+        signal: options.signal,
+        group: ctx.job.id,
+        extraEnv,
+        engineEnv,
+      });
+    } catch (error) {
+      runs.push({ ...base, verdict: "not_run", reason: `Ensemble could not start it here: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000) });
+      continue;
+    }
     const verdict = rerunVerdict(result, check.rerun.expects);
     runs.push({ ...base, verdict: verdict.verdict, reason: verdict.reason, exitCode: result.exitCode, ms: result.ms, counts: verdict.counts, output: keep(result.output, options.secrets ?? []) });
   }
@@ -294,6 +381,7 @@ export async function verifyCodeTurn(ctx: JobContext, input: { outcome: Paramete
           signal: ctx.signal,
           progress: (text) => ctx.progress(text),
           secrets: Object.values(ctx.secretEnv ?? {}),
+          stopped: async () => ((await acceptedOf(ctx.prisma, ctx.runId ?? null)) === "rejected" ? "The owner discarded the turn's changes before this check ran." : null),
           ...options,
         })
       : [];
@@ -306,16 +394,42 @@ export async function verifyCodeTurn(ctx: JobContext, input: { outcome: Paramete
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
+/** The owner's or a reviewer's accept or discard kept on the run so far; "pending" when there is none. */
+export async function acceptedOf(db: Db, runId: string | null): Promise<AcceptedState> {
+  if (!runId) return "pending";
+  const run = await db.run.findUnique({ where: { id: runId }, select: { completion: true } });
+  const state = (run?.completion as { accepted?: { state?: unknown } } | null)?.accepted?.state;
+  return state === "accepted" || state === "rejected" ? state : "pending";
+}
+
+/**
+ * Keeps the run's completion record. An accept or discard that came while its checks ran again
+ * (`markAccepted`) stays: both are one statement each, so neither writes over the other.
+ */
+export async function saveCompletion(db: Db, runId: string, completion: Completion): Promise<void> {
+  const value = JSON.stringify(completion);
+  await db.$executeRaw`
+    UPDATE "runs" SET "completion" = CASE
+      WHEN jsonb_typeof("completion") = 'object' AND "completion" -> 'accepted' ->> 'state' IN ('accepted', 'rejected')
+        THEN jsonb_set(${value}::jsonb, '{accepted}', "completion" -> 'accepted')
+      ELSE ${value}::jsonb
+    END
+    WHERE "id" = ${runId}`;
+}
+
 /**
  * The owner accepted or rejected the run's work (its review: accept or discard), or a reviewer did.
- * Kept on the run's completion record; a run from before records gets one that holds only this.
+ * Kept on the run's completion record; a run from before records, or one still running its checks,
+ * gets one that holds only this until its record is written.
  */
 export async function markAccepted(db: Db, jobId: string, state: Exclude<AcceptedState, "pending">, by: "owner" | "reviewer", now = new Date()): Promise<boolean> {
   const job = await db.workspaceJob.findUnique({ where: { id: jobId }, select: { runId: true } });
   if (!job?.runId) return false;
-  const run = await db.run.findUnique({ where: { id: job.runId }, select: { completion: true } });
-  const accepted = { state, by, at: now.toISOString() };
-  const current = run?.completion && typeof run.completion === "object" && !Array.isArray(run.completion) ? (run.completion as Record<string, unknown>) : { schema: COMPLETION_SCHEMA };
-  await db.run.update({ where: { id: job.runId }, data: { completion: { ...current, accepted } as Prisma.InputJsonValue } });
+  const accepted = JSON.stringify({ state, by, at: now.toISOString() });
+  const empty = JSON.stringify({ schema: COMPLETION_SCHEMA });
+  await db.$executeRaw`
+    UPDATE "runs" SET "completion" =
+      (CASE WHEN jsonb_typeof("completion") = 'object' THEN "completion" ELSE ${empty}::jsonb END) || jsonb_build_object('accepted', ${accepted}::jsonb)
+    WHERE "id" = ${job.runId}`;
   return true;
 }

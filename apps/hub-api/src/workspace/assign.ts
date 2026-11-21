@@ -7,7 +7,7 @@ import { withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -385,7 +385,7 @@ async function createDeviceJob(
   provider: string,
   model: string,
   tierEffort: string | null,
-  orchestration: { sandboxNetwork: boolean; maxMinutes: number | null; maxTurns: number | null; outsideAccess: string },
+  orchestration: { sandboxNetwork: boolean; maxMinutes: number | null; maxTurns: number | null; ownLimits?: readonly string[]; outsideAccess: string },
   options: CreateJobOptions,
 ): Promise<{ jobId: string }> {
   if (body.kind === "code" && body.branchMode !== "as-is" && (!body.branch || !BRANCH.test(body.branch))) {
@@ -439,8 +439,8 @@ async function createDeviceJob(
       reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
       resourceKeys: worktreeKeys(assigned.resourceKeys, options.context),
-      maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
-      maxTurns: body.maxTurns ?? orchestration.maxTurns,
+      maxMinutes: body.maxMinutes ?? runLimits(orchestration).maxMinutes,
+      maxTurns: body.maxTurns ?? runLimits(orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
       context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
@@ -712,8 +712,8 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
       resourceKeys,
-      maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
-      maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
+      maxMinutes: body.maxMinutes ?? runLimits(settings.orchestration).maxMinutes,
+      maxTurns: body.maxTurns ?? runLimits(settings.orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       context: contextWith(withCodeTurn(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
     },

@@ -44,6 +44,21 @@ test("a Context DB packet becomes facts keyed by record, list and handle; hints 
   assert.equal(contextItems(packetText("Fix the CSV export", "Mira Chen-Ito: Lead"), TASK)[1]!.key, items[1]!.key);
 });
 
+test("facts with the same label each keep a key of their own, so one that did not change is not sent again as changed", () => {
+  const text = [`# Fix the CSV export (task, ${TASK})\nStatus: in progress`, `## Comments\n- Mira Chen: keep the header row\n- Mira Chen: semicolons in the EU`].join("\n\n");
+  const items = contextItems(text, TASK);
+  assert.equal(new Set(items.map((item) => item.key)).size, items.length);
+  const first = buildPacket(input({ source: source(items) }));
+  const again = buildPacket(input({ source: source(contextItems(text, TASK)), message: "Go on.", previous: first.record.delivered }));
+  assert.deepEqual([again.record.mode, again.prompt], ["none", "Go on."]);
+
+  // Facts a computer got from an older web, with keys that clash: each is still its own.
+  const clashing: ContextItem[] = [{ key: "k", section: "Notes", text: "one" }, { key: "k", section: "Notes", text: "two" }];
+  const one = buildPacket(input({ source: source(clashing) }));
+  const two = buildPacket(input({ source: source(clashing), message: "Go on.", previous: one.record.delivered }));
+  assert.deepEqual([two.record.mode, two.prompt], ["none", "Go on."]);
+});
+
 test("the first turn gets the whole packet; a later turn gets the message and only the facts that changed", () => {
   const first = buildPacket(input());
   assert.equal(first.record.mode, "full");

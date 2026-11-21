@@ -5,7 +5,7 @@ import { AlertTriangle, ChevronRight, RotateCcw, Trash2, X } from "lucide-react"
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding } from "@ensemble/shared-types";
+import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding, runLimits } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useHostCode, useModuleOn } from "@/lib/use-module";
 import { isApplePlatform } from "@/lib/platform";
@@ -88,7 +88,8 @@ type OrchestrationSet = (value: Partial<Settings["orchestration"]>) => void;
 export function TaskLimitsSection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set: OrchestrationSet = (value) => patch({ orchestration: value });
-  // The owner's own limits on a run: none unless they set one (an empty box).
+  // The owner's own limits on a run: none unless they set one (an empty box). One typed here is theirs, even 60 minutes.
+  const limits = runLimits(orchestration);
   const limit = (key: "maxTurns" | "maxMinutes", min: number, max: number, unit: string) => (
     <NumberField
       label={{ maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
@@ -96,8 +97,8 @@ export function TaskLimitsSection({ settings, patch }: Props) {
       max={max}
       unit={unit}
       empty="No limit"
-      value={orchestration[key]}
-      onChange={(value) => set({ [key]: value })}
+      value={limits[key]}
+      onChange={(value) => set({ [key]: value, ownLimits: [...new Set([...(orchestration.ownLimits ?? []), key])] })}
     />
   );
   return (

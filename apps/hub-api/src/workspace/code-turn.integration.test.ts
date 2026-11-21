@@ -16,12 +16,15 @@ import { createHttpHarness } from "../test/http.js";
 const h = await createHttpHarness();
 const db = h.prisma;
 const { keepCodeTurn, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
-const { completionOf, markAccepted, parseCompletion } = await import("./completion.js");
+const { completionOf, markAccepted, parseCompletion, saveCompletion, verifyCodeTurn } = await import("./completion.js");
 const { steerPrompt } = await import("./engine-watch.js");
 const { HANDOFF_CHARS, renderHandoff, parseHandoff } = await import("./handoff-record.js");
+const { withMentionedContent } = await import("./mentioned.js");
 const { packetRecordOf } = await import("./turn-packet.js");
-const { loadSettings } = await import("../lib/settings.js");
+const { loadSettings, saveSettings } = await import("../lib/settings.js");
+const { runLimits } = await import("@ensemble/shared-types");
 type Ctx = Parameters<typeof prepareCodeTurn>[0];
+type JobContext = Parameters<typeof verifyCodeTurn>[0];
 
 const scratch = mkdtempSync(join(tmpdir(), "ensemble-code-turn-"));
 after(async () => {
@@ -72,7 +75,7 @@ async function setup(name: string) {
 }
 
 test("the first turn gets the whole packet; the next turn in the session only the renamed task; the run keeps the packet's version", async () => {
-  const { board, turn, ctx, ran, base } = await setup("delta");
+  const { user, board, turn, ctx, ran, base } = await setup("delta");
   const first = await turn({ instructions: `Make the export keep the column order.${mention(board.title, board.id)}` });
   const one = await prepareCodeTurn(ctx(first), { ...base, resume: null });
   assert.equal(one.operation, "fresh");
@@ -96,10 +99,13 @@ test("the first turn gets the whole packet; the next turn in the session only th
   await ran(second, two, "session-1");
   assert.equal((await db.run.findUniqueOrThrow({ where: { id: second.runId! } })).promptVersion, two.record.version);
 
-  // The steer prompt: a message that changes the work under way, in the same session.
-  const steered = await turn({ continueFrom: second.id, instructions: "Use semicolons.", context: { steer: { update: "Use semicolons." } } });
+  // The steer prompt: a message that changes the work under way, in the same session, with what it mentions read for the agent.
+  const words = `Use semicolons, as the task says.${mention(board.title, board.id)}`;
+  const expanded = await withMentionedContent(db, user.id, words);
+  assert.match(expanded, /\(Attached from Ensemble:[\s\S]*The header row stays first/);
+  const steered = await turn({ continueFrom: second.id, instructions: expanded, context: { steer: { update: words } } });
   const three = await prepareCodeTurn(ctx(steered), { ...base, resume: "session-1" });
-  assert.ok(three.prompt.endsWith(steerPrompt("Use semicolons.")));
+  assert.ok(three.prompt.endsWith(steerPrompt(expanded)), "the steer carries the mentioned records' content");
   // A new day is said again.
   const later = await prepareCodeTurn(ctx(steered), { ...base, resume: "session-1", now: new Date(Date.now() + 2 * 86_400_000) });
   assert.match(later.prompt, /Today is \d{4}-\d{2}-\d{2} \([\w/]+\)/);
@@ -117,7 +123,17 @@ test("the owner's linked skills go into the agent's own skill folder, out of git
   await ran(job, built, "session-s");
   const run = await db.run.findUniqueOrThrow({ where: { id: job.runId! } });
   assert.deepEqual(run.skillIds, [skill.id]);
-  assert.deepEqual((run.skillSignatures as Array<{ name: string }>).map((row) => row.name), ["owner-release-notes"]);
+  const names = (run.skillSignatures as Array<{ name: string; source: string }>).map((row) => `${row.source}:${row.name}`);
+  assert.equal(names.at(-1), "owner:owner-release-notes");
+  assert.ok(names.slice(0, -1).length > 0 && names.slice(0, -1).every((name) => /^ensemble:ensemble-[a-z0-9-]+$/.test(name)), "Ensemble's bundled skills come first");
+
+  // A read-only turn writes nothing into the folder.
+  const other = await setup("skills-read-only");
+  const looking = await other.turn({ instructions: `Look at the release notes.${mention(other.board.title, other.board.id)}` });
+  const looked = await prepareCodeTurn({ ...other.ctx(looking), accessMode: "review" } as Ctx, { ...other.base, resume: null });
+  assert.equal(looked.skills, null);
+  assert.ok(!existsSync(join(other.root, ".claude")));
+  assert.doesNotMatch(looked.prompt, /Skills for this run are in/);
 });
 
 test("switching agent starts a new session with a handoff record of the earlier one, kept in the database and the folder", async () => {
@@ -201,9 +217,80 @@ test("another model on the same plan stays in the session; another plan starts a
   assert.match(other.prompt, /because the owner switched to another subscription/);
 });
 
-test("a run's minutes and turns have no limit of Ensemble's own", async () => {
+test("a handoff record from a turn whose failing check has a long command is kept, its fields clipped", async () => {
+  const { turn, ctx, ran, base } = await setup("long-check");
+  const first = await turn({ instructions: "Make the build pass." });
+  await ran(first, await prepareCodeTurn(ctx(first), { ...base, resume: null }), "claude-long");
+  const command = `npm test -- ${"--grep 'keeps the header row in the CSV export' ".repeat(40)}`.slice(0, 1990);
+  const failed = { name: "export test", id: null, command, cwd: null, expects: "exit_0" as const, claimed: "pass" as const, verdict: "fail" as const, reason: "It exited 1.", exitCode: 1, ms: 40, counts: null, output: "not ok 1" };
+  await db.run.update({ where: { id: first.runId! }, data: { completion: completionOf({ outcome: "success", files: [], report: null, runs: [failed], pr: { state: "none", url: null, source: null } }) as never } });
+  const warned: string[] = [];
+  const switched = await turn({ provider: "codex", continueFrom: first.id, instructions: "Codex, fix the build." });
+  const built = await prepareCodeTurn(ctx(switched), { ...base, resume: null, warn: (_error, message) => warned.push(message) });
+  assert.ok(built.handoff, "the record is not dropped");
+  assert.ok(built.handoff.record.openWork.nextStep.length <= 800);
+  assert.match(built.handoff.record.openWork.nextStep, /^Fix what makes the check export test fail \(npm test -- --grep/);
+  assert.deepEqual(warned, []);
+});
+
+test("an accept or discard while Ensemble runs the checks again stays on the run, and a discard stops the checks", async () => {
+  const { user, root, turn } = await setup("discard");
+  const job = await turn({ instructions: "Fix the export." });
+  const report = {
+    outcome: "pass" as const,
+    summary: "Done.",
+    checks: [
+      { name: "unit", verdict: "pass" as const, rerun: { command: "npm test", expects: "exit_0" as const } },
+      { name: "e2e", verdict: "pass" as const, rerun: { command: "npm run e2e", expects: "exit_0" as const } },
+    ],
+  };
+  await db.workspaceJob.update({ where: { id: job.id }, data: { report } });
+  const jobCtx = (over: Record<string, unknown> = {}) =>
+    ({ prisma: db, job, userId: user.id, root, runId: job.runId, signal: new AbortController().signal, secretEnv: {}, accessMode: "read-write", sandboxed: false, network: false, progress: async () => undefined, event: async () => undefined, ...over }) as unknown as JobContext;
+  const ran: string[] = [];
+  const completion = await verifyCodeTurn(jobCtx(), { outcome: "success", files: [{ added: 2, removed: 1 }] }, {
+    judge: async () => ({ decision: "allow" }),
+    run: async (options) => {
+      ran.push(options.argv.at(-1)!);
+      // The owner discards the turn's changes while its first check runs.
+      await markAccepted(db, job.id, "rejected", "owner");
+      return { exitCode: 0, output: "ok", truncated: false, timedOut: false, killed: false, ms: 5 };
+    },
+  });
+  assert.deepEqual(ran, ["npm test"], "no check runs after the discard");
+  assert.deepEqual(completion.checks.runs.map((row) => row.verdict), ["pass", "not_run"]);
+  assert.match(completion.checks.runs[1]!.reason ?? "", /discarded/);
+  await saveCompletion(db, job.runId!, completion);
+  const stored = parseCompletion((await db.run.findUniqueOrThrow({ where: { id: job.runId! } })).completion);
+  assert.deepEqual([stored?.accepted.state, stored?.accepted.by, stored?.checks.passed, stored?.files.count], ["rejected", "owner", 1, 1], "the run's end keeps the discard and records the checks");
+
+  // An accept that came first stays the same way, on this computer's run and on the web's from a computer's end.
+  const accepted = await turn({ instructions: "Again." });
+  await markAccepted(db, accepted.id, "accepted", "owner");
+  await saveCompletion(db, accepted.runId!, completionOf({ outcome: "success", files: [], report: null, runs: [], pr: { state: "none", url: null, source: null } }));
+  assert.equal(parseCompletion((await db.run.findUniqueOrThrow({ where: { id: accepted.runId! } })).completion)?.accepted.state, "accepted");
+  await keepCodeTurnResult(db, accepted, accepted.runId!, { completion: completionOf({ outcome: "success", files: [{ added: 1, removed: 0 }], report: null, runs: [], pr: { state: "none", url: null, source: null } }) });
+  const web = parseCompletion((await db.run.findUniqueOrThrow({ where: { id: accepted.runId! } })).completion);
+  assert.deepEqual([web?.accepted.state, web?.files.count], ["accepted", 1]);
+});
+
+test("a run's minutes and turns have no limit of Ensemble's own: the old saved defaults count as none, a limit the owner sets stays", async () => {
   const user = await h.asUser();
-  const settings = await loadSettings(db, user.id);
-  assert.equal(settings.orchestration.maxMinutes, null);
-  assert.equal(settings.orchestration.maxTurns, null);
+  assert.deepEqual(runLimits((await loadSettings(db, user.id)).orchestration), { maxMinutes: null, maxTurns: null });
+  // Settings saved before carry Ensemble's old defaults (60 minutes, 40 turns) whether or not the owner chose them.
+  await saveSettings(db, user.id, { orchestration: { maxMinutes: 60, maxTurns: 40, maxConcurrentJobs: 2 } });
+  const saved = await loadSettings(db, user.id);
+  assert.deepEqual([saved.orchestration.maxMinutes, saved.orchestration.maxTurns], [60, 40], "kept as saved, so an older API still reads them");
+  assert.deepEqual(runLimits(saved.orchestration), { maxMinutes: null, maxTurns: null });
+  // The owner sets 60 minutes themselves, then clears it.
+  await saveSettings(db, user.id, { orchestration: { maxMinutes: 60, ownLimits: ["maxMinutes"] } });
+  assert.deepEqual(runLimits((await loadSettings(db, user.id)).orchestration), { maxMinutes: 60, maxTurns: null });
+  await saveSettings(db, user.id, { orchestration: { maxMinutes: null } });
+  assert.deepEqual(runLimits((await loadSettings(db, user.id)).orchestration), { maxMinutes: null, maxTurns: null });
+  // Saving anything else writes no null in their place.
+  const other = await h.asUser();
+  await saveSettings(db, other.id, { orchestration: { maxConcurrentJobs: 2 } });
+  const row = await db.preference.findFirstOrThrow({ where: { userId: other.id, key: "hub.settings" } });
+  const orchestration = (row.value as { orchestration: { maxMinutes: unknown; maxTurns: unknown } }).orchestration;
+  assert.deepEqual([orchestration.maxMinutes, orchestration.maxTurns], [60, 40]);
 });
