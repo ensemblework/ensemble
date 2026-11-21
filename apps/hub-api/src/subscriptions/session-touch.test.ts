@@ -95,7 +95,7 @@ test("a session used outside Ensemble is kept unresumed, and deleted with the ch
   }
 });
 
-test("a turn that failed or was stopped notes its session's prompts: only in the chat's own session, the chat's place unmoved, an unknown count dropped", async () => {
+test("a turn that failed or was stopped notes its session's prompts: only in the chat's own session, the chat's place moved only by a stopped turn, an unknown count dropped", async () => {
   const state = await mkdtemp(join(tmpdir(), "ensemble-noted-state-"));
   const saved = process.env.ENSEMBLE_REMOTE_STATE_DIR;
   process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
@@ -105,15 +105,19 @@ test("a turn that failed or was stopped notes its session's prompts: only in the
     // The turn at position 2 failed after Claude Code took its message: a failed exchange does not move the chat on.
     await notePrompts(key, "session-1", 2);
     assert.deepEqual(await findSession(key, "claude-code", "Instructions", true, 2), { id: "session-1", text: null, prompts: 2 }, "the next message goes on in the session and reads only what comes after the failed one");
+    // The turn at position 2 was stopped: its message and "Stopped." stay in the chat, so the session's place moves past them.
+    await notePrompts(key, "session-1", 3, 4);
+    assert.deepEqual(await findSession(key, "claude-code", "Instructions", true, 4), { id: "session-1", text: null, prompts: 3 }, "the turn after the stop goes on in the session");
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 6), { found: null, declined: "moved" }, "its place is 4, not further");
     await notePrompts(key, "session-0", 5);
-    assert.equal((await findSession(key, "claude-code", "Instructions", true, 2))?.prompts, 2, "a session the chat no longer has notes nothing");
+    assert.equal((await findSession(key, "claude-code", "Instructions", true, 4))?.prompts, 3, "a session the chat no longer has notes nothing");
     await notePrompts(key, "session-1", null);
-    const unknown = await findSession(key, "claude-code", "Instructions", true, 2);
+    const unknown = await findSession(key, "claude-code", "Instructions", true, 4);
     assert.equal(unknown?.id, "session-1");
     assert.equal(unknown?.prompts, undefined, "a count that could not be made is dropped: the next turn brings nothing in");
     await forgetSession(key, { gone: true });
     await notePrompts(key, "session-1", 3);
-    assert.equal(await findSession(key, "claude-code", "Instructions", true, 2), null, "a session forgotten meanwhile is not brought back");
+    assert.equal(await findSession(key, "claude-code", "Instructions", true, 4), null, "a session forgotten meanwhile is not brought back");
     await notePrompts("chat-noted-000002", "session-1", 3);
     assert.equal(await findSession("chat-noted-000002", "claude-code", "Instructions", true), null, "nor is a chat made for it");
   } finally {
@@ -159,6 +163,10 @@ test("why a chat's session is not resumed: expired, moved on elsewhere, rotated,
     await saveSession(key, "claude-code", "session-1", "Instructions", { next: 2, perTurn: true });
     assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 2), { found: { id: "session-1", text: null } });
     assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 6), { found: null, declined: "moved" }, "a turn ran elsewhere since");
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 0), { found: { id: "session-1", text: null } }, "ahead of the chat: it answered a turn the chat keeps as failed, and misses nothing");
+    // Another message of the turn at 0 goes on only in the session that took that turn: its place is right after it.
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 0, true), { found: { id: "session-1", text: null } });
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 2, true), { found: null, declined: "moved" }, "the turn at 2 never ran in it");
     assert.deepEqual(await lookSession(key, "codex", "Instructions", true, 2), { found: null }, "another agent: nothing to restart");
     assert.deepEqual(await lookSession("chat-never-0001", "claude-code", "Instructions", true, 0), { found: null });
     await saveSession(key, "claude-code", "session-1", "Instructions", { next: ROTATE_MESSAGES + 2, perTurn: true });

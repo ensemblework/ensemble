@@ -56,12 +56,14 @@ import { pageMarkdown } from "../pages/markdown.js";
 import { storeDeviceActivity } from "../lib/ai-activity.js";
 import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, runtimeInstanceOf, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
-import { claimedLinks } from "../workspace/sessions.js";
+import { claimedLinks, forkOf } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
 import { isCodeEngine, PageDocument } from "@ensemble/shared-types";
 import { nodeProjectBrief, projectBrief } from "../workspace/agent-projects.js";
+import { CodeTurnResult, profileInstructionsOf } from "../workspace/code-turn.js";
+import { packetSource } from "../workspace/turn-packet.js";
 import { activeConfig } from "../workspace/session-choice/config.js";
 import { factsOf } from "../workspace/session-choice/related.js";
 import { recordChoiceOutcome } from "../workspace/session-choice/outcome.js";
@@ -153,6 +155,8 @@ const Complete = z.object({
   totals: RunTotals.optional(),
   /** The worker's own result (protocol 6), kept on the job when it is a valid StepReport (node/report.ts). */
   report: z.unknown().optional(),
+  /** A Code tab turn's packet, skills, checks run again and handoff record (workspace/code-turn.ts `CodeTurnResult`). */
+  codeTurn: z.unknown().optional(),
 });
 
 function deviceJson(device: Device, now = Date.now()) {
@@ -487,7 +491,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
       sseHub.publish(next.userId, { event: "task", data: { id: next.taskId, action: "agent" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
-      const fromApps = await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "");
+      // A Code tab turn gets its own packet (`codePacket` below), not the task brief's context.
+      const briefed = !codeTurnOf(next.context);
+      const fromApps = briefed ? await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "") : "";
       // The computer downloads the originals (the attachments route); the brief names them.
       const filesAttached = await filesOnTask(prisma, next.userId, next.taskId);
       const diagramsAttached = await prisma.blockDiagram.findMany({ where: { userId: next.userId, deletedAt: null, id: { in: diagramIds(next.task.page?.content) } }, select: { id: true, title: true, source: true } });
@@ -498,7 +504,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const page = await pageAgentText(prisma, next.userId, next.task.page?.content ?? null, next.task.notes, 6000, 9500);
       const owner = await prisma.user.findUnique({ where: { id: next.userId }, select: { moduleSet: true } });
       // What Ensemble knows around the task (its meeting, project, people, related and earlier work); the run asks for more with ensemble_context.
-      const known = await workContext({ db: prisma, userId: next.userId, modules: owner?.moduleSet ?? null }, { kind: "task", id: next.taskId }, { budget: 5000, moreTool: "ensemble_context" }).catch(() => null);
+      const known = briefed ? await workContext({ db: prisma, userId: next.userId, modules: owner?.moduleSet ?? null }, { kind: "task", id: next.taskId }, { budget: 5000, moreTool: "ensemble_context" }).catch(() => null) : null;
       // The page goes first and is at most 16,000 characters, so the cut below never splits it: older
       // computers read all of it, and newer ones find the whole section to take out.
       // A run by the person's own agent: the project's brief for its folder on the computer (agent-projects.ts), and
@@ -518,6 +524,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
             ? await nodeProjectBrief(prisma, nodeId!).catch(() => null)
             : null;
       const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions, { space: next.userId, runner: next.runnerAccountId }).catch(() => null) : null;
+      const codePacket = codeTurn ? await packetSource(prisma, next.userId, next).catch(() => null) : null;
       const choiceConfig = runSettings ? await activeConfig(app.log) : null;
       const description = [
         page ? `${PAGE_HEADING}\n${page}` : "",
@@ -584,6 +591,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(runContext.newSession === true ? { newSession: true } : {}),
         // A turn of the Code tab's agent (codeAgent 1): the message continues the agent's own session, in the folder Code has open there.
         ...(codeTurn ? { chat: true, surface: "code", ...(codeTurn.codeFolder ? { codeFolder: codeTurn.codeFolder } : {}) } : {}),
+        // Its packet's facts as they are now, its run profile's instructions, and a fork's new session (workspace/code-turn.ts).
+        ...(codePacket ? { packet: codePacket } : {}),
+        ...(codeTurn && profileInstructionsOf(next.context) ? { profileInstructions: profileInstructionsOf(next.context) } : {}),
+        ...(codeTurn && forkOf(next.context) ? { fork: true } : {}),
       };
     }
     return reply.code(204).send();
@@ -891,7 +902,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const results: DeviceResult[] = body.results.map((result) => ({ kind: result.kind, url: result.url, ...(result.sha ? { sha: result.sha } : {}) }));
     const report = body.report === undefined ? null : parseReport(body.report);
     if (body.report !== undefined && !report) request.log.warn({ jobId: id }, "a computer sent a report that is not a valid StepReport; it was not kept");
-    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report });
+    const codeTurn = body.codeTurn === undefined ? null : CodeTurnResult.safeParse(body.codeTurn);
+    if (codeTurn && !codeTurn.success) request.log.warn({ jobId: id }, "a computer sent a Code tab turn's result that could not be read; it was not kept");
+    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report, codeTurn: codeTurn?.success ? codeTurn.data : null });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     void recordChoiceOutcome(prisma, id).catch((error: unknown) => request.log.warn({ err: error, jobId: id }, "could not record how the session choice went"));
     return { status: body.outcome };

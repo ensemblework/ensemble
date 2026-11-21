@@ -211,6 +211,17 @@ App content (MCP tools included) is read only when the person asks for that app'
 - `hub_how_to` loads another playbook and adds its tools for the rest of the loop.
 - A simple todo request gets a one-line recipe and five tools (`hub_how_to`, `hub_create_tasks`, `hub_list_tasks`, `hub_list_people`, `hub_list_projects`). Otherwise the turn shows the ten `CORE_TOOLS` (`skills/index.ts`, including `hub_web_search` and `hub_read_web_page`) plus the loaded playbooks' tools. Ensemble Code uses the same routing plus its own tools.
 - Every model request carries at most **128 tool schemas**. `ENSEMBLE_ASSISTANT_TOOLSETS=off` shows every allowed tool; it turns off routing, not the cap or authorization.
+- A caller can route by other words than the message (`routeBy`: an Ensemble Node's turn passes its owner's words, not the packet of new messages around them) and show more tools beside the core ones (`coreTools`: a node's page tools).
+
+### Records named by id
+
+A tool input field that takes a page, task or project id (`pageId`, `parentPageId`, `taskId`, `parentTaskId`, `projectId`, where the tool's schema asks for a uuid) also takes the record's `ensemble://` link or its exact title: case, spacing and quotes aside, one match (`tools/lookup.ts`, before the input is checked). A title that matches several records, or none, fails with the matching or closest records by title and their ids (at most three, nearest first; for an id, only ids a few characters apart), and so does a call that failed with not found for an id that names nothing; `hub_item_context` says the same for a page, task or project it cannot find. Another app's ids (a Jira issue, a Google task) are left alone. Deterministic: no model.
+
+A failed call's record keeps what the model sent (`sentInput` in `agent.ts`: values that look like secrets removed with `lib/redact.ts`, each value cut at 500 characters, the whole at 4,000), so a trace shows the id a call used.
+
+### Write results
+
+`hub_create_page`, `hub_update_page` and `hub_update_task` with `page` return what the page now says (`saved` or `page`: its first 1,500 characters, its last after an append, with its length): the result is the proof it was saved, and the instructions say to read a record back only when the result does not show the final state.
 
 Routing changes only what the model sees; what may run is every tool the settings allow. Prompt caching depends on the provider ([CACHING](CACHING.md)).
 
@@ -297,7 +308,9 @@ A held write is reported as proposed. A text-only reply that promises a lookup b
 
 A turn on an AI subscription runs the agent's own loop, with no limit of Ensemble's on its calls or turns ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
 
-Error turns are saved but never enter model history as answers; without a valid final answer the UI shows the failure and Retry. A surface may pass a `verify` hook (Ensemble Node's answer check, [35 §6.1](35_ENSEMBLE_NODE.md#61-who-does-the-work)): on the model's final text it returns what is still missing, which goes back to the model as a user message, at most `MAX_VERIFY_ROUNDS` (2) per turn and only while a step with tools remains; if the model then fails, the answer it was sent back with stands.
+A model that ran tools and then wrote nothing is asked once for its reply (`ANSWER_NUDGE`); on an AI subscription the agent's own session is asked once (`REPLY_PROMPT` in `assistant/empty-reply.ts`). Still nothing, and the reply says what the turn's tools did, from their records (`workReply`): "Done: …", "Waiting for your approval: …" and "Did not work: …", or "Looked at: …" when nothing was done, in one paragraph without ids (the result's `emptyReply`). A turn whose last request still asked for tools when its cap allowed none ends the same way, and its reply opens with "I reached this turn's step limit before writing my answer." Only a turn that did nothing and wrote nothing fails: "The model ended its turn without replying or doing anything. Try again, or choose another model."
+
+Error turns are saved but never enter model history as answers; without a valid final answer the UI shows the failure and Retry. A surface may pass a `verify` hook (Ensemble Node's answer check, [35 §6.1](35_ENSEMBLE_NODE.md#61-who-does-the-work)): on the model's final text it returns what is still missing, which goes back to the model as a user message, at most `MAX_VERIFY_ROUNDS` (2) per turn and only while a step with tools remains; if the model then fails, the answer it was sent back with stands. On an AI subscription the hook runs after the agent's turn, and what is missing goes to the same session as one more message, at most twice. A reply that changed after the last round gets one last check (`final` on the hook's state), recorded and never sent back. A `claims` hook (Ensemble Node's delivery check) finds claims that something reached the chat when nothing did: after the answer check they go back once the same way, and if the reply the turn ends with still makes them, it is replaced by the hook's `corrected` text (the result's `falseClaims`). `onRewrite` tells the surface that the reply being written starts again. Such a message goes only to the computer that ran the turn, into the session that took it (`followUp` on `runSubscriptionTurn`, `assistantTurns` 6, [41 §5](41_AGENT_SESSIONS.md#5-assistant-chats-on-an-ai-plan-implementation-reference)); that computer gone or older, it is not sent and the turn keeps what it had. Its answer counts only when the agent resumed the session, and none is sent after a stop.
 
 ### 10. Adding a tool
 

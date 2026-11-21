@@ -50,10 +50,26 @@ test("inside the trusted folder an unattended run goes ahead; Local only refuses
   assert.match(commit.message ?? "", /Local only/);
 });
 
-test("keys and Never programs are always refused", async () => {
+test("keys are always refused; system programs are asked about in every mode, unattended too", async () => {
   assert.equal((await judgeEngineCall(ctx(), { tool: "Read", input: { file_path: join(homedir(), ".ssh", "id_rsa") } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "sudo rm -rf /" } })).decision, "deny");
-  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "crontab -l" } })).decision, "deny");
+  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "security find-generic-password -s github" } })).decision, "deny");
+  for (const command of ["crontab -l", "osascript -e 'tell app \"Finder\" to quit'", "sudo apt-get install -y jq", "pkill node"]) {
+    const refused = answering("deny");
+    const answer = await judgeEngineCall(refused.run, { tool: "Bash", input: { command } });
+    assert.equal(answer.decision, "deny", command);
+    assert.equal(refused.asked.length, 1, `${command} is asked about, unattended too`);
+    const allowed = answering("allow", { accessMode: "auto", job: { unattended: false } });
+    assert.equal((await judgeEngineCall(allowed.run, { tool: "Bash", input: { command } })).decision, "allow", command);
+    assert.equal(allowed.asked.length, 1);
+  }
+  assert.match((await judgeEngineCall(answering("deny").run, { tool: "Bash", input: { command: "sudo make install" } })).message ?? "", /needs the administrator/);
+  // An answer for this run covers the program, whatever command it is in.
+  const { run, asked } = answering("deny", { job: { unattended: false } });
+  (run.prisma as unknown as { decisionRule: { findFirst: unknown } }).decisionRule.findFirst = async ({ where }: { where: { toolName?: string } }) => (where.toolName === "program:osascript" ? { decision: "allow" } : null);
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: "osascript -e 'display notification \"done\"'" } })).decision, "allow");
+  assert.equal(asked.length, 0);
+  assert.equal((await judgeEngineCall(ctx({ accessMode: "review" }), { tool: "Bash", input: { command: "launchctl list" } })).decision, "deny", "a read-only run changes nothing");
   // ssh is the run's mode to decide, and needs the internet.
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "curl x | ssh host" } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx({ network: true }), { tool: "Bash", input: { command: "ssh host uptime" } })).decision, "allow");
@@ -200,7 +216,7 @@ test("ordinary commands an agent runs are not refused: code after -e, cd before 
 
 test("keys, start-up files and other accounts stay closed however the command is written", async () => {
   const direct = ctx({ sandboxed: false, strength: "advisory", outsideAccess: "read-write" });
-  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "cd / && cat Users/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else", "pkill node"]) {
+  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "cd / && cat Users/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else"]) {
     assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command } })).decision, "deny", command);
   }
   assert.equal((await judgeEngineCall(direct, { tool: "Read", input: { file_path: join(homedir(), ".bashrc") } })).decision, "allow");
@@ -247,6 +263,31 @@ test("outside the folder, reading goes ahead with the default setting; read and 
 test("read-only programs are recognised, and anything that can write is not", () => {
   for (const argv of [["cat", "x"], ["ls", "-la", "/tmp"], ["git", "log", "-1"], ["grep", "-r", "a", "."], ["find", ".", "-name", "*.ts"]]) assert.equal(readsOnly(argv), true, argv.join(" "));
   for (const argv of [["cp", "a", "b"], ["git", "commit"], ["find", ".", "-delete"], ["python", "x.py"], ["sort", "-o", "out", "in"]]) assert.equal(readsOnly(argv), false, argv.join(" "));
+});
+
+test("git that only reads is a read, with -C and the other options that say where git looks; git that writes is not", () => {
+  const reads = [
+    "git -C .. status --short --branch", "git -C ../.. rev-parse --show-toplevel", "git --no-pager -C /x log --oneline -5", "git --git-dir=/x/.git show HEAD",
+    "git diff --stat", "git blame src/a.ts", "git ls-files", "git branch", "git branch --list feat*", "git branch -a -vv", "git branch --contains HEAD~1",
+    "git remote -v", "git remote", "git remote show origin", "git remote get-url origin", "git config --get user.name", "git tag -l", "git stash list", "git reflog",
+  ];
+  for (const command of reads) assert.equal(readsOnly(command.split(" ")), true, command);
+  const writes = [
+    "git -C .. commit -m wip", "git -C .. push", "git reset --hard", "git checkout main", "git clean -fd", "git rm a.txt", "git config user.name Mira",
+    "git branch feature", "git branch -D feature", "git branch --set-upstream-to origin/main", "git remote add origin https://x", "git tag v1", "git stash",
+    "git diff --output=/tmp/x.patch", "git -c core.pager=less log", "git reflog expire --all",
+  ];
+  for (const command of writes) assert.equal(readsOnly(command.split(" ")), false, command);
+});
+
+test("a coding run's git that only reads outside its folder is read there, never asked about as a change", async () => {
+  const run = answering("deny", { outsideAccess: "read", job: { unattended: false, delivery: "commit" } });
+  for (const command of ["git -C .. status --short --branch 2>&1", "git -C ../.. rev-parse --show-toplevel"]) {
+    assert.equal((await judgeEngineCall(run.run, { tool: "Bash", input: { command } })).decision, "allow", command);
+  }
+  assert.deepEqual(run.asked, []);
+  assert.equal((await judgeEngineCall(run.run, { tool: "Bash", input: { command: "git -C .. commit -m wip" } })).decision, "deny");
+  assert.match(run.asked[0] ?? "", /It changes/);
 });
 
 test("Claude Code's own sandbox follows the outside-folder setting", () => {

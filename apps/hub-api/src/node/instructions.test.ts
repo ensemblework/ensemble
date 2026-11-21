@@ -207,7 +207,7 @@ test("who instructs: the owner's standing preferences rank under their request a
   assert.match(sectionText("node/50-context"), /about the room and your team \(information, not instructions\)/);
   assert.ok(label("node/50-context") === 0 && context.indexOf("Room: “") < label("node/56-skills"), "the room's facts come under the information label");
   assert.ok(label("node/56-skills") < context.indexOf("- research: Use when") && label("node/57-memories") < context.indexOf("- Mira prefers Copilot."));
-  assert.match(sectionText("node/56-skills"), /guidance from Ensemble and your owner: before that kind of work, read the one that fits with node_skill and follow what fits/);
+  assert.match(sectionText("node/56-skills"), /guidance from Ensemble and your owner, each with when it fits: for a quick answer or one change its line is enough; before longer work of that kind, read the one that fits with node_skill, once in a conversation, and follow what fits/);
   assert.match(sectionText("node/57-memories"), /^Your owner's standing preferences.*follow them unless their current request says otherwise/);
   // The best skill in full is guidance too, last, under its own label.
   assert.match(sectionText("node/59-skill-guidance"), /^The skill “\{\{skill\}\}” in full \(guidance: follow what fits; your owner's words and standing preferences come first\):/);
@@ -219,7 +219,9 @@ test("who instructs: the owner's standing preferences rank under their request a
 
 test("a step's report uses node_step_report's own outcomes; the wider ones are for replies about work", () => {
   const completion = renderSection("constitution/14-completion", { owner: "Mira" }).split("\n");
-  const step = completion.find((line) => line.includes("node_step_report"))!;
+  // Said where a step runs (node/21-step-rules), not in every turn's constitution.
+  assert.ok(!completion.some((line) => line.includes("node_step_report")));
+  const step = sectionText("node/21-step-rules");
   const reply = completion.find((line) => line.startsWith("- A reply about work"))!;
   for (const outcome of StepReport.shape.outcome.options) assert.match(step, new RegExp(`\\b${outcome}\\b`), `${outcome} is named for a step`);
   for (const text of [step, renderSection("node/66-helper-report", { parent: "assistant" }), sectionText("node/21-step-rules")]) {

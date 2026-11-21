@@ -487,6 +487,49 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
   }
 });
 
+test("another message of a turn goes on in the session that took the turn, at the turn's place, or is not sent: it never starts a session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-follow-up-"));
+  const log = join(root, "calls.jsonl");
+  const { findSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  setNativeDropForTests(async () => undefined);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_SESSIONS = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
+  // The turn's MCP config names the local API; this stand-in never calls it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const chat = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
+  const elsewhere = "6d7e8f9a-0b1c-4d2e-8f3a-4b5c6d7e8f9a";
+  const turn = (prompt: string, position: number, key = chat, resume?: "only") =>
+    runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: resume ? "" : "This chat so far, oldest first:\n\nPerson: hi", position, ...(resume ? { resume } : {}) } }, io);
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { session: string | null; prompt: string });
+  try {
+    assert.equal((await turn("Add a task", 0)).resumed, false);
+    const session = calls().at(-1)!.session!;
+    // Asked again within the turn, at the turn's place: the same session, just the message.
+    assert.equal((await turn("Reply now", 0, chat, "only")).resumed, true);
+    assert.deepEqual([calls().at(-1)!.session, calls().at(-1)!.prompt], [session, "Reply now"]);
+    // Its place stays where the turn left it: the next turn goes on in it, and the first turn is then over.
+    assert.equal((await turn("Next", 2)).resumed, true);
+    const sent = calls().length;
+    await assert.rejects(turn("Reply now", 0, chat, "only"), /not on this computer/, "the session took a later turn");
+    await assert.rejects(turn("Reply now", 0, elsewhere, "only"), /not on this computer/, "no session of that chat here");
+    rmSync(join(root, "copilot-home", "session-state", session), { recursive: true, force: true });
+    await assert.rejects(turn("Reply now", 2, chat, "only"), /not on this computer/, "a session Copilot no longer has");
+    assert.equal(calls().length, sent, "none of them reached the agent");
+    assert.equal((await findSession(chat, "copilot-cli", "Instructions.", false, 4))?.id, session, "and no new session took the chat's place");
+    assert.equal(await findSession(elsewhere, "copilot-cli", "Instructions."), null);
+  } finally {
+    setNativeDropForTests(null);
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a turn stopped because its node parked on its owner's answer keeps its session, so the turn their answer wakes goes on in it; a plain stop does not", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-parked-turn-"));
   const log = join(root, "calls.jsonl");

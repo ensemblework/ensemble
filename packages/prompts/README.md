@@ -1,10 +1,11 @@
 # @ensemble/prompts
 
 The instructions Ensemble gives its models, as Markdown sections, and `assemble()`, which puts the
-sections a request needs together in three tiers with a budget for each. The Hub assistant and Ensemble
-Node use them today (`apps/hub-api/src/assistant/state.ts`, `apps/hub-api/src/node/instructions.ts`,
-docs/11 and docs/35 §5.5). It also embeds Ensemble's bundled skills from the repository's `skills/`
-folder (`SKILLS`, below).
+sections a request needs together in three tiers with a budget for each. The Hub assistant, Ensemble
+Node and the Code tab's agent use them (`apps/hub-api/src/assistant/state.ts`,
+`apps/hub-api/src/node/instructions.ts`, `apps/hub-api/src/workspace/turn-packet.ts`; docs/11, docs/35
+§5.5 and docs/16 §9). It also embeds Ensemble's bundled skills from the repository's `skills/` folder
+(`SKILLS`, below).
 
 ## Layout
 
@@ -13,7 +14,7 @@ folder (`SKILLS`, below).
 | `sections/constitution/` | The shared rules: who Ensemble works for, whose word decides, how a task runs, acting, asking, permissions, tools, teamwork, knowledge, how replies read, and what counts as done | Every node turn gets all of them. The Hub assistant gets the ones whose note says "shared word for word" (`03-acting`, `09-look-up`, `10-sources`, `12-records`, `13-every-part`) |
 | `sections/node/` | A node's role and charter, the routing rows (who does the work), crew, lead and step rules, helpers, sessions, the variants for the owner's own AI plan, the context tier (`50` to `59`, `67`: the room and team, the skills catalogue, memories, workspace items, the best skill in full) the turn packet (`80` to `83`) and the rules a plan step's task packet gives a coding agent (`84-task-report`, `85-task-review` for a review step; `84-task-report-basic` and `85-task-review-basic` for a computer that takes only the first report format) | `node/instructions.ts` (`nodeSections` chooses them from the turn's facts), `node/plans.ts` (`21-step-rules`, `85-task-review`), `node/packet.ts` (`84`, `85`; their version is the packet header's `instructionVersion`) |
 | `sections/assistant/` | The Hub assistant's own lines: where it works, its scope, facts, dates, one space, playbooks and skills | `assistant/state.ts` (`assistantInstructions`) |
-| `sections/code/` | The Code tab's own sections: none yet (the `code` surface may use this folder and the constitution) | Nothing |
+| `sections/code/` | The Code tab agent's turn packet: who and where it is (`00`), Ensemble's tools (`01`), the run's rules (`02`), `report_result` and the checks Ensemble runs again (`03`), completion states (`04`), the context tier (`10` run profile, `11` skills and when to read them, `12` project, `13` the Context DB slice), the volatile part (`20` acceptance criteria, `21` the date, `22` a handoff record, `90` the line before the message) and a later turn's changes (`30` to `33`) | `workspace/turn-packet.ts` (`buildPacket`), with the constitution's `01` to `05`, `08`, `10`, `12` and `13` |
 
 `src/sections.generated.ts` holds every section's text, its variables and the SHA-256 of its text.
 It is written by `scripts/generate.mjs` and committed, so nothing reads a Markdown file at run time: the

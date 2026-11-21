@@ -795,7 +795,8 @@ export type RunJob = {
   toolCalls: number;
   tokensIn: number;
   tokensOut: number;
-  limits: { turns: number; toolCalls: number; minutes: number };
+  /** The owner's limits for the run; null: none. */
+  limits: { turns: number | null; toolCalls: number; minutes: number | null };
   costUsd: number | null;
   files: Array<{ path: string; added: number; removed: number }>;
   results: Array<{ kind: "pr" | "commit" | "branch"; url: string; sha?: string }>;
@@ -825,7 +826,8 @@ export type AgentJob = {
   branchMode?: "as-is" | "existing" | "new";
   reasoningEffort?: string | null;
   networkAccess?: boolean;
-  maxTurns?: number;
+  /** The owner's turn limit for the run; null: none. */
+  maxTurns?: number | null;
   folder: string;
   repoUrl: string | null;
   branch: string;
@@ -839,7 +841,8 @@ export type AgentJob = {
   tokensIn: number;
   tokensOut: number;
   maxToolCalls: number;
-  maxMinutes: number;
+  /** The owner's minutes limit for the run; null: none. */
+  maxMinutes: number | null;
   continueFromJobId: string | null;
   /** Carrying on a run cut off when its computer restarted: why, and which carry-on of how many. */
   resume?: { reason: string; attempt: number; of: number } | null;
@@ -1031,6 +1034,8 @@ export type AssignInput = {
   chat?: boolean;
   /** `code`: a turn of the Code tab's agent, with Ensemble's actions as well (docs/16 §9). */
   surface?: "code";
+  /** A Code tab turn: the run profile's instructions, sent to the agent with the turn's packet. */
+  profileInstructions?: string;
 };
 
 /**
@@ -1079,7 +1084,48 @@ export type KeepTarget =
  * One turn of a thread: the run of one message. `steer`: a message sent while the turn before worked,
  * which carries on that turn's work; `steeredBy`: the turn that stopped this one to carry it on.
  */
-export type CodeTurn = AgentJob & { reviewId: string | null; saved?: KeptPage[]; steer?: boolean; steeredBy?: string | null };
+/** How a Code tab turn ended, each state apart (hub-api workspace/completion.ts). */
+export type TurnCompletion = {
+  conversation: { state: "finished" | "failed" | "stopped" | "interrupted" };
+  files: { state: "none" | "changed"; count: number; added: number; removed: number };
+  checks: {
+    state: "none" | "passed" | "failed" | "unverified";
+    passed: number;
+    failed: number;
+    notRun: number;
+    claimed: number;
+    runs: Array<{ name: string; id: string | null; command: string; claimed: "pass" | "fail" | "blocked" | "skipped"; verdict: "pass" | "fail" | "not_run"; reason: string | null; exitCode: number | null; ms: number; output: string }>;
+  };
+  accepted: { state: "pending" | "accepted" | "rejected"; by: "owner" | "reviewer" | null; at: string | null };
+  pr: { state: "none" | "opened" | "merged"; url: string | null; source: "ensemble" | "observed" | null };
+  claim: { outcome: "done" | "pass" | "fail" | "blocked" | "partial" | "stopped" | "uncertain" | null };
+};
+
+/** What a Code tab turn's packet carried and how its agent session started (hub-api workspace/turn-packet.ts). */
+export type TurnPacket = {
+  mode: "full" | "delta" | "none";
+  operation: "fresh" | "resume" | "handoff" | "fork" | null;
+  version: string;
+  base: string;
+  chars: number;
+  sections: number;
+  items: { sent: number; changed: number; added: number; removed: number };
+  skills: string[];
+  criteria: Array<{ id: string; text: string }>;
+};
+
+export type CodeTurn = AgentJob & {
+  reviewId: string | null;
+  saved?: KeptPage[];
+  steer?: boolean;
+  steeredBy?: string | null;
+  /** The first turn of a forked thread. */
+  fork?: boolean;
+  completion?: TurnCompletion | null;
+  packet?: TurnPacket | null;
+  /** The handoff record a new session got: why, and the agent and model it took over from. */
+  handoff?: { id: string; reason: "agent" | "subscription" | "fork" | "session_gone"; from: string; model: string; chars: number } | null;
+};
 
 export type JobEvent = { id: string; kind: string; data: Record<string, unknown>; at: string };
 
@@ -1791,6 +1837,8 @@ export const api = bindClient({
   codePresence: (present: boolean) => post<void>("/api/agent/code-presence", { present }),
   /** A message while a turn works: taken into a turn not started yet, else it steers the one at work. */
   steerCodeThread: (id: string, data: { jobId: string; turn: Omit<AssignInput, "taskId"> }) => post<{ jobId: string; delivery: "amended" | "steered" | "queued" }>(`/api/agent/threads/${id}/steer`, data),
+  /** A new thread from one of a thread's turns: its first message starts a new session with a handoff record of the thread so far. */
+  forkCodeThread: (id: string, data: { jobId: string; turn: Omit<AssignInput, "taskId"> }) => post<{ thread: Pick<CodeThread, "id" | "title" | "createdAt" | "updatedAt">; jobId: string }>(`/api/agent/threads/${id}/fork`, data),
   /** Keeps a finished turn's reply in Ensemble (a page, a task, meeting notes or a deliverable), marked as the agent's. */
   keepCodeTurn: (threadId: string, data: { jobId: string } & KeepTarget) => post<{ page: KeptPage }>(`/api/agent/threads/${threadId}/save`, data),
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),

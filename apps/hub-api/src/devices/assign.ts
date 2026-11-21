@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
-import { deviceCodesWithAgent, deviceEngines, deviceOpensPullRequests, folderLabels } from "./labels.js";
+import { deviceCodesWithAgent, deviceEngines, deviceForksCodeThreads, deviceOpensPullRequests, folderLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { pairingsOf } from "./earlier.js";
 
@@ -31,6 +31,8 @@ export async function deviceAssignment(
      * (`capabilities.codeAgent`) and checks it against its own Code folders. A turn with no folder needs neither.
      */
     codeFolder?: string;
+    /** A Code tab turn that forks the run it continues: the computer's runtime must start a new session for it. */
+    fork?: boolean;
   },
   where: { space: string; runner: string | null } = { space: userId, runner: null },
 ): Promise<{
@@ -50,6 +52,9 @@ export async function deviceAssignment(
   if (input.codeFolder && !deviceCodesWithAgent(device.capabilities)) {
     const version = /(\d+\.\d+\.\d+)/.exec(device.appVersion ?? "")?.[1];
     throw new GuardError(`Ensemble${version ? ` ${version}` : ""} on ${device.name} cannot run the agent in a folder of its own yet; a newer Ensemble release adds it. Choose No folder to start now: the agent works in a new folder in its Ensemble workspace.`);
+  }
+  if (input.fork && !deviceForksCodeThreads(device.capabilities)) {
+    throw new GuardError(`Ensemble on ${device.name} is too old to fork a thread. Update it on that computer (\`ensemble update\`, or the desktop app's update), then fork again.`);
   }
   if (input.pullRequest && !deviceOpensPullRequests(device.capabilities)) {
     throw new GuardError(`Ensemble on ${device.name} is too old to open pull requests into any branch. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);

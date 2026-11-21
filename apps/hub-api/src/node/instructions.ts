@@ -194,18 +194,27 @@ const ROOM_SECTION: Record<string, SectionName> = { dm: "node/51-room-dm", crew:
 
 /**
  * What the context tier chose for the turn and why (docs/35 §5.6), with the config that chose it: the
- * skills with their scores, the memories and the workspace items given, and how many were left out.
+ * skills with their scores, the memories and the workspace items given, and how many were left out. Ids,
+ * kinds, scores and reasons only: never the words searched for, a title or a memory's key, which come from
+ * the owner's words and records (an Ensemble skill by its name, an owner's skill by its id).
  */
 export type Selected = {
   config: { version: string; hash: string };
-  /** The words the memories and the workspace were searched with. */
-  terms: string[];
-  skills: Array<{ name: string; source: CatalogueSkill["source"]; score: number; why: string[] }>;
+  skills: Array<{ skill: string; source: CatalogueSkill["source"]; score: number; why: string[] }>;
   /** The skill whose guidance came in full, its characters and whether it was cut to the budget. */
-  inline: { name: string; source: CatalogueSkill["source"]; chars: number; cut: boolean } | null;
-  memories: SelectedMemory[];
-  context: Array<Pick<ContextItem, "group" | "kind" | "id" | "title" | "score" | "why">>;
+  inline: { skill: string; source: CatalogueSkill["source"]; chars: number; cut: boolean } | null;
+  memories: Array<Omit<SelectedMemory, "key">>;
+  context: Array<Pick<ContextItem, "group" | "kind" | "id" | "score" | "why">>;
   left: { memories: number; context: number };
+};
+
+/** A skill as the record names it: Ensemble's by its name, an owner's by its id (its name is their words). */
+const skillRef = (skill: Pick<CatalogueSkill, "name" | "source" | "id">): string => (skill.source === "owner" ? (skill.id ?? "owner") : skill.name);
+
+/** A reason without the words that gave it: "keywords: build fails, error" is kept as "keywords 2". */
+export const reasonOnly = (why: string): string => {
+  const listed = /^([^:]+): (.+)$/.exec(why);
+  return listed ? `${listed[1]} ${listed[2]!.split(", ").length}` : why;
 };
 
 /** What the turn was told and how big each part was, and what it was given: the turn's one `node.instructions` metric (node/brain.ts). */
@@ -469,11 +478,10 @@ async function nodeFacts(prisma: PrismaClient, input: NodeTurnInput, config: Con
     refs: [...open.map((row) => ({ kind: "room", id: row.room.id, label: row.room.title })), ...(workspace?.refs ?? [])],
     selected: {
       config: contextConfigRef(config),
-      terms: workspace?.terms ?? [],
-      skills: catalogue.map((choice) => ({ name: choice.skill.name, source: choice.skill.source, score: choice.score, why: choice.why })),
-      inline: guidance ? { name: guidance.name, source: guidance.source, chars: guidance.text.length, cut: guidance.cut } : null,
-      memories: memories.selected,
-      context: (workspace?.items ?? []).map(({ group, kind, id, title, score, why }) => ({ group, kind, id, title, score, why })),
+      skills: catalogue.map((choice) => ({ skill: skillRef(choice.skill), source: choice.skill.source, score: choice.score, why: choice.why.map(reasonOnly) })),
+      inline: guidance ? { skill: skillRef(catalogue.find((choice) => choice.skill.name === guidance.name)?.skill ?? { name: guidance.name, source: guidance.source }), source: guidance.source, chars: guidance.text.length, cut: guidance.cut } : null,
+      memories: memories.selected.map(({ key: _key, ...memory }) => memory),
+      context: (workspace?.items ?? []).map(({ group, kind, id, score, why }) => ({ group, kind, id, score, why })),
       left: { memories: memories.left, context: workspace?.left ?? 0 },
     },
   };

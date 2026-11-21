@@ -4,7 +4,7 @@ import { inferComplexity } from "../../lib/complexity.js";
 import { createTask, labelPriority, labelStatus, taskChangePreview, titlesMatch, updateTask } from "../../services/tasks.js";
 import { softDelete, trashTasks } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
-import { MAX_MARKDOWN, appendToTaskPage, droppedNote } from "./pages.js";
+import { MAX_MARKDOWN, appendToTaskPage, droppedNote, pageNow } from "./pages.js";
 import { titleList } from "../refs.js";
 import { ON_BOARD } from "../../lib/node-tasks.js";
 
@@ -190,7 +190,7 @@ export const taskTools = [
     name: "hub_update_task",
     area: "tasks",
     description:
-      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. page adds Markdown to the end of the task's page; to rewrite the page use hub_update_page. The short description is the person's and is never set. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Do not use this to link a repo or create a person.",
+      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. page adds Markdown to the end of the task's page (the result shows the page's end: no need to read it back); to rewrite the page use hub_update_page. The short description is the person's and is never set. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Do not use this to link a repo or create a person.",
     input: z.preprocess(foldIntoPage, z
       .object({
         taskId: z.string().uuid(),
@@ -260,7 +260,9 @@ export const taskTools = [
         const written = page?.trim() ? await appendToTaskPage(tx, ctx.userId, taskId, page) : { dropped: [] };
         return { task: row, dropped: written.dropped };
       });
-      return toolOk(`${updateSummary(matchTitle, task.title, patch, Boolean(page?.trim()))}${droppedNote(dropped)}`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId } }, {
+      // What its page now says ends the result: the proof the Markdown was added, so it need not be read back.
+      const saved = page?.trim() ? await pageNow(ctx.tx ?? ctx.prisma, ctx.userId, { taskId: task.id }, "end") : null;
+      return toolOk(`${updateSummary(matchTitle, task.title, patch, Boolean(page?.trim()))}${droppedNote(dropped)}`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId }, ...(saved ? { page: saved } : {}) }, {
         invalidate: ["tasks"],
         href: `/tasks/${task.id}`,
       });

@@ -279,9 +279,10 @@ export function appWithoutAgent(id: SubscriptionProvider, agents: readonly Pick<
  * also takes the files attached to the person's message, 3 keeps one agent session per chat, 4 lets
  * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor, 5 lets an
  * Ensemble Node's turn keep them too (judged by the node's folder policy, with asks relayed to the
- * owner), reports the agent's own calls, and takes a turn with no turn limit.
+ * owner), reports the agent's own calls, and takes a turn with no turn limit, 6 takes another message
+ * of a turn in the session that took it (`session.resume: "only"`), never starting a new one.
  */
-export const ASSISTANT_TURNS_API = 5;
+export const ASSISTANT_TURNS_API = 6;
 /** The oldest `assistantTurns` that runs assistant turns at all. */
 export const ASSISTANT_TURNS_MIN = 1;
 /** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
@@ -297,6 +298,12 @@ export const ASSISTANT_TURN_OWN_TOOLS = 4;
 export const ASSISTANT_TURN_NODE_TOOLS = 5;
 /** The most turns a computer before `ASSISTANT_TURN_NODE_TOOLS` takes in one assistant turn. */
 export const ASSISTANT_TURN_MAX_TURNS = 64;
+/**
+ * The first `assistantTurns` that takes another message of a turn (the reply a turn's agent did not write, what
+ * the answer check found missing) in the chat's session that took the turn, or refuses it: never in another
+ * session or a new one. Older computers get none; their turns end with what they had.
+ */
+export const ASSISTANT_TURN_FOLLOW_UPS = 6;
 /**
  * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
  * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).

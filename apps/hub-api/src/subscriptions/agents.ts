@@ -44,7 +44,7 @@ import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
-import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, floorJudge, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
+import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, floorJudge, logAcpTool, OwnToolLog, OwnVerdicts, writeCopilotFloorPlugin } from "./own-tools.js";
 import type { NodeTurnPolicy } from "./node-own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { acpPrompts, acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside, type OutsideTurn } from "./outside.js";
@@ -73,8 +73,10 @@ export type AgentTurnSpec = {
    * `history` is the chat so far, sent only when the turn starts a new session, and `position` how
    * many messages the chat had before this one (a session resumes only where it left the chat).
    * `title` names a new session in the agent's own app (app-sessions.ts); older computers ignore it.
+   * `resume: "only"` (`assistantTurns` 6): another message of the turn at `position`, which goes on in the
+   * session that took that turn or fails; it never starts a session.
    */
-  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number; title?: string } | null;
+  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number; title?: string; resume?: "only" } | null;
   /**
    * The agent's own web search and page reading (Claude Code's WebSearch and WebFetch, Codex's live
    * web_search, Copilot's web_search and web_fetch): on the person's plan, so a node reads the web
@@ -159,7 +161,7 @@ type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string
  * `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). `servers`: the
  * MCP servers the agent loads by itself here (Copilot's and Codex's, agent-mcp.ts), for the driver to turn off.
  */
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[] }) => Promise<DriverResult>;
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[]; verdicts?: OwnVerdicts }) => Promise<DriverResult>;
 
 /**
  * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
@@ -176,6 +178,9 @@ class SessionBusy extends Error {
 }
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
+
+/** Why another message of a turn was not sent (`resume: "only"`): the session that took the turn cannot go on here. */
+const NOT_KEPT = "The session that took this turn is not on this computer any more, so this message was not sent.";
 
 /** The first message of a session: Ensemble's instructions, for agents that have no system prompt, then the message. */
 const opening = (spec: AgentTurnSpec, session: TurnSession) => (session?.resume ? spec.prompt : `${spec.system}\n\n---\n\n${spec.prompt}`);
@@ -260,7 +265,7 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
   ];
 }
 
-const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, session }) => {
+const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, session, verdicts }) => {
   const systemFile = join(own ?? folder, "system.md");
   const mcpFile = join(own ?? folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
@@ -290,7 +295,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   // and a later answer set apart from the earlier one as it streams.
   let spend: ClaudeSpend | null = null;
   let answered = false;
-  const tools = new OwnToolLog("claude-code", io.onOwnTool);
+  const tools = new OwnToolLog("claude-code", io.onOwnTool, verdicts);
   try {
     for await (const line of createInterface({ input: child.stdout! })) {
       if (!line.trim()) continue;
@@ -375,7 +380,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, servers }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, servers, verdicts }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: codexEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -390,7 +395,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, ju
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
   // With its own tools, the paths each file change touches, for its approval (own-tools.ts).
   const changes = new Map<string, string[]>();
-  const tools = new OwnToolLog("codex", io.onOwnTool);
+  const tools = new OwnToolLog("codex", io.onOwnTool, verdicts);
   server.onRequest = (method, params) => (judge ? answerCodexOwnTools(judge, method, params, changes) : answerCodexTurn(method, params));
   server.onNotification = (method, params) => {
     if (method === "item/started" || method === "item/completed") {
@@ -605,7 +610,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts }) => {
   const model = chosen(spec.model);
   const child = spawn(bin, ["--sandbox", spec.ownTools ? "disabled" : "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
@@ -631,7 +636,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, j
   let overflow = false;
   /** The message this turn sent to the agent, which the session holds however the turn then ends. */
   let sent = 0;
-  const tools = new OwnToolLog("cursor-agent", io.onOwnTool);
+  const tools = new OwnToolLog("cursor-agent", io.onOwnTool, verdicts);
   rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update") return;
@@ -807,7 +812,7 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
   ];
 }
 
-const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session, servers }) => {
+const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session, servers, verdicts }) => {
   // `--session-id` would quietly start a new, empty session under the id of one deleted in Copilot.
   if (session?.resume && (await copilotHasSession(session.id)) === false) throw new SessionGone(`Copilot no longer has session ${session.id}`);
   const mcpFile = join(own ?? folder, "mcp.json");
@@ -841,7 +846,7 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   child.stdin.end(stdin ? prompt : undefined, "utf8");
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
-  const tools = new OwnToolLog("copilot-cli", io.onOwnTool);
+  const tools = new OwnToolLog("copilot-cli", io.onOwnTool, verdicts);
   const output = copilotOutput(chosen(spec.model), io.onDelta, tools);
   let stderr = "";
   createInterface({ input: child.stdout }).on("line", line => output.line(line));
@@ -882,7 +887,7 @@ export function answerAcpTurn(method: string, params: Record<string, unknown>): 
 /** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
 const runAcpTurn =
   (id: AcpEngine): Driver =>
-  async ({ spec, io, folder, mcp, files, session, judge }) => {
+  async ({ spec, io, folder, mcp, files, session, judge, verdicts }) => {
     const model = chosen(spec.model);
     const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env, ensembleMcpOnly: !spec.ownTools || Boolean(spec.node) });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
@@ -898,7 +903,7 @@ const runAcpTurn =
     let overflow = false;
     /** The message this turn sent to the agent, which the session holds however the turn then ends. */
     let sent = 0;
-    const tools = new OwnToolLog(id, io.onOwnTool);
+    const tools = new OwnToolLog(id, io.onOwnTool, verdicts);
     rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
       if (method !== "session/update") return;
@@ -1018,9 +1023,9 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
  * count their prompts as they go and carry the count on what they throw (`withPrompts`); Claude Code's and Copilot's
  * transcripts are read. A turn whose message never went out (nothing carried, or the count the session had as the
  * turn began, `began`) leaves the count as it was, so what the person said in the agent's app before it still comes
- * in with the next turn. Never fails.
+ * in with the next turn. `next`: a stopped turn's place in the chat, which the session takes too. Never fails.
  */
-async function notePromptsAfter(input: { key: string; agent: SubscriptionProvider; session: string; folder: string; error: unknown; began: number | null }): Promise<void> {
+async function notePromptsAfter(input: { key: string; agent: SubscriptionProvider; session: string; folder: string; error: unknown; began: number | null; next?: number }): Promise<void> {
   let prompts: number | null;
   if (input.agent === "claude-code" || input.agent === "copilot-cli") {
     prompts = await sessionPrompts(input.agent, input.session, input.folder).catch(() => null);
@@ -1030,7 +1035,7 @@ async function notePromptsAfter(input: { key: string; agent: SubscriptionProvide
     if (!counted) return;
     prompts = counted.session === input.session ? counted.prompts : null;
   }
-  await notePrompts(input.key, input.session, prompts).catch(() => undefined);
+  await notePrompts(input.key, input.session, prompts, input.next).catch(() => undefined);
 }
 
 /** `later`: takes the note a turn that failed or was stopped in the chat's session starts (`notePromptsAfter`). */
@@ -1068,7 +1073,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         : [];
   // With its own tools, each of the agent's calls is judged from the turn's folder: by the hard floor, or a node's folder
   // policy (loaded only for a node's turn: it reads this computer's own settings and rules).
-  const judge = !spec.ownTools ? undefined : spec.node ? (await import("./node-own-tools.js")).nodeOwnJudge({ folder, node: spec.node, app: spec.agent, mcpServers: servers, ...(io.ask ? { ask: io.ask } : {}) }) : floorJudge(folder, spec.agent);
+  // A node's turn keeps how each of the agent's own calls was answered, for its trace.
+  const verdicts = spec.ownTools && spec.node ? new OwnVerdicts() : undefined;
+  const judge = !spec.ownTools ? undefined : spec.node ? (await import("./node-own-tools.js")).nodeOwnJudge({ folder, node: spec.node, app: spec.agent, mcpServers: servers, ...(io.ask ? { ask: io.ask } : {}), ...(verdicts ? { onVerdict: verdicts.note } : {}) }) : floorJudge(folder, spec.agent);
   const bridge = openBridge(spec.tools, io.call, judge ? { judge } : {});
   let handedOff = false;
   const mcp: McpServer = {
@@ -1088,7 +1095,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
     const perTurn = spec.agent === "claude-code" || spec.agent === "codex";
     const position = spec.session?.position;
-    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position) : null;
+    // Another message of a turn goes on in the session that took that turn, or is not sent: never in a new one.
+    const only = spec.session?.resume === "only";
+    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position, only) : null;
     const kept = look?.found ?? null;
     // Why the chat's earlier session, when it has one, does not go on: recorded with the turn (session-restart.ts).
     let restart: Restart | null = look?.declined ? restartOf(look.declined) : null;
@@ -1104,6 +1113,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
     if (found && update === null) restart = restartOf("instructions");
     const earlier = found && update !== null ? found.id : null;
+    if (only && !earlier) throw new AgentTurnError("failed", NOT_KEPT);
     // Stopped because the node's turn parked: the chat keeps this session, now holding the message and the wait for the
     // owner, as after a turn that ended. Claude Code and Copilot run in the session they are given; the others say theirs.
     const keepParked = async (session: TurnSession, error: unknown): Promise<void> => {
@@ -1134,6 +1144,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
           own,
           servers,
           ...(judge ? { judge } : {}),
+          ...(verdicts ? { verdicts } : {}),
         });
       } catch (error) {
         await keepParked(session, error);
@@ -1148,9 +1159,12 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
       // The chat's session went on but the turn failed or was stopped: its prompts are noted for the next turn, once
       // this error has gone back. A session the agent could not reopen, or an agent that keeps none, leaves nothing to note.
       if (key && earlier && !(error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported)) {
-        later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began }).catch(() => undefined));
+        // A stopped turn stays in the chat with its "Stopped.": the session's place in the chat moves with it (a failed turn's does not).
+        const next = io.signal.aborted && position !== undefined ? { next: position + 2 } : {};
+        later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began, ...next }).catch(() => undefined));
       }
       if (io.signal.aborted || !key) throw error;
+      if (only) throw error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported ? new AgentTurnError("failed", NOT_KEPT) : error;
       if (error instanceof SessionGone || error instanceof SessionBusy) {
         restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
         // What the person added there before it could not be reopened still comes in.

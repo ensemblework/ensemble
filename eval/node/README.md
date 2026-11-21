@@ -108,7 +108,7 @@ Each run writes `eval/node/results/<timestamp>-<label>.json` and a Markdown summ
 | result, score | Pass (all checks) and the share of checks passed |
 | verified | A pass whose evidence checks passed too: the file, the picture or the row exists, not only words |
 | false claims | Claims in the replies that nothing backs |
-| no answer / error msgs | Turns that failed because the agent ended without a reply ("The model returned no answer"), and error messages posted in the chat |
+| no answer / error msgs | Turns that failed because the agent ended without a reply and did nothing ("The model ended its turn without replying or doing anything", or "The model returned no answer" in earlier result files), and error messages posted in the chat. A turn that did work and wrote nothing answers from its tool log and is not counted |
 | turns, model calls | Node turns, and the agent's model calls in them and in coding sessions |
 | Ensemble tools, agent tools | Ensemble tool calls the turns made, and tool calls the agent's own trace shows (its own tools and the Ensemble tools it called) |
 | tokens in / out, credits | From the agent's session usage records (node turns and coding sessions), or Ensemble's own `model.call` metric events where those count more (a session Ensemble replaced leaves no log to read); credits are the AI units Copilot reports in its usage records |

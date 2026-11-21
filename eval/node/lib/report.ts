@@ -6,8 +6,8 @@
 import type { CardLog, CleanupEntry, RunResult, Saved } from "./types.js";
 import { FINISHED_WITHOUT, KEPT } from "./cards.js";
 
-/** A turn that failed because the agent ended without a reply. */
-export const NO_ANSWER = /returned no answer/i;
+/** A turn that failed because the agent ended without a reply or anything done (a turn that did work answers from its tool log); result files may hold the earlier wording. */
+export const NO_ANSWER = /returned no answer|ended its turn without replying/i;
 
 /** A stuck plan step's card (the owner's one decision for a step the plan could not get past). */
 const stuck = (card: CardLog) => card.type === "plan_decision";

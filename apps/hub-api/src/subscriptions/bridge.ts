@@ -59,7 +59,11 @@ export const OwnAnswerShape = z.discriminatedUnion("decision", [
 ]);
 export type OwnAnswer = z.infer<typeof OwnAnswerShape>;
 
-/** One of the agent's own calls (its shell, files, web) starting or ending, as a node's chat shows it. `acts`: it can change something. */
+/**
+ * One of the agent's own calls (its shell, files, web) starting or ending, as a node's chat shows it. `acts`: it can change
+ * something. At its end, for the turn's trace: how long it ran, the characters of its input and output, and how Ensemble
+ * answered it (`verdict`: allowed with no question, `asked` and allowed by the owner, or refused); absent where not known.
+ */
 export const OwnToolEventShape = z.object({
   id: z.string().min(1).max(200),
   name: z.string().min(1).max(100),
@@ -67,8 +71,13 @@ export const OwnToolEventShape = z.object({
   phase: z.enum(["start", "end"]),
   ok: z.boolean().optional(),
   acts: z.boolean(),
+  ms: z.number().int().min(0).optional(),
+  inChars: z.number().int().min(0).optional(),
+  outChars: z.number().int().min(0).optional(),
+  verdict: z.enum(["allowed", "asked", "refused"]).optional(),
 });
 export type OwnToolEvent = z.infer<typeof OwnToolEventShape>;
+export type OwnVerdict = NonNullable<OwnToolEvent["verdict"]>;
 
 type Bridge = {
   secret: string;
