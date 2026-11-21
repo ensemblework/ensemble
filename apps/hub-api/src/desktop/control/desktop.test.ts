@@ -484,7 +484,7 @@ test("a call works on the screen it names, its look's, its recording's or the la
   const screens = new Desktops(owner.service, () => agent.service);
   const a = caller();
   assert.equal(screens.runningAgent(), null, "asking does not start the agent screen");
-  const both = await screens.status(20_000, async () => ({ ready: true, version: "GNOME Shell 50.1" }));
+  const both = await screens.status(20_000, async () => ({ ready: true, session: "wayland" as const, consent: "ask" as const, recorder: "webm" as const, helper: "stopped", agentScreen: { ready: true, version: "GNOME Shell 50.1" } }));
   assert.equal(both.agent, null);
   const { statusText } = await import("./text.js");
   assert.match(statusText(both), /The agent screen \(yours, private\): ready, not running/);
@@ -647,4 +647,89 @@ test("partial recordings a stopped runtime left are swept from the evidence fold
   utimesSync(other, hourAgo, hourAgo);
   assert.equal(await sweepRecordingParts(evidence, 30 * 60_000), 1);
   assert.deepEqual([existsSync(stale), existsSync(live), existsSync(other)], [false, true, true]);
+});
+
+// ── screenshots for the owner, and status without a desktop ────────────────
+
+test("a look with share true becomes held evidence for the chat, on either screen; a plain look does not", { timeout: 40_000 }, async () => {
+  const { runNodeDesktop } = await import("./device.js");
+  const { operationEvidenceDir } = await import("../../evidence/files.js");
+  const owner = harness();
+  const agent = harness({ agent: "up" });
+  await owner.set({ idle: 300_000 });
+  const screens = new Desktops(owner.service, () => agent.service);
+  const rows: Array<Record<string, unknown>> = [];
+  const prisma = {
+    jobEvidence: {
+      count: async () => 0,
+      findFirst: async () => null,
+      findMany: async () => [],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const row = { id: `ev${rows.length + 1}`, createdAt: new Date(), updatedAt: new Date(), ...data };
+        rows.push(row);
+        return row;
+      },
+    },
+  };
+  const uploads: Array<{ uploadId: string; meta: Record<string, unknown> }> = [];
+  const client = { uploadEvidenceFile: async (uploadId: string, meta: Record<string, unknown>) => (uploads.push({ uploadId, meta }), { result: "stored" }) };
+  const request = (input: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    ({ id: "q1", nodeId: "n1", nodeSlug: "helper", mission: "m1", attended: true, grants: [], tool: "desktop", name: "desktop_observe", input, operation: "node:n1:own", inlineImage: false, uploadId: "up1", ...extra }) as never;
+  for (const screen of ["agent", "owner"]) {
+    const done = await runNodeDesktop({ prisma } as never, client as never, request({ screen, share: true }), screens);
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual((done.body.evidence as Array<{ kind: string; held: boolean }>).map((item) => [item.kind, item.held]), [["screenshot", true]], screen);
+    assert.match(String(done.body.summary), /Screenshot cap_/);
+  }
+  assert.deepEqual(uploads.map((row) => row.uploadId), ["up1", "up1"]);
+  const kept = readdirSync(operationEvidenceDir("node:n1:own")).filter((name) => name.startsWith("screenshot"));
+  assert.equal(kept.length, 2, "each its own file, never one over another");
+  const plain = await runNodeDesktop({ prisma } as never, client as never, request({ screen: "agent" }), screens);
+  assert.deepEqual(plain.body.evidence, [], "a look without share stays the model's");
+  const noGrant = await runNodeDesktop({ prisma } as never, client as never, request({ screen: "agent", share: true }, { uploadId: undefined }), screens);
+  assert.equal(noGrant.status, 400);
+  const blind = await runNodeDesktop({ prisma } as never, client as never, request({ screen: "agent", share: true, screenshot: false, app: "Calculator" }), screens);
+  assert.equal((blind.body.error as { code: string }).code, "bad_input", "a look at elements only has no picture to share");
+});
+
+test("desktop_status starts no helper for a screen that cannot work here", { timeout: 30_000 }, async () => {
+  const { statusText } = await import("./text.js");
+  const owner = harness();
+  const agent = harness({ agent: "up" });
+  const screens = new Desktops(owner.service, () => agent.service);
+  const both = await screens.status(20_000, async () => ({ ready: false, session: "none" as const, consent: "ask" as const, recorder: null, helper: "stopped", reason: "Ensemble here does not run inside a desktop session.", agentScreen: { ready: true, version: "GNOME Shell 50.1" } }));
+  assert.equal(owner.helper.health().state, "stopped", "the owner's helper was not started");
+  assert.equal(agent.helper.health().state, "stopped", "nor the agent screen's");
+  assert.match(statusText(both), /Your owner's screen:[\s\S]*does not run inside a desktop session/);
+});
+
+test("a coding run's shared screenshot is the run's evidence, held for the person's preview", { timeout: 30_000 }, async () => {
+  const { runRunDesktopTool } = await import("./run-tools.js");
+  const { evidenceDir } = await import("../../evidence/files.js");
+  const owner = harness();
+  const agent = harness({ agent: "up" });
+  const screens = new Desktops(owner.service, () => agent.service);
+  const jobId = "6f1c2b9e-1d2f-4a3b-9c8d-7e6f5a4b3c2d";
+  const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+  const rows: Array<Record<string, unknown>> = [];
+  const prisma = {
+    workspaceJob: { findMany: async () => [] },
+    jobEvidence: {
+      count: async () => 0,
+      findFirst: async () => null,
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const row = { id: `ev${rows.length + 1}`, variantOf: null, ...data };
+        rows.push(row);
+        return row;
+      },
+    },
+  };
+  const ctx = { accessMode: "review", job: { id: jobId, context: {} }, prisma, userId: "u1", taskTitle: "Check the calculator", event: async (type: string, data: Record<string, unknown>) => void events.push({ type, data }) };
+  const looked = await runRunDesktopTool(ctx as never, "desktop_observe", { screen: "agent", share: true }, screens);
+  assert.equal(looked.ok, true, looked.text);
+  assert.match(looked.text, /Held for your owner to preview first/);
+  assert.deepEqual(events.map((event) => [event.type, event.data.kind, event.data.held]), [["evidence", "screenshot", true]], "a read-only run may share what it sees");
+  assert.deepEqual(readdirSync(evidenceDir(jobId)), ["screenshot.jpg"]);
+  const blind = await runRunDesktopTool(ctx as never, "desktop_observe", { screen: "agent", share: true, screenshot: false, app: "Calculator" }, screens);
+  assert.equal(blind.ok, false);
 });

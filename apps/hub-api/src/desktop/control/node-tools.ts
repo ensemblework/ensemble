@@ -5,8 +5,9 @@
  * app, and the owner's own pointer and keyboard, ask the owner once per mission on a card in this chat.
  * The model sees each screenshot:
  * as a picture with the tool's result on Ensemble's API, or (on the owner's own subscription) through
- * the line images.ts turns into one on the computer. Screenshots are not evidence; a saved recording is,
- * held for the owner's preview.
+ * the line images.ts turns into one on the computer. The owner sees a screenshot only when the node
+ * shares it (desktop_observe or desktop_zoom with `share`), and a saved recording: both are evidence,
+ * held for the owner's preview on a card in this chat.
  */
 import { z } from "zod";
 import type { Device } from "@prisma/client";
@@ -37,6 +38,7 @@ export function requireDesktop(device: Pick<Device, "name" | "capabilities">, to
 function describe(name: string, input: Record<string, unknown>): string {
   if (name === "desktop_open") return `Open ${String(input.app ?? "an app")} on the screen`;
   if (name === "desktop_act") return "Use the screen";
+  if ((name === "desktop_observe" || name === "desktop_zoom") && input.share === true) return "Show you a screenshot of the screen";
   if (name === "desktop_record") return `${input.action === "start" ? "Record" : input.action === "save" ? "Save the recording of" : "Discard the recording of"} the screen`;
   return name.replace("desktop_", "Desktop ");
 }
@@ -56,6 +58,7 @@ export function desktopTools(scope: NodeScope): AnyHubTool[] {
         const { computer: name, ...input } = raw as Record<string, unknown> & { computer?: string };
         const operation = captureOperation(scope);
         const saving = spec.name === "desktop_record" && input.action === "save";
+        const sharing = (spec.name === "desktop_observe" || spec.name === "desktop_zoom") && input.share === true;
         const done = await callComputer(
           ctx,
           scope,
@@ -68,13 +71,13 @@ export function desktopTools(scope: NodeScope): AnyHubTool[] {
             again: callText(spec.name, raw),
             before: async (device) => {
               requireDesktop(device, spec.name);
-              // A saved recording has somewhere to go before the computer makes it.
-              return saving ? { uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) } : {};
+              // A saved recording or a shared screenshot has somewhere to go before the computer makes it.
+              return saving || sharing ? { uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) } : {};
             },
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "pictures", saving ? "video" : undefined);
+        const kept = await keepCaptures(ctx, scope, done, operation, "pictures", saving ? "video" : sharing ? "picture" : undefined);
         const parsed = NodeDesktopAnswer.safeParse(done.body);
         const picture = parsed.success ? parsed.data.image : undefined;
         const lines = [...kept.lines];

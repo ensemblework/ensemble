@@ -19,8 +19,8 @@
  * typing or changing the focus there, and wait while the owner uses the app they act in.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { link, mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, link, mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { hideSecretValues } from "../../lib/redact.js";
 import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, type FloorHit } from "./floor.js";
@@ -632,6 +632,20 @@ export class DesktopService {
     });
   }
 
+  /** This screen's state without its helper, for a screen that cannot work here: asking never starts it. */
+  offline(reason: string): DesktopStatus {
+    const holder = this.controllers.current();
+    return {
+      screen: this.screenName,
+      facts: { session: { state: "unavailable", detail: reason } },
+      session: { state: "unavailable", displays: [] },
+      lease: this.lease.view(),
+      controller: holder ? { label: holder.label, since: holder.since } : null,
+      recording: null,
+      helper: this.options.helper.health(),
+    };
+  }
+
   async apps(input: { query?: string; running?: boolean }, budgetMs = 20_000): Promise<AppsResult> {
     return this.run(budgetMs, async (deadline) => {
       const installed = input.running ? [] : (await this.call<{ apps: Array<{ id: string; name: string }> }>("apps.catalog", { ...(input.query ? { query: input.query } : {}), limit: input.query ? 20 : 80 }, deadline)).apps;
@@ -853,6 +867,32 @@ export class DesktopService {
       void this.pruneScreenshots();
       return { ...this.observation(capture, shot, null, null, session, []), zoomOf: capture.parent!, region: capture.region };
     });
+  }
+
+  /**
+   * A copy of one of the caller's screenshots in `evidenceDir` for its owner (`share`), held for their
+   * preview: the picture the model saw, under a name no other file has there.
+   */
+  async shareCapture(caller: Caller, captureId: string, evidenceDir: string): Promise<StillRef & { kind: "image"; held: true; reason: string }> {
+    const capture = this.ledger.get(captureId);
+    if (!capture || capture.controller !== caller.key) throw new DesktopError("stale_capture", `${captureId} is not one of your screenshots here. Look again with share true.`, "no");
+    if (!capture.path) throw new DesktopError("bad_input", `${captureId} read elements only: it has no picture to share. Look with a screenshot.`, "no");
+    await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+    const png = capture.path.endsWith(".png");
+    const base = capture.parent ? "screenshot-detail" : "screenshot";
+    for (let n = 1; n < 1000; n += 1) {
+      const path = join(evidenceDir, `${base}${n === 1 ? "" : `-${n}`}.${png ? "png" : "jpg"}`);
+      try {
+        await copyFile(capture.path, path, constants.COPYFILE_EXCL);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") continue;
+        throw new DesktopError("failed", `The screenshot could not be kept (${code === "ENOENT" ? "it is gone" : (code ?? "error")}): look again with share true.`, "no");
+      }
+      const size = (await stat(path)).size;
+      return { path, kind: "image", mime: png ? "image/png" : "image/jpeg", size, width: capture.image.width, height: capture.image.height, held: true, reason: DESKTOP_HOLD_REASON };
+    }
+    throw new DesktopError("failed", "Too many screenshots are kept for this work already.", "no");
   }
 
   // ── acting ───────────────────────────────────────────────────────────────

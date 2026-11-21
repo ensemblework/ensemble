@@ -3,9 +3,10 @@
  * a private headless desktop of the agent's own that nobody sees unless they watch it. Each has its own
  * service and helper. A call names its screen, or works where its capture id was taken (or where its
  * recording is), or where its controller last worked, else on the agent screen; it never moves to the
- * other screen by itself. Asking about the agent screen never starts it.
+ * other screen by itself. Asking about the agent screen never starts it, nor the owner's screen's helper
+ * where that screen cannot work (no desktop session, missing libraries).
  */
-import type { AgentScreenReadiness } from "./readiness.js";
+import type { AgentScreenReadiness, DesktopReadiness } from "./readiness.js";
 import type { AppsResult, DesktopService, DesktopStatus, ScreenName } from "./service.js";
 
 export type BothStatus = { owner: DesktopStatus; agent: DesktopStatus | null; agentReadiness: AgentScreenReadiness };
@@ -53,10 +54,15 @@ export class Desktops {
   }
 
   /** Both screens' state; the agent screen's facts only while it runs, else whether it can start. */
-  async status(budgetMs: number, agentReadiness: () => Promise<AgentScreenReadiness>): Promise<BothStatus> {
+  async status(budgetMs: number, readiness: () => Promise<DesktopReadiness>): Promise<BothStatus> {
+    const facts = await readiness();
     const running = this.runningAgent();
-    const [owner, agent, readiness] = await Promise.all([this.owner.status(budgetMs), running ? running.status(budgetMs) : Promise.resolve(null), agentReadiness()]);
-    return { owner, agent, agentReadiness: readiness };
+    const ownerWorks = facts.ready || this.owner.helperReady;
+    const [owner, agent] = await Promise.all([
+      ownerWorks ? this.owner.status(budgetMs) : Promise.resolve(this.owner.offline(facts.reason ?? "Desktop control cannot start here.")),
+      running ? running.status(budgetMs) : Promise.resolve(null),
+    ]);
+    return { owner, agent, agentReadiness: facts.agentScreen };
   }
 
   /** The apps: installed, and running on the named screen, or on the owner's and the agent screen's while it runs. */

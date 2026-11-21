@@ -4,8 +4,9 @@
  * drives that screen while it works). A sensitive app, and the owner's own pointer and keyboard
  * (`screen:owner`), are the policy's (device-tools/policy.ts, scope `app`): attended, the owner is asked
  * once per app and mission; unattended, it is allowed. The hard floor is the service's and is never asked
- * about. A saved recording is the node's evidence (device-tools/capture.ts `keepEvidence`), held for the
- * owner's preview; the model's screenshots are not evidence and come back only to the model.
+ * about. A saved recording, and a screenshot the node shares (`share`), is the node's evidence
+ * (device-tools/capture.ts `keepEvidence`), held for the owner's preview; its other screenshots come back
+ * only to the model.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -90,11 +91,17 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
   // Handing over is of the owner's screen only: the agent screen is the agent's own.
   const service = request.name === "desktop_handoff" ? screens.owner : screens.service(screen);
   const ok = (summary: string, extra: Record<string, unknown> = {}) => answer(200, { ok: true, summary, evidence: [], refused: [], ...extra });
+  const share = (request.name === "desktop_observe" || request.name === "desktop_zoom") && input.share === true;
+  if (share && input.screenshot === false) return answer(200, { ok: false, error: { code: "bad_input", message: "share sends a screenshot, so it needs one: drop screenshot false." }, evidence: [], refused: [] });
+  if (share && !request.uploadId) return answer(400, { error: "Sharing a screenshot needs its upload id. Update Ensemble on the web." });
+  /** The look's screenshot as the node's evidence, for its owner (held for their preview). */
+  const shared = async (look: Observation) =>
+    keepEvidence(app, client, { nodeId: request.nodeId, operation: request.operation, uploadId: request.uploadId! }, capturedFiles({ file: await service.shareCapture(caller, look.captureId, operationEvidenceDir(request.operation)) }));
   try {
     let done: DesktopDone;
     switch (request.name) {
       case "desktop_status": {
-        const both = await screens.status(caller.budgetMs, async () => (await desktopReadiness()).agentScreen);
+        const both = await screens.status(caller.budgetMs, () => desktopReadiness());
         done = ok(statusText(both), { result: { owner: { session: both.owner.session, lease: both.owner.lease }, agent: both.agent ? { session: both.agent.session } : { ready: both.agentReadiness.ready, running: false } } });
         break;
       }
@@ -112,12 +119,12 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
       case "desktop_observe": {
         const observation = await service.observe(caller, input as { display?: string; app?: string; elements?: boolean; maxElements?: number; screenshot?: boolean });
         screens.remember(caller.key, service.screenName);
-        done = ok(observationText(observation), { result: lean(observation), image: image(observation) });
+        done = ok(observationText(observation), { result: lean(observation), image: image(observation), ...(share ? await shared(observation) : {}) });
         break;
       }
       case "desktop_zoom": {
         const zoomed = await service.zoom(caller, input as { captureId: string; box: [number, number, number, number] });
-        done = ok(observationText(zoomed), { result: lean(zoomed), image: image(zoomed) });
+        done = ok(observationText(zoomed), { result: lean(zoomed), image: image(zoomed), ...(share ? await shared(zoomed) : {}) });
         break;
       }
       case "desktop_act": {

@@ -15,5 +15,6 @@ Prefer your own screen, and look after every action.
 - After every action (a click, typing, a key, opening something), look again before the next one (capture_screenshot, or the next observation). Aim only at what the latest look shows: positions from an older screenshot are stale.
 - Work in one app at a time. When a window or a handle is gone, list the apps again rather than guessing another.
 - Passwords, system prompts and permission dialogs are your owner's: hand control to them, and never type a password.
-- Never assume an action worked: confirm it on screen (the installed app opens, the setting shows its new value), and capture it as evidence when your owner wants proof.
+- Never assume an action worked: confirm it on screen (the installed app opens, the setting shows its new value).
+- Your looks reach only you. When your owner wants to see the screen, call desktop_observe (or desktop_zoom) with share true: that screenshot goes to them in this chat, held for their preview. Never say a screenshot is attached or shown unless such a call kept it.
 - Stop the apps you started when you are done (capture_app_stop).

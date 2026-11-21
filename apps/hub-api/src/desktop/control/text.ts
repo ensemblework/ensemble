@@ -66,7 +66,7 @@ export function actText(result: ActResult): string {
 function screenStatus(status: DesktopStatus): string[] {
   const lines = Object.entries(status.facts).map(([name, fact]) => `- ${name}: ${fact.state}${fact.detail ? `, ${fact.detail}` : ""}${fact.fix ? ` Fix: ${fact.fix}` : ""}`);
   lines.push(`- screen control: ${status.session.state}${status.session.displays.length ? ` (${status.session.displays.map((display) => `${display.id} ${display.width}×${display.height}${display.primary ? " main" : ""}`).join(", ")})` : ""}.`);
-  if (status.screen === "owner") lines.push(status.lease.holder === "owner" ? `- Your owner has the computer (since ${status.lease.since.slice(11, 16)}): your input and screenshots there wait; elements-only looks and background steps go on.` : "- You may use it when it is your turn.");
+  if (status.screen === "owner" && status.session.state !== "unavailable") lines.push(status.lease.holder === "owner" ? `- Your owner has the computer (since ${status.lease.since.slice(11, 16)}): your input and screenshots there wait; elements-only looks and background steps go on.` : "- You may use it when it is your turn.");
   if (status.controller) lines.push(`- In use by ${status.controller.label} (since ${status.controller.since.slice(11, 16)}).`);
   if (status.recording) lines.push(`- A recording ${status.recording.ended ? `ended (${status.recording.ended}) and waits to be saved` : "is running"}.`);
   return lines;

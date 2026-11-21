@@ -17,6 +17,8 @@ const screen = z
   .optional()
   .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent.");
 
+const share = z.boolean().optional().describe("true: also send this picture to your owner in this chat, held for them to preview first. Use it whenever they want to see the screen.");
+
 export const STEP_ACTIONS = ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press", "set_text", "select", "toggle", "focus", "wait", "open"] as const;
 export type StepAction = (typeof STEP_ACTIONS)[number];
 
@@ -121,7 +123,7 @@ export const DESKTOP_TOOLS = [
     name: "desktop_observe",
     readOnly: true,
     description:
-      "Look at a screen: a screenshot with its captureId, the app in front and its accessibility elements (ids e1, e2…). Aim desktop_act at those ids (exact, and the only way to act in the background on your owner's screen), or at x,y in this screenshot with its captureId. Look again after the screen changes: coordinates on an older screenshot are refused. Takes up to about 10 seconds; the first screenshot of your owner's screen may wait for them to allow screen control, and the first look at the agent screen starts it (about 5 seconds).",
+      "Look at a screen: a screenshot with its captureId, the app in front and its accessibility elements (ids e1, e2…). Aim desktop_act at those ids (exact, and the only way to act in the background on your owner's screen), or at x,y in this screenshot with its captureId. Look again after the screen changes: coordinates on an older screenshot are refused. Your owner sees none of it unless share is true, which sends this screenshot to them in this chat: the only way to show them a screen, so never say one is attached otherwise. Takes up to about 10 seconds; the first screenshot of your owner's screen may wait for them to allow screen control, and the first look at the agent screen starts it (about 5 seconds).",
     input: z
       .object({
         screen,
@@ -130,6 +132,7 @@ export const DESKTOP_TOOLS = [
         elements: z.boolean().optional().describe("Read the accessibility elements (default true)."),
         screenshot: z.boolean().optional().describe("false: read one app's elements without a picture. Needs no screen control, and works while your owner uses the computer."),
         maxElements: z.number().int().min(10).max(200).optional(),
+        share,
       })
       .strict(),
   },
@@ -150,11 +153,12 @@ export const DESKTOP_TOOLS = [
   {
     name: "desktop_zoom",
     readOnly: true,
-    description: "A closer, sharper look at part of a screenshot: its captureId and a box [x0, y0, x1, y1] in its pixels. Returns a new image with its own captureId, which clicks can aim at too. Answers in a few seconds.",
+    description: "A closer, sharper look at part of a screenshot: its captureId and a box [x0, y0, x1, y1] in its pixels. Returns a new image with its own captureId, which clicks can aim at too; share true sends it to your owner as well. Answers in a few seconds.",
     input: z
       .object({
         captureId,
         box: z.tuple([coordinate, coordinate, coordinate, coordinate]).describe("[x0, y0, x1, y1] in the screenshot's pixels."),
+        share,
       })
       .strict(),
   },
