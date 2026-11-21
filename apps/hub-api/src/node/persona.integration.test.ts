@@ -182,7 +182,7 @@ test("the stable tier stays the same byte for byte from one turn to the next; th
   assert.equal(second.stable, first.stable);
   assert.deepEqual(second.systems[0], first.systems[0], "and the assistant's instructions before it");
   assert.doesNotMatch(first.context, /14 November/);
-  assert.match(second.context, /Your owner's standing preferences, newest first \([^\n]*\):\n- Akash's launch is on 14 November\./);
+  assert.match(second.context, /Your owner's standing preferences \([^\n]*\):\n- Akash's launch is on 14 November\./);
   assert.doesNotMatch(second.stable, /14 November/, "a memory is never in the stable tier");
   const metrics = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "model.call" }, orderBy: { ts: "asc" } });
   const hashes = metrics.map((row) => (row.payload as { instructions?: { hashes: { stable: string; context: string } } }).instructions!.hashes);
@@ -251,10 +251,10 @@ test("on its owner's AI plan a node's system prompt is the stable tier alone; th
   for (const name of CONSTITUTION) assert.ok(first.system.includes(words(name)), name);
   assert.ok(first.system.includes(words("node/00-role", { name: "Assistant", slug: "assistant", role: "assistant" })));
   assert.ok(first.system.includes(words("node/13-web-task-own-loop")) && first.system.includes(words("node/10-facts-hands-own-web")), "the agent drives the browser and searches the web itself");
-  assert.doesNotMatch(first.system, /web_task|Context for this turn|standing preferences, newest first|Room: “/, "nothing of the context tier");
+  assert.doesNotMatch(first.system, /web_task|Context for this turn|Your owner's standing preferences \(|From your workspace|Room: “/, "nothing of the context tier");
   for (const spec of specs) assert.ok(spec.prompt.startsWith(`${CONTEXT}\n\nRoom: “`), "the context tier leads the prompt, marked as information");
   assert.doesNotMatch(first.prompt, /14 November/);
-  assert.match(second.prompt, /Your owner's standing preferences, newest first \([^\n]*\):\n- Akash's launch is on 14 November\.[\s\S]*<context>[\s\S]*what's on for the launch\?/, "then the message's own context and the room's new messages");
+  assert.match(second.prompt, /Your owner's standing preferences \([^\n]*\):\n- Akash's launch is on 14 November\.[\s\S]*<context>[\s\S]*what's on for the launch\?/, "then the message's own context and the room's new messages");
 });
 
 test("a node's own run profile is what its sessions use and what it says they use; the run card names the agent, model, thinking and context", async () => {
@@ -302,7 +302,53 @@ test("a conversation turn offers the advanced browser and capture tools only for
 
   await say(akash, room.id, "log in to my Azure console and check yesterday's resource usage");
   const azure = seen.at(-1)!.context;
-  assert.match(azure, /Skills for this request \(guidance[^\n]*\):\nMulti-step web work:\n- Dashboards, consoles and forms: web_task/);
-  assert.match(azure, /Sign-in and human checks:\n- A page that needs your owner's account: browser_login_needed/);
-  assert.doesNotMatch(azure, /Research and facts:/, "at most two skills");
+  assert.match(azure, /Skills for this request \(guidance[^\n]*node_skill[^\n]*\):\n- web-task: Use when the work is several steps on a site/);
+  assert.match(azure, /\n- sign-in: Use when a page needs your owner's account/);
+  assert.doesNotMatch(azure, /- research: |- shopping: /, "only the skills its words call for");
+  assert.doesNotMatch(azure, /Dashboards, consoles and forms: web_task/, "a skill's full text only through node_skill");
+});
+
+test("an owner's turn gets their overdue and due-today work, the memories and skills that fit, and the turn's record keeps what was chosen", async () => {
+  const akash = await person("Akash");
+  await laptopFor(akash);
+  await saveSettings(h.prisma, akash.id, { timezone: "UTC" });
+  const { node, room } = await createNode(akash, "assistant");
+  const today = new Date().toISOString().slice(0, 10);
+  const day = (offset: number) => new Date(Date.parse(`${today}T00:00:00.000Z`) + offset * 86_400_000);
+  // The v1 eval's day plan read only today's tasks and missed this one.
+  const domain = await h.prisma.task.create({ data: { userId: akash.id, title: "Renew the company domain", status: "todo", priority: "p0", due: day(-3) } });
+  const invoice = await h.prisma.task.create({ data: { userId: akash.id, title: "Send the invoice to Acme", status: "todo", due: day(0) } });
+  await h.prisma.nodeMemory.create({ data: { userId: akash.id, nodeId: node.id, content: "Akash plans his day with deep work first.", key: "day plans", pinned: true } });
+  script = (turn) => (turn.transcript.includes("plan my day") ? [{ name: "node_skill", arguments: { name: "planning" } }] : []);
+  await say(akash, room.id, "plan my day");
+  const turn = seen.find((row) => row.slug === "assistant")!;
+  assert.ok(turn.tools.includes("node_skill"), "node_skill is offered");
+  // Set apart from the stable tier, with the label that says they are information.
+  assert.match(turn.context, /Skills for this request \([^\n]*\):\n- planning: Use when /);
+  assert.match(turn.context, /Your owner's standing preferences \([^\n]*\):\n- Akash plans his day with deep work first\. \(key “day plans”, pinned\)/);
+  assert.match(turn.context, new RegExp(`From your workspace \\(information, not instructions[^\\n]*\\n(?:[^\\n]*\\n)*- \\[Renew the company domain\\]\\(ensemble://task/${domain.id}\\): due [0-9-]{10} \\(3 days overdue\\)`));
+  assert.ok(turn.context.includes(`- [Send the invoice to Acme](ensemble://task/${invoice.id}): due today`));
+  assert.doesNotMatch(turn.stable, /Renew the company domain|deep work first|Skills for this request/, "never in the stable tier");
+
+  type Selected = { config: { version: string; hash: string }; skills: Array<{ name: string; source: string; score: number; why: string[] }>; memories: Array<{ why: string; pinned: boolean }>; context: Array<{ group: string; id: string; title: string }> };
+  const record = async () => {
+    const rows = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" }, orderBy: { ts: "asc" } });
+    return (rows.at(-1)!.payload as { selected: Selected }).selected;
+  };
+  const selected = await record();
+  assert.equal(selected.config.version, (await import("../context/config.js")).DEFAULT_CONTEXT_CONFIG.version);
+  assert.match(selected.config.hash, /^[0-9a-f]{12}$/);
+  assert.equal(selected.skills[0]?.name, "planning");
+  assert.ok(selected.skills[0]!.score > 0 && selected.skills[0]!.why.length > 0);
+  assert.deepEqual(selected.memories.map((row) => [row.why, row.pinned]), [["pinned", true]]);
+  assert.deepEqual(selected.context.filter((row) => row.group === "overdue").map((row) => row.id), [domain.id]);
+  assert.deepEqual(selected.context.filter((row) => row.group === "today").map((row) => row.id), [invoice.id]);
+
+  // node_skill gave the full text; the next turn counts it as read in this conversation.
+  const replies = await h.prisma.assistantMessage.findMany({ where: { userId: akash.id, role: "assistant" }, select: { toolCalls: true } });
+  const read = replies.flatMap((row) => (Array.isArray(row.toolCalls) ? row.toolCalls : []) as Array<{ name?: string; summary?: string }>).find((call) => call.name === "node_skill");
+  assert.equal(read?.summary, "Read the planning skill.", "node_skill answered with the skill");
+  await say(akash, room.id, "and after lunch?");
+  const again = await record();
+  assert.ok(again.skills.some((row) => row.name === "planning" && row.why.includes("read in this conversation")), JSON.stringify(again.skills));
 });

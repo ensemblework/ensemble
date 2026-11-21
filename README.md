@@ -95,6 +95,7 @@ apps/cli                the `ensemble` CLI, runner and `ensemble mcp` (npm name 
 apps/quick-capture      Tauri tray app with a global shortcut
 apps/desktop            Tauri desktop app with a local API sidecar
 packages/               brand, shared-types, block-diagrams, ide-theme, prompts (the instructions models get)
+skills/                 Ensemble's bundled skills (<name>/SKILL.md), embedded by packages/prompts
 packaging/              CLI release metadata: Homebrew, Scoop, winget, nfpm, AUR
 infra/                  local docker-compose; deploy/ (VM), deploy/home/ (production), deploy/testing/ (isolated web testing)
 design/                 generated brand assets (pnpm brand:build)

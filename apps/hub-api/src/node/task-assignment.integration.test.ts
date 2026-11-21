@@ -311,6 +311,10 @@ test("scripted: a node answers once and runs the task in an agent session with t
   assert.deepEqual([job.taskId, job.provider, job.model, job.reasoningEffort], [task.id, "claude-code", "claude-opus-4.8", "high"]);
   const held = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
   assert.deepEqual([held.owner, held.assigneeNodeId], ["node", node.id], "its own run keeps the task with the node");
+  // The task's words chose its context (node/instructions.ts): the memory about coding work came with it.
+  const record = (await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" }, orderBy: { ts: "asc" } })).at(-1)!.payload as { selected: { terms: string[]; memories: unknown[] } };
+  assert.ok(["dark", "mode", "settings"].every((term) => record.selected.terms.includes(term)), JSON.stringify(record.selected.terms));
+  assert.equal(record.selected.memories.length, 1);
 
   // Its work board lists the task on its next turn.
   script = () => ({ text: "Going: the session is building it." });

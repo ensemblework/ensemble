@@ -2,6 +2,8 @@
 
 Write a personal skill to tell the assistant and assigned agents how you like work done. Open **Skills** in the space where you want to use it, then edit its Markdown instructions. Skills keep version history. App actions use typed tools and playbooks instead ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
 
+Ensemble Node also comes with Ensemble's own skills (planning, checking work before saying it is done, debugging, research, shopping and more, §2.1). Your enabled personal skills join them: a node lists the ones that fit your message and reads one in full when it starts that kind of work. A personal skill with the same name as one of Ensemble's replaces it for your nodes.
+
 ## 1. Storage and editing
 
 Edit the body on the Skills page. It saves 900 ms after you stop typing. Each body change creates a version; the newest **three** versions are kept, including the current one. Editing the body removes older versions.
@@ -21,10 +23,22 @@ Read it again before editing." The Markdown body is what agents follow.
 | Workspace agent brief (`workspace/agent.ts`) | Only the skills linked to the task (`skillIds`), never one with a dedicated `scope.purpose`; up to 6, each body cut to 900 characters |
 | Context Bridge brief (`bridge/service.ts`, `rankSkills`) | Enabled skills ranked: linked on the task +5, scope mentions the repository +3, the project +2, the task type +2. The top 3 with a score (else the top 3), bodies excerpted to 1,800 characters. Only current bodies; version history is never exposed |
 | Hub assistant (`assistant/state.ts`) | The names and descriptions of enabled skills (up to 12, not one with `scope.purpose`) in its instructions; it reads a body with `hub_read_skill` when one applies |
+| Ensemble Node (`node/skills.ts`) | One catalogue with Ensemble's bundled skills (§2.1): the enabled skills (not one with `scope.purpose`) whose name, description or first 1,000 characters share words with the turn's request, one line each, in a turn its owner started and reads alone; `node_skill` reads one in full by its name ([35 §5.6](35_ENSEMBLE_NODE.md#56-context-db-memory-and-skills-implementation-reference)). Node turns leave the assistant's own list out |
 
 Runs do not record which skills were used: `Run.skillIds` and `Run.skillSignatures` exist in the schema but are not written.
 
 A skill is guidance, never a permission, credential or schedule.
+
+### 2.1 Ensemble's bundled skills
+
+Ensemble's own skills are `SKILL.md` files in the repository's `skills/<name>/` folder, written in Ensemble's words. Each has the frontmatter every agent harness reads: `name` (the folder's name), `description` (when to use it, starting "Use when", under 500 characters), `license`, and `metadata` with `priority` (`p0` for the process skills), `keywords` (the words and phrases that call for it), `tools` (it is offered only when the turn has one of them; none: always) and `source` (where its method comes from; adapted MIT texts are listed in `THIRD_PARTY_NOTICES`). The body is the guidance, as lines to follow, with no headings.
+
+| Priority | Skills |
+| --- | --- |
+| p0 (process) | `planning`, `verify-before-done`, `clarify-intent`, `debugging`, `delegation`, `independent-review`, `stuck-recovery` |
+| p1 | `research`, `writing`, `connected-apps`, `browser-tasks`, `desktop-tasks`, `recording`, `memory-notes`, `routine-design`, `shopping`, `screenshots`, `sign-in`, `web-files`, `web-task` |
+
+`packages/prompts` embeds them at build time (`scripts/generate.mjs` writes `src/skills.generated.ts`, exported as `SKILLS`), so the API, the desktop sidecar and the CLI read no file at run time; the generator refuses a skill whose frontmatter or wording breaks these rules, and `pnpm prompts:check` fails while the module is out of date. Ensemble Node chooses among them for each turn ([35 §5.6](35_ENSEMBLE_NODE.md#56-context-db-memory-and-skills-implementation-reference)).
 
 ## 3. Morning brief instructions
 
@@ -70,7 +84,7 @@ Tests (under `apps/hub-api/src`): `jobs/retention.integration.test.ts` (mining w
 
 ## In the code
 
-The code is in `apps/hub-api`: `routes/skills.ts`, `jobs/skill-mining.ts` and `assistant/tools/skills.ts`. `apps/skill-forge` is an empty Python package stub; there are no `forge:*` or `ensemble-forge` commands. Skills are the `skills` module.
+The code is in `apps/hub-api`: `routes/skills.ts`, `jobs/skill-mining.ts` and `assistant/tools/skills.ts`; Ensemble Node's catalogue is `node/skills.ts`. `apps/skill-forge` is an empty Python package stub; there are no `forge:*` or `ensemble-forge` commands. Skills are the `skills` module. Bundled skills are the root `skills/` folder, embedded by `packages/prompts` (§2.1).
 
 `Skill` holds the current body, name, slug, description, scope, enabled/deleted state and version; `SkillVersion` holds past bodies. Bodies live in the database, not in files. The API returns the newest **three** versions, current included (`KEEP_VERSIONS`), and a body edit deletes older ones.
 

@@ -3127,16 +3127,37 @@ model NodePeerRequest {
   @@map("node_peer_requests")
 }
 
-/// What a node keeps between conversations. The owner sees, edits and deletes every row.
+/// A fact or preference a node keeps for later turns (node/memory.ts, docs/35 §5.6): its owner's words, with
+/// a scope, what it is about, where it came from, and its earlier revisions kept as history.
 model NodeMemory {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  nodeId    String    @map("node_id")
-  content   String
-  createdAt DateTime  @default(now()) @map("created_at")
-  node      NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid())
+  userId          String    @map("user_id")
+  nodeId          String    @map("node_id")
+  content         String
+  /// owner (about the owner: every node of theirs reads it) | node (this node's own) | room | project
+  scope           String    @default("node")
+  /// The room's id for a room memory, the project's for a project memory.
+  scopeId         String?   @map("scope_id")
+  /// What the fact is about ("preferred coding agent"): a newer fact with the same key replaces it.
+  key             String?
+  /// The owner's message it came from and the node turn that saved it; both null when the owner wrote it in Node.
+  sourceMessageId String?   @map("source_message_id")
+  turnId          String?   @map("turn_id")
+  /// The newer revision that replaced this one, which stays as history.
+  supersededById  String?   @map("superseded_by_id")
+  /// The owner pinned it: always in the node's context, and no node can change it.
+  pinned          Boolean   @default(false)
+  /// Past the live memories a node keeps, the oldest unused are archived, never deleted.
+  archivedAt      DateTime? @map("archived_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  /// When its words, key, scope, pin or archive state last changed; reading it never moves it.
+  updatedAt       DateTime  @default(now()) @map("updated_at")
+  node            NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([nodeId, createdAt])
+  @@index([userId, scope])
+  @@index([supersededById])
   @@map("node_memories")
 }
 

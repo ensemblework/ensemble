@@ -35,7 +35,7 @@ import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
-import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
+import { tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
 
@@ -345,7 +345,6 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
-  const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
   // A turn the room reads keeps its room-bound persona (node/audience.ts); any other is assembled from packages/prompts.
   const roomBound = bound ? await bound.persona() : null;
   const instructions = roomBound
@@ -358,7 +357,12 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         fromNonOwner,
         ownerOnly,
         step: Boolean(step),
-        skills,
+        // The skills, memories and workspace items for this turn are chosen from these (node/instructions.ts).
+        turn,
+        words: ownerWords,
+        has,
+        conversationId,
+        modules: user.moduleSet,
         provider: choice.provider,
         origin: room.kind === "task" && !node.parentNodeId ? await originLine(app, node, room) : null,
         packet,
@@ -400,7 +404,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       modules: user.moduleSet,
       ...(instructions ? { nodeInstructions: instructions } : { agentPersona: roomBound!.text }),
       instructionsRef: assembled,
-      extraRefs: instructions?.rooms ?? roomBound!.rooms,
+      extraRefs: instructions?.refs ?? roomBound!.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.

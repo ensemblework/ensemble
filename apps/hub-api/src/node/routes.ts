@@ -24,6 +24,7 @@ import { pausedNotice, stopNodeRuns } from "./sessions.js";
 import { registerSessionRoutes } from "./session-routes.js";
 import { saveSecret, SecretAnswer, SecretError, secretStuck, secretTarget } from "./node-secrets.js";
 import { createCrew, deleteNode, MAX_NODES, promoteHelper } from "./helpers.js";
+import { checkScope, editAsOwner, forgetMemory, KEY_CHARS, listMemories, MEMORY_CHARS, MEMORY_SCOPES, MemoryRefused, memoryView, rememberAsOwner, scopeTitles } from "./memory.js";
 import { stopPlans } from "./plans.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
@@ -595,27 +596,69 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // What a node remembers (node/memory.ts): live memories first (pinned, then newest), then archived ones;
+  // `history=1` adds the revisions newer ones replaced.
   app.get("/api/node/nodes/:id/memory", async (request) => {
     const accountId = nodeAccount(request);
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
-    const rows = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
-    return { memories: rows.map((row) => ({ id: row.id, content: row.content, createdAt: row.createdAt.toISOString() })) };
+    const query = z.object({ history: z.enum(["0", "1", "true", "false"]).optional() }).parse(request.query ?? {});
+    return { memories: await listMemories(prisma, node, { history: query.history === "1" || query.history === "true" }) };
   });
 
+  const MemoryScope = z.enum(MEMORY_SCOPES);
+  const memoryFailure = (error: unknown) => (error instanceof MemoryRefused ? fail(error.status, error.message) : error);
+
+  /** The owner adds a memory; one with the key of a memory it has replaces that one (kept as history). */
   app.post("/api/node/nodes/:id/memory", async (request, reply) => {
     const accountId = nodeAccount(request);
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
-    const body = z.object({ content: z.string().min(1).max(500) }).strict().parse(request.body);
-    const row = await prisma.nodeMemory.create({ data: { userId: accountId, nodeId: node.id, content: body.content.trim() } });
-    return reply.code(201).send({ memory: { id: row.id, content: row.content, createdAt: row.createdAt.toISOString() } });
+    const body = z
+      .object({ content: z.string().trim().min(1).max(MEMORY_CHARS), key: z.string().max(KEY_CHARS).nullish(), scope: MemoryScope.optional(), scopeId: z.string().uuid().nullish(), pinned: z.boolean().optional() })
+      .strict()
+      .refine((value) => value.scopeId == null || value.scope !== undefined, "Send scope with scopeId.")
+      .parse(request.body);
+    try {
+      const scopeId = body.scope ? await checkScope(prisma, node, body.scope, body.scopeId) : null;
+      const saved = await rememberAsOwner(prisma, node, { ...body, scopeId });
+      return reply.code(201).send({ memory: memoryView(saved.memory, await scopeTitles(prisma, node, [saved.memory])), ...(saved.replaced ? { replaced: saved.replaced.id } : {}), archived: saved.archived });
+    } catch (error) {
+      throw memoryFailure(error);
+    }
   });
 
+  /** The owner edits a memory: new words make a revision that replaces it; a key, scope, pin or archive change applies in place. */
+  app.patch("/api/node/nodes/:id/memory/:memoryId", async (request) => {
+    const accountId = nodeAccount(request);
+    const { id, memoryId } = request.params as { id: string; memoryId: string };
+    const node = await ownNode(prisma, accountId, id);
+    const body = z
+      .object({
+        content: z.string().trim().min(1).max(MEMORY_CHARS).optional(),
+        key: z.string().max(KEY_CHARS).nullish(),
+        scope: MemoryScope.optional(),
+        scopeId: z.string().uuid().nullish(),
+        pinned: z.boolean().optional(),
+        archived: z.boolean().optional(),
+      })
+      .strict()
+      .refine((value) => Object.keys(value).length > 0, "Nothing to change.")
+      .refine((value) => value.scopeId === undefined || value.scope !== undefined, "Send scope with scopeId.")
+      .parse(request.body);
+    try {
+      const scopeId = body.scope ? await checkScope(prisma, node, body.scope, body.scopeId) : body.scopeId;
+      const memory = await editAsOwner(prisma, node, memoryId, { ...body, ...(scopeId !== undefined ? { scopeId } : {}) });
+      return { memory: memoryView(memory, await scopeTitles(prisma, node, [memory])) };
+    } catch (error) {
+      throw memoryFailure(error);
+    }
+  });
+
+  /** Deletes a memory with its earlier revisions. */
   app.delete("/api/node/nodes/:id/memory/:memoryId", async (request, reply) => {
     const accountId = nodeAccount(request);
     const { id, memoryId } = request.params as { id: string; memoryId: string };
     const node = await ownNode(prisma, accountId, id);
-    const deleted = await prisma.nodeMemory.deleteMany({ where: { id: memoryId, nodeId: node.id, userId: accountId } });
-    if (!deleted.count) throw fail(404, "That memory is not available.");
+    if (!(await forgetMemory(prisma, node, memoryId))) throw fail(404, "That memory is not available.");
     return reply.code(204).send();
   });
 

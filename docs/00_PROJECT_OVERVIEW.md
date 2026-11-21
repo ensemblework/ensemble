@@ -48,6 +48,8 @@ The scheduler runs product jobs (reminders, retention, device leases) and the pe
 
 Its backend is hub-api's `node` module: same account, workspace tools, included models and credits. A node acts for its owner in every space they can open, their own and those shared with them, with their current role in each, and lists their work across them.
 
+Before each turn's model call, code (no model) gives a node what fits the message: in a chat only its owner reads, their overdue and due-today tasks, today's calendar and the workspace records the words are about, as information with links; the memories that fit, pinned ones always (a memory is revised by its key and archived rather than deleted, and the owner lists, edits and pins them); and a short catalogue of skills, Ensemble's bundled ones (the repository's `skills/` folder) and the owner's own, which the node reads in full when it starts that kind of work.
+
 Nodes run the owner's own coding agents on their paired computer as agent sessions they start, queue, steer and stop, each node only its own; that work stays off the board unless the owner asks for a task.
 
 In a crew one node answers its person (the one they mention, else the lead); the lead hands work to the others as one plan whose steps run in order without chat between nodes, and reports once. A plan names every requirement and an independent check for each; a failed check repairs the build and checks it again before anything that depends on it, and the lead reports once with the checked screenshots and videos. A node does quick work itself, takes Ensemble tasks its person gives it or its crew from a task's owner field (deciding itself how to do them, a crew's lead by its members' roles), brings in temporary helpers for side tasks, makes nodes and crews when asked, runs routines on a schedule or an event, and hands an agent session to another node.
@@ -253,7 +255,7 @@ Migration `20261006010000_account_data_lifetime` adds SQL foreign keys that stop
 | --- | --- | --- |
 | Hub | `apps/hub-web/app`, `components`, `lib` | [02](02_MODULE_INTERACTION_HUB_UI.md) |
 | Context and connected apps | `apps/hub-api/src/context`, `connectors`, `people`, `projects` | [03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md) |
-| Personal skills | `apps/hub-api/src/routes/skills.ts`, `jobs/skill-mining.ts`, `cowork/morning-skill.ts` | [04](04_MODULE_SKILL_FORGE.md) |
+| Personal skills, Ensemble's bundled skills | `apps/hub-api/src/routes/skills.ts`, `jobs/skill-mining.ts`, `cowork/morning-skill.ts`; bundled `SKILL.md` files in `skills/`, embedded by `packages/prompts` | [04](04_MODULE_SKILL_FORGE.md) |
 | Agent execution | `apps/hub-api/src/workspace`, `devices`, `remote` | [05](05_MODULE_TASK_ORCHESTRATOR.md), [06](06_MODULE_WORKSPACE_AND_SURFACES.md) |
 | Access, audit, retention | `apps/hub-api/src/lib`, `sharing`, `spaces`, `jobs` | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Assistant | `apps/hub-api/src/assistant` | [11](11_HOW_THE_ASSISTANT_WORKS.md) |
