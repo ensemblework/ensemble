@@ -89,16 +89,19 @@ export function summaryTable(results: RunResult[], repeats = 1): string {
   return [...HEADER, ...results.map((result) => row(result, repeats)), total].join("\n");
 }
 
+const minutes = (ms: number) => `${(ms / 60_000).toFixed(1)} min`;
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 /** Per suite and overall: the measures v2 is meant to move. */
 export function suiteTable(results: RunResult[]): string {
   const suites = [...new Set(results.map((result) => result.suite))];
   const line = (name: string, rows: RunResult[]) => {
     const t = totals(rows);
-    return `| ${name} | ${t.runs} | ${t.passed} | ${pct(t.meanScore)} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
+    return `| ${name} | ${t.runs} | ${t.passed} | ${t.verified} | ${pct(t.meanScore)} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${t.approvals}${t.unanswered ? ` (${t.unanswered} unanswered)` : ""} | ${minutes(t.wallMs)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
   };
   return [
-    "| suite | tasks | passed | mean score | turns ended with no answer | error messages | false claims | input tokens per task | credits per task |",
-    "|---|---|---|---|---|---|---|---|---|",
+    "| suite | tasks | passed | verified | mean score | turns ended with no answer | error messages | false claims | input tokens per task | approvals | time | credits per task |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...suites.map((suite) => line(suite, results.filter((result) => result.suite === suite))),
     ...(suites.length > 1 ? [line("**all**", results)] : []),
   ].join("\n");
@@ -118,25 +121,10 @@ function cleanupLines(entries: CleanupEntry[]): string[] {
   ];
 }
 
-export function markdown(saved: Saved): string {
-  const repeats = saved.repeat;
-  const lines: string[] = [
-    `# Ensemble Node eval: ${saved.label || saved.stamp}`,
-    "",
-    `Commit \`${saved.commit}\` · agent ${saved.agent} · model ${saved.model} · judge ${saved.judgeModel} · repeat ${repeats} · started ${saved.startedAt}${saved.finishedAt ? ` · finished ${saved.finishedAt}` : " · unfinished"}.`,
-    "",
-    "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).",
-    "",
-    summaryTable(saved.results, repeats),
-    "",
-    "## Suite metrics",
-    "",
-    suiteTable(saved.results),
-    "",
-    "## Failed checks, false claims and errors",
-    "",
-  ];
-  const problems = saved.results.filter((result) => !result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined"));
+/** Every task that failed, claimed something false, hit an error or met a card the harness could not approve. */
+function problemLines(results: RunResult[], repeats: number): string[] {
+  const lines: string[] = [];
+  const problems = results.filter((result) => !result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined"));
   if (!problems.length) lines.push("None.");
   for (const result of problems) {
     const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
@@ -149,6 +137,67 @@ export function markdown(saved: Saved): string {
     const declined = result.cards.filter((card) => card.answered && card.answer === "declined");
     if (declined.length) lines.push(`  - Cards declined: ${declined.map((card) => `${card.type}${card.note ? ` (${cell(card.note)})` : ""}`).join(", ")}.`);
   }
+  return lines;
+}
+
+/** What the columns mean, for every summary. */
+export const COLUMNS =
+  "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).";
+
+/** Several saved runs side by side: their suites, then every task. */
+export function summary(title: string, runs: Array<{ name: string; saved: Saved }>): string {
+  const results = runs.flatMap((run) => run.saved.results);
+  const unique = (values: string[]) => [...new Set(values)];
+  const first = runs[0]!.saved;
+  const repeats = Math.max(...runs.map((run) => run.saved.repeat));
+  return `${[
+    `# Ensemble Node eval: ${title}`,
+    "",
+    `Agent ${first.agent} · model ${first.model} · judge ${unique(runs.map((run) => run.saved.judgeModel)).join(", ")} · commits ${unique(runs.flatMap((run) => run.saved.commit.split(", "))).join(", ")} · repeat ${repeats}.`,
+    "",
+    COLUMNS,
+    "",
+    "## Suites",
+    "",
+    suiteTable(results),
+    "",
+    "## Tasks",
+    "",
+    summaryTable(results, repeats),
+    "",
+    "## Failed checks, false claims and errors",
+    "",
+    ...problemLines(results, repeats),
+    "",
+    "## Sources",
+    "",
+    ...runs.map((run) => `- [\`${run.name}.md\`](${run.name}.md): ${unique(run.saved.results.map((result) => result.suite)).join(", ")}, ${plural(run.saved.results.length, "task")}, ${run.saved.cleanup.filter((entry) => entry.deleted).length} of ${plural(run.saved.cleanup.length, "agent session")} deleted.`),
+    "",
+    "## Notes",
+    "",
+    ...unique(runs.flatMap((run) => run.saved.notes)).map((note) => `- ${note}`),
+  ].join("\n")}\n`;
+}
+
+export function markdown(saved: Saved): string {
+  const repeats = saved.repeat;
+  const lines: string[] = [
+    `# Ensemble Node eval: ${saved.label || saved.stamp}`,
+    "",
+    `Commit \`${saved.commit}\` · agent ${saved.agent} · model ${saved.model} · judge ${saved.judgeModel} · repeat ${repeats} · started ${saved.startedAt}${saved.finishedAt ? ` · finished ${saved.finishedAt}` : " · unfinished"}.`,
+    "",
+    COLUMNS,
+    "",
+    summaryTable(saved.results, repeats),
+    "",
+    "## Suite metrics",
+    "",
+    suiteTable(saved.results),
+    "",
+    "## Failed checks, false claims and errors",
+    "",
+    ...problemLines(saved.results, repeats),
+  ];
   lines.push("", "## Cleanup receipt", "", ...cleanupLines(saved.cleanup));
   if (saved.notes.length) lines.push("", "## Notes", "", ...saved.notes.map((note) => `- ${note}`));
   return `${lines.join("\n")}\n`;

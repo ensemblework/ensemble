@@ -10,7 +10,7 @@
 | `eval/node/lib/world.ts` | The API in the eval process on an in-memory PGlite database, turns on the owner's subscription on this computer (`ENSEMBLE_DESKTOP=1`) |
 | `eval/node/lib/computer-main.ts` | The owner's computer: a second process with its own in-memory database, paired through the real remote loop, running device tools, coding sessions and the browser on this machine |
 | `eval/node/tasks/` | The `core` suite (11 tasks, a DM with one node), the `crew` suite (4 tasks, a lead, a developer and a tester) and the `hard` suite (10 tasks on what Node v2 changes: many reads, old memories and meetings, overdue work, the desktop, honest delivery, interruptions) |
-| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; the `baseline-v1-all` and `baseline-v1-hard-all` files are the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna |
+| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; `baseline-v1-summary.md` is the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna, all three suites side by side |
 
 ## Running it
 
@@ -20,7 +20,7 @@ From the repository root, with the agent installed and signed in on this compute
 pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:core --agent copilot-cli --model gpt-6-luna --repeat 1 --label baseline-v1
 ```
 
-`--tasks` takes task ids, `suite:core`, `suite:crew`, `suite:hard` or `all`. `--judge-model` picks the rubric judge's model, `--regrade <results.json>` grades a saved run again from its traces, `--report <results.json>` writes a saved run's summary again, and `--work-dir` moves the scratch folder (outside the repository, with a short path).
+`--tasks` takes task ids, `suite:core`, `suite:crew`, `suite:hard` or `all`. `--judge-model` picks the rubric judge's model, `--regrade <results.json>` grades a saved run again from its traces, `--report <results.json>` writes a saved run's summary again, `--summary <results.json>,…` puts several runs' suites side by side in one file, and `--work-dir` moves the scratch folder (outside the repository, with a short path).
 
 ## What a run does
 

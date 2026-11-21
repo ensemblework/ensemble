@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markdown, suiteTable, summaryTable, totals, withMetrics } from "./report.js";
+import { markdown, suiteTable, summary, summaryTable, totals, withMetrics } from "./report.js";
 import type { RunResult, Saved } from "./types.js";
 
 const run = (task: string, over: Partial<RunResult> = {}): RunResult => ({
@@ -79,9 +79,20 @@ test("no-answer turns and error messages come from the metrics, or from the erro
 });
 
 test("the suite table has a row per suite, an overall row, and input tokens per task", () => {
-  const lines = suiteTable([run("a"), run("b", { suite: "hard", pass: false, score: 0.5, falseClaims: ["x"] }), run("c", { suite: "hard" })]).split("\n");
+  const lines = suiteTable([run("a"), run("b", { suite: "hard", pass: false, verifiedPass: false, score: 0.5, falseClaims: ["x"] }), run("c", { suite: "hard" })]).split("\n");
   assert.equal(lines.length, 5);
-  assert.match(lines[2]!, /^\| core \| 1 \| 1 \| 100% \| 0 \| 0 \| 0 \| 12k \| 0\.50 \|$/);
-  assert.match(lines[3]!, /^\| hard \| 2 \| 1 \| 75% \| 0 \| 0 \| 1 \| 12k \|/);
-  assert.match(lines[4]!, /^\| \*\*all\*\* \| 3 \| 2 \|/);
+  assert.match(lines[2]!, /^\| core \| 1 \| 1 \| 1 \| 100% \| 0 \| 0 \| 0 \| 12k \| 1 \| 1\.0 min \| 0\.50 \|$/);
+  assert.match(lines[3]!, /^\| hard \| 2 \| 1 \| 1 \| 75% \| 0 \| 0 \| 1 \| 12k \| 2 \| 2\.0 min \|/);
+  assert.match(lines[4]!, /^\| \*\*all\*\* \| 3 \| 2 \| 2 \|/);
+});
+
+test("a summary puts several runs' suites side by side and lists its sources", () => {
+  const saved = (label: string, results: RunResult[]): Saved => ({ label, stamp: "s", commit: "abc", agent: "copilot-cli", model: "gpt-6-luna", judgeModel: "gpt-6-luna", tasks: [], repeat: 1, startedAt: "", finishedAt: "", results, cleanup: [{ agent: "copilot-cli", id: "1", kind: "node-turn", task: "a", deleted: true }], notes: ["same setup"] });
+  const text = summary("baseline", [{ name: "one", saved: saved("one", [run("a")]) }, { name: "two", saved: saved("two", [run("b", { suite: "hard" })]) }]);
+  assert.match(text, /\| core \| 1 \|/);
+  assert.match(text, /\| hard \| 1 \|/);
+  assert.match(text, /\| \*\*all\*\* \| 2 \|/);
+  assert.match(text, /- \[`one\.md`\]\(one\.md\): core, 1 task, 1 of 1 agent session deleted\./);
+  assert.equal(text.match(/- same setup/g)?.length, 1);
+  assert.ok(!text.includes("—") && !text.includes(" -- "));
 });

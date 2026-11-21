@@ -24,8 +24,9 @@ pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:co
 | `--keep` | off | Keeps the scratch folder (logs, fixtures, both computers' state) for debugging |
 | `--protect` | none | Agent session ids never to delete, separated by commas; `NODE_EVAL_PROTECT` adds more |
 | `--regrade <results.json>` | | Grades a saved run again from the evidence in its traces: no node turns, only the judge and live ground truth again |
-| `--combine <results.json>,<results.json>` | | With `--label`: one result file from several runs on the same agent and model, a later run of a task replacing an earlier one |
+| `--combine <results.json>,<results.json>` | | With `--label`: one result file from several runs on the same agent and model, in the suites' task order, a later run of a task replacing an earlier one |
 | `--report <results.json>` | | Writes a saved run's JSON and Markdown again in the current format (counts older files lack are read from their errors); no agent calls |
+| `--summary <results.json>,<results.json>` | | With `--label`: one Markdown summary of several saved runs on the same agent and model, `results/<label>.md`: their suites side by side, every task, and every failed check; no agent calls |
 | `--cleanup <ledger.jsonl>` | | Deletes the sessions a crashed run recorded in its scratch folder's ledger |
 
 The agent must be installed and signed in on this computer. Press Ctrl+C once to stop after the current task, twice to quit at once.
@@ -113,17 +114,17 @@ Each run writes `eval/node/results/<timestamp>-<label>.json` and a Markdown summ
 | tokens in / out, credits | From the agent's session usage records (node turns and coding sessions), or Ensemble's own `model.call` metric events where the agent kept none; credits are the AI units Copilot reports in its usage records |
 | time, approvals, errors | Wall time, owner cards (and how many were left unanswered), failed turns, runs and harness errors |
 
-Under the table, **suite metrics** give per suite and overall the measures v2 is meant to move: turns ended with no answer, error messages, false claims, and input tokens and credits per task.
+Under the table, **suite metrics** give per suite and overall: tasks passed and verified, mean score, turns ended with no answer, error messages, false claims, input tokens per task, approvals, time and credits per task. The no-answer turns, error messages, false claims and input tokens are the measures v2 is meant to move.
 
-In the `baseline-v1-all` runs (`core` and `crew`) the agent used this machine's Copilot home: node turns could see its MCP servers (and seldom used them), and every prompt carried those servers' tool lists, so input tokens per task there run higher than with a home of the run's own. Compare `core` and `crew` against a run of this harness, not against that file.
+`eval/node/results/baseline-v1-summary.md` is the Ensemble Node v1 baseline: commit 9a418803, Copilot CLI with gpt-6-luna, one run of each task, all three suites with this harness, side by side and task by task. It is made with `--summary` from the `baseline-v1-iso-all` files (`core` and `crew`) and the `baseline-v1-hard-all` files (`hard`), each combined from the runs beside it.
 
-`eval/node/results/2026-11-21T14-52-32-baseline-v1-all.md` is the Ensemble Node v1 baseline of the `core` and `crew` suites (commit 9a418803, Copilot CLI, gpt-6-luna), combined from the runs beside it; `2026-11-21T16-04-55-baseline-v1-hard-all.md` is the same for the `hard` suite.
+The `baseline-v1-all` files (`core` and `crew`) come from runs in which the agent used this machine's Copilot home: node turns could see its MCP servers, and every prompt carried their tool lists, so input tokens per task there run higher. Compare against the summary, not against them.
 
 Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: messages, turns, runs, plans, cards and sessions as they happen, then the checks, the metrics, and the evidence the grader read (kept small and with home folders, keys and tokens redacted). `--regrade` reads that last line.
 
 ## Cost and safety
 
-- Every node turn, coding session and judge call is a call on the owner's own subscription. On Copilot CLI with gpt-6-luna the `core` suite took about 12 minutes, 14 sessions (2 of them the judge's), 1.6 million input tokens and 6 credits; the `crew` suite about 21 minutes, 18 sessions, 3.6 million input tokens and 13 credits; the `hard` suite about 9 minutes, 13 sessions, 1.7 million input tokens and 7 credits. Use a cheap model.
+- Every node turn, coding session and judge call is a call on the owner's own subscription. On Copilot CLI with gpt-6-luna the `core` suite took about 8 minutes, 14 sessions (2 of them the judge's), 1.2 million input tokens and 5 credits; the `crew` suite about 35 minutes (25 of them a task that timed out), 18 sessions, 3.5 million input tokens and 12 credits; the `hard` suite about 9 minutes, 13 sessions, 1.7 million input tokens and 7 credits. Use a cheap model.
 - Runs are sequential: one task at a time, one agent process at a time where the product allows it.
 - Included models and Ensemble's own agent get no runtime here (`AGENT_RUNTIME_URL` points nowhere), so those calls fail at once and cost nothing.
 - Variables that could reach real keys or a screen are removed before Ensemble loads; every folder Ensemble writes (state, workspace, app data, temporary files, the runtime folder) is in the scratch folder, and the session bus reaches only the keyring.

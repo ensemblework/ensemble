@@ -6,6 +6,7 @@
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --regrade eval/node/results/<stamp>-<label>.json [--tasks ids]
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --combine <results.json>,<results.json> --label <label>
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --report <results.json>
+ *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --summary <results.json>,<results.json> --label <label>
  *   pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --cleanup <ledger.jsonl>
  *
  * Options: --work-dir <dir> (scratch folders; default the system's temporary folder), --keep (keep the
@@ -19,7 +20,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, falseClaims, scoreOf } from "./lib/grade.js";
-import { markdown, NO_ANSWER, summaryTable, withMetrics } from "./lib/report.js";
+import { markdown, NO_ANSWER, suiteTable, summary, summaryTable, withMetrics } from "./lib/report.js";
 import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
@@ -27,7 +28,7 @@ import { collectEvidence } from "./lib/evidence.js";
 import { busy, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, waitQuiet, waitUntil } from "./lib/drive.js";
 import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
 import { lastAnswer } from "./tasks/helpers.js";
-import { selectTasks } from "./tasks/index.js";
+import { selectTasks, TASKS } from "./tasks/index.js";
 import type { Check, CleanupEntry, Evidence, GradeInput, Judge, RunResult, Saved, Task } from "./lib/types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,10 +54,10 @@ const RUN_NOTES = [
   "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland, PipeWire or PulseAudio socket) and no session bus beyond the keyring. Cards asking for the owner's own screen are never approved; a desktop task that needs a screen must bring its own.",
 ];
 
-type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
+type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; summary: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, report: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [] };
+  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, report: null, summary: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]!;
     const value = () => {
@@ -73,6 +74,7 @@ function parseArgs(argv: string[]): Args {
     else if (flag === "--regrade") args.regrade = value();
     else if (flag === "--combine") args.combine = value();
     else if (flag === "--report") args.report = value();
+    else if (flag === "--summary") args.summary = value();
     else if (flag === "--cleanup") args.cleanup = value();
     else if (flag === "--work-dir") args.workDir = resolve(value());
     else if (flag === "--keep") args.keep = true;
@@ -259,6 +261,7 @@ async function main(): Promise<void> {
   if (args.report) return rewriteReport(args, log);
   if (!args.label) throw new Error("Give the run a --label (for example baseline-v1).");
   if (args.combine) return combine(args, log);
+  if (args.summary) return summarize(args, log);
   const tasks = selectTasks(args.tasks);
   const before = copilotSessionIds();
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -321,8 +324,7 @@ async function main(): Promise<void> {
 
 /** Grades a saved run again from the evidence its traces kept (no agent calls; the judge and live ground truth run again). */
 async function regrade(args: Args, log: (line: string) => void): Promise<void> {
-  const path = resolve(process.cwd(), args.regrade!);
-  const file = existsSync(path) ? path : resolve(REPO, args.regrade!);
+  const file = resultFile(args.regrade!);
   const saved = JSON.parse(readFileSync(file, "utf8")) as Saved;
   const wanted = args.tasks === "all" ? null : new Set(selectTasks(args.tasks).map((task) => task.id));
   const root = mkdtempSync(join(args.workDir, "nv-regrade-"));
@@ -361,10 +363,30 @@ async function regrade(args: Args, log: (line: string) => void): Promise<void> {
   }
 }
 
+/** A saved run's file, named from the repository root or from here. */
+function resultFile(name: string): string {
+  const path = resolve(process.cwd(), name.trim());
+  return existsSync(path) ? path : resolve(REPO, name.trim());
+}
+
+/** One Markdown summary of several saved runs, `results/<label>.md`: their suites side by side, then every task; no agent calls. */
+function summarize(args: Args, log: (line: string) => void): void {
+  const runs = args.summary!.split(",").map((name) => {
+    const file = resultFile(name);
+    const saved = JSON.parse(readFileSync(file, "utf8")) as Saved;
+    return { name: basename(file, ".json"), saved: { ...saved, results: saved.results.map(withMetrics) } };
+  });
+  const first = runs[0]!.saved;
+  for (const run of runs) if (run.saved.agent !== first.agent || run.saved.model !== first.model) throw new Error(`${run.name} ran ${run.saved.agent} ${run.saved.model}, not ${first.agent} ${first.model}.`);
+  mkdirSync(RESULTS, { recursive: true });
+  writeFileSync(join(RESULTS, `${args.label}.md`), summary(args.label, runs));
+  log(`Saved ${relative(REPO, join(RESULTS, `${args.label}.md`))}`);
+  console.log(`\n${suiteTable(runs.flatMap((run) => run.saved.results))}`);
+}
+
 /** Writes a saved run's files again (its JSON with the counts older files lack, and its Markdown); no agent calls. */
 function rewriteReport(args: Args, log: (line: string) => void): void {
-  const path = resolve(process.cwd(), args.report!);
-  const file = existsSync(path) ? path : resolve(REPO, args.report!);
+  const file = resultFile(args.report!);
   const saved = JSON.parse(readFileSync(file, "utf8")) as Saved;
   saved.results = saved.results.map(withMetrics);
   const name = basename(file, ".json");
@@ -372,17 +394,18 @@ function rewriteReport(args: Args, log: (line: string) => void): void {
   log(`Rewrote ${relative(REPO, join(RESULTS, name))}.{json,md}`);
 }
 
-/** One result file from several runs on the same agent and model: a later run of a task replaces an earlier one. */
+/** One result file from several runs on the same agent and model, in the suites' task order: a later run of a task replaces an earlier one. */
 function combine(args: Args, log: (line: string) => void): void {
-  const runs = args.combine!.split(",").map((name) => {
-    const path = resolve(process.cwd(), name.trim());
-    return JSON.parse(readFileSync(existsSync(path) ? path : resolve(REPO, name.trim()), "utf8")) as Saved;
-  });
+  const runs = args.combine!.split(",").map((name) => JSON.parse(readFileSync(resultFile(name), "utf8")) as Saved);
   const first = runs[0]!;
   for (const run of runs) if (run.agent !== first.agent || run.model !== first.model) throw new Error(`${run.stamp}-${run.label} ran ${run.agent} ${run.model}, not ${first.agent} ${first.model}.`);
   const byTask = new Map<string, RunResult>();
   for (const run of runs) for (const row of run.results) byTask.set(`${row.task}#${row.repeat}`, row);
-  const results = [...byTask.values()].map(withMetrics);
+  const order = (row: RunResult) => {
+    const index = TASKS.findIndex((task) => task.id === row.task);
+    return index < 0 ? TASKS.length : index;
+  };
+  const results = [...byTask.values()].sort((a, b) => order(a) - order(b) || a.repeat - b.repeat).map(withMetrics);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const unique = (values: string[]) => [...new Set(values)];
   const saved: Saved = {
