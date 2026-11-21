@@ -59,6 +59,35 @@ test("facts with the same label each keep a key of their own, so one that did no
   assert.deepEqual([two.record.mode, two.prompt], ["none", "Go on."]);
 });
 
+test("of two facts with the same label, the one removed is named and the other left out, wherever they stand", () => {
+  const text = (lines: string[]) => [`# Fix the CSV export (task, ${TASK})\nStatus: in progress`, `## Comments\n${lines.map((line) => `- ${line}`).join("\n")}`].join("\n\n");
+  const header = "Mira Chen: keep the header row";
+  const eu = "Mira Chen: semicolons in the EU";
+  const both = buildPacket(input({ source: source(contextItems(text([header, eu]), TASK)) }));
+  const removed = buildPacket(input({ source: source(contextItems(text([eu]), TASK)), message: "Go on.", previous: both.record.delivered }));
+  assert.equal(removed.record.mode, "delta");
+  assert.match(removed.prompt, /- No longer listed: [^\n]*keep the header row/);
+  assert.doesNotMatch(removed.prompt, /semicolons|Changed|New:/);
+  assert.deepEqual(removed.record.items, { sent: 0, changed: 0, added: 0, removed: 1 });
+  // Their order alone changes nothing; one put back before the other is the only one sent.
+  const swapped = buildPacket(input({ source: source(contextItems(text([eu, header]), TASK)), message: "Go on.", previous: both.record.delivered }));
+  assert.deepEqual([swapped.record.mode, swapped.prompt], ["none", "Go on."]);
+  const back = buildPacket(input({ source: source(contextItems(text([header, eu]), TASK)), message: "Go on.", previous: removed.record.delivered }));
+  assert.match(back.prompt, /- New: [^\n]*keep the header row/);
+  assert.doesNotMatch(back.prompt, /semicolons|No longer listed/);
+});
+
+test("a turn that leaves the skill folder as it was (read-only) reports the skills unchanged", () => {
+  const skills = { folder: ".claude/skills", list: [{ name: "ensemble-debugging", description: "Use when a test fails." }] };
+  const first = buildPacket(input({ skills }));
+  const kept = buildPacket(input({ skills: "unchanged", message: "Look again.", previous: first.record.delivered }));
+  assert.deepEqual([kept.record.mode, kept.prompt], ["none", "Look again."]);
+  assert.deepEqual(kept.record.delivered.skills, ["ensemble-debugging"]);
+  // Skills Ensemble did take away are still said to be gone.
+  const gone = buildPacket(input({ skills: null, message: "Go on.", previous: kept.record.delivered }));
+  assert.match(gone.prompt, /The skills listed earlier are no longer in your skill folder/);
+});
+
 test("the first turn gets the whole packet; a later turn gets the message and only the facts that changed", () => {
   const first = buildPacket(input());
   assert.equal(first.record.mode, "full");
