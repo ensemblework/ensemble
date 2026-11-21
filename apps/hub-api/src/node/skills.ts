@@ -353,8 +353,9 @@ export function wantsAdvancedTools(words: string, recentTools: readonly string[]
 /**
  * Tools a conversation turn is offered only for their kind of work: when its words say so, when one of them is named,
  * or when the conversation's last replies used one. `always`: the node's situation needs them whatever the words.
+ * `follows`: other tools whose recent use keeps them too.
  */
-export type ToolTier = { name: string; tools: (name: string) => boolean; intent: RegExp; always?: keyof TierSituation };
+export type ToolTier = { name: string; tools: (name: string) => boolean; intent: RegExp; always?: keyof TierSituation; follows?: (name: string) => boolean };
 
 /** What about the node's situation keeps a tier's tools in every turn (node/brain.ts): `crew`, it leads a crew, has helpers or other nodes beside it, or works in a crew, a task room or a plan. */
 export type TierSituation = { crew: boolean };
@@ -373,8 +374,13 @@ export const TOOL_TIERS: readonly ToolTier[] = [
   },
   // Work for several nodes: a crew's plan, a step for a member or a helper.
   { name: "crew", tools: (name) => CREW_TOOLS.has(name), intent: /@[a-z0-9]|\b(?:crew|delegate|delegating|helpers?|(?:other|my|your|another|new|the) nodes?\b(?!\.))/i, always: "crew" },
-  // A coding session's less common handling.
-  { name: "sessions", tools: (name) => SESSION_EXTRAS.has(name), intent: /\b(?:sessions?|claude|codex|copilot|cursor|gemini|coding agents?|adopt|hand (?:it )?over|queue)\b/i },
+  // A coding session's less common handling, also right after the conversation started or messaged a session ("docs first after all").
+  {
+    name: "sessions",
+    tools: (name) => SESSION_EXTRAS.has(name),
+    intent: /\b(?:sessions?|claude|codex|copilot|cursor|gemini|coding agents?|adopt|hand (?:it )?over|queue)\b/i,
+    follows: (name) => name.startsWith("node_session_"),
+  },
   { name: "terminal", tools: (name) => name.startsWith("terminal_") || name === "live_view", intent: /\b(?:terminal|shell|interactive|ssh|repl|live|watch|tty|tmux|htop)\b/i },
   {
     name: "maker",
@@ -391,7 +397,7 @@ export function tieredTools<T extends { name: string }>(tools: readonly T[], wor
   const wanted = (tier: ToolTier) =>
     (tier.always !== undefined && situation[tier.always] === true) ||
     tier.intent.test(words) ||
-    recentTools.some((name) => tier.tools(name)) ||
+    recentTools.some((name) => tier.tools(name) || tier.follows?.(name) === true) ||
     tools.some((tool) => tier.tools(tool.name) && words.includes(tool.name));
   const hidden = TOOL_TIERS.filter((tier) => !wanted(tier));
   return tools.filter((tool) => !hidden.some((tier) => tier.tools(tool.name)));
