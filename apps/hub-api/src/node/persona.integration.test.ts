@@ -156,11 +156,12 @@ test("a DM turn and a crew lead's turn get the sections their conditions call fo
   assert.match(lead.context, /- @developer: your owner's node “Software developer” \(developer\)/, "the roster gives each member's role, which the manager's charter matches work to");
   assert.match(lead.context, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
 
-  // What was assembled is in the turn's model call metric, for its trace.
-  type Logged = { version: string; hash: string; hashes: Record<string, string>; sections: Array<{ name: string; tier: string; chars: number; tokens: number }>; dropped: unknown[] };
-  const metrics = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "model.call" } });
-  const logged = metrics.map((row) => (row.payload as { instructions?: Logged }).instructions).find((row) => row?.sections.some((section) => section.name === "node/22-lead"))!;
+  // What was assembled is in the turn's node.instructions metric, for its trace.
+  type Logged = { turnId: string; nodeId: string; version: string; hash: string; hashes: Record<string, string>; sections: Array<{ name: string; tier: string; chars: number; tokens: number }>; dropped: unknown[] };
+  const metrics = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" } });
+  const logged = metrics.map((row) => row.payload as Logged).find((row) => row.sections.some((section) => section.name === "node/22-lead"))!;
   assert.ok(logged, "the lead's turn logged its instructions");
+  assert.equal(logged.nodeId, ids[0]);
   assert.match(logged.version, /^[0-9a-f]{16}$/);
   assert.match(logged.hash, /^[0-9a-f]{16}$/);
   assert.ok(logged.sections.some((row) => row.name === "node/22-lead" && row.tier === "stable" && row.tokens === tokens(words("node/22-lead"))));
@@ -181,12 +182,31 @@ test("the stable tier stays the same byte for byte from one turn to the next; th
   assert.equal(second.stable, first.stable);
   assert.deepEqual(second.systems[0], first.systems[0], "and the assistant's instructions before it");
   assert.doesNotMatch(first.context, /14 November/);
-  assert.match(second.context, /What you remember \(newest first; from earlier conversations, and it may be out of date\):\n- Akash's launch is on 14 November\./);
+  assert.match(second.context, /Your owner's standing preferences, newest first \([^\n]*\):\n- Akash's launch is on 14 November\./);
   assert.doesNotMatch(second.stable, /14 November/, "a memory is never in the stable tier");
   const metrics = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "model.call" }, orderBy: { ts: "asc" } });
   const hashes = metrics.map((row) => (row.payload as { instructions?: { hashes: { stable: string; context: string } } }).instructions!.hashes);
   assert.equal(hashes.at(-1)!.stable, hashes[0]!.stable, "the first turn's and the second's");
   assert.notEqual(hashes.at(-1)!.context, hashes[0]!.context);
+});
+
+test("a turn's instructions are recorded once with every section; each of its model calls names only their version and hashes", async () => {
+  const akash = await person("Akash");
+  const { room } = await createNode(akash, "assistant");
+  // Two model calls in one turn: a look-up, then the answer.
+  script = (turn) => (turn.transcript.includes("my tasks") ? [{ name: "hub_list_tasks", arguments: {} }] : []);
+  await say(akash, room.id, "what are my tasks?");
+  const records = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "node.instructions" } });
+  const calls = await h.prisma.metricEvent.findMany({ where: { userId: akash.id, kind: "model.call" } });
+  assert.equal(records.length, 1, "one record for the turn");
+  assert.equal(calls.length, 2, "and two model calls");
+  const record = records[0]!.payload as { version: string; hash: string; hashes: Record<string, string>; sections: unknown[] };
+  assert.ok(record.sections.length > 30);
+  for (const call of calls) {
+    const named = (call.payload as { instructions: Record<string, unknown> }).instructions;
+    assert.deepEqual(Object.keys(named).sort(), ["hash", "hashes", "version"]);
+    assert.deepEqual(named, { version: record.version, hash: record.hash, hashes: record.hashes });
+  }
 });
 
 const COPILOT = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true, checkedAt: new Date().toISOString() };
@@ -231,10 +251,10 @@ test("on its owner's AI plan a node's system prompt is the stable tier alone; th
   for (const name of CONSTITUTION) assert.ok(first.system.includes(words(name)), name);
   assert.ok(first.system.includes(words("node/00-role", { name: "Assistant", slug: "assistant", role: "assistant" })));
   assert.ok(first.system.includes(words("node/13-web-task-own-loop")) && first.system.includes(words("node/10-facts-hands-own-web")), "the agent drives the browser and searches the web itself");
-  assert.doesNotMatch(first.system, /web_task|Context for this turn|What you remember|Room: “/, "nothing of the context tier");
+  assert.doesNotMatch(first.system, /web_task|Context for this turn|standing preferences, newest first|Room: “/, "nothing of the context tier");
   for (const spec of specs) assert.ok(spec.prompt.startsWith(`${CONTEXT}\n\nRoom: “`), "the context tier leads the prompt, marked as information");
   assert.doesNotMatch(first.prompt, /14 November/);
-  assert.match(second.prompt, /What you remember \(newest first; from earlier conversations, and it may be out of date\):\n- Akash's launch is on 14 November\.[\s\S]*<context>[\s\S]*what's on for the launch\?/, "then the message's own context and the room's new messages");
+  assert.match(second.prompt, /Your owner's standing preferences, newest first \([^\n]*\):\n- Akash's launch is on 14 November\.[\s\S]*<context>[\s\S]*what's on for the launch\?/, "then the message's own context and the room's new messages");
 });
 
 test("a node's own run profile is what its sessions use and what it says they use; the run card names the agent, model, thinking and context", async () => {
@@ -282,7 +302,7 @@ test("a conversation turn offers the advanced browser and capture tools only for
 
   await say(akash, room.id, "log in to my Azure console and check yesterday's resource usage");
   const azure = seen.at(-1)!.context;
-  assert.match(azure, /Skills for this request:\nMulti-step web work:\n- Dashboards, consoles and forms: web_task/);
+  assert.match(azure, /Skills for this request \(guidance[^\n]*\):\nMulti-step web work:\n- Dashboards, consoles and forms: web_task/);
   assert.match(azure, /Sign-in and human checks:\n- A page that needs your owner's account: browser_login_needed/);
   assert.doesNotMatch(azure, /Research and facts:/, "at most two skills");
 });

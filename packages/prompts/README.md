@@ -52,8 +52,9 @@ const result = assemble({
 ```
 
 - **Tiers.** `stable` (the constitution, the role, what it can do) is the same byte for byte while a
-  node and its setup are the same. `context` (the room and who is in it, crew, rooms, the skills for
-  this request, memories) changes between turns and is labelled as information, not instructions.
+  node and its setup are the same. `context` changes between turns: the room and who is in it, crew
+  and rooms, labelled as information, not instructions; then, each under its own label, the skills for
+  this request (guidance) and the owner's standing preferences (what they told the node to remember).
   `volatile` is the turn packet.
 - **Budgets** are tokens per tier, estimated as characters / 4. Each tier is filled in priority order
   (lower first, then the order given). A section that does not fit is left out whole, or loses the
@@ -73,7 +74,8 @@ On Ensemble's own model loop a node turn's system message is the stable and cont
 user message is the turn packet. On the owner's own AI plan (Claude Code, Codex, Copilot and the
 rest) the system prompt is the stable tier alone, so the agent's session keeps the instructions it
 began with, and the context tier leads the turn's prompt. Each node turn records `version`, the
-hashes, the sections and what was dropped on its `model.call` metric (docs/35 §5.5).
+hashes, the sections and what was dropped once, as its `node.instructions` metric; each of its
+`model.call` metrics names only the version and hashes (docs/35 §5.5).
 
 ## Checks
 

@@ -169,7 +169,7 @@ test("a room-bound turn never sees its owner's private page, memories or other c
   for (const name of ROOM_TOOLS) assert.ok(turn.tools.includes(name), `${name} is offered`);
   for (const name of PRIVATE_TOOLS) assert.ok(!turn.tools.includes(name), `${name} is not offered`);
   assert.ok(inputs.length >= 2 && inputs.every((text) => !/CANARY-|Initech in May/.test(text)), "no private page, memory or chat in anything the model was sent");
-  assert.doesNotMatch(turn.system, /What you remember|Your rooms:|Your owner's other nodes|Your work board/);
+  assert.doesNotMatch(turn.system, /Your owner's standing preferences|Your rooms:|Your owner's other nodes|Your work board/);
   assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable/);
   const row = (await turnsOf([lead.id], room.id)).at(-1)!;
   assert.equal(row.audience, "room");

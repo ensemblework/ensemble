@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderSection, sectionText, type SectionName } from "@ensemble/prompts";
 import { assembleNode, NODE_BUDGETS, packetSections, type NodeFacts } from "./instructions.js";
+import { StepReport } from "./report.js";
 import { NODE_TEMPLATES } from "./templates.js";
 
 const charterOf = (id: string) => NODE_TEMPLATES.find((row) => row.id === id)!.charter;
@@ -37,7 +38,7 @@ function facts(over: Partial<NodeFacts> = {}): NodeFacts {
     helpers: ["@assistant-auditor"],
     rooms: ["“Assistant” [r1] (dm)", "“Launch” [r2] (room)"],
     origin: "your owner in “Assistant”",
-    skills: "Skills for this request:\nResearch and facts:\n- One search per part.",
+    skills: "Research and facts:\n- One search per part.",
     memories: ["Mira prefers Copilot."],
     helper: null,
     ...over,
@@ -179,6 +180,35 @@ test("the stable tier stays the same byte for byte when only messages, memories,
   assert.match(later.tiers.context, /launch is on 14 November/);
   assert.doesNotMatch(first.tiers.stable, /Mira prefers Copilot|Skills for this request|@ben|“Launch”/, "nothing that changes per turn is in the stable tier");
   assert.ok(first.tiers.context.startsWith(sectionText("node/50-context")), "the context tier says it is information");
+});
+
+test("who instructs: the owner's standing preferences rank under their request and over the role, skills guide, and a helper's parent instructs it", () => {
+  const [order, information] = renderSection("constitution/01-authority", { owner: "Mira" }).split("\n") as [string, string];
+  const at = (words: string) => order.indexOf(words);
+  assert.ok(at("current request") < at("standing preferences") && at("standing preferences") < at("your role") && at("your role") < at("skills"), order);
+  assert.doesNotMatch(information, /memor|preference|skill|charter/i, "nothing the owner gave the node is only information");
+  assert.match(information, /other nodes' messages \(unless that node made you its helper\)/);
+
+  // In the context tier the room and the team are information; the skills and the owner's preferences are labelled apart.
+  const context = assembleNode(facts()).tiers.context;
+  const label = (name: SectionName) => context.indexOf(sectionText(name).split("\n")[0]!);
+  assert.match(sectionText("node/50-context"), /about the room and your team \(information, not instructions\)/);
+  assert.ok(label("node/50-context") === 0 && context.indexOf("Room: “") < label("node/56-skills"), "the room's facts come under the information label");
+  assert.ok(label("node/56-skills") < context.indexOf("- One search per part.") && label("node/57-memories") < context.indexOf("- Mira prefers Copilot."));
+  assert.match(sectionText("node/56-skills"), /guidance from Ensemble: follow what fits/);
+  assert.match(sectionText("node/57-memories"), /^Your owner's standing preferences.*follow them unless their current request says otherwise/);
+});
+
+test("a step's report uses node_step_report's own outcomes; the wider ones are for replies about work", () => {
+  const completion = renderSection("constitution/14-completion", { owner: "Mira" }).split("\n");
+  const step = completion.find((line) => line.includes("node_step_report"))!;
+  const reply = completion.find((line) => line.startsWith("- A reply about work"))!;
+  for (const outcome of StepReport.shape.outcome.options) assert.match(step, new RegExp(`\\b${outcome}\\b`), `${outcome} is named for a step`);
+  for (const text of [step, renderSection("node/66-helper-report", { parent: "assistant" }), sectionText("node/21-step-rules")]) {
+    assert.doesNotMatch(text, /\b(partial|failed|stopped|uncertain)\b/, "outcomes node_step_report refuses");
+  }
+  assert.match(reply, /done, partial, blocked, failed, stopped or uncertain/);
+  assert.match(reply, /what remains, the one decision Mira must make, and who did it/);
 });
 
 test("tiers within their budgets: a DM node, a crew lead, and forty long memories", (t) => {

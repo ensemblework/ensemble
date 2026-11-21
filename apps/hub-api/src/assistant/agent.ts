@@ -172,8 +172,11 @@ export interface AssistantTurnArgs {
    * it unchanged, and `context` leads the turn's prompt. Not a permission change.
    */
   nodeInstructions?: { stable: string; context: string };
-  /** What the turn's instructions were assembled from, recorded with each `model.call` metric. */
-  instructionsLog?: Pick<Assembled, "version" | "hash" | "hashes" | "sections" | "dropped">;
+  /**
+   * Which instructions the turn runs with (their version and hashes), on each `model.call` metric. Every
+   * section is in the node turn's one `node.instructions` metric (node/brain.ts).
+   */
+  instructionsRef?: Pick<Assembled, "version" | "hash" | "hashes">;
   /** Tools added to this turn and always shown (Ensemble Node's room tools). Same checks as every tool. */
   extraTools?: AnyHubTool[];
   /** Assistant tools this surface replaces with its own (Ensemble Node's session tools replace agent assignment). */
@@ -393,8 +396,9 @@ async function drive(
     },
   ];
   if (contextRefs.length) args.emit({ type: "refs", refs: contextRefs });
-  // Which instruction files the turn was given and how big each part was (a node turn's, node/instructions.ts).
-  const instructionsMeta = args.instructionsLog ? { instructions: args.instructionsLog } : {};
+  // Only the version and hashes: a caller may pass the whole log, which is recorded once per turn instead.
+  const ref = args.instructionsRef;
+  const instructionsMeta = ref ? { instructions: { version: ref.version, hash: ref.hash, hashes: ref.hashes } } : {};
 
   let chatTools = chatToolSpecs(shown());
   let responsesTools = responsesToolSpecs(shown());

@@ -112,7 +112,7 @@ Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §
 
 Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider filters to apply them to every aggregate: reported tokens, daily activity, models, purposes and recent calls. Usage belongs to you, including work in a shared space.
 
-`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing.
+`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 
 Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
 

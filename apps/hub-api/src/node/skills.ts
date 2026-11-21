@@ -114,10 +114,9 @@ export function skillsFor(text: string, has: (tool: string) => boolean): NodeSki
     .map((row) => row.skill);
 }
 
-/** The persona block for these skills. */
+/** These skills, each with its title, for the turn's context (its label is `node/56-skills` in packages/prompts). */
 export function skillsBlock(skills: readonly NodeSkill[], has: (tool: string) => boolean): string {
-  if (!skills.length) return "";
-  return ["Skills for this request:", ...skills.flatMap((skill) => [`${skill.title}:`, ...skill.lines(has)])].join("\n");
+  return skills.flatMap((skill) => [`${skill.title}:`, ...skill.lines(has)]).join("\n");
 }
 
 /**

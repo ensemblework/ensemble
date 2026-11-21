@@ -71,7 +71,7 @@ test("an empty list or an empty rendering leaves its section out without a note;
     surface: "node",
     sections: [
       { name: "node/57-memories", tier: "context", vars: { memories: [] } },
-      { name: "node/56-skills", tier: "context", vars: { skills: "" } },
+      { name: "node/83-packet-step", tier: "volatile", vars: { note: "" } },
     ],
   });
   assert.equal(result.text, "");

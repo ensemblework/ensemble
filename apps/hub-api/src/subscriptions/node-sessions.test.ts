@@ -101,7 +101,7 @@ test("a node's instructions on an AI plan stay the same while its room, skills a
   const system = (facts: Parameters<typeof nodeFacts>[0]) =>
     agentConversation([{ role: "system", content: "You're helping Mira in Ensemble." }, { role: "system", content: assembleNode(nodeFacts(facts)).tiers.stable }, { role: "user", content: "hi" }], "copilot-cli", { ownWeb: true, node: true }).system;
   const first = system({ ownLoop: true, ownWeb: true });
-  const later = system({ ownLoop: true, ownWeb: true, memories: ["Mira's launch is on 14 November."], skills: "Skills for this request:\nResearch and facts:\n- One search per part.", roster: ["- @mira: Mira (your owner)", "- @ada: you", "- @ben: Ben"] });
+  const later = system({ ownLoop: true, ownWeb: true, memories: ["Mira's launch is on 14 November."], skills: "Research and facts:\n- One search per part.", roster: ["- @mira: Mira (your owner)", "- @ada: you", "- @ben: Ben"] });
   assert.equal(later, first);
   assert.equal(instructionsUpdate(first, later), "");
 });

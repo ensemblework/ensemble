@@ -166,7 +166,7 @@ export function nodeSections(facts: NodeFacts): SectionRequest[] {
 
 const ROOM_SECTION: Record<string, SectionName> = { dm: "node/51-room-dm", crew: "node/51-room-crew", task: "node/51-room-task", room: "node/51-room-people" };
 
-/** What the turn was told and how big each part was: for the turn's `model.call` metric (agent.ts). */
+/** What the turn was told and how big each part was: the turn's one `node.instructions` metric (node/brain.ts). */
 export type InstructionsLog = Pick<Assembled, "version" | "hash" | "hashes" | "sections" | "dropped">;
 
 export type NodeInstructions = {

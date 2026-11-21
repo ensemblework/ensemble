@@ -34,7 +34,7 @@ test("a skill needs its tools: without them it is not offered, and its lines fol
   assert.match(skillsBlock(skillsFor("research the latest GPU reviews", before), before), /open 1 to 3 of the best sources/);
   assert.match(skillsBlock(skillsFor("research the latest GPU reviews", every), every), /browser_extract on 1 to 3 of the best sources/);
   const signIn = skillsBlock(skillsFor("sign in to my bank", before), before);
-  assert.match(signIn, /^Skills for this request:\nSign-in and human checks:\n/);
+  assert.match(signIn, /^Sign-in and human checks:\n/);
   assert.match(signIn, /try the page again/);
   assert.doesNotMatch(signIn, /browser_login_check/);
   const shopping = (has: (tool: string) => boolean) => NODE_SKILLS.find((skill) => skill.name === "shopping")!.lines(has).join("\n");

@@ -25,6 +25,7 @@ import { canSee, postMessage, roomPeople, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { nodeTools, postAsNode, type Lineage } from "./tools.js";
 import { codeBuiltLog, nodeInstructions, packetSections, packetText } from "./instructions.js";
+import { recordMetric } from "../lib/metrics.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
@@ -361,6 +362,11 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         origin: room.kind === "task" && !node.parentNodeId ? await originLine(app, node, room) : null,
         packet,
       });
+  const assembled = instructions?.log ?? codeBuiltLog(roomBound!.text, packet);
+  // Every section the turn was given, once per turn; each of its model calls names only their version and hashes.
+  await recordMetric(prisma, { userId: owner, kind: "node.instructions", meta: { turnId: turn.id, nodeId: node.id, ...assembled } }).catch((error: unknown) =>
+    app.log.error({ err: error }, "Could not record the node's instructions"),
+  );
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
@@ -391,7 +397,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined),
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
-      ...(instructions ? { nodeInstructions: instructions, instructionsLog: instructions.log } : { agentPersona: roomBound!.text, instructionsLog: codeBuiltLog(roomBound!.text, packet) }),
+      ...(instructions ? { nodeInstructions: instructions } : { agentPersona: roomBound!.text }),
+      instructionsRef: assembled,
       extraRefs: instructions?.rooms ?? roomBound!.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: gateway,
