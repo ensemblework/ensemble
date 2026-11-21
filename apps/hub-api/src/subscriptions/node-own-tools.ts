@@ -20,6 +20,12 @@
  * - Always asked, unattended too: a program that changes the system (crontab, launchctl, osascript…),
  *   answered at most for the run, and a read or change that names no path the floor could check, answered
  *   for that call only.
+ * - The person's own MCP servers' tools (the agent loads them itself; Copilot's keep their server's name,
+ *   agent-mcp.ts) and the agent's tools Ensemble does not know: one whose input names a command is judged
+ *   as that command (where it does not say where it runs, as if in the home folder), one that names files
+ *   in full as reading or changing them, by its name; a server that says it only reads is allowed. Any
+ *   other asks, unattended too, with the tool and its input, answered at most for the run.
+ * - A shell keeps the folder a `cd` took it to: its next commands are judged there too.
  * - A helper works only in the folders its node gave it, its own folders and temporary ones; the folders
  *   it was given are not its own, so their first change or command asks.
  *
@@ -38,9 +44,10 @@ import { isEnsembleWorkFolder, ownFolderName, resolveToolFolder } from "../devic
 import { publicWebAddress } from "../device-tools/http.js";
 import { loadSettings } from "../remote/store.js";
 import { expandHome, harmlessPath, inTemp, isNeverProgram, within, workspaceRoot } from "../workspace/guard.js";
-import { globRoot, judgeFloor, pathsOf, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
+import { globRoot, HARMLESS, judgeFloor, pathsOf, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
 import { parseShell } from "../workspace/shell-parse.js";
 import { outsideArgs, readsOnly, realOutside } from "../workspace/tools.js";
+import type { AgentMcpServer } from "./agent-mcp.js";
 import type { OwnAnswer, OwnAsk, OwnAskKind, OwnJudge } from "./bridge.js";
 import { logRefused } from "./own-tools.js";
 
@@ -55,10 +62,12 @@ export type NodeTurnPolicy = { id: string; slug: string; mission: string; attend
 
 /**
  * This computer's answers about the agent's own calls (`decision_rules.tool_name`, source `node-tools`):
- * changes and commands in a folder, calls to an address, or one program for one run. The node's computer
- * tools keep theirs as `folder` and `origin`, which never count here.
+ * changes and commands in a folder, calls to an address, or one program or one tool for one run. The
+ * node's computer tools keep theirs as `folder` and `origin`, which never count here.
  */
-export const OWN_RULES = { write: "own:write", origin: "own:origin", program: "own:program" } as const;
+export const OWN_RULES = { write: "own:write", origin: "own:origin", program: "own:program", tool: "own:tool" } as const;
+/** What an answer covers at most for the run, never from then on. */
+const RUN_ONLY: ReadonlySet<OwnAskKind> = new Set(["program", "tool"]);
 
 type Db = Pick<PrismaClient, "decisionRule">;
 
@@ -68,6 +77,8 @@ export type NodeJudgeInput = {
   node: NodeTurnPolicy;
   /** Asks the owner through Ensemble on the web; absent, a call that needs them is refused. */
   ask?: (request: OwnAsk) => Promise<OwnAnswer>;
+  /** The MCP servers the agent loads by itself here besides Ensemble's (agent-mcp.ts): how its calls to them are named. */
+  mcpServers?: AgentMcpServer[];
   /** The agent, for the AI activity log. */
   app: string;
   /** Tests: the database, account and approval switch to use. */
@@ -103,6 +114,70 @@ const SEARCHES = new Set(["Grep", "Glob", "LS"]);
 
 /** Ensemble's MCP tools as each agent names them: judged where they run, on the web. */
 const ensembleTool = (name: string) => /^(?:mcp__ensemble__|ensemble[-_./:])/.test(name);
+
+/** The agents' own bookkeeping, Claude Code's (judge.ts) and GitHub Copilot CLI's: nothing outside the agent itself. */
+const BOOKKEEPING: ReadonlySet<string> = new Set([
+  ...HARMLESS,
+  "AskUserQuestion",
+  "report_intent", "think", "update_todo", "read_bash", "list_bash", "stop_bash", "task", "read_agent", "list_agents", "write_agent", "skill", "fetch_copilot_cli_documentation", "tool_search_tool", "sql",
+]);
+
+/**
+ * The server and tool an MCP call names: `mcp__<server>__<tool>` (Claude Code, ACP agents), or GitHub
+ * Copilot CLI's `<server>-<tool>` for a server it loads here (its name with every character but letters,
+ * digits, _ and - as -). Never Ensemble's.
+ */
+function mcpOf(name: string, servers: AgentMcpServer[]): { server: string; tool: string; readOnly: boolean } | null {
+  const pair = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (pair) return pair[1] === "ensemble" ? null : { server: pair[1]!, tool: pair[2]!, readOnly: servers.some((server) => server.name === pair[1] && server.readOnly) };
+  let found: { server: AgentMcpServer; prefix: number } | null = null;
+  for (const server of servers) {
+    const prefix = `${server.name.replace(/[^A-Za-z0-9_-]/g, "-")}-`;
+    if (server.name !== "ensemble" && name.length > prefix.length && name.startsWith(prefix) && (!found || prefix.length > found.prefix)) found = { server, prefix: prefix.length };
+  }
+  return found ? { server: found.server.name, tool: name.slice(found.prefix), readOnly: found.server.readOnly } : null;
+}
+
+const COMMAND_FIELDS = ["command", "cmd", "script", "shell_command", "commandLine"];
+const PLACE_FIELDS = ["cwd", "workdir", "working_directory", "workingDirectory", "directory", "dir"];
+const PATH_FIELDS = ["path", "paths", "file_path", "filePath", "file", "files", "filename", "fileName", "absolute_path", "directory", "dir", "folder", "source", "destination", "src", "dest", "from", "to", "old_path", "new_path", "oldPath", "newPath"];
+/** A path given in full: from the top of the disk or the home folder. */
+const FULL_PATH = /^(?:~(?=[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/;
+
+/** The words of a tool's name that say what it does with the files it names. */
+const CHANGE_WORDS = new Set([
+  "write", "edit", "create", "move", "rename", "delete", "remove", "rm", "rmdir", "mkdir", "append", "patch", "replace", "set", "update", "insert", "save", "copy", "cp", "mv",
+  "put", "upload", "download", "touch", "chmod", "chown", "truncate", "unlink", "extract", "unzip", "untar", "zip", "archive", "compress", "apply", "modify", "change", "overwrite",
+  "clear", "empty", "format", "convert", "store", "merge", "restore", "import", "export", "link", "symlink", "mount", "unmount", "trash", "purge", "wipe", "destroy", "drop", "reset", "new", "add", "make",
+]);
+const SEARCH_WORDS = new Set(["search", "find", "grep", "glob", "scan"]);
+const LIST_WORDS = new Set(["list", "ls", "tree", "dir"]);
+const READ_WORDS = new Set(["read", "get", "view", "show", "stat", "info", "cat", "head", "tail", "exists", "describe", "inspect", "lookup", "count", "diff", "compare", "check", "preview", "peek"]);
+
+/**
+ * The call a tool Ensemble does not know makes, where its input says: a command (run where it says, else
+ * in `away`), or files it names in full that it reads, searches, lists or changes by the words of its
+ * name. Null when nothing says: no command, a path not given in full (found where the tool runs, which is
+ * not known here), or a name that says neither.
+ */
+function shapeOf(tool: string, input: Record<string, unknown>, away: string | null): EngineCall | null {
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+  const command = COMMAND_FIELDS.map((field) => text(input[field])).find(Boolean);
+  if (command) {
+    const place = PLACE_FIELDS.map((field) => text(input[field])).find((value) => FULL_PATH.test(value)) ?? away;
+    return { tool: "Bash", input: { command, ...(place ? { cwd: place } : {}) } };
+  }
+  // A value with no folder in it ("README.md", "bob@example.com") is not taken for a path.
+  const values = PATH_FIELDS.flatMap((field) => (Array.isArray(input[field]) ? (input[field] as unknown[]) : [input[field]]).map(text)).filter((value) => FULL_PATH.test(value) || /[\\/]/.test(value));
+  if (!values.length || values.some((value) => !FULL_PATH.test(value))) return null;
+  const words = tool.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/);
+  const paths = { paths: [...new Set(values)] };
+  if (words.some((word) => CHANGE_WORDS.has(word))) return { tool: "Write", input: paths };
+  if (words.some((word) => SEARCH_WORDS.has(word))) return { tool: "Grep", input: paths };
+  if (words.some((word) => LIST_WORDS.has(word))) return { tool: "LS", input: paths };
+  if (words.some((word) => READ_WORDS.has(word))) return { tool: "Read", input: paths };
+  return null;
+}
 
 /** What a privilege prompt in the agent's own shell is told. */
 export function sudoGuidance(offered: boolean): string {
@@ -151,6 +226,8 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
   let own: Promise<string[]> | null = null;
   let granted: Promise<string[]> | null = null;
   const inflight = new Map<string, Promise<void>>();
+  /** The folders besides the turn's that the agent's shells may be in now: a `cd` holds for a shell's next command (Claude Code's, a Copilot shell session's). */
+  const shellPlaces = new Set<string>();
   const at = (base: string, path: string) => resolve(base, expandHome(path));
 
   /** The node's own folders here: the turn's and `nodes/<handle>`. */
@@ -185,28 +262,32 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     return deny(`You work only in ${named}, the folders your node gave you, and your own folder. Report what needs another folder.`);
   };
 
-  /** This computer's answers about the agent's own calls (never the node's computer tools'). */
-  const kept = async () => (await db.decisionRule.findMany({ where: { userId, source: NODE_TOOL_RULE_SOURCE, decision: "allow" }, select: { toolName: true, pattern: true, sessionId: true }, take: 1000 })).filter((rule) => rule.toolName.startsWith("own:"));
+  /** This computer's answers about the agent's own calls (never the node's computer tools'); none it cannot read, so the owner is asked. */
+  const kept = async () =>
+    (await db.decisionRule.findMany({ where: { userId, source: NODE_TOOL_RULE_SOURCE, decision: "allow" }, select: { toolName: true, pattern: true, sessionId: true }, take: 1000 }).catch(() => [])).filter((rule) => rule.toolName.startsWith("own:"));
 
-  /** An answer covers this: one of its own kind, for this run or (but a program's) from then on, for its target or a folder holding it. */
+  /** An answer covers this: one of its own kind, for this run or (but a program's or a tool's) from then on, for its target or a folder holding it. */
   const covered = async (need: Need): Promise<boolean> => {
     if (need.kind === "unnamed") return false;
     const toolName = OWN_RULES[need.kind];
     return (await kept()).some(
       (rule) =>
         rule.toolName === toolName &&
-        (rule.sessionId === node.mission || (rule.sessionId === null && need.kind !== "program")) &&
+        (rule.sessionId === node.mission || (rule.sessionId === null && !RUN_ONLY.has(need.kind))) &&
         (rule.pattern === need.target || (need.folder && isAbsolute(rule.pattern) && within(rule.pattern, need.target))),
     );
   };
 
-  /** The owner's answer, kept as this computer's rule for what it was given for: a program's for this run at most, a once answer not at all. */
+  /** The owner's answer, kept as this computer's rule for what it was given for: a program's or a tool's for this run at most, a once answer not at all. */
   const keep = async (need: Need, grant: Grant): Promise<void> => {
     if (need.kind === "unnamed" || grant.scope === "once") return;
     if (grant.target !== need.target && !(need.folder && isAbsolute(grant.target) && within(grant.target, need.target))) return;
-    const sessionId = grant.scope === "always" && need.kind !== "program" ? null : node.mission;
+    const sessionId = grant.scope === "always" && !RUN_ONLY.has(need.kind) ? null : node.mission;
     const rule = { userId, source: NODE_TOOL_RULE_SOURCE, toolName: OWN_RULES[need.kind], pattern: grant.target, decision: "allow", sessionId };
-    if (!(await db.decisionRule.findFirst({ where: rule }))) await db.decisionRule.create({ data: rule });
+    // The answer stands for this call either way; a rule that cannot be kept means the next call asks again.
+    await (async () => {
+      if (!(await db.decisionRule.findFirst({ where: rule }))) await db.decisionRule.create({ data: rule });
+    })().catch(() => undefined);
   };
 
   const answerFor = async (need: Need): Promise<EngineAnswer> => {
@@ -215,7 +296,7 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     for (let asking = inflight.get(key); asking; asking = inflight.get(key)) await asking;
     if (parked) return deny(parked);
     if (await covered(need)) return ALLOW;
-    // Nobody watches an unattended run: changes, commands and calls go ahead above the floor (never a program, nor a call that names no path).
+    // Nobody watches an unattended run: changes, commands and calls go ahead above the floor (never a program, a tool Ensemble does not know, nor a call that names no path).
     if (!node.attended && (need.kind === "write" || need.kind === "origin")) return ALLOW;
     if (!(input.acceptWeb ?? loadSettings().acceptWebApprovals)) {
       return deny("This computer takes approvals only on itself (approvals from the web are off), so this call cannot be approved. Turn them on there with `ensemble approvals on`.");
@@ -272,6 +353,29 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     };
   };
 
+  /** A tool Ensemble does not know, asked about with its input, for the run at most: one of a server's, or of the agent's own. */
+  const toolNeed = (call: EngineCall, mcp: { server: string; tool: string } | null): Need => {
+    const named = mcp ? `${mcp.tool} from ${mcp.server}` : call.tool;
+    return {
+      kind: "tool",
+      capability: "run",
+      target: `tool:${mcp ? `${mcp.server}/${mcp.tool}` : call.tool}`.slice(0, 4096),
+      label: named.slice(0, 300),
+      scope: "folder",
+      operation: `Use: ${named}\nWith: ${JSON.stringify(call.input ?? {})}`.slice(0, 4000),
+      what: `use ${named}`.slice(0, 300),
+      folder: false,
+    };
+  };
+
+  /** Where a command's shell may be once it ran: each folder it went to (`cd`, `pushd`) and ran in. */
+  const notePlaces = (command: string, place: string) => {
+    for (const segment of parseShell(`${command}\n__ensemble_where__`, place)) {
+      if (shellPlaces.size >= 50) return;
+      if (segment.cwd !== input.folder) shellPlaces.add(segment.cwd);
+    }
+  };
+
   /** The programs and folders a command acts on, one answer each: the folder it runs in and those it names to write, and a program that changes the system. */
   const commandNeeds = async (command: string, cwd: string): Promise<Need[] | EngineAnswer> => {
     const parsed = parseShell(command, cwd);
@@ -316,12 +420,24 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       const command = text(given.command);
       if (!command) return ALLOW;
       if (CARD_ROUTE.test(command)) return deny(CARDS);
-      const needs = await commandNeeds(command, text(given.cwd) ? at(input.folder, text(given.cwd)) : input.folder);
-      if (!Array.isArray(needs)) return needs;
+      // Where the agent says it runs; else the turn's folder, or wherever a `cd` left one of its shells.
+      const places = text(given.cwd) ? [at(input.folder, text(given.cwd))] : [input.folder, ...shellPlaces];
+      const needs: Need[] = [];
+      for (const [index, place] of places.entries()) {
+        if (index > 0) {
+          const floor = await judgeFloor(input.folder, { tool: call.tool, input: { command, cwd: place } }, { neverPrograms: false });
+          if (floor.decision !== "allow") return floor;
+        }
+        const found = await commandNeeds(command, place);
+        if (!Array.isArray(found)) return found;
+        for (const need of found) if (!needs.some((known) => known.kind === need.kind && known.target === need.target)) needs.push(need);
+      }
       for (const need of needs) {
         const answer = await answerFor(need);
         if (answer.decision !== "allow") return answer;
       }
+      // A command that says where it runs (Codex's, a server's) starts there each time; a shell of the agent's keeps its folder.
+      if (!text(given.cwd)) for (const place of places) notePlaces(command, place);
       return ALLOW;
     }
     if (SEARCHES.has(call.tool)) {
@@ -371,7 +487,17 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       return answerFor({ kind: "origin", capability: "http", target: origin, label: origin, scope: "origin", operation: `Open: ${url.slice(0, 2000)}`, what: `open ${url.slice(0, 200)}`, folder: false });
     }
     // Web searches, and the agent's own bookkeeping (its to-dos; its sub-agents, whose calls come here too).
-    return ALLOW;
+    if (call.tool === "WebSearch" || BOOKKEEPING.has(call.tool)) return ALLOW;
+    // Copilot's text typed into one of its shells: a command there.
+    if (call.tool === "write_bash") return one({ tool: "Bash", input: { command: text(given.input) } });
+    const mcp = mcpOf(call.tool, input.mcpServers ?? []);
+    if (mcp?.readOnly) {
+      const local = pathsOf(given).filter((path) => FULL_PATH.test(path));
+      return local.length ? one({ tool: "Read", input: { paths: local } }) : ALLOW;
+    }
+    // A server's command runs where the server does, not in the turn's folder: as if in the home folder, where most start.
+    const shaped = shapeOf(mcp?.tool ?? call.tool, given, mcp ? homedir() : null);
+    return shaped ? one(shaped) : answerFor(toolNeed(call, mcp));
   };
 
   return async (calls) => {

@@ -44,15 +44,19 @@ const WAIT_RECHECK_MS = 3_000;
 export const CHOICES = { once: "Once", mission: "This mission", folder: "Always for this folder", origin: "Always for this address" } as const;
 /**
  * The answers to a question about one of the agent's own calls, by what it covers (bridge.ts `ownAskKind`);
- * Don't allow is the card's own. A program that changes the system is never allowed beyond the run, and a
- * call that names no path only once.
+ * Don't allow is the card's own. A program that changes the system or a tool Ensemble does not know is
+ * never allowed beyond the run, and a call that names no path only once.
  */
 export const OWN_CHOICES: Record<OwnAskKind, { always?: string; run?: string; once?: string }> = {
   write: { always: "Allow changes and commands", run: "Allow changes and commands for this run" },
   origin: { always: "Allow this address", run: "Allow this address for this run" },
   program: { once: "Allow once", run: "Allow for this run" },
+  tool: { once: "Allow once", run: "Allow for this run" },
   unnamed: { once: "Allow once" },
 };
+
+/** A question about a program, a tool or a call that names no path: about no one folder or address. */
+const placeless = (target: string) => /^(?:program|tool|unnamed):/.test(target);
 
 /** How long a tool call waits for its owner's answer (`ENSEMBLE_NODE_PERMISSION_WAIT_MS`). */
 export function permissionWaitMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -138,6 +142,7 @@ const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target" | "own">): string {
   if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
+  if (card.target.startsWith("tool:")) return `@${card.nodeSlug} wants to use ${card.label} on ${card.deviceName}`;
   if (card.target.startsWith("unnamed:")) return `@${card.nodeSlug} wants to ${card.capability === "read" ? "read" : "change"} files it does not name on ${card.deviceName}`;
   if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
@@ -146,7 +151,7 @@ function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "s
 
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */
 export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName" | "target">): string {
-  if (card.target.startsWith("program:") || card.target.startsWith("unnamed:")) return `on ${card.deviceName}`;
+  if (placeless(card.target)) return `on ${card.deviceName}`;
   return card.scope === "origin" ? `${card.label} on ${card.deviceName}` : `in ${card.label} on ${card.deviceName}`;
 }
 
@@ -457,7 +462,7 @@ export async function awaitAnswer(app: FastifyInstance, id: string, signal: Abor
 
 /** Where the agent's own call would act, for the note that wakes its turn: " in ~/projects/site", or nothing for a program or an address. */
 export function ownPlace(tool: Pick<NodeToolCard, "scope" | "label" | "target">): string {
-  return tool.scope === "folder" && !tool.target.startsWith("program:") && !tool.target.startsWith("unnamed:") ? ` in ${tool.label}` : "";
+  return tool.scope === "folder" && !placeless(tool.target) ? ` in ${tool.label}` : "";
 }
 
 /** The note that wakes a conversation or step parked on an answered question: the answer, and the call to make again. */

@@ -22,10 +22,12 @@ export type OwnJudge = (calls: EngineCall[]) => Promise<EngineAnswer>;
 /**
  * One of the agent's own calls in a node's turn that needs its owner's answer (node-own-tools.ts), as
  * this computer asks Ensemble on the web: what it acts on (a folder's real path, `program:<name>` for
- * a program that changes the system, or a web address's origin) and exactly what would run.
+ * a program that changes the system, `tool:<server>/<tool>` or `tool:<name>` for a tool Ensemble does
+ * not know, `unnamed:<hash>` for a call that names no path, or a web address's origin) and exactly
+ * what would run.
  */
 export const OwnAskShape = z.object({
-  /** `read`: reading the owner's files, asked only in a node's turn that is not its owner's own. */
+  /** `read`: reading files a call does not name. */
   capability: z.enum(["run", "files", "read", "http"]),
   target: z.string().min(1).max(4096),
   label: z.string().min(1).max(300),
@@ -39,12 +41,13 @@ export type OwnAsk = z.infer<typeof OwnAskShape>;
 
 /**
  * What an answer to an ask covers, the same on the computer and on the web: changes and commands in a
- * folder (reading there too), calls to an address, one program that changes the system (for a run at
- * most), or one call that names no path (that call only).
+ * folder (reading there too), calls to an address, one program that changes the system or one tool
+ * Ensemble does not know (for a run at most), or one call that names no path (that call only).
  */
-export type OwnAskKind = "write" | "origin" | "program" | "unnamed";
+export type OwnAskKind = "write" | "origin" | "program" | "tool" | "unnamed";
 export function ownAskKind(ask: Pick<OwnAsk, "target" | "scope">): OwnAskKind {
   if (ask.target.startsWith("program:")) return "program";
+  if (ask.target.startsWith("tool:")) return "tool";
   if (ask.target.startsWith("unnamed:")) return "unnamed";
   return ask.scope === "origin" ? "origin" : "write";
 }

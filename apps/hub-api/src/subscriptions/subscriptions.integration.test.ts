@@ -5,6 +5,9 @@
  * streams its reply and finishes. Plus the subscriptions list, check and sign-in for the web.
  */
 import assert from "node:assert/strict";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test, { after, before } from "node:test";
 import type { Prisma } from "@prisma/client";
 import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http.js";
@@ -373,6 +376,7 @@ test("an agent's app there without the agent is listed with the computer, and Se
 // ── an Ensemble Node's turn on its owner's plan ────────────────────────────────────────────────
 
 type NodeSpec = {
+  agent: string;
   system: string;
   prompt: string;
   maxTurns?: number;
@@ -553,13 +557,55 @@ test("an own call the node's policy asks about waits for its owner's card: answe
   }
 });
 
-test("a turn another person started keeps Ensemble's tools only, whatever the agent, with its own web search where it had it", async () => {
+// A GitHub Copilot CLI 1.0.114 whose person has an MCP server of their own: it writes down how each turn started it.
+const COPILOT_WITH_SERVERS = String.raw`#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "help" || args.includes("--help")) { console.log("  --plugin-dir <directory>\n  --disable-mcp-server <server-name>"); process.exit(0); }
+if (args.includes("--version")) { console.log("1.0.114"); process.exit(0); }
+if (args.includes("--headless")) process.exit(1);
+if (args[0] === "mcp") { console.log(JSON.stringify({ mcpServers: { "desktop-commander": { command: "npx", source: "user", enabled: true } } })); process.exit(0); }
+readFileSync(0, "utf8");
+appendFileSync(process.env.STANDIN_ARGS, JSON.stringify(args) + "\n");
+// Copilot keeps each session it saves as a folder in its home's session-state.
+if (args.includes("--session-id")) require("node:fs").mkdirSync(require("node:path").join(process.env.COPILOT_HOME, "session-state", args[args.indexOf("--session-id") + 1]), { recursive: true });
+console.log(JSON.stringify({ type: "assistant.message", data: { content: "(no reply)" } }));
+`;
+
+test("a turn another person started keeps Ensemble's tools only, whatever the agent, with its own web search where it had it; Copilot loads none of the owner's own MCP servers", async () => {
   const { settleTurns } = await import("../node/queue.js");
+  const { runAgentTurn } = await import("./agents.js");
+  const { forgetMcpServersForTests } = await import("./agent-mcp.js");
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  const { localApiUrl, setLocalPort } = await import("../workspace/engines/registry.js");
   const mira = await harness.asUser();
   const ben = await harness.asUser();
   for (const [user, name] of [[mira, "Mira"], [ben, "Ben"]] as const) await harness.prisma.user.update({ where: { id: user.id }, data: { name, emailVerifiedAt: new Date() } });
   const CODEX = { ...CLAUDE, id: "codex", plan: "plus", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };
-  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE, CODEX], nodeTools: 1 });
+  const COPILOT = { ...CLAUDE, id: "copilot-cli", plan: "pro", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE, CODEX, COPILOT], nodeTools: 1 });
+  // This computer runs a Copilot turn with a stand-in Copilot whose person set up Desktop Commander.
+  const scratch = mkdtempSync(join(tmpdir(), "ensemble-others-copilot-"));
+  mkdirSync(join(scratch, "bin"));
+  writeFileSync(join(scratch, "bin", "copilot"), COPILOT_WITH_SERVERS);
+  chmodSync(join(scratch, "bin", "copilot"), 0o755);
+  const startedWith = join(scratch, "args.jsonl");
+  const saved = { PATH: process.env.PATH, STANDIN_ARGS: process.env.STANDIN_ARGS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${join(scratch, "bin")}:${process.env.PATH ?? ""}`;
+  process.env.STANDIN_ARGS = startedWith;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "state");
+  process.env.COPILOT_HOME = join(scratch, "copilot-home");
+  forgetExecutablesForTests();
+  forgetMcpServersForTests();
+  // The turn's MCP config names this computer's local API; the stand-in never calls it.
+  const port = (() => {
+    try {
+      return Number(new URL(localApiUrl()).port);
+    } catch {
+      return 0;
+    }
+  })();
+  if (!port) setLocalPort(9);
   const { node } = await nodeOnPlan(mira);
   const bens = (await ben.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } })).json().node as { id: string };
   await harness.prisma.nodeAgent.update({ where: { id: bens.id }, data: { status: "paused" } });
@@ -567,8 +613,13 @@ test("a turn another person started keeps Ensemble's tools only, whatever the ag
   const simulated = computer(device.id, async (event, data) => {
     if (event !== "assistant.turn") return;
     const id = String(data.id);
-    specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
-    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("(no reply)") });
+    const spec = ((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec;
+    specs.push(spec);
+    try {
+      if (spec.agent === "copilot-cli") await runAgentTurn(spec as unknown as Parameters<typeof runAgentTurn>[0], { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: AbortSignal.timeout(30_000) });
+    } finally {
+      await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("(no reply)") });
+    }
   });
   try {
     const made = await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch", nodeIds: [node.id], leadNodeId: node.id, invite: [ben.email] } });
@@ -580,8 +631,8 @@ test("a turn another person started keeps Ensemble's tools only, whatever the ag
     await settleTurns();
     const handle = (await harness.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).handle;
 
-    for (const provider of ["claude-code", "codex"] as const) {
-      await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider, model: provider === "codex" ? "gpt-5.5" : "haiku" } });
+    for (const provider of ["claude-code", "codex", "copilot-cli"] as const) {
+      await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider, model: provider === "claude-code" ? "haiku" : "gpt-5.5" } });
       specs.length = 0;
       await postTo(ben, room.id, `@${handle} what is in Mira's notes folder?`);
       await settleTurns();
@@ -590,8 +641,20 @@ test("a turn another person started keeps Ensemble's tools only, whatever the ag
       assert.match(specs[0]!.system, /reached only through Ensemble's tools/);
     }
     assert.deepEqual(simulated.failures, []);
+    const copilot = readFileSync(startedWith, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    assert.equal(copilot.length, 1);
+    assert.equal(copilot[0]![copilot[0]!.indexOf("--disable-mcp-server") + 1], "desktop-commander", "on Copilot, Mira's own MCP server is off for Ben's turn");
+    assert.equal(copilot[0]!.includes("--plugin-dir"), false);
   } finally {
     simulated.stop();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    forgetExecutablesForTests();
+    forgetMcpServersForTests();
+    if (!port) setLocalPort(0);
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 

@@ -39,6 +39,7 @@ import { antigravityAuthLink } from "./antigravity.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type OwnAnswer, type OwnAsk, type OwnJudge, type OwnToolEvent, type ToolAnswer, type ToolSpec } from "./bridge.js";
+import { codexMcpServers, copilotMcpServers, type AgentMcpServer } from "./agent-mcp.js";
 import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
@@ -154,8 +155,11 @@ type TurnSession = { id: string; resume: boolean; usage?: SessionUsage; since?: 
  */
 /** `prompts`: how many prompts the session holds after this turn, from a driver that counted them as it reopened it. */
 type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string | null; totals?: SessionUsage | null; prompts?: number | null };
-/** `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). */
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge }) => Promise<DriverResult>;
+/**
+ * `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). `servers`: the
+ * MCP servers the agent loads by itself here (Copilot's and Codex's, agent-mcp.ts), for the driver to turn off.
+ */
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[] }) => Promise<DriverResult>;
 
 /**
  * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
@@ -371,7 +375,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, servers }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: codexEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -459,7 +463,12 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, ju
       ...(model ? { model } : {}),
       config: {
         projects: { [folder]: { trust_level: "untrusted" } },
-        mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: TOOL_TIMEOUT_MS / 1000 } },
+        // The person's own servers stay off (`enabled: false` merges into their config): Codex calls their tools without an
+        // approval Ensemble could judge. Only a chat with all of its own tools keeps them (runTurn passes none).
+        mcp_servers: {
+          ...Object.fromEntries((servers ?? []).filter((server) => server.name !== "ensemble").map((server) => [server.name, { enabled: false }])),
+          ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: TOOL_TIMEOUT_MS / 1000 },
+        },
         // Codex's own web search runs at OpenAI, not in the sandbox: the person's plan reads the web.
         ...(spec.ownWeb || spec.ownTools ? { web_search: "live" } : {}),
       },
@@ -751,7 +760,12 @@ export function copilotPrompt(head: string, sections: string[], platform?: NodeJ
 }
 
 /** The arguments for Copilot CLI (exported for tests). */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null; pluginDir?: string | null; name?: string | null }): string[] {
+/**
+ * `serversOff`: the person's own MCP servers (every source Copilot reads), each turned off where the turn has
+ * Ensemble's tools only, with `--disable-mcp-server` (`disableFlag`: its help lists it) or else a `--deny-tool`
+ * rule for the whole server, which wins over `--allow-all-tools`.
+ */
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null; pluginDir?: string | null; name?: string | null; serversOff?: string[]; disableFlag?: boolean }): string[] {
   const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -774,6 +788,7 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
           // Copilot's web_fetch asks for url(); its web_search does not. Without own web both stay closed.
           ...(input.web ? [] : ["--deny-tool", "url", "--excluded-tools", "web_search"]),
           "--disable-builtin-mcps",
+          ...(input.serversOff ?? []).flatMap((name) => (input.disableFlag ? ["--disable-mcp-server", name] : ["--deny-tool", name])),
         ]),
     // Nobody can answer Copilot's own question prompt here; Ensemble's tools carry the conversation.
     "--no-ask-user",
@@ -792,7 +807,7 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
   ];
 }
 
-const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session }) => {
+const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session, servers }) => {
   // `--session-id` would quietly start a new, empty session under the id of one deleted in Copilot.
   if (session?.resume && (await copilotHasSession(session.id)) === false) throw new SessionGone(`Copilot no longer has session ${session.id}`);
   const mcpFile = join(own ?? folder, "mcp.json");
@@ -810,7 +825,10 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   const oneOff = !session && stdin ? randomUUID() : null;
   // Its own tools need a Copilot that loads a plugin for one run; an older one has only Ensemble's.
   const pluginDir = spec.ownTools && (await copilotTakesPlugins(bin)) ? await writeCopilotFloorPlugin(join(own ?? folder, "copilot-floor"), chatHookCommand("copilot-cli")) : null;
-  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir, name }), {
+  // With Ensemble's tools only, none of the person's own MCP servers (the built-in ones go with --disable-builtin-mcps).
+  const serversOff = pluginDir ? [] : (servers ?? []).filter((server) => server.name !== "ensemble" && server.source !== "builtin").map((server) => server.name);
+  const disableFlag = serversOff.length > 0 && (await helpHas(bin, ["--help"], "--disable-mcp-server", copilotEnv({})));
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir, name, serversOff, disableFlag }), {
     cwd: folder,
     // A hook of the person's own Ensemble connection (`ensemble hooks connect`) stays out of the turn.
     env: copilotEnv({ ...mcp.env, ENSEMBLE_RUN: "assistant-turn" }),
@@ -866,7 +884,7 @@ const runAcpTurn =
   (id: AcpEngine): Driver =>
   async ({ spec, io, folder, mcp, files, session, judge }) => {
     const model = chosen(spec.model);
-    const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env });
+    const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env, ensembleMcpOnly: !spec.ownTools || Boolean(spec.node) });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
     const child = spawn(launch.program, launch.args, { cwd: folder, env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
     child.stdin.on("error", () => undefined);
@@ -1038,9 +1056,19 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
   // The turn's own files and settings stay out of a shared folder: one folder per chat beside it.
   const own = group ? sessionFolder(key!) : folder;
   if (group) await mkdir(own, { recursive: true });
+  // The MCP servers the agent loads by itself here: turned off where the turn has Ensemble's tools only (on a Copilot
+  // too old to load a plugin, too), and on Codex in a node's turn as well; in a node's own turn on Copilot they stay and
+  // its judge knows their tools by name. A chat with all of its own tools keeps them as the person set them up.
+  const restricted = !spec.ownTools || Boolean(spec.node);
+  const servers =
+    spec.agent === "copilot-cli" && (restricted || !(await copilotTakesPlugins(found_.path)))
+      ? await copilotMcpServers(found_.path, folder, copilotEnv({}))
+      : spec.agent === "codex" && restricted
+        ? await codexMcpServers(found_.path, folder, codexEnv({}))
+        : [];
   // With its own tools, each of the agent's calls is judged from the turn's folder: by the hard floor, or a node's folder
   // policy (loaded only for a node's turn: it reads this computer's own settings and rules).
-  const judge = !spec.ownTools ? undefined : spec.node ? (await import("./node-own-tools.js")).nodeOwnJudge({ folder, node: spec.node, app: spec.agent, ...(io.ask ? { ask: io.ask } : {}) }) : floorJudge(folder, spec.agent);
+  const judge = !spec.ownTools ? undefined : spec.node ? (await import("./node-own-tools.js")).nodeOwnJudge({ folder, node: spec.node, app: spec.agent, mcpServers: servers, ...(io.ask ? { ask: io.ask } : {}) }) : floorJudge(folder, spec.agent);
   const bridge = openBridge(spec.tools, io.call, judge ? { judge } : {});
   let handedOff = false;
   const mcp: McpServer = {
@@ -1104,6 +1132,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
           mcp,
           session,
           own,
+          servers,
           ...(judge ? { judge } : {}),
         });
       } catch (error) {

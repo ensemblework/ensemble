@@ -44,7 +44,7 @@ const SEARCHES = new Set(["Grep", "Glob"]);
 const WRITES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const SHELLS = new Set(["Bash", "PowerShell"]);
 /** Bookkeeping tools that touch nothing outside the agent itself. */
-const HARMLESS = new Set([
+export const HARMLESS: ReadonlySet<string> = new Set([
   "TodoWrite", "TodoRead", "Task", "Agent", "ExitPlanMode", "BashOutput", "KillShell", "KillBash", "Skill", "SlashCommand", "ToolSearch",
   "ListMcpResourcesTool", "ReadMcpResourceTool",
   ...ENSEMBLE_OWN_TOOLS.map((name) => `mcp__ensemble__${name}`),

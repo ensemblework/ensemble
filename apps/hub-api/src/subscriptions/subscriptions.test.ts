@@ -460,6 +460,7 @@ test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, an
   // Claude Code: its own tools, each through Ensemble's hook; Ensemble's tools from its MCP server.
   const claude = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, ownTools: true, hookCommand: "node hook.mjs --source claude --chat" });
   assert.equal(claude.includes("--tools"), false, "no tool is taken away");
+  assert.ok(claude.includes("--strict-mcp-config") && claude[claude.indexOf("--mcp-config") + 1] === "m", "and no MCP server but Ensemble's");
   assert.deepEqual(JSON.parse(claude[claude.indexOf("--settings") + 1]), claudeChatSettings("node hook.mjs --source claude --chat"));
   assert.equal(claudeChatSettings("h").hooks && (claudeChatSettings("h").hooks as { PreToolUse: Array<{ matcher: string }> }).PreToolUse[0]!.matcher, "*", "the hook sees every tool");
   // GitHub Copilot: every tool, path and URL, with the hook as a per-turn plugin.
@@ -539,7 +540,7 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", model: null, effort: null }).includes("--max-turns"), "no limit of Ensemble's own");
 });
 
-test("Copilot CLI denies its shell, writes and fetches, and Windows gets a prompt that fits its command line", () => {
+test("Copilot CLI denies its shell, writes and fetches, loads none of the person's own MCP servers, and Windows gets a prompt that fits its command line", () => {
   const args = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: "claude-haiku-5.5", effort: null, platform: "darwin" });
   assert.ok(!args.includes("--session-id"), "a one-off turn names no session");
   const chat = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: null, effort: null, sessionId: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" });
@@ -547,6 +548,11 @@ test("Copilot CLI denies its shell, writes and fetches, and Windows gets a promp
   const denied = args.flatMap((arg, index) => (arg === "--deny-tool" ? [args[index + 1]] : []));
   assert.deepEqual(denied, ["shell", "write", "url"]);
   assert.ok(args.includes("--disable-builtin-mcps"));
+  const servers = ["io.github.wonderwhy-er/desktop-commander", "notion"];
+  const theirs = copilotArgs({ prompt: "hello", mcpFile: "m", model: null, effort: null, serversOff: servers, disableFlag: true });
+  assert.deepEqual(theirs.flatMap((arg, index) => (arg === "--disable-mcp-server" ? [theirs[index + 1]] : [])), servers, "each of the person's own servers off");
+  const older = copilotArgs({ prompt: "hello", mcpFile: "m", model: null, effort: null, serversOff: servers, disableFlag: false });
+  assert.deepEqual(older.flatMap((arg, index) => (arg === "--deny-tool" ? [older[index + 1]] : [])), ["shell", "write", "url", ...servers], "a Copilot without --disable-mcp-server: their tools denied, which wins over allowing all");
   assert.ok(args.includes("--no-ask-user"), "nobody can answer Copilot's own question prompt in an assistant turn");
   assert.ok(!args.includes("--context"), "the model's standard window unless the tier chose the long one");
   assert.equal(args[args.indexOf("--additional-mcp-config") + 1], "@/t/mcp.json");

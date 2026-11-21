@@ -64,6 +64,11 @@ export type AcpLaunchInput = {
   model?: string | null;
   /** Variables for Ensemble's MCP server and the run. */
   extraEnv?: Record<string, string>;
+  /**
+   * Only Ensemble's MCP server, none of the person's own (an assistant turn with Ensemble's tools only, or a node's):
+   * Gemini CLI and Qwen Code take `--allowed-mcp-server-names` for it; the other agents have no such switch.
+   */
+  ensembleMcpOnly?: boolean;
 };
 
 export type AcpAgent = {
@@ -104,16 +109,27 @@ export const OPENCODE_PERMISSIONS = {
   doom_loop: "ask",
 } as const;
 
-const geminiFlag = new Map<string, string>();
-/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code, built from it) from before it was renamed. */
-async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+const geminiHelp = new Map<string, Promise<string>>();
+/** A Gemini CLI's (or Qwen Code's, built from it) help, read once per program. */
+function geminiHelpText(found: HostLaunch): Promise<string> {
   const key = [found.program, ...found.args].join("\u0000");
-  const known = geminiFlag.get(key);
-  if (known) return known;
-  const help = await quickRun(found.program, [...found.args, "--help"], 15_000);
-  const flag = /--acp\b/.test(help.stdout) || !/--experimental-acp\b/.test(help.stdout) ? "--acp" : "--experimental-acp";
-  geminiFlag.set(key, flag);
-  return flag;
+  let known = geminiHelp.get(key);
+  if (!known) {
+    known = quickRun(found.program, [...found.args, "--help"], 15_000).then((help) => help.stdout);
+    geminiHelp.set(key, known);
+  }
+  return known;
+}
+
+/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code) from before it was renamed. */
+async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+  const help = await geminiHelpText(found);
+  return /--acp\b/.test(help) || !/--experimental-acp\b/.test(help) ? "--acp" : "--experimental-acp";
+}
+
+/** Only Ensemble's MCP server, where the turn asks for that and this Gemini CLI (or Qwen Code) takes the flag. */
+async function geminiMcpOnly(found: HostLaunch, input: AcpLaunchInput): Promise<string[]> {
+  return input.ensembleMcpOnly && /--allowed-mcp-server-names\b/.test(await geminiHelpText(found)) ? ["--allowed-mcp-server-names", "ensemble"] : [];
 }
 
 /** The agent's program on the trusted PATH (an npm shim on Windows as Node and its script), or null. */
@@ -167,7 +183,7 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["gemini-cli"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...(await geminiMcpOnly(found, input))], env: agentEnv(input.extraEnv), resume: "session/load" };
     },
   },
   antigravity: {
@@ -208,7 +224,7 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["qwen-code"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...(await geminiMcpOnly(found, input))], env: agentEnv(input.extraEnv), resume: "session/load" };
     },
   },
   "kimi-code": {
