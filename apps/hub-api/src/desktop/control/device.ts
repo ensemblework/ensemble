@@ -19,7 +19,7 @@ import { appendLedger } from "../../lib/ledger.js";
 import type { HostedClient } from "../../remote/client.js";
 import type { NodeDesktopAnswer, NodeToolAsk, NodeToolRequest } from "../../remote/contract.js";
 import { loadSettings } from "../../remote/store.js";
-import { desktops, UNSUPPORTED_HERE } from "./index.js";
+import { desktops, desktopSystem, UNSUPPORTED_HERE, WINDOWS_UNSUPPORTED } from "./index.js";
 import { desktopReadiness } from "./readiness.js";
 import type { Desktops } from "./screens.js";
 import { secretFor } from "./secrets.js";
@@ -61,7 +61,7 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
   const answer = (status: number, body: Record<string, unknown>): DesktopDone => ({ status, body, grantsUsed });
   const spec = DESKTOP_TOOLS.find((item) => item.name === request.name);
   if (!spec) return answer(400, { error: `Unknown desktop tool ${request.name}. Update Ensemble on this computer.` });
-  if (process.platform !== "linux") return answer(409, { error: UNSUPPORTED_HERE });
+  if (!desktopSystem()) return answer(409, { error: process.platform === "win32" ? WINDOWS_UNSUPPORTED : UNSUPPORTED_HERE });
   const parsed = (spec.input as z.ZodTypeAny).safeParse(request.input ?? {});
   if (!parsed.success) return answer(200, { ok: false, error: { code: "bad_input", message: parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ").slice(0, 2000) }, evidence: [], refused: [] });
   const input = parsed.data as Record<string, unknown>;

@@ -796,7 +796,7 @@ function pageName(url: string): string {
 }
 
 function desktopUnsupported(): CaptureError {
-  return new CaptureError("not_supported", "Capturing your real screen works on Linux, through the desktop portal, which asks the owner the first time.");
+  return new CaptureError("not_supported", "Capturing your real screen works on Linux, through the desktop portal, which asks the owner the first time, and on macOS in the Ensemble app, with its Screen Recording permission.");
 }
 
 function sleep(ms: number): Promise<void> {

@@ -184,7 +184,7 @@ Paired host ← device token / claims / progress / bounded files → local remot
 | `apps/hub-api/src/desktop/main.ts` | Sidecar entry: environment, runtime lock, secret key, PATH, PGlite, `startHub` |
 | `apps/hub-api/src/desktop/runtime-lock.ts`, `user-path.ts` | One runtime per data folder; the person's PATH |
 | `apps/hub-api/src/desktop/mode.ts`, `account.ts` | `mode.json`; `/api/desktop/account*`, `/api/desktop/mode`, `/api/desktop/mcp`, `/api/desktop/connected` |
-| `apps/hub-api/src/desktop/control/` | Desktop control on Linux for Ensemble Node and coding runs: a private agent screen (a headless GNOME Shell) and the owner's real screen, keyboard and pointer, through `apps/hub-api/desktop-helper/linux/` ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
+| `apps/hub-api/src/desktop/control/` | Desktop control for Ensemble Node and coding runs: on Linux a private agent screen (a headless GNOME Shell) and the owner's real screen, keyboard and pointer, through `apps/hub-api/desktop-helper/linux/`; on macOS the owner's screen through cua-driver (`drivers/macos-cua.ts`), only in this app's own runtime ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
 | `apps/hub-api/src/transfer/` | Moving local data into an account: export (computer) and import (account) |
 | `apps/hub-api/src/lib/pglite-engine.ts` | PGlite open, backups, migrations |
 
@@ -218,7 +218,7 @@ The desktop app and the CLI runner share the data folder, so a computer has one 
 
 The shell attaches to a CLI runner that is already running (its `api.json` answers `/health` with its token), leaves it running on quit, and starts its own on the same port and token if that runner stops. A desktop-owned runtime stops with the app.
 
-The packaged sidecar carries `scripts/ensemble-hook.mjs`, `scripts/ensemble-ask-mcp.mjs` and `desktop-discovery.mjs` at `app/scripts/hooks/`, and on Linux the Landlock helper at `bin/landrun` (built from pinned source with Go; release builds require it).
+The packaged sidecar carries `scripts/ensemble-hook.mjs`, `scripts/ensemble-ask-mcp.mjs` and `desktop-discovery.mjs` at `app/scripts/hooks/`, on Linux the Landlock helper at `bin/landrun` (built from pinned source with Go; release builds require it), and on macOS the desktop control driver at `bin/cua-driver` with `bin/cua-driver.LICENSE` (`scripts/fetch-cua-driver.mjs`: cua-driver's universal release archive at the version and SHA-256 pinned in `apps/hub-api/desktop-helper/macos/cua-driver.json`, signed by its publisher; the build stops when the checksum differs). The CLI's sidecar leaves it out (`--no-cua-driver`): desktop control on a Mac runs only in this app's runtime, so macOS asks about its permissions for Ensemble ([25 §11.9](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#119-macos)).
 
 #### 3.4 Storage, keys and migrations
 
@@ -294,7 +294,7 @@ pnpm desktop:build      # tauri build
 | `linux-arm64` | `ubuntu-22.04-arm` | deb, rpm, AppImage | `ensemble-desktop-linux-arm64` |
 | `windows-arm64` | `windows-11-arm` | nsis | `ensemble-desktop-windows-arm64` |
 
-Each target builds on a runner of its own architecture, never a cross build: the sidecar packs the runner's Node, Prisma engines and landrun, so it matches the app's architecture. Both Linux runners are Ubuntu 22.04, so both builds need glibc 2.35 or newer. Tauri cannot build an MSI for arm64, so Windows on Arm gets the NSIS installer only.
+Each target builds on a runner of its own architecture, never a cross build: the sidecar packs the runner's Node, Prisma engines and landrun, so it matches the app's architecture. Both macOS targets carry the same universal cua-driver. Both Linux runners are Ubuntu 22.04, so both builds need glibc 2.35 or newer. Tauri cannot build an MSI for arm64, so Windows on Arm gets the NSIS installer only.
 
 Prisma 6 builds its query engine for Windows on x64 only, so the Windows arm64 sidecar (the app's, and the `windows-arm64` CLI package's, [26 §1](26_CLI.md#1-install)) carries Prisma's Rust-free client instead: `assemble-desktop-sidecar.mjs` generates it from a copy of the schema with `engineType = "client"`, and a WASM module compiles each query that the PGlite adapter runs. `apps/hub-api/src/lib/pglite-adapter.ts` wraps the adapter for that client (it finds `engineType = "client"` in the generated client's schema): bytes go to PGlite as binary, timestamps get their UTC offset, and constraint errors get the kinds that make them P2002, P2003 and the rest, as the Rust engine does. Before it finishes, the script runs the migrations on an in-memory database with that client and checks that a duplicate comes back as P2002. The hosted API and every other target keep the Rust engine.
 
