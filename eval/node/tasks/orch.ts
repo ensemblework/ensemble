@@ -203,11 +203,12 @@ const peerDuringApproval: Task = {
   id: "peer-message-during-approval",
   suite: "orch",
   category: "orchestration",
-  title: "Another person in the room asks the node something while its turn waits on the owner's card: the card survives, one press finishes the work, the question is answered once",
+  title: "A teammate asks the node something in a shared room while its turn in the owner's DM waits on the owner's card: the card survives, one press finishes the work, the question is answered once",
   timeoutMs: ORCH_MS,
   setup: async (ctx) => {
     await ctx.makeNode("ops", "assistant", { slug: "ops" });
-    // A room the owner shares with a teammate, who joins through the invite as a person would.
+    // A room the owner shares with a teammate, who joins through the invite as a person would. The write itself
+    // happens in the owner's DM: a turn in a room with other people never reaches the owner's computer.
     const theo = await ctx.world.newOwner("Theo Park");
     const made = await ctx.api<{ room: { id: string } }>("POST", "/api/node/rooms", { title: "Launch room", nodeIds: [ctx.nodes.ops!.id], invite: [theo.email] });
     ctx.rooms.room = made.room.id;
@@ -229,14 +230,14 @@ const peerDuringApproval: Task = {
   },
   steps: [
     {
-      room: "room",
+      room: "ops",
       wait: "none",
-      say: (ctx) => `@${ctx.nodes.ops!.slug} please create a file called approval-op.txt in ${ctx.data.out as string} on my computer, containing exactly the line: operation done. Then tell me it's there.`,
+      say: (ctx) => `Please create a file called approval-op.txt in ${ctx.data.out as string} on my computer, containing exactly the line: operation done. Then tell me it's there.`,
     },
     {
       before: { what: "a card waiting for the owner", until: waitingCard, timeoutMs: 6 * 60_000 },
       act: {
-        what: "the teammate asks @ops a question while the card waits",
+        what: "the teammate asks @ops a question in the shared room while the card waits",
         run: async (ctx) => {
           ctx.data.waitingAtPeer = await waitingCardIds(ctx);
           const posted = await peers.get(ctx)!.inject({ method: "POST", url: `/api/node/rooms/${ctx.rooms.room!}/messages`, payload: { body: `@${ctx.nodes.ops!.slug} quick question while you work on that: what is 17 + 25? Just the number, please.` } });
