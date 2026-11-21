@@ -247,8 +247,9 @@ export const OrchestrationSettings = z.object({
   runWithoutAsking: z.boolean().default(true),
   placeByPriority: z.boolean().default(true),
   maxConcurrentJobs: z.number().int().min(1).max(8).default(3),
-  maxTurns: z.number().int().min(5).max(200).default(40),
-  maxMinutes: z.number().int().min(5).max(480).default(60),
+  /** The owner's own limits on a coding agent's run: none unless they set one (null). */
+  maxTurns: z.number().int().min(5).max(200).nullable().default(null),
+  maxMinutes: z.number().int().min(5).max(480).nullable().default(null),
   planWithTaskModel: z.boolean().default(true),
   requireTestsBeforeCommit: z.boolean().default(true),
   /**

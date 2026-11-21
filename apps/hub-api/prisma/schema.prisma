@@ -460,6 +460,12 @@ model Run {
   deletedAt              DateTime?       @map("deleted_at")
   /// The finished piece of work, as Markdown — not the step log.
   result                 String?
+  /// The turn packet a Code tab turn sent (workspace/turn-packet.ts): mode, sections and sizes, and the
+  /// hashes of what it delivered, which the next turn in the same agent session compares against.
+  packet                 Json?
+  /// How the run ended, each state kept apart (workspace/completion.ts): conversation, files, checks
+  /// Ensemble ran again, accepted, pull request.
+  completion             Json?
   task                   Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
   steps                  RunStep[]
   approvals              Approval[]
@@ -561,8 +567,9 @@ model WorkspaceJob {
   summary              String?
   resourceKeys         String[]            @default([]) @map("resource_keys")
   repository           Json                @default("{}")
-  maxTurns             Int                 @default(40) @map("max_turns")
-  maxMinutes           Int                 @default(60) @map("max_minutes")
+  /// Null: no limit. A limit is the owner's own (Settings or a run profile), never Ensemble's.
+  maxTurns             Int?                @map("max_turns")
+  maxMinutes           Int?                @map("max_minutes")
   completeDeliverable  Boolean             @default(false) @map("complete_deliverable")
   context              Json?
   evidence             Json?
@@ -608,6 +615,7 @@ model WorkspaceJob {
   evidenceFiles        JobEvidence[]
 
   sessionChoices       SessionChoice[]
+  handoffs             SessionHandoff[]
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
   @@index([deviceId, status, sequence])
@@ -692,6 +700,30 @@ model SessionChoice {
 
   @@index([userId, createdAt])
   @@map("session_choices")
+}
+
+/// A portable record of an agent session's work (`ensemble.handoff.v1`, workspace/handoff-record.ts),
+/// made when a Code tab thread switches agent or subscription, or is forked: the new session's first
+/// turn carries it, and the run folder keeps it as `.ensemble/handoff/<id>.md`. Data, never lossless.
+/// (Not `AgentHandoff`, which is a task opened in an agent's own app.)
+model SessionHandoff {
+  /// `hof_<day>_<random>`
+  id          String        @id
+  userId      String        @map("user_id")
+  /// The run that received it (the new session's first run).
+  jobId       String?       @map("job_id")
+  /// The run of the session it was made from.
+  sourceJobId String?       @map("source_job_id")
+  /// agent | subscription | fork | session_gone
+  reason      String
+  record      Json
+  chars       Int
+  createdAt   DateTime      @default(now()) @map("created_at")
+  job         WorkspaceJob? @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([jobId])
+  @@map("session_handoffs")
 }
 
 /// Retention deletes chunks by `createdAt`; WorkspaceEvent stays the place for milestones.

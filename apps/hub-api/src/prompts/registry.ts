@@ -19,7 +19,8 @@ import { MEETING_AI_PROMPT } from "../connectors/meetings/ai.js";
 import { MEETING_PREP_PROMPT } from "../cowork/prep.js";
 import { SKILL_MINING_PROMPT } from "../jobs/skill-mining.js";
 import { howYouRun } from "../subscriptions/turn.js";
-import { chatPrompt, ownAgentPrompt, workingNotes } from "../workspace/agent.js";
+import { chatPrompt, engineRules, ownAgentPrompt, workingNotes } from "../workspace/agent.js";
+import { buildPacket } from "../workspace/turn-packet.js";
 import type { JobContext } from "../workspace/tools.js";
 
 export type PromptEntry = { id: string; title: string; when: string; purpose: string; body: string };
@@ -90,6 +91,35 @@ export function promptCatalog(): PromptEntry[] {
       when: "The first message in the CLI's Chat tab. Later messages are sent as you typed them; the rules go again only after you change the run's settings.",
       purpose: "Where it works, the board tools it has, and how the run works.",
       body: chatPrompt(run, "<your message>", { resumed: false }),
+    },
+    {
+      id: "agent.code",
+      title: "Coding agent: Code tab",
+      when: "A message in the Code tab. A new agent session gets all of it; a later message in the same session gets only what changed since its last one (records, the run's rules, the run profile, skills, the date), then the message.",
+      purpose: "Where it works and how the run works, your run profile's instructions, the skills in its own skill folder, the Ensemble project, the records the thread names, what done means, and a handoff record when it takes over from another session.",
+      body: buildPacket({
+        owner: "Mira",
+        root: run.root,
+        rules: engineRules(run),
+        source: {
+          items: [
+            { key: "task:t1#head", section: "", text: "Fix the CSV export (task, In progress, due 2026-10-30) · Project: Fieldnote web" },
+            { key: "task:t1|People|Mira Chen", section: "Fix the CSV export (task), People", text: "Mira Chen: owner" },
+          ],
+          project: null,
+          skills: [],
+          acceptance: [],
+          timezone: "Europe/London",
+        },
+        profile: "Run the tests before you say you are done.",
+        skills: { folder: ".claude/skills", list: [{ name: "ensemble-verify-before-done", description: "Use when you are about to say work is done: check it first." }] },
+        acceptance: [{ id: "AC-1", text: "The export keeps the column order." }],
+        timezone: "Europe/London",
+        now: new Date("2026-10-29T09:00:00Z"),
+        handoff: null,
+        message: "<your message>",
+        previous: null,
+      }).prompt,
     },
     {
       id: "agent.ensemble",

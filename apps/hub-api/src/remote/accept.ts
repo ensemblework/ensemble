@@ -21,6 +21,7 @@ import { webContext } from "./origin.js";
 import { agentProjectOf } from "../workspace/agent-projects.js";
 import { parseConfig } from "../workspace/session-choice/config.js";
 import { parseFacts } from "../workspace/session-choice/related.js";
+import { parsePacketSource } from "../workspace/turn-packet.js";
 import { isRefusal, planLocalJob, sharedFolder, type LocalPlan, type Refusal } from "./policy.js";
 import { authRejected, type HostedClient } from "./client.js";
 import { parseMission, type JobSpec, type MissionSpec, type ResultLink } from "./contract.js";
@@ -84,13 +85,15 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       if (bytes.byteLength !== attachment.byteSize) throw new Error("The attached file was incomplete. Retry this task.");
       downloads.push({ attachment, bytes });
     }
-    // A Code-tab agent thread keeps one task here, off the board, as on the web: later turns go on it.
+    // A Code-tab agent thread keeps one task here, off the board, as on the web: later turns go on it. A fork is a thread of its own.
     const codeTurn = resolved.assign.surface === "code";
-    const threadTask = codeTurn && resolved.assign.continueFromJobId
-      ? await app.prisma.workspaceJob.findUnique({ where: { id: resolved.assign.continueFromJobId }, select: { task: { select: { id: true, deletedAt: true } } } }).then((row) => (row?.task.deletedAt ? null : row?.task ?? null))
+    const fork = codeTurn && spec.fork === true && Boolean(resolved.assign.continueFromJobId);
+    const continued = codeTurn && resolved.assign.continueFromJobId
+      ? await app.prisma.workspaceJob.findUnique({ where: { id: resolved.assign.continueFromJobId }, select: { task: { select: { id: true, deletedAt: true, sourceRef: true } } } }).then((row) => (row?.task.deletedAt ? null : row?.task ?? null))
       : null;
+    const threadTask = fork ? null : continued;
     const task = threadTask ?? (await app.prisma.$transaction((tx) =>
-      createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: codeTurn ? codeThreadRef(null, resolved.assign.folder ?? spec.id) : "remote" }, "system"),
+      createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: codeTurn ? (fork && continued ? continued.sourceRef : codeThreadRef(null, resolved.assign.folder ?? spec.id)) : "remote" }, "system"),
     ));
     const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
     if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
@@ -98,6 +101,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     // A secret scope from the web (an Ensemble Node run) limits the saved secrets the run gets (lib/run-secrets.ts).
     const mission = parseMission(spec.mission);
     const facts = parseFacts(spec.related);
+    const packet = parsePacketSource(spec.packet);
     // An Ensemble Node build that works apart gets its own git worktree of the shared folder (B13).
     const tree = mission ? await intoWorktree(app, spec, resolved, mission) : null;
     const context = {
@@ -111,6 +115,10 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       ...(agentProjectOf(spec.project) ? { agentProject: agentProjectOf(spec.project) } : {}),
       // The task's facts as the web knows them, kept so later runs here can be matched against this one (session-choice).
       ...(facts ? { taskFacts: facts } : {}),
+      // A Code tab turn: its packet's facts from the web, the run profile's instructions, a fork's source (code-turn.ts).
+      ...(codeTurn && packet ? { codePacket: packet } : {}),
+      ...(codeTurn && spec.profileInstructions?.trim() ? { profileInstructions: spec.profileInstructions.trim().slice(0, 4000) } : {}),
+      ...(fork ? { fork: { from: resolved.assign.continueFromJobId } } : {}),
     } as Prisma.InputJsonValue;
     const choiceConfig = parseConfig(spec.sessionChoice);
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, {

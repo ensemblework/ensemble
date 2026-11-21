@@ -166,13 +166,59 @@ async function sessionRuns(prisma: PrismaClient, scope: SessionScope, where: Pri
 /** The agent session the run was part of was deleted (by the person, or Ensemble's clean-up). */
 const sessionDeleted = (context: unknown) => sessionDeletionOf(context)?.state === "deleted";
 
+/** A fork (`context.fork`): a new session seeded from a handoff record of the run it starts from. */
+export function forkOf(context: unknown): { from: string } | null {
+  const fork = typeof context === "object" && context !== null ? (context as { fork?: unknown }).fork : undefined;
+  const from = typeof fork === "object" && fork !== null ? (fork as { from?: unknown }).from : undefined;
+  return typeof from === "string" && from ? { from } : null;
+}
+
 /**
- * A run continues its parent's agent session when the same agent does it, unless that session was
- * deleted since: a run continuing a deleted session's folder ("Continue an earlier task") starts a session
- * of its own, which is listed, chosen and cleaned up as any other.
+ * The subscription a run's agent and model use: the agent's own sign-in, and for an agent whose models
+ * name their provider (`anthropic/claude-sonnet-4-5` in OpenCode), that provider too. A model without
+ * one (the agent's default) stays on the agent's subscription.
  */
-export function continuesSessionOf(run: { provider: string | null; context: unknown }, parent: { provider: string | null; context: unknown }): boolean {
-  return parent.provider === run.provider && !(sessionDeleted(parent.context) && !sessionDeleted(run.context));
+export function subscriptionOf(provider: string | null, model: string | null | undefined): string {
+  const vendor = /^([a-z0-9][\w.-]*)\/./i.exec(model?.trim() ?? "")?.[1]?.toLowerCase();
+  return vendor ? `${provider ?? ""}:${vendor}` : provider ?? "";
+}
+
+/** Two runs' subscriptions differ only when both name one and they are not the same. */
+function sameSubscription(a: { provider: string | null; model?: string | null }, b: { provider: string | null; model?: string | null }): boolean {
+  if (a.provider !== b.provider) return false;
+  const left = subscriptionOf(a.provider, a.model);
+  const right = subscriptionOf(b.provider, b.model);
+  return left === right || left === (a.provider ?? "") || right === (b.provider ?? "");
+}
+
+/**
+ * A run continues its parent's agent session when the same agent does it on the same subscription (a
+ * model switch within it stays in the session, from the next run on), unless that session was deleted
+ * since, or the run is a fork: a run continuing a deleted session's folder ("Continue an earlier task")
+ * starts a session of its own, which is listed, chosen and cleaned up as any other.
+ */
+export function continuesSessionOf(run: { provider: string | null; model?: string | null; context: unknown }, parent: { provider: string | null; model?: string | null; context: unknown }): boolean {
+  return sameSubscription(run, parent) && !forkOf(run.context) && !(sessionDeleted(parent.context) && !sessionDeleted(run.context));
+}
+
+/**
+ * How a run starts its agent conversation (docs/41 §2): `fresh` (nothing before it, or a deleted
+ * session), `resume` (the same agent and subscription go on in their own session), `handoff` (another
+ * agent or subscription: a new child session that gets a handoff record of the one before), or `fork`
+ * (a new session seeded from a handoff record of the run it starts from).
+ */
+export type SessionOperation = "fresh" | "resume" | "handoff" | "fork";
+
+export function sessionOperation(run: { provider: string | null; model?: string | null; context: unknown; continueFromJobId: string | null }, parent: { provider: string | null; model?: string | null; context: unknown } | null): SessionOperation {
+  if (!run.continueFromJobId || !parent) return "fresh";
+  if (forkOf(run.context)) return "fork";
+  if (continuesSessionOf(run, parent)) return "resume";
+  return sameSubscription(run, parent) ? "fresh" : "handoff";
+}
+
+/** Why a handoff: another agent, or the same agent on another subscription. */
+export function handoffReasonOf(run: { provider: string | null }, parent: { provider: string | null }): "agent" | "subscription" {
+  return run.provider === parent.provider ? "subscription" : "agent";
 }
 
 /** A run's session: walk back while the earlier run is in the same agent session. */
@@ -372,14 +418,14 @@ export const LIVE_RUN = new Set<string>(WAITING);
 /** The session a run belongs to, for its detail view: its id, and whether the agent's own conversation is known. */
 export async function sessionOfJob(prisma: PrismaClient, job: { id: string; userId: string; runnerAccountId: string | null; provider: string | null; kind: string }): Promise<{ id: string; resumable: boolean } | null> {
   if (job.kind !== "code" || !isCodeEngine(job.provider)) return null;
-  type Link = { id: string; provider: string | null; continueFromJobId: string | null; context: unknown };
-  const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true, context: true } });
-  let current: Link | null = { id: job.id, provider: job.provider, continueFromJobId: own?.continueFromJobId ?? null, context: own?.context ?? null };
+  type Link = { id: string; provider: string | null; model: string | null; continueFromJobId: string | null; context: unknown };
+  const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true, context: true, model: true } });
+  let current: Link | null = { id: job.id, provider: job.provider, model: own?.model ?? null, continueFromJobId: own?.continueFromJobId ?? null, context: own?.context ?? null };
   const seen = new Set([job.id]);
   while (current?.continueFromJobId) {
     const parent: Link | null = await prisma.workspaceJob.findFirst({
       where: { id: current.continueFromJobId, userId: job.userId, runnerAccountId: job.runnerAccountId },
-      select: { id: true, provider: true, continueFromJobId: true, context: true },
+      select: { id: true, provider: true, model: true, continueFromJobId: true, context: true },
     });
     if (!parent || !continuesSessionOf(current, parent)) break;
     if (seen.has(parent.id)) throw new Error("The agent session has a cyclic resume chain.");
@@ -447,6 +493,8 @@ const QUEUE_SELECT = {
   runnerAccountId: true,
   kind: true,
   provider: true,
+  model: true,
+  context: true,
   status: true,
   continueFromJobId: true,
   queuePosition: true,
@@ -476,13 +524,18 @@ export async function assertSessionContinuation(tx: Prisma.TransactionClient, id
   if (sessionDeletionOf(row?.context)) throw new QueueChangedError("This session is being deleted or has been deleted. Start a new session instead.");
 }
 
+/** A run that starts a session of its own though its parent may be by the same agent: a fork, or another subscription. */
+export const startsOwnSession = (run: { provider: string | null; model?: string | null; context?: unknown }, parent: { provider: string | null; model?: string | null }) =>
+  parent.provider !== run.provider || Boolean(forkOf(run.context)) || !sameSubscription(run, parent);
+
 /** The first run of the session a run belongs to: back along `continueFromJobId` while the earlier run is by the same agent. */
 async function rootOfRun(db: Db, run: { id: string; userId: string; provider: string | null; continueFromJobId: string | null }): Promise<string> {
-  let current: { id: string; continueFromJobId: string | null } = run;
+  const own = await db.workspaceJob.findUnique({ where: { id: run.id }, select: { model: true, context: true } });
+  let current: { id: string; provider: string | null; model: string | null; context: unknown; continueFromJobId: string | null } = { ...run, model: own?.model ?? null, context: own?.context ?? null };
   const seen = new Set([run.id]);
   while (current.continueFromJobId) {
-    const parent = await db.workspaceJob.findFirst({ where: { id: current.continueFromJobId, userId: run.userId }, select: { id: true, provider: true, continueFromJobId: true } });
-    if (!parent || parent.provider !== run.provider) break;
+    const parent = await db.workspaceJob.findFirst({ where: { id: current.continueFromJobId, userId: run.userId }, select: { id: true, provider: true, model: true, context: true, continueFromJobId: true } });
+    if (!parent || startsOwnSession(current, parent)) break;
     if (seen.has(parent.id)) throw new QueueChangedError("The session has a cyclic resume chain.");
     seen.add(parent.id);
     current = parent;
@@ -498,7 +551,10 @@ async function queueRows(db: Db, owner: Owner, root: string): Promise<QueueRow[]
   const seen = new Set([root]);
   let frontier = [root];
   for (let round = 0; frontier.length && round < 200 && rows.length < 500; round += 1) {
-    const next = (await db.workspaceJob.findMany({ where: { userId: owner.userId, runnerAccountId: owner.runnerAccountId, continueFromJobId: { in: frontier }, provider: first.provider }, select: QUEUE_SELECT })).filter((row) => !seen.has(row.id));
+    const parents = new Map(rows.map((row) => [row.id, row]));
+    const next = (await db.workspaceJob.findMany({ where: { userId: owner.userId, runnerAccountId: owner.runnerAccountId, continueFromJobId: { in: frontier }, provider: first.provider }, select: QUEUE_SELECT })).filter(
+      (row) => !seen.has(row.id) && !startsOwnSession(row, parents.get(row.continueFromJobId!) ?? first),
+    );
     for (const row of next) seen.add(row.id);
     rows.push(...next);
     frontier = next.map((row) => row.id);

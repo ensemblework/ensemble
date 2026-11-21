@@ -1258,9 +1258,9 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                 <Label>Limits</Label>
                 <div className="grid grid-cols-3 gap-3">
                   {([
-                    ["maxMinutes", maxMinutes, setMaxMinutes, settings.data?.settings.orchestration.maxMinutes ?? 60],
+                    ["maxMinutes", maxMinutes, setMaxMinutes, settings.data?.settings.orchestration.maxMinutes ?? "No limit"],
                     ["maxToolCalls", maxToolCalls, setMaxToolCalls, 80],
-                    ["maxTurns", maxTurns, setMaxTurns, settings.data?.settings.orchestration.maxTurns ?? 40],
+                    ["maxTurns", maxTurns, setMaxTurns, settings.data?.settings.orchestration.maxTurns ?? "No limit"],
                   ] as const).map(([key, value, set, fallback]) => (
                     <label key={key} className="block">
                       <span className="text-[12px] text-muted">{LIMITS[key].label}</span>

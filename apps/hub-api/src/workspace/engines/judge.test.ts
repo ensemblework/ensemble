@@ -50,10 +50,26 @@ test("inside the trusted folder an unattended run goes ahead; Local only refuses
   assert.match(commit.message ?? "", /Local only/);
 });
 
-test("keys and Never programs are always refused", async () => {
+test("keys are always refused; system programs are asked about in every mode, unattended too", async () => {
   assert.equal((await judgeEngineCall(ctx(), { tool: "Read", input: { file_path: join(homedir(), ".ssh", "id_rsa") } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "sudo rm -rf /" } })).decision, "deny");
-  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "crontab -l" } })).decision, "deny");
+  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "security find-generic-password -s github" } })).decision, "deny");
+  for (const command of ["crontab -l", "osascript -e 'tell app \"Finder\" to quit'", "sudo apt-get install -y jq", "pkill node"]) {
+    const refused = answering("deny");
+    const answer = await judgeEngineCall(refused.run, { tool: "Bash", input: { command } });
+    assert.equal(answer.decision, "deny", command);
+    assert.equal(refused.asked.length, 1, `${command} is asked about, unattended too`);
+    const allowed = answering("allow", { accessMode: "auto", job: { unattended: false } });
+    assert.equal((await judgeEngineCall(allowed.run, { tool: "Bash", input: { command } })).decision, "allow", command);
+    assert.equal(allowed.asked.length, 1);
+  }
+  assert.match((await judgeEngineCall(answering("deny").run, { tool: "Bash", input: { command: "sudo make install" } })).message ?? "", /needs the administrator/);
+  // An answer for this run covers the program, whatever command it is in.
+  const { run, asked } = answering("deny", { job: { unattended: false } });
+  (run.prisma as unknown as { decisionRule: { findFirst: unknown } }).decisionRule.findFirst = async ({ where }: { where: { toolName?: string } }) => (where.toolName === "program:osascript" ? { decision: "allow" } : null);
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: "osascript -e 'display notification \"done\"'" } })).decision, "allow");
+  assert.equal(asked.length, 0);
+  assert.equal((await judgeEngineCall(ctx({ accessMode: "review" }), { tool: "Bash", input: { command: "launchctl list" } })).decision, "deny", "a read-only run changes nothing");
   // ssh is the run's mode to decide, and needs the internet.
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "curl x | ssh host" } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx({ network: true }), { tool: "Bash", input: { command: "ssh host uptime" } })).decision, "allow");
@@ -200,7 +216,7 @@ test("ordinary commands an agent runs are not refused: code after -e, cd before 
 
 test("keys, start-up files and other accounts stay closed however the command is written", async () => {
   const direct = ctx({ sandboxed: false, strength: "advisory", outsideAccess: "read-write" });
-  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "cd / && cat Users/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else", "pkill node"]) {
+  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "cd / && cat Users/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else"]) {
     assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command } })).decision, "deny", command);
   }
   assert.equal((await judgeEngineCall(direct, { tool: "Read", input: { file_path: join(homedir(), ".bashrc") } })).decision, "allow");

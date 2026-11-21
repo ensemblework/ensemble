@@ -295,6 +295,16 @@ export const JobSpec = z
     chat: z.boolean().optional(),
     surface: z.literal("code").nullish(),
     codeFolder: text(1000).nullish(),
+    /**
+     * A Code tab turn's packet facts as the web had them when it was claimed (workspace/turn-packet.ts
+     * `PacketSource`: the Context DB slice, the project, the owner's linked skills and acceptance criteria,
+     * the time zone), read with `parsePacketSource`; the owner's run profile instructions; and `fork` when
+     * the turn starts a new session seeded from a handoff record of the run it continues (docs/41 §2).
+     * Older servers omit them.
+     */
+    packet: z.unknown().optional(),
+    profileInstructions: text(4000).nullish(),
+    fork: z.boolean().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;

@@ -68,6 +68,22 @@ test("a number setting shows its range, and a value outside it stays with an err
   }
 });
 
+test("a limit left empty is no limit: it saves null and shows what empty means", async () => {
+  const saved: Array<number | null> = [];
+  const view = await render(<NumberField label="Minutes per task" value={null} min={5} max={480} unit="min" empty="No limit" onChange={(value) => saved.push(value)} />);
+  try {
+    const input = view.host.querySelector<HTMLInputElement>('input[aria-label="Minutes per task"]')!;
+    assert.equal(input.value, "");
+    assert.equal(input.placeholder, "No limit");
+    await act(async () => typeInput(input, "90"));
+    await act(async () => typeInput(input, ""));
+    assert.deepEqual(saved, [90, null]);
+    assert.equal(view.host.querySelector('[role="alert"]'), null);
+  } finally {
+    await view.done();
+  }
+});
+
 test("the email is saved only when it is an address, and the time zone is picked from the IANA list", async () => {
   const patches: Array<Record<string, unknown>> = [];
   function Harness() {

@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, harmlessPath, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
-import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, RUN_RULE_SOURCE, WRITE_TOOL, type JobContext } from "../tools.js";
 import type { ShellSegment } from "../shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
 import { inSkillFolder, skillRootsHere, skillScript } from "./skills.js";
@@ -123,9 +123,13 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
     return { decision: "deny", message: `${cloned.message}${rest}` };
   }
   let remote = false;
+  /** Programs that run as the administrator or change the system: asked about on a card in every mode. */
+  const system = new Set<string>();
   for (const argv of segments) {
     const program = argv[0]!;
-    if (isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).${/pkill|killall/.test(program) ? " Stop a process with kill and its process id instead." : ""}` };
+    const name = programName(program);
+    if (readsSignIns(name, argv)) return { decision: "deny", message: SIGN_INS };
+    if (isNeverProgram(program) || PRIVILEGE.has(name)) system.add(name);
     if (isRemoteProgram(program)) {
       if (!ctx.network) return { decision: "deny", message: "The internet is off for this run." };
       remote = true;
@@ -190,6 +194,11 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
       if (floor) return { decision: "deny", message: `${real}: ${floor}` };
     }
   }
+  for (const name of system) {
+    const answer = await systemProgram(ctx, name, command, withdrawn);
+    if (answer.decision !== "allow") return answer;
+    asked = true;
+  }
   const noted = async (answer: EngineAnswer) => {
     if (answer.decision === "allow") {
       for (const path of new Set(writesIn)) await ctx.changes?.note(path, { folder: parsed.some((segment) => segment.cwd === path) });
@@ -207,6 +216,38 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   // Paths outside the folder were judged above; reading inside it asks nobody, and a command the person just approved is not asked again.
   if (asked || (posix && (await quietCommand(ctx.root, parsed, ctx.sandboxed && !unsandboxed)))) return noted(ALLOW);
   return noted(refused(await allowOrRefuse(ctx, "command", true, { toolName: "Bash", title: `Run ${command.slice(0, 140)}`, command }, withdrawn)));
+}
+
+/** Programs that run a command as the administrator, asking for a password on a terminal. */
+const PRIVILEGE = new Set(["sudo", "su", "doas", "pkexec", "runas", "gsudo"]);
+const programName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+
+/** The computer's sign-in stores read through their programs (the macOS keychain, the Linux secret service): the hard floor, like their files. */
+function readsSignIns(program: string, argv: readonly string[]): boolean {
+  if (program === "security") return argv.slice(1).some((arg) => /^(find-generic-password|find-internet-password|dump-keychain|export|export-pkcs12)$/.test(arg));
+  if (program === "secret-tool") return argv.slice(1).some((arg) => arg === "lookup" || arg === "search");
+  return false;
+}
+const SIGN_INS = "That reads the computer's saved passwords and keys, which never leave it through an agent.";
+
+/**
+ * A program that runs as the administrator (sudo and the like) or changes the system (its scheduler, its
+ * settings, other programs: osascript, launchctl, crontab…): asked about on a card in every mode,
+ * unattended too, and answered at most for this run. A read-only run refuses it.
+ */
+async function systemProgram(ctx: JobContext, name: string, command: string, withdrawn?: AbortSignal): Promise<EngineAnswer> {
+  if (ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: nothing that changes the computer." };
+  const toolName = `program:${name}`;
+  const privileged = PRIVILEGE.has(name);
+  const rule = ctx.prisma ? await ctx.prisma.decisionRule.findFirst({ where: { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName }, orderBy: { createdAt: "desc" } }) : null;
+  if (rule?.decision === "deny") return { decision: "deny", message: `The person did not allow ${name} in this run.` };
+  if (rule?.decision === "allow") return ALLOW;
+  await ctx.progress(`Waiting for approval: ${name}`);
+  const title = privileged ? `Run as the administrator: ${command.slice(0, 120)}` : `Run ${name}, which changes this computer: ${command.slice(0, 110)}`;
+  const answer = await askPerson(ctx, { event: "permission", toolName, title, command }, withdrawn);
+  if (answer.decision === "allow") return ALLOW;
+  const said = answer.answer ? ` They said: ${answer.answer}` : "";
+  return { decision: "deny", message: `The person did not allow this.${said}${privileged ? " Say which command needs the administrator and why, and carry on without it." : ""}` };
 }
 
 /**

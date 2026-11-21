@@ -201,7 +201,8 @@ export async function runClaudeCode(
     context?: "long_context" | null;
     /** The model's fast mode, for a model that has one. */
     fast?: boolean;
-    maxTurns: number;
+    /** The owner's turn limit for the run; none unless they set one. */
+    maxTurns?: number | null;
     stopCheck: () => Promise<void>;
     resume?: string | null;
     chat?: boolean;
@@ -251,8 +252,7 @@ export async function runClaudeCode(
     // Ensemble's ask_person tool: headless Claude Code has no question tool of its own.
     "--mcp-config",
     JSON.stringify({ mcpServers: { ensemble: { type: "stdio", command: process.execPath, args: [hookScriptPath("ensemble-ask-mcp.mjs")] } } }),
-    "--max-turns",
-    String(options.maxTurns),
+    ...(options.maxTurns ? ["--max-turns", String(options.maxTurns)] : []),
     ...(launch.model ? ["--model", launch.model] : []),
     ...(launch.effort ? ["--effort", launch.effort] : []),
     // The next message in a chat: the same Claude Code session, so it remembers the conversation.

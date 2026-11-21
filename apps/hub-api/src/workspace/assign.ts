@@ -95,6 +95,16 @@ export const Assign = z.object({
    */
   surface: z.literal("code").optional(),
   /**
+   * A Code tab turn: the owner's run profile instructions, sent to the agent with the turn packet
+   * (code-turn.ts), not shown as part of the message.
+   */
+  profileInstructions: z.string().max(4000).optional(),
+  /**
+   * A Code tab turn that forks `continueFromJobId`: a new agent session in the same folder, seeded with
+   * a handoff record of the session up to that run (docs/41 §2), instead of continuing it.
+   */
+  fork: z.boolean().optional(),
+  /**
    * An agent session (workspace/sessions.ts) to do the task in: its agent, computer and folder, and
    * the agent's own conversation, continued from the session's latest run.
    */
@@ -152,6 +162,16 @@ function codeFolderPath(value: string | undefined): string {
     throw new GuardError("That folder is not one Code can use on that computer.");
   }
   return path;
+}
+
+/** A Code tab turn's run profile instructions and fork, kept on its job's context (code-turn.ts). */
+function withCodeTurn(context: Prisma.InputJsonValue | undefined, body: Pick<AssignInput, "chat" | "surface" | "profileInstructions" | "fork" | "continueFromJobId">): Prisma.InputJsonValue | undefined {
+  if (!body.chat || body.surface !== "code") return context;
+  const profile = body.profileInstructions?.trim();
+  const fork = body.fork === true && body.continueFromJobId ? { from: body.continueFromJobId } : null;
+  if (!profile && !fork) return context;
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return { ...base, ...(profile ? { profileInstructions: profile } : {}), ...(fork ? { fork } : {}) } as Prisma.InputJsonValue;
 }
 
 function withNewSession(context: Prisma.InputJsonValue | undefined): Prisma.InputJsonValue {
@@ -365,7 +385,7 @@ async function createDeviceJob(
   provider: string,
   model: string,
   tierEffort: string | null,
-  orchestration: { sandboxNetwork: boolean; maxMinutes: number; maxTurns: number; outsideAccess: string },
+  orchestration: { sandboxNetwork: boolean; maxMinutes: number | null; maxTurns: number | null; outsideAccess: string },
   options: CreateJobOptions,
 ): Promise<{ jobId: string }> {
   if (body.kind === "code" && body.branchMode !== "as-is" && (!body.branch || !BRANCH.test(body.branch))) {
@@ -387,6 +407,7 @@ async function createDeviceJob(
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,
     pullRequest: Boolean(body.pullRequest),
+    fork: codeTurn && body.fork === true,
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -422,7 +443,7 @@ async function createDeviceJob(
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -694,7 +715,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withCodeTurn(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   // The decision and every candidate's signals, kept to calibrate the weights (session-choice/config.ts).

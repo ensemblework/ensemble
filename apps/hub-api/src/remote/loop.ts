@@ -22,6 +22,7 @@ import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
 import { workspaceRoot } from "../workspace/guard.js";
 import { removeWorktrees } from "../workspace/worktrees.js";
+import { codeTurnResultOf } from "../workspace/code-turn.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
@@ -146,8 +147,9 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
-    // Chat turns of the web's Code tab agent run here, in a folder Code may use here (the claim's `chat`, `surface`, `codeFolder`).
-    codeAgent: 1,
+    // Chat turns of the web's Code tab agent run here, in a folder Code may use here (the claim's `chat`, `surface`, `codeFolder`);
+    // 2: with their turn packet, forks and handoff records, and the checks run again here (the claim's `packet`, `fork`).
+    codeAgent: 2,
     // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
     runAnswers: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
@@ -851,6 +853,8 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
   const report = (job.protocol ?? 1) >= 6 ? parseReport(local.report) : null;
+  // A Code tab turn's packet, skills, checks run again and handoff record; older servers ignore it.
+  const codeTurn = current ? await codeTurnResultOf(prisma, local, scrubOutgoing).catch(() => null) : null;
   const send = async () => {
     // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
@@ -860,7 +864,7 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
       app.log.warn({ err: error }, "could not send the run's evidence");
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}) });
   };
   try {
     await send();

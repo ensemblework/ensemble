@@ -26,6 +26,10 @@ import { Assign, createJob } from "../workspace/assign.js";
 import { jobToolsOff } from "../workspace/context-tools.js";
 import { MENTIONS_MARK, withMentionedContent, withoutAttached } from "../workspace/mentioned.js";
 import { codeTurnOf, steerOf } from "../workspace/trust.js";
+import { parseCompletion } from "../workspace/completion.js";
+import { parseHandoff, renderHandoff } from "../workspace/handoff-record.js";
+import { forkOf } from "../workspace/sessions.js";
+import { PacketSummarySchema } from "../workspace/turn-packet.js";
 import { stopJob } from "../workspace/worker.js";
 import { card, onCurrentDevices } from "./agents.js";
 
@@ -51,7 +55,28 @@ export function keptPlace(data: unknown): KeptPlace | null {
   return taskId ? { kind: "task", id: taskId, pageId, taskId, title, href: `/tasks/${taskId}` } : { kind: "page", id: pageId, pageId, taskId: null, title, href: `/pages/${pageId}` };
 }
 
-const JOB_INCLUDE = { task: { select: { id: true, title: true, priority: true, status: true } }, review: { select: { id: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } } as const;
+const JOB_INCLUDE = {
+  task: { select: { id: true, title: true, priority: true, status: true } },
+  review: { select: { id: true } },
+  device: { select: { name: true, lastSeenAt: true, revokedAt: true } },
+  run: { select: { completion: true, packet: true } },
+  handoffs: { select: { id: true, reason: true, record: true }, orderBy: { createdAt: "desc" }, take: 1 },
+} as const;
+
+/**
+ * How a turn's agent session started and what its packet carried (workspace/turn-packet.ts), and how the
+ * turn ended, each state apart (workspace/completion.ts); null for a turn without them.
+ */
+export function turnHarness(job: { run: { completion: unknown; packet: unknown } | null; handoffs: Array<{ id: string; reason: string; record: unknown }> }) {
+  const packet = PacketSummarySchema.safeParse(job.run?.packet);
+  const handoff = job.handoffs[0];
+  const record = handoff ? parseHandoff(handoff.record) : null;
+  return {
+    completion: parseCompletion(job.run?.completion),
+    packet: packet.success ? { mode: packet.data.mode, operation: packet.data.operation ?? null, version: packet.data.version, base: packet.data.base, chars: packet.data.chars, sections: packet.data.sections.length, items: packet.data.items, skills: packet.data.skills, criteria: packet.data.criteria } : null,
+    handoff: handoff && record ? { id: handoff.id, reason: handoff.reason, from: record.from.agent, model: record.from.model.reported ?? record.from.model.requested, chars: renderHandoff(record).length } : null,
+  };
+}
 
 type PlaceJob = { deviceId: string | null; externalRoot: string | null; repoPath: string | null; context: unknown; device?: { name: string } | null };
 
@@ -199,7 +224,7 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     return {
       // The latest turn's switches carry on to the next: reopening or continuing keeps them (tool-policy.ts).
       thread: { ...task, place: threadPlace(jobs[0] ?? null, paths), toolsOff: jobToolsOff(jobs.at(-1)?.context) },
-      turns: jobs.map((job) => ({ ...card(job, undefined, { paths }), reviewId: job.review?.id ?? null, saved: saved.get(job.id) ?? [], steer: Boolean(steerOf(job.context)), steeredBy: steeredBy.get(job.id) ?? null })),
+      turns: jobs.map((job) => ({ ...card(job, undefined, { paths }), reviewId: job.review?.id ?? null, saved: saved.get(job.id) ?? [], steer: Boolean(steerOf(job.context)), steeredBy: steeredBy.get(job.id) ?? null, fork: Boolean(forkOf(job.context)), ...turnHarness(job) })),
       asks: asks.map(publicDecision),
     };
   });
@@ -275,6 +300,38 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
       await appendLedger({ userId: request.userId, actor: "me", action: "code.agent_steer", taskId: id, payload: { from: active.id, jobId: created.jobId } });
     }
     return { jobId: created.jobId, delivery: steering ? ("steered" as const) : ("queued" as const) };
+  });
+
+  /**
+   * Forks a thread at one of its finished turns: a new thread in the same place whose first message
+   * starts a new agent session, seeded with a handoff record of the thread's session up to that turn
+   * (docs/41 §2). The thread it came from goes on as it was.
+   */
+  app.post("/api/agent/threads/:id/fork", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ jobId: z.string().uuid(), turn: z.record(z.unknown()) }).parse(request.body);
+    const thread = await prisma.task.findFirst({ where: { id, userId: request.userId, deletedAt: null, sourceRef: { startsWith: CODE_THREAD_PREFIX } }, select: { id: true, title: true, sourceRef: true } });
+    if (!thread) return reply.code(404).send({ error: "That thread is gone." });
+    const source = await prisma.workspaceJob.findFirst({ where: { id: body.jobId, userId: request.userId, taskId: id }, select: { id: true, status: true } });
+    if (!source) return reply.code(404).send({ error: "That turn is not in this thread." });
+    if (source.status === "queued" || LIVE_TURN.has(source.status)) return reply.code(409).send({ error: "Fork from a turn that has finished." });
+    const probe = Assign.safeParse({ ...body.turn, taskId: id, continueFromJobId: source.id, fork: true });
+    if (!probe.success || !probe.data.chat || probe.data.surface !== "code") return reply.code(400).send({ error: "A fork starts with a message to the Code tab's agent." });
+    const task = await prisma.task.create({
+      data: { userId: request.userId, title: `Fork: ${thread.title}`.slice(0, 200), owner: "agent", status: "todo", sourceKind: "other", sourceRef: thread.sourceRef, createdBy: "me" },
+      select: { id: true, title: true, createdAt: true, updatedAt: true },
+    });
+    const created = await createJob(prisma, request.userId, { ...probe.data, taskId: task.id }).catch(async (error: unknown) => {
+      await prisma.task.delete({ where: { id: task.id } }).catch(() => undefined);
+      throw error;
+    });
+    if (!created) {
+      await prisma.task.delete({ where: { id: task.id } }).catch(() => undefined);
+      return reply.code(404).send({ error: "That thread is gone." });
+    }
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.thread_fork", taskId: task.id, payload: { from: id, turn: source.id, jobId: created.jobId } });
+    sseHub.publish(request.userId, { event: "task", data: { id: task.id, action: "create" } });
+    return { thread: { id: task.id, title: task.title, createdAt: task.createdAt.toISOString(), updatedAt: task.updatedAt.toISOString() }, jobId: created.jobId };
   });
 
   /**
