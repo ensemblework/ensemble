@@ -438,6 +438,7 @@ test("a node's turn on its owner's plan keeps the agent's own tools where the co
     assert.equal(spec.maxTurns, undefined, "no turn limit of Ensemble's own");
     assert.deepEqual(spec.node, { id: node.id, slug: node.slug, mission: `conversation:${room.id}:shared`, attended: true, sudo: true });
     assert.match(spec.system, /all your own tools: your shell, files and web/);
+    assert.match(spec.system, /your own shell and files, in your own folder/, "its persona sends commands and files to its own shell");
     assert.match(spec.system, /once per folder, on a card in this chat/);
     assert.match(spec.system, /computer_sudo: your owner types their password on a card/);
     assert.doesNotMatch(spec.system, /reached only through Ensemble's tools/);
@@ -448,6 +449,8 @@ test("a node's turn on its owner's plan keeps the agent's own tools where the co
     const older = specs[1]!;
     assert.deepEqual([older.ownTools, older.node, older.maxTurns], [undefined, undefined, 64], "Ensemble's tools only, and the most turns it takes");
     assert.match(older.system, /reached only through Ensemble's tools/);
+    assert.doesNotMatch(older.system, /your own shell/, "nothing in its instructions says it has a shell of its own");
+    assert.match(older.system, /computer_run or computer_files_write yourself/);
     assert.deepEqual(simulated.failures, []);
   } finally {
     simulated.stop();

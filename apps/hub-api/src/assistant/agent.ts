@@ -201,6 +201,8 @@ export interface AssistantTurnArgs {
     keepDays?: number;
     ownWeb?: boolean;
     ownTools?: boolean;
+    /** The node's persona for a computer that runs the turn with Ensemble's tools only: it names no shell or files of the agent's own. */
+    personaWithoutOwnTools?: string;
     nodeTools?: {
       policy: NodeTurnPolicy;
       ask: (request: OwnAsk, computer: { id: string; name: string }) => Promise<OwnAnswer>;
@@ -214,6 +216,13 @@ export interface AssistantTurnArgs {
     history?: string;
     title?: string;
   };
+}
+
+/** The messages with the persona `to` in place of `from` (`agentPersona`'s system message). */
+function swapPersona(messages: readonly ModelMessage[], from: string | undefined, to: string | undefined): readonly ModelMessage[] {
+  if (from === undefined || to === undefined) return messages;
+  const was = truncateText(from, 12_000);
+  return messages.map((message) => (message.role === "system" && message.content === was ? { ...message, content: truncateText(to, 12_000) } : message));
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -462,8 +471,9 @@ async function drive(
         model: args.model,
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
-        // A computer whose Ensemble is too old for the agent's own tools (in a node's turn: for the node's policy) is told it has only Ensemble's.
-        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(messages, agent, { ...how, ownTools: false }).system } : {}),
+        // A computer whose Ensemble is too old for the agent's own tools (in a node's turn: for the node's policy) is told it has only
+        // Ensemble's, by its run notes and by the node's persona for such a computer.
+        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(swapPersona(messages, args.agentPersona, args.subscription?.personaWithoutOwnTools), agent, { ...how, ownTools: false }).system } : {}),
         prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),

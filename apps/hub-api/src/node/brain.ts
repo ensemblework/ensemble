@@ -579,7 +579,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         ...(node.parentNodeId && helperFolders(node).length ? { folders: helperFolders(node) } : {}),
       }
     : null;
-  const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider, ownTools) } : built;
+  // The persona for the model that answers: on the owner's plan, saying the agent is the loop, and that commands and files are
+  // its own shell's only where the computer that runs the turn keeps them (`personaWithoutOwnTools` for one that does not).
+  const personaFor = (pick: ChatModel, own: boolean) => (isSubscriptionProvider(pick.provider) ? { ...built, text: ownLoopPersona(built.text, pick.provider, own) } : built);
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
@@ -596,7 +598,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         return feedback;
       }
     : undefined;
-  const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
+  const ask = async (pick: ChatModel, persona = personaFor(pick, Boolean(ownPolicy))): Promise<AssistantTurnResult> =>
     (bound ? bound.run : runAssistantTurn)({
       app,
       userId: spaceId,
@@ -610,12 +612,12 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined),
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
-      agentPersona: nodePersona.text,
-      extraRefs: nodePersona.rooms,
+      agentPersona: persona.text,
+      extraRefs: persona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
-      extraTools: extraTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
+      extraTools: (isSubscriptionProvider(pick.provider) ? extraTools : tiered).map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
@@ -628,6 +630,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
               ...(ownPolicy
                 ? {
                     ownTools: true,
+                    personaWithoutOwnTools: personaFor(pick, false).text,
                     nodeTools: {
                       policy: ownPolicy,
                       ask: ownToolAsker(app, { node, room, privateTo, lineage, turnId: turn.id, plan }),
