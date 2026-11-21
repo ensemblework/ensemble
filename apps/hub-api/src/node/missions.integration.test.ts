@@ -22,8 +22,8 @@ const { RunProfile } = await import("@ensemble/shared-types");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
-/** `again`: the calls are made again after their results too, for a turn that keeps working step after step. */
-type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void>; again?: boolean };
+/** `again`: the calls are made again after their results too, for a turn that keeps working step after step. `waitAfter`: slow once the calls have run. */
+type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void>; waitAfter?: Promise<void>; again?: boolean };
 type Seen = { slug: string; transcript: string; system: string; tools: string[] };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
@@ -38,9 +38,10 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
   const step = script(current);
-  if (step.wait && !second) {
+  const slow = second ? step.waitAfter : step.wait;
+  if (slow) {
     // A slow model: the turn is in flight until the test lets it go (or it is aborted).
-    await Promise.race([step.wait, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
+    await Promise.race([slow, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
     if (args.signal?.aborted) {
       const error = new Error("aborted");
       error.name = "AbortError";
@@ -318,6 +319,30 @@ test("a newer message from the owner merges with a turn that has not acted yet",
   const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
   assert.match(turns[0]!.error ?? "", /Merged into the next turn/);
   assert.deepEqual(turns.map((row) => [row.status, row.outcome]), [["done", "coalesced"], ["done", "done"]], "the merged turn's real outcome is kept");
+});
+
+test("a turn that has only read (a skill) still merges with a newer message from the owner", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  let release: () => void = () => undefined;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  script = (turn) =>
+    turn.transcript.includes("forget that")
+      ? { text: "Forgotten: nothing is being built." }
+      : { calls: [{ name: "node_skill", arguments: { name: "planning" } }], waitAfter: slow, then: "Building the site now." };
+  await post(mira, room.id, "build me a site for the bakery");
+  const firstTurn = () => h.prisma.nodeTurn.findFirst({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+  const reading = async () => ((await firstTurn())?.receipts ?? []) as Array<{ name: string; state: string }>;
+  for (let i = 0; i < 150 && !(await reading()).some((row) => row.name === "node_skill"); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual((await reading()).map((row) => [row.name, row.state]), [["node_skill", "ok"]], "the first turn read a skill and is still thinking");
+  await post(mira, room.id, "forget that");
+  for (let i = 0; i < 150 && (await firstTurn())?.outcome !== "coalesced"; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await settleTurns();
+  const replies = (await read(mira, room.id)).filter((row) => row.authorNodeId === node.id);
+  assert.deepEqual(replies.map((row) => row.body), ["Forgotten: nothing is being built."], "reading changes nothing: the newer message takes the turn over");
+  const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(turns.map((row) => row.outcome), ["coalesced", "done"]);
 });
 
 test("a newer message never stops a turn bound to something else (an approval); a merged turn's update goes on with the turn that answers", async () => {

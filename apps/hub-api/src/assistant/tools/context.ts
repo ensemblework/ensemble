@@ -3,7 +3,8 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../../files/extracted-text-policy.js";
 import { NOT_UPLOADED } from "../../context/artifacts.js";
 import type { Prisma } from "@prisma/client";
 import { clip } from "../../lib/office/text.js";
-import { defineTool, toolOk } from "../types.js";
+import { defineTool, toolOk, type ToolContext } from "../types.js";
+import { closestTo } from "./lookup.js";
 import { itemNeighbors } from "../../context/graph/neighbors.js";
 import { workContext } from "../../context/graph/packet.js";
 import { parseItemRef } from "../../context/graph/refs.js";
@@ -28,6 +29,12 @@ const ITEM = z
   .max(400)
   .describe("A record as ensemble://<kind>/<id> (from any tool result or link), or a Hub link. Kinds: task, project, person, repo, deliverable, meeting, file, page, event.");
 
+/** A record that is not there, with the closest pages, tasks or projects and their ids (tools/lookup.ts). */
+async function missing(ctx: ToolContext, ref: { kind: string; id: string }) {
+  const closest = await closestTo(ctx.prisma, ctx.userId, ref.kind, ref.id).catch(() => null);
+  return toolOk(`That record is not in this space, or it is in Trash.${closest ? ` ${closest}` : ""}`, { found: false });
+}
+
 export const contextTools = [
   defineTool({
     name: "hub_item_context",
@@ -50,7 +57,7 @@ export const contextTools = [
       const graph = { db: ctx.prisma, userId: ctx.userId, modules: ctx.modules };
       if (input.rel) {
         const hood = await itemNeighbors(graph, ref, { rel: input.rel, offset: input.offset, limit: input.limit });
-        if (!hood) return toolOk("That record is not in this space, or it is in Trash.", { found: false });
+        if (!hood) return missing(ctx, ref);
         const group = hood.groups[0]!;
         return toolOk(`${group.label} of “${hood.item.title.slice(0, 80)}”: ${group.items.length}${group.more ? "+" : ""}.`, {
           item: { ref: hood.item.ref, title: hood.item.title },
@@ -60,7 +67,7 @@ export const contextTools = [
         });
       }
       const packet = await workContext(graph, ref, { budget: 7000, moreTool: "hub_item_context" });
-      if (!packet) return toolOk("That record is not in this space, or it is in Trash.", { found: false });
+      if (!packet) return missing(ctx, ref);
       return toolOk(`Read the context of “${packet.title.slice(0, 80)}”.`, {
         item: packet.neighborhood.item,
         context: packet.text,

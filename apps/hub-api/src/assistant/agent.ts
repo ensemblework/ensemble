@@ -62,8 +62,9 @@ import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal 
 import { loadConnections } from "./connections.js";
 import { isGuestIn } from "../sharing/context.js";
 import { advertisedTools, playbookText, findPlaybook, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
+import { missingRefs, RefLookupError, refFields, resolveRefs } from "./tools/lookup.js";
 import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
-import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "../subscriptions/bridge.js";
+import type { OwnAnswer, OwnAsk, OwnToolEvent, OwnVerdict, ToolAnswer } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
@@ -83,6 +84,7 @@ import {
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
 import { headAndTail, safePublicError, truncateText } from "../lib/text.js";
+import { redactValue } from "../lib/redact.js";
 import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
@@ -135,6 +137,15 @@ export interface AssistantTurnArgs {
   userId: string;
   conversationId: string;
   message: string;
+  /** The words that choose the turn's playbooks and their tools (skills/index.ts) when they are not `message`: a node's turn gives its owner's words and its note, not the packet around them. */
+  routeBy?: string;
+  /** Tools shown beside the core ones whatever the playbooks (a node's turn: its pages). */
+  coreTools?: readonly string[];
+  /**
+   * Tools not shown but there when the work needs them (a node's tools its turn's words did not call for, node/skills.ts):
+   * on the owner's AI plan hub_use_tool names and calls them, and one called is shown for the rest of the turn.
+   */
+  hiddenTools?: readonly AnyHubTool[];
   page?: AssistantPageContext;
   settings: Settings;
   /** Approved orchestrator model, already resolved from the engineer's choice. */
@@ -155,7 +166,7 @@ export interface AssistantTurnArgs {
   actAs?: ActAs;
   signal?: AbortSignal;
   /** Called just before a tool runs (not for held writes): Ensemble Node marks a turn that acts from this point. */
-  onToolStart?: (call: { name: string; isWrite: boolean }) => void | Promise<void>;
+  onToolStart?: (call: { name: string; isWrite: boolean; readOnly: boolean }) => void | Promise<void>;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
   /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
@@ -255,6 +266,31 @@ export interface ToolCallTrace {
   readOnly: boolean;
 }
 
+/** One of the agent's own calls on the person's plan (its shell, files, web: subscriptions/own-tools.ts), as a node turn's trace records it. */
+export interface OwnCallTrace {
+  kind: "own";
+  name: string;
+  /** Null where the computer did not say (an older Ensemble there). */
+  ms: number | null;
+  state: "ok" | "failed";
+  inChars: number | "unknown";
+  outChars: number | "unknown";
+  /** Allowed with no question, `asked` and allowed by the owner on a card, or refused (by Ensemble's rules or by the owner). */
+  verdict: OwnVerdict | "unknown";
+}
+
+export function ownCallTrace(event: OwnToolEvent): OwnCallTrace {
+  return {
+    kind: "own",
+    name: event.name,
+    ms: event.ms ?? null,
+    state: event.ok === false ? "failed" : "ok",
+    inChars: event.inChars ?? "unknown",
+    outChars: event.outChars ?? "unknown",
+    verdict: event.verdict ?? "unknown",
+  };
+}
+
 /**
  * What a turn offered the model and how it ran, in sizes, counts and settings only: the tools of its first
  * model call (a hash of their specs and how many), each tool call, tokens and cost across its model
@@ -262,7 +298,7 @@ export interface ToolCallTrace {
  */
 export interface LoopTrace {
   tools: { hash: string; count: number } | null;
-  calls: ToolCallTrace[];
+  calls: Array<ToolCallTrace | OwnCallTrace>;
   modelCalls: number;
   tokensIn: number | null;
   tokensOut: number | null;
@@ -429,24 +465,26 @@ async function drive(
   const loop = activeLoopConfig(app.log);
   const limits = turnLimits(loop, args.provider, args.model, Boolean(args.code));
   const hubTools = (await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name));
-  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
+  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...(subscription ? (args.hiddenTools ?? []) : [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);
   // The model sees core tools and the playbooks in play; Code also keeps its local tools.
   // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
   const playbooks = playbooksFor(args.modules);
+  const routeWords = args.routeBy ?? args.message;
   const active = new Map<string, Playbook>(
     routePlaybooks(
-      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected, customBoard: args.page?.surface?.filters?.customBoard === true },
+      { message: routeWords, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected, customBoard: args.page?.surface?.filters?.customBoard === true },
       playbooks,
     ).map((playbook) => [playbook.name, playbook]),
   );
   // Tools the loop adds during the turn (read_tool_output once a long result is kept), always shown.
   const turnTools: AnyHubTool[] = [];
   const shown = () => {
-    const selected = advertisedTools(tools, active.values(), args.message);
-    const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...selected];
+    const selected = advertisedTools(tools, active.values(), routeWords);
+    const always = args.coreTools?.length && process.env.ENSEMBLE_ASSISTANT_TOOLSETS !== "off" ? tools.filter((tool) => args.coreTools!.includes(tool.name)) : [];
+    const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...always, ...selected];
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
   };
   const persona =
@@ -472,7 +510,7 @@ async function drive(
     timezone: settings.timezone,
     mentions: args.mentions?.length ? args.mentions.map((mention) => (mention.kind === "date" ? `${mention.label} (${mention.id})` : refLink(mention))).join("; ") : undefined,
     reference: args.referenceContext,
-    playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, args.message) })),
+    playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, routeWords) })),
   });
   const prior = await priorTurns(app, args.conversationId, args.messageId, args.spaces, { tokens: limits.historyTokens, rows: loop.historyRows });
   const history = prior.messages;
@@ -591,13 +629,18 @@ async function drive(
   if (isSubscriptionProvider(args.provider)) {
     // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
     const agent = args.provider;
-    const toolSpecs = () => [
-      ...chatToolSpecs(shown()).map((spec) => {
-        const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
-        return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
-      }),
-      USE_TOOL,
-    ];
+    const hidden = new Map((args.hiddenTools ?? []).map((tool) => [tool.name, tool]));
+    const toolSpecs = () => {
+      const listed = shown();
+      const unlisted = [...hidden.keys()].filter((name) => !listed.some((tool) => tool.name === name));
+      return [
+        ...chatToolSpecs(listed).map((spec) => {
+          const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
+          return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
+        }),
+        unlisted.length ? { ...USE_TOOL, description: `${USE_TOOL.description} Also there when the work needs them: ${unlisted.join(", ")}.` } : USE_TOOL,
+      ];
+    };
     // A chat, Ask Ensemble or a routine keeps the agent's own tools; a node's turn keeps them with its node's policy (node/brain.ts).
     const node = args.subscription?.node === true;
     const nodeTools = node && args.subscription?.ownTools ? args.subscription.nodeTools : undefined;
@@ -629,7 +672,10 @@ async function drive(
       const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
       const loaded = Boolean(playbook && !active.has(playbook.name));
       if (playbook && loaded) active.set(playbook.name, playbook);
-      return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
+      // A tool the turn had not shown, once called, is shown for the rest of the turn.
+      const shownNow = hidden.has(requested.name) && !turnTools.some((tool) => tool.name === requested.name);
+      if (shownNow) turnTools.push(hidden.get(requested.name)!);
+      return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded || shownNow ? { tools: toolSpecs() } : {}) };
     });
     try {
       const offeredSpecs = toolSpecs();
@@ -1207,11 +1253,14 @@ async function runTool(
 
   let input: unknown;
   try {
-    input = tool.input.parse(JSON.parse(requested.arguments || "{}"));
+    // A page, task or project named by its link or exact title is the same as by its id (tools/lookup.ts).
+    const raw: unknown = JSON.parse(requested.arguments || "{}");
+    const fields = refFields(tool.input);
+    input = tool.input.parse(fields.length ? await inScope(base, tool, raw, (db, userId, given) => resolveRefs(db, userId, given, fields)) : raw);
   } catch (error) {
     // Handed back rather than thrown: a schema mistake is recoverable.
     const call = failed(requested, tool.area, describe(error));
-    return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
+    return { call, forModel: { error: call.error, hint: error instanceof RefLookupError ? "Call again with one of those ids." : "Fix the arguments and call again." } };
   }
   // A tool that takes a `space` (Ensemble Node, node/spaces.ts): where this call acts, checked now,
   // since access can change during a turn. The receipt and the result name it.
@@ -1243,7 +1292,7 @@ async function runTool(
     try {
       preview = await renderPreview(ctx, tool, input, known);
     } catch (error) {
-      const message = describe(error);
+      const message = await withClosest(ctx, tool, input, error);
       const call = failed(requested, tool.area, message, true);
       return {
         call,
@@ -1283,7 +1332,7 @@ async function runTool(
   }
 
   try {
-    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite });
+    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite, readOnly: readsOnly(tool) });
     const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
@@ -1321,9 +1370,26 @@ async function runTool(
     }
     return { call, forModel, resultChars: summary.length + trimmed.chars, offloaded: trimmed.offloaded, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
   } catch (error) {
-    const call = failed(requested, tool.area, describe(error), tool.isWrite);
+    const call = failed(requested, tool.area, await withClosest(base, tool, input, error), tool.isWrite);
     return { call, forModel: { error: call.error } };
   }
+}
+
+/** `look` run where the call acts: in its space for a tool that takes one (Ensemble Node), else the turn's own account. */
+async function inScope<T>(base: ToolContext, tool: AnyHubTool, raw: unknown, look: (db: ToolContext["prisma"], userId: string, raw: unknown) => Promise<T>): Promise<T> {
+  if (!tool.spaceFor) return look(base.prisma, base.userId, raw);
+  const space = await tool.spaceFor(base, raw);
+  const scoped = space.context(base);
+  return space.run(() => look(scoped.prisma, scoped.userId, raw));
+}
+
+/** A failure that says a record was not found, with what the call gave that names nothing and the closest records; else the error as it was. */
+async function withClosest(base: ToolContext, tool: AnyHubTool, input: unknown, error: unknown): Promise<string> {
+  const message = describe(error);
+  if ((error as { statusCode?: unknown } | null)?.statusCode !== 404 && !/\bno (?:page|task|project)\b|not on your board|not in this space/i.test(message)) return message;
+  const fields = refFields(tool.input);
+  const closest = fields.length ? await inScope(base, tool, input, (db, userId, given) => missingRefs(db, userId, given, fields)).catch(() => null) : null;
+  return closest ? `${message} ${closest}` : message;
 }
 
 async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown, known: ReadonlyMap<string, AssistantRef>): Promise<string> {
@@ -1333,8 +1399,25 @@ async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown,
   return withPastScheduleWarning(formatEntityText(raw, [...known.values()], { plain: true }), input, ctx.settings.timezone);
 }
 
+/** The most characters a failed call's record keeps of what it was sent. */
+const FAILED_INPUT_CHARS = 4_000;
+
+/** What a call that failed was sent, as its record keeps it: redacted, long values cut, at most `FAILED_INPUT_CHARS`. */
+export function sentInput(raw: string | undefined): Record<string, unknown> {
+  let value: unknown = {};
+  try {
+    value = JSON.parse(raw?.trim() || "{}");
+  } catch {
+    value = { text: raw ?? "" };
+  }
+  const kept = redactValue(value);
+  const record = kept && typeof kept === "object" && !Array.isArray(kept) ? (kept as Record<string, unknown>) : { value: kept };
+  const json = JSON.stringify(record);
+  return json.length <= FAILED_INPUT_CHARS ? record : { cut: true, text: `${json.slice(0, FAILED_INPUT_CHARS)}…` };
+}
+
 const failed = (
-  requested: { id: string; name: string },
+  requested: { id: string; name: string; arguments?: string },
   area: AssistantToolCall["area"],
   error: string,
   isWrite = false,
@@ -1342,7 +1425,7 @@ const failed = (
   id: requested.id,
   name: requested.name,
   area,
-  input: {},
+  input: sentInput(requested.arguments),
   state: "failed",
   isWrite,
   error,

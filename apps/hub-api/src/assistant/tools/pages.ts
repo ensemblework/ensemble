@@ -94,6 +94,21 @@ const Target = {
   taskId: z.string().uuid().optional().describe("A task id, for that task's page."),
 };
 
+/** Characters of a page a write's result shows (`pageNow`). */
+const SAVED_CHARS = 1_500;
+
+/**
+ * What a page says after a write, for the write's result: the proof it was saved, so it need not be read back. A long
+ * page shows its start (`from: "start"`, after a new page or a rewrite) or its end (after an append), with its length.
+ */
+export async function pageNow(db: Parameters<typeof editablePage>[0], userId: string, where: PageTarget, from: "start" | "end"): Promise<{ text: string; total: number; cut?: "start" | "end" }> {
+  const { task, page } = await editablePage(db, userId, where);
+  const doc = page?.content ? PageDocument.parse(page.content) : null;
+  const markdown = pageMarkdown(doc, task ? task.notes : (page?.notesSnapshot ?? ""));
+  if (markdown.length <= SAVED_CHARS) return { text: markdown, total: markdown.length };
+  return from === "start" ? { text: markdown.slice(0, SAVED_CHARS), total: markdown.length, cut: "end" } : { text: markdown.slice(-SAVED_CHARS), total: markdown.length, cut: "start" };
+}
+
 function target(input: { pageId?: string; taskId?: string }): PageTarget {
   if (input.pageId && input.taskId) throw Object.assign(new Error("Pass pageId or taskId, not both."), { statusCode: 400 });
   if (input.pageId) return { pageId: input.pageId };
@@ -196,7 +211,7 @@ export const pageTools = [
     name: "hub_create_page",
     area: "projects",
     description:
-      "Create a page (standalone note) from a title and Markdown, at the top level or nested inside a page (parentPageId) or a task (parentTaskId): headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id and link.",
+      "Create a page (standalone note) from a title and Markdown, at the top level or nested inside a page (parentPageId) or a task (parentTaskId): headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id, link and what the page now says (saved): no need to read it back.",
     input: z.object({
       title: z.string().trim().min(1).max(200),
       markdown: z.string().max(MAX_MARKDOWN).default("").describe("The page body in Markdown."),
@@ -221,7 +236,9 @@ export const pageTools = [
         return { page, dropped, undoEntryId: lastUndoId(tx) };
       });
       sseHub.publish(ctx.userId, { event: "page", data: { id: created.page.id, action: "create" } });
-      return toolOk(`Created page “${created.page.title}”.${droppedNote(created.dropped)}`, { id: created.page.id, title: created.page.title, href: `/pages/${created.page.id}` }, {
+      // Inside Apply's batch the page is not committed yet: read it where it was written.
+      const saved = await pageNow(ctx.tx ?? ctx.prisma, ctx.userId, { pageId: created.page.id }, "start");
+      return toolOk(`Created page “${created.page.title}”.${droppedNote(created.dropped)}`, { id: created.page.id, title: created.page.title, href: `/pages/${created.page.id}`, saved }, {
         href: `/pages/${created.page.id}`,
         invalidate: ["pages"],
         ...(created.undoEntryId ? { undoEntryId: created.undoEntryId } : {}),
@@ -232,7 +249,7 @@ export const pageTools = [
     name: "hub_update_page",
     area: "projects",
     description:
-      "Add to or rewrite a page (pageId) or a task's page (taskId) with Markdown. mode append adds at the end; replace rewrites the whole page, so read it first and keep its [@Label](ensemble://kind/id) links and ![…](ensemble://file/id){…} image lines as they are. matchTitle must be the page's current title (for a task page, the task title); the write is refused when it differs. title renames a standalone page.",
+      "Add to or rewrite a page (pageId) or a task's page (taskId) with Markdown. mode append adds at the end; replace rewrites the whole page, so read it first and keep its [@Label](ensemble://kind/id) links and ![…](ensemble://file/id){…} image lines as they are. matchTitle must be the page's current title (for a task page, the task title); the write is refused when it differs. title renames a standalone page. Returns what the page now says (saved: its start, or its end after an append): no need to read it back.",
     input: z.object({
       ...Target,
       matchTitle: z.string().trim().min(1).max(200).describe("The page's current title. Refused when it is not the title of that page."),
@@ -272,7 +289,8 @@ export const pageTools = [
       });
       const { saved } = result;
       sseHub.publish(ctx.userId, { event: "page", data: { id: saved.id, ...(saved.taskId ? { taskId: saved.taskId } : {}), action: "save", by: "agent" } });
-      return toolOk(`${input.mode === "append" ? "Added to" : "Rewrote"} “${saved.title}”.${droppedNote(result.dropped)}`, { id: saved.id, taskId: saved.taskId, title: saved.title }, {
+      const now = await pageNow(ctx.tx ?? ctx.prisma, ctx.userId, saved.taskId ? { taskId: saved.taskId } : { pageId: saved.id }, input.mode === "append" ? "end" : "start");
+      return toolOk(`${input.mode === "append" ? "Added to" : "Rewrote"} “${saved.title}”.${droppedNote(result.dropped)}`, { id: saved.id, taskId: saved.taskId, title: saved.title, saved: now }, {
         href: hrefOf(saved),
         invalidate: ["pages"],
         ...(result.undoEntryId ? { undoEntryId: result.undoEntryId } : {}),

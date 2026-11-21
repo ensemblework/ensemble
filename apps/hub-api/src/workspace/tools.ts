@@ -20,7 +20,7 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, gitReadsOnly, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
 import { expandWord, programArgv } from "./shell-parse.js";
 import { commandKind, urlKind } from "./command-kind.js";
 import type { RunChanges } from "./outside-changes.js";
@@ -592,9 +592,7 @@ const READ_ONLY_PROGRAMS = new Set([
   "jq", "yq", "xxd", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum", "cksum",
   "cd", "pushd", "popd", "pwd", "echo", "printf", "true", "false", "sleep", "test", "[", "which", "type", "whereis", "date", "uname", "whoami", "id", "hostname", "ps", "lsof",
 ]);
-const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "rev-parse", "describe", "grep", "cat-file", "shortlog"]);
-
-/** True when a command only reads: a read-only tool, or a git subcommand that only reads. */
+/** True when a command only reads: a read-only tool, or a git command that only reads (guard.ts `gitReadsOnly`). */
 export function readsOnly(argv: string[]): boolean {
   const program = baseName(argv[0] ?? "");
   if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
@@ -602,7 +600,7 @@ export function readsOnly(argv: string[]): boolean {
   if (program === "sed") return !argv.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith("--in-place"));
   if (program === "curl") return !argv.some((arg) => /^-[a-zA-Z]*[oOD]/.test(arg) || /^--(output|remote-name|dump-header|cookie-jar)/.test(arg) || arg === "-c");
   if (READ_ONLY_PROGRAMS.has(program)) return true;
-  if (program === "git") return READ_ONLY_GIT.has(argv.find((arg, index) => index > 0 && !arg.startsWith("-")) ?? "");
+  if (program === "git") return gitReadsOnly(argv);
   return false;
 }
 

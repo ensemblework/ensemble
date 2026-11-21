@@ -11,7 +11,7 @@ import { fileQuoteContext } from "./file-workspace.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, PrismaClient } from "@prisma/client";
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, type AssistantToolCall } from "@ensemble/shared-types";
-import { runAssistantTurn, type AssistantTurnResult, type VerifyState } from "../assistant/agent.js";
+import { ownCallTrace, runAssistantTurn, type AssistantTurnResult, type VerifyState } from "../assistant/agent.js";
 import { getTool } from "../assistant/registry.js";
 import { pauseQuestion } from "../assistant/runaway.js";
 import { env } from "../config.js";
@@ -76,6 +76,9 @@ async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnI
 
 /** The assistant tools a node turn does without: its session tools replace them, scoped to the node's own sessions. */
 export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessions"] as const;
+
+/** Pages are a node's everyday records, like tasks: their tools are shown whatever the guides, so a page needs no hub_how_to first. */
+export const NODE_CORE_TOOLS = ["hub_list_pages", "hub_read_page", "hub_create_page", "hub_update_page"] as const;
 
 
 /** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
@@ -373,8 +376,19 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // A conversation turn offers the advanced browser and capture tools only for that work (node/skills.ts).
   // On the owner's own AI plan the agent is the loop: web_task's sub-agent would spend Ensemble's model, so it drives the browser itself.
   const ownLoop = isSubscriptionProvider(choice.provider);
-  const tiered = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  // What the owner asked this turn: it chooses the advanced tools, and the guides and their tools, not the packet around it.
+  const intent = step || carriesOn ? "" : `${ownerWords}\n${turn.note ?? ""}`.trim();
+  // A crew's lead, a node with helpers or other nodes beside it, a crew or task room or a plan's turn plans and delegates whatever the words.
+  const crewWork = () =>
+    Boolean(lead) ||
+    room.kind === "crew" ||
+    room.kind === "task" ||
+    Boolean(turn.planId) ||
+    prisma.nodeAgent.count({ where: { OR: [{ parentNodeId: node.id }, { userId: node.userId, status: "active", parentNodeId: null, id: { not: node.id } }] } }).then((count) => count > 0, () => true);
+  const tiered = step || carriesOn ? offered : tieredTools(offered, intent, await recentTools(prisma, conversationId), { crew: await crewWork() });
   const extraTools = ownLoop ? tiered.filter((tool) => tool.name !== "web_task") : tiered;
+  // The rest stay within reach on the owner's plan: hub_use_tool names them.
+  const hiddenTools = offered.filter((tool) => tool.name !== "web_task" && !tiered.includes(tool));
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
@@ -452,6 +466,9 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       userId: spaceId,
       conversationId: conversationId!,
       message: transcript,
+      // Only where the owner's own words started it: a draft for someone else or a room-bound turn keeps the packet's routing.
+      ...(intent && !drafting && !bound && !fromNonOwner ? { routeBy: intent } : {}),
+      coreTools: NODE_CORE_TOOLS,
       messageId: userRow.id,
       ...(attachedFiles.length ? { mentions: attachedFiles.map((file) => ({ kind: "file" as const, id: file.id, label: file.name })) } : {}),
       settings: turnSettings,
@@ -467,6 +484,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
       extraTools: (isSubscriptionProvider(pick.provider) ? extraTools : tiered).map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
+      ...(isSubscriptionProvider(pick.provider) && hiddenTools.length ? { hiddenTools: hiddenTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)) } : {}),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
@@ -490,6 +508,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
                           return;
                         }
                         toolsRan += 1;
+                        trace.loop.calls.push(ownCallTrace(event));
                         const state = event.ok === false ? "failed" : "ok";
                         void addReceipt(app, turn.id, { name: event.name, state, summary: event.summary || null }).catch(() => undefined);
                         // The agent's own calls show to its owner only, like Ensemble's tool chips.
@@ -507,7 +526,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       signal: deps.signal,
       async onToolStart(call) {
         // From the first tool that changes something, the turn is not aborted to merge a newer message.
-        if (actsOnTheWorld(call.name, call.isWrite)) await markActed(app, turn.id);
+        if (actsOnTheWorld(call)) await markActed(app, turn.id);
       },
       emit(frame) {
         if (frame.type === "tool" || frame.type === "pending") {

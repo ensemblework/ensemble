@@ -109,7 +109,8 @@ test("a DM turn acts in the owner's Ensemble with the assistant's tools and repo
   const call = seen[0]!;
   assert.match(call.transcript, /Mira \(your owner\)\] add a task to write the README/);
   assert.match(call.system, /You are Assistant \(@assistant\), an Ensemble Node: a persistent AI teammate that belongs to Mira/);
-  for (const name of ["node_delegate", "node_post", "node_remember", "hub_create_tasks"]) assert.ok(call.tools.includes(name), `${name} is offered`);
+  for (const name of ["node_post", "node_remember", "hub_create_tasks"]) assert.ok(call.tools.includes(name), `${name} is offered`);
+  assert.ok(!call.tools.includes("node_delegate"), "with no crew, helper or other node, the crew's tools wait for that kind of work (node/skills.ts TOOL_TIERS)");
 
   const reply = (await read(mira, room.id)).find((row) => row.authorNodeId === node.id)!;
   assert.match(reply.body, /^Added “Write the README”\./);

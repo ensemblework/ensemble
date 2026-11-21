@@ -65,3 +65,28 @@ export function redactKeys(value: string): string {
     .replace(URL_PASSWORD, "$1[redacted]@")
     .replace(SHAPED, "[redacted]");
 }
+
+/** Keys whose value is a secret whatever it looks like. */
+const SECRET_KEY = /secret|token|password|passwd|api_?key|private_?key|access_?key|credential|authorization|cookie/i;
+
+/**
+ * A JSON value as a record keeps it: every string redacted (`redactText`) and cut to `chars`, a value under a
+ * key that names a secret replaced, lists and objects cut to `items`, nothing deeper than `depth`.
+ */
+export function redactValue(value: unknown, limits: { chars: number; items: number; depth: number } = { chars: 500, items: 20, depth: 4 }, level = 0): unknown {
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const text = redactText(value);
+    return text.length > limits.chars ? `${text.slice(0, limits.chars)}…` : text;
+  }
+  if (level >= limits.depth) return Array.isArray(value) ? `[${value.length} items]` : typeof value === "object" ? "{…}" : null;
+  if (Array.isArray(value)) return value.slice(0, limits.items).map((item) => redactValue(item, limits, level + 1));
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, limits.items)
+        .map(([key, item]) => [key, SECRET_KEY.test(key) && typeof item === "string" && item ? "[redacted]" : redactValue(item, limits, level + 1)]),
+    );
+  }
+  return null;
+}

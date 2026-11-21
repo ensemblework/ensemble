@@ -4,13 +4,13 @@
  * that has the agent, through the relay. The caller supplies the tools; this file picks the
  * computer and turns its problems into words.
  */
-import { hostname } from "node:os";
 import type { Device } from "@prisma/client";
 import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
+import { loadSettings as computerSettings } from "../remote/store.js";
 import { currentScope, keysFor } from "../sharing/context.js";
 import { AgentTurnError, OWN_WEB_AGENTS, PARK_STOP, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
 import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer, ToolSpec } from "./bridge.js";
@@ -20,8 +20,17 @@ import type { TurnFile } from "./turn-files.js";
 
 type Prismaish = Pick<typeof defaultPrisma, "device">;
 
-/** The computer that runs a turn: this one (desktop runtime) or a paired one. */
-export type TurnComputer = { local: true; name: string } | { local: false; id: string; name: string; agent: SubscriptionAgent | null; turns: number };
+/**
+ * The computer that runs a turn: this one (desktop runtime) or a paired one, by its Ensemble name; this one's
+ * paired device id when it has one. Never the system's host name: records and cards name a computer as Ensemble does.
+ */
+export type TurnComputer = { local: true; name: string; deviceId: string | null } | { local: false; id: string; name: string; agent: SubscriptionAgent | null; turns: number };
+
+/** This computer as Ensemble knows it: the name it pairs with and its device id once paired (remote/store.ts). */
+export function thisComputer(): Extract<TurnComputer, { local: true }> {
+  const settings = computerSettings();
+  return { local: true, name: settings.deviceName.trim() || "this computer", deviceId: settings.deviceId };
+}
 
 const isDesktopRuntime = () => process.env.ENSEMBLE_DESKTOP === "1";
 
@@ -53,7 +62,7 @@ const since = (date: Date | null): string => {
 /** The paired computer for this agent: the chosen one when it can, else the most recently seen that can; or why none can. */
 export async function pickComputer(prisma: Prismaish, userId: string, agent: SubscriptionProvider, preferred: string | null): Promise<TurnComputer> {
   const label = SUBSCRIPTION_INFO[agent].label;
-  if (isDesktopRuntime()) return { local: true, name: hostname().replace(/\.local$/, "") || "this computer" };
+  if (isDesktopRuntime()) return thisComputer();
   const devices = await prisma.device.findMany({ where: { userId: { in: deviceOwners(userId) }, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
   if (!devices.length) {
     throw new RuntimeError(
@@ -259,7 +268,8 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
       output: result.text,
       meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}), ...(result.restart ? { restart: result.restart } : {}) },
     });
-    return { ...result, computer: computer.name, ...(computer.local ? {} : { computerId: computer.id }), ownTools };
+    const computerId = computer.local ? computer.deviceId : computer.id;
+    return { ...result, computer: computer.name, ...(computerId ? { computerId } : {}), ownTools };
   } catch (error) {
     logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
     if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);
@@ -324,11 +334,11 @@ export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string
   const goesOn = "This conversation goes on from one message to the next: what you did and found earlier is above, so build on it instead of doing it again.";
   if (how.ownTools && how.node) {
     return [
-      `You run on their own ${label} subscription, on their computer, with ${tools} and all your own tools: your shell, files and web, which their plan pays for. Use your own tools for commands, files and reading the web, as you judge best.`,
-      "Your working folder is this node's own folder on their computer: work there unless your owner names another. Some commands and changes ask your owner first, once per folder, on a card in this chat, and the call waits for their answer. When a call says your owner has not answered yet, stop there and end your turn without a reply: you go on when they answer.",
-      "Ensemble's tools add what yours cannot do: their browser (browser_*: a site that needs clicking, a sign-in or a shop; drive it one step at a time, reading the page after each), screenshots and recordings (capture_*), a file into this chat (node_share_file), a command as the administrator (computer_sudo: your owner types their password on a card; your shell has no terminal for one), coding-agent sessions (node_session_start / node_session_send) and their Ensemble workspace.",
+      // The node's instructions say how and when to use each tool; this says only what differs on the person's own agent.
+      `You run on their own ${label} subscription, on their computer, with ${tools} and all your own tools: your shell, files and web, which their plan pays for.`,
+      "Your working folder is this node's own folder on their computer unless your owner names another. Some commands and changes ask your owner first, once per folder, on a card in this chat, and the call waits for their answer.",
+      "Ensemble's tools add what yours cannot do: their browser (browser_*), screenshots and recordings (capture_*), a file into this chat (node_share_file), administrator commands (computer_sudo), coding-agent sessions (node_session_start / node_session_send) and their Ensemble workspace.",
       "Real coding in one of their repositories can go to a coding-agent session when your owner wants to review it there; otherwise do it yourself.",
-      "Ensemble refuses only keys and sign-ins, the system's files and its own data and code; if a call is refused, say so in a few words and carry on.",
       "A tool you need but cannot see: call hub_use_tool with its name and input.",
       goesOn,
     ].join(" ");

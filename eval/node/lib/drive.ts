@@ -322,7 +322,8 @@ export async function traceNodeRecords(drive: Drive): Promise<void> {
       model: { requested: row.modelRequested ?? null, sent: row.modelSent ?? null, reported: row.modelReported ?? null, provider: row.provider ?? null, effort: row.effort ?? null },
       placement: row.placement ?? null,
       tokens: { in: row.tokensIn ?? null, out: row.tokensOut ?? null },
-      calls: calls.slice(0, 60).map((call) => `${String(call.name)}:${String(call.state)}`),
+      // The agent's own calls on the owner's plan (its shell, files, web) with how Ensemble answered them.
+      calls: calls.slice(0, 60).map((call) => (call.kind === "own" ? `own:${String(call.name)}:${String(call.state)}:${String(call.verdict)}` : `${String(call.name)}:${String(call.state)}`)),
       loop: row.loop ?? null,
       ...(row.report ? { report: row.report } : {}),
       ...(row.error ? { error: row.error } : {}),

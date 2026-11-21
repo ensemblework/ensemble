@@ -249,6 +249,31 @@ test("read-only programs are recognised, and anything that can write is not", ()
   for (const argv of [["cp", "a", "b"], ["git", "commit"], ["find", ".", "-delete"], ["python", "x.py"], ["sort", "-o", "out", "in"]]) assert.equal(readsOnly(argv), false, argv.join(" "));
 });
 
+test("git that only reads is a read, with -C and the other options that say where git looks; git that writes is not", () => {
+  const reads = [
+    "git -C .. status --short --branch", "git -C ../.. rev-parse --show-toplevel", "git --no-pager -C /x log --oneline -5", "git --git-dir=/x/.git show HEAD",
+    "git diff --stat", "git blame src/a.ts", "git ls-files", "git branch", "git branch --list feat*", "git branch -a -vv", "git branch --contains HEAD~1",
+    "git remote -v", "git remote", "git remote show origin", "git remote get-url origin", "git config --get user.name", "git tag -l", "git stash list", "git reflog",
+  ];
+  for (const command of reads) assert.equal(readsOnly(command.split(" ")), true, command);
+  const writes = [
+    "git -C .. commit -m wip", "git -C .. push", "git reset --hard", "git checkout main", "git clean -fd", "git rm a.txt", "git config user.name Mira",
+    "git branch feature", "git branch -D feature", "git branch --set-upstream-to origin/main", "git remote add origin https://x", "git tag v1", "git stash",
+    "git diff --output=/tmp/x.patch", "git -c core.pager=less log", "git reflog expire --all",
+  ];
+  for (const command of writes) assert.equal(readsOnly(command.split(" ")), false, command);
+});
+
+test("a coding run's git that only reads outside its folder is read there, never asked about as a change", async () => {
+  const run = answering("deny", { outsideAccess: "read", job: { unattended: false, delivery: "commit" } });
+  for (const command of ["git -C .. status --short --branch 2>&1", "git -C ../.. rev-parse --show-toplevel"]) {
+    assert.equal((await judgeEngineCall(run.run, { tool: "Bash", input: { command } })).decision, "allow", command);
+  }
+  assert.deepEqual(run.asked, []);
+  assert.equal((await judgeEngineCall(run.run, { tool: "Bash", input: { command: "git -C .. commit -m wip" } })).decision, "deny");
+  assert.match(run.asked[0] ?? "", /It changes/);
+});
+
 test("Claude Code's own sandbox follows the outside-folder setting", () => {
   const base = { home: "/h", writable: ["/h/ensemble-workspace/runs/1", "/h/ensemble-workspace/.cache"], closed: ["/h/.ssh", "/h/.aws"], toolchain: ["/h/.nvm"] };
   const read = claudeFilesystem({ ...base, access: "read" });
