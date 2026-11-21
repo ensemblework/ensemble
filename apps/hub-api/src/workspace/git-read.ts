@@ -54,11 +54,12 @@ const DIFF: Record<string, Kind> = {
     "indent-heuristic", "no-stat", "remerge-diff", "dd", "no-diff-merges", "full-diff",
   ),
   ...values(
-    "diff-algorithm", "anchored", "unified", "src-prefix", "dst-prefix", "line-prefix", "word-diff-regex", "diff-filter", "find-object", "ws-error-highlight",
+    "diff-algorithm", "anchored", "src-prefix", "dst-prefix", "line-prefix", "word-diff-regex", "diff-filter", "find-object", "ws-error-highlight",
     "output-indicator-new", "output-indicator-old", "output-indicator-context", "inter-hunk-context", "stat-width", "stat-name-width", "stat-graph-width",
     "stat-count", "skip-to", "rotate-to", "diff-merges", "color-moved-ws",
   ),
-  ...optional("stat", "dirstat", "relative", "abbrev", "find-renames", "find-copies", "break-rewrites", "word-diff", "color", "color-words", "color-moved", "submodule", "ignore-submodules"),
+  // Values git takes only as `--x=v` (checked against git 2.53: `--unified 3` reads 3 as a revision).
+  ...optional("stat", "dirstat", "relative", "abbrev", "find-renames", "find-copies", "break-rewrites", "word-diff", "color", "color-words", "color-moved", "submodule", "ignore-submodules", "unified"),
 };
 
 /** Which commits `git log`, `show`, `shortlog` and `rev-list` walk, and how they print them. */
@@ -74,10 +75,10 @@ const REVS: Record<string, Kind> = {
     "exclude-first-parent-only", "objects", "objects-edge", "no-object-names", "object-names", "header", "timestamp", "bisect", "no-graph",
   ),
   ...values(
-    "format", "date", "author", "committer", "grep", "since", "after", "until", "before", "max-count", "skip", "min-parents", "max-parents", "encoding",
-    "glob", "exclude", "decorate-refs", "decorate-refs-exclude", "since-as-filter", "max-age", "min-age", "filter",
+    "date", "author", "committer", "grep", "since", "after", "until", "before", "max-count", "skip", "encoding",
+    "glob", "exclude", "decorate-refs", "decorate-refs-exclude", "since-as-filter", "max-age", "min-age",
   ),
-  ...optional("decorate", "pretty", "branches", "tags", "remotes", "ancestry-path", "expand-tabs", "notes", "show-notes", "show-linear-break", "no-walk"),
+  ...optional("decorate", "pretty", "branches", "tags", "remotes", "ancestry-path", "expand-tabs", "notes", "show-notes", "show-linear-break", "no-walk", "format", "min-parents", "max-parents", "filter"),
 };
 const REV_SHORT = { short: "pusSzRwbtcmrgiEFPWaDMCB0123456789", shortValue: "nLSGUl", shortUnsafe: "O" };
 
@@ -96,7 +97,6 @@ const SPECS: Readonly<Record<string, Spec>> = {
   },
   log: LOG,
   show: LOG,
-  whatchanged: LOG,
   "rev-list": LOG,
   shortlog: { safe: { ...REVS, ...flags("numbered", "summary", "email", "committer"), ...values("group") }, short: "nsec0123456789", shortOptional: "w", shortValue: "L", shortUnsafe: "O" },
   diff: DIFF_SPEC,
@@ -104,7 +104,7 @@ const SPECS: Readonly<Record<string, Spec>> = {
     safe: {
       ...flags("incremental", "porcelain", "line-porcelain", "show-stats", "root", "show-name", "show-number", "show-email", "minimal", "first-parent", "progress", "no-progress", "score-debug", "color-lines", "color-by-age", "no-textconv"),
       ...flags("reverse"),
-      ...values("date", "ignore-rev", "ignore-revs-file", "since", "contents", "encoding"),
+      ...values("date", "ignore-rev", "ignore-revs-file", "since", "contents", "encoding", "diff-algorithm"),
       ...optional("abbrev"),
     },
     short: "bclnpstwefCM0123456789",
@@ -117,8 +117,8 @@ const SPECS: Readonly<Record<string, Spec>> = {
         "is-inside-git-dir", "is-inside-work-tree", "is-bare-repository", "is-shallow-repository", "shared-index-path", "local-env-vars", "verify", "quiet",
         "symbolic", "symbolic-full-name", "revs-only", "no-revs", "flags", "no-flags", "sq", "sq-quote", "not", "keep-dashdash", "stop-at-non-option", "stuck-long",
       ),
-      ...values("glob", "exclude", "disambiguate", "git-path", "resolve-git-dir", "since", "after", "until", "before", "default", "prefix", "path-format", "exclude-hidden"),
-      ...optional("abbrev-ref", "branches", "tags", "remotes", "show-object-format", "short"),
+      ...values("git-path", "resolve-git-dir", "default", "prefix"),
+      ...optional("abbrev-ref", "branches", "tags", "remotes", "show-object-format", "short", "glob", "exclude", "disambiguate", "since", "after", "until", "before", "path-format", "exclude-hidden"),
     },
     short: "q",
   },
@@ -138,7 +138,7 @@ const SPECS: Readonly<Record<string, Spec>> = {
         "word-regexp", "invert-match", "full-name", "extended-regexp", "basic-regexp", "fixed-strings", "perl-regexp", "line-number", "column", "files-with-matches", "name-only",
         "files-without-match", "null", "only-matching", "count", "no-color", "break", "heading", "show-function", "function-context", "and", "or", "not", "all-match", "quiet",
       ),
-      ...values("max-depth", "context", "after-context", "before-context", "threads", "file", "max-count"),
+      ...values("max-depth", "context", "after-context", "before-context", "threads", "max-count"),
       ...optional("color"),
     },
     unsafe: ["ext-grep"],
@@ -148,7 +148,7 @@ const SPECS: Readonly<Record<string, Spec>> = {
   },
   describe: { safe: { ...flags("all", "tags", "contains", "exact-match", "debug", "long", "always", "first-parent"), ...values("candidates", "match", "exclude"), ...optional("abbrev", "dirty", "broken") } },
   branch: {
-    safe: { ...flags("list", "all", "remotes", "verbose", "show-current", "no-color", "no-column", "ignore-case", "omit-empty", "no-abbrev", "quiet"), ...nexts("contains", "no-contains", "merged", "no-merged", "points-at"), ...values("format", "sort", "abbrev"), ...optional("color", "column") },
+    safe: { ...flags("list", "all", "remotes", "verbose", "show-current", "no-color", "no-column", "ignore-case", "omit-empty", "no-abbrev", "quiet"), ...nexts("contains", "no-contains", "merged", "no-merged", "points-at"), ...values("format", "sort"), ...optional("color", "column", "abbrev") },
     unsafe: ["delete", "move", "copy", "force", "set-upstream-to", "set-upstream", "unset-upstream", "edit-description", "track", "no-track", "create-reflog", "recurse-submodules"],
     short: "larvqi",
     shortUnsafe: "dDmMcCfuteE",
@@ -281,22 +281,20 @@ const CONFIG: Spec = {
   },
   unsafe: ["add", "replace-all", "unset", "unset-all", "rename-section", "remove-section", "comment", "append"],
   short: "lz",
-  shortValue: "f",
+  shortValue: "ft",
   shortUnsafe: "e",
 };
 const CONFIG_READ_ACTIONS = new Set(["get", "get-all", "get-regexp", "get-urlmatch", "list", "l", "get-color", "get-colorbool"]);
 const CONFIG_WRITE_WORDS = new Set(["set", "unset", "rename-section", "remove-section", "edit"]);
 
 function configReads(rest: readonly string[]): boolean {
-  const first = rest.find((arg) => !arg.startsWith("-"));
-  if (first !== undefined && CONFIG_WRITE_WORDS.has(first)) return false;
-  if (first === "get" || first === "list") {
-    const at = rest.indexOf(first);
-    return readsWith(CONFIG, [...rest.slice(0, at), ...rest.slice(at + 1)]);
-  }
+  // `get` and `list` are subcommands only as the first word after `config`; elsewhere a word may be an option's value.
+  if (rest[0] === "get" || rest[0] === "list") return readsWith(CONFIG, rest.slice(1));
+  if (rest[0] !== undefined && CONFIG_WRITE_WORDS.has(rest[0])) return false;
   let reads = false;
   const spec: Spec = {
     ...CONFIG,
+    // The words left once every option has taken its value (`--file get` names a file): one name alone reads it.
     words: (words, seen) => {
       reads = [...seen].some((name) => CONFIG_READ_ACTIONS.has(name)) || words.length === 1;
       return true;

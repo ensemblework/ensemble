@@ -12,7 +12,7 @@
  * a `cd` holds for the shell's next command. How each call was answered reaches the call the agent reported, for the turn's trace.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { homeScratch, removeScratch } from "../test/home-scratch.js";
@@ -142,6 +142,52 @@ test("git is a read only by the coding run's own allowlist: helpers, set variabl
   assert.match(global.message ?? "", /\.gitconfig runs at sign-in or start-up/);
   assert.equal(asked.length, 0, "refused, never asked");
   for (const command of [`git -C ${site} status --short`, `git -C ${site} log --onel -5`, `git -C ${site} diff --stat`, `cd ${site} && git branch -a`]) {
+    const reading = judgeWith();
+    assert.equal((await reading.judge(bash(command))).decision, "allow", command);
+    assert.equal(reading.asked.length, 0, command);
+  }
+});
+
+test("what the words do not show is never a read: arguments xargs feeds, words the shell expands, a repository's hooks and settings, glued paths", async () => {
+  const planted = join(home, "projects", "planted");
+  mkdirSync(join(planted, ".git", "hooks"), { recursive: true });
+  writeFileSync(join(planted, ".git", "config"), "[core]\n\tbare = false\n");
+  writeFileSync(join(planted, ".git", "hooks", "post-index-change"), "#!/bin/sh\nrm -f report.docx\n");
+  chmodSync(join(planted, ".git", "hooks", "post-index-change"), 0o755);
+  const filtered = join(home, "projects", "filtered");
+  mkdirSync(join(filtered, ".git"), { recursive: true });
+  writeFileSync(join(filtered, ".git", "config"), '[filter "lfs"]\n\tsmudge = rm -f report.docx\n');
+  const aliased = join(home, "projects", "aliased");
+  mkdirSync(join(aliased, ".git"), { recursive: true });
+  writeFileSync(join(aliased, ".git", "config"), "[alias]\n\twhatchanged = !rm -f report.docx\n");
+  for (const command of [
+    `cd ${site} && printf '%s\n' '"-Oecho X"' | xargs git grep -e foo`,
+    `cd ${site} && printf -- '--output=notes.txt\n' | xargs git log -1`,
+    `cd ${site} && echo -delete | xargs find .`,
+    `cd ${site} && git log "$(printf -- --output=notes.txt)" -1`,
+    `cd ${site} && git log $OPT -1`,
+    `cd ${site} && env -S 'git log \${OPT}'`,
+    `git -C ${planted} status`,
+    `git -C ${filtered} diff`,
+    `git -C ${aliased} log -1`,
+    `cd ${site} && git whatchanged -1`,
+    `cd ${site} && git status; rm -f report.docx`,
+    `cd ${site} && git status && rm -f report.docx`,
+    `cd ${site} && git status || rm -f report.docx`,
+    `cd ${site} && bash -c 'git log --output=notes.txt'`,
+  ]) {
+    const { judge, asked } = judgeWith();
+    assert.equal((await judge(bash(command))).decision, "deny", command);
+    assert.equal(asked.length, 1, `${command}: asked, not run`);
+  }
+  // A path glued to its option is still a path: the floor refuses the keys file as it does `--file=`.
+  for (const command of [`git config -f${home}/.aws/credentials --list`, `git config --file=${home}/.aws/credentials --list`, `git diff --no-index ${home}/.ssh/id_rsa /dev/null`]) {
+    const { judge, asked } = judgeWith();
+    assert.equal((await judge(bash(command))).decision, "deny", command);
+    assert.equal(asked.length, 0, `${command}: refused, never asked`);
+  }
+  // Wrappers that only change how a program runs keep a read a read; another commit-ish's file is read from git itself.
+  for (const command of [`cd ${site} && command git status`, `cd ${site} && nice -n 5 git log -1`, `cd ${site} && timeout 5 git show HEAD:README.md`, `git --git-dir=${site}/.git --work-tree=${site} status`]) {
     const reading = judgeWith();
     assert.equal((await reading.judge(bash(command))).decision, "allow", command);
     assert.equal(reading.asked.length, 0, command);

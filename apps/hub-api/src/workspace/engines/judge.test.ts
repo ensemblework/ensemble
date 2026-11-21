@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -282,6 +282,60 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "git checkout main", "git clean -fd", "git rm a.txt", "git remote add origin https://x", "git reflog expire --all",
   ];
   for (const command of never) assert.equal(reads(command), false, command);
+  // A wrapper that feeds arguments the words do not show, or a word the shell expands, is never a read.
+  for (const command of [
+    `printf '%s\n' '"-Oecho X"' | xargs git grep -e foo`,
+    `printf -- '--output=notes.txt\n' | xargs git log -1`,
+    "echo -delete | xargs find .",
+    "echo -o | xargs sort data.txt",
+    "env -S 'git log ${OPT}'",
+    `git log "$(printf -- --output=notes.txt)" -1`,
+    "git log $OPT -1",
+    "git log `echo --output=x` -1",
+    "cat {a,../b}",
+  ]) {
+    const segments = parseShell(command, "/w");
+    assert.ok(!segments.every((segment) => segmentReadsOnly(segment)), command);
+  }
+  // An option whose value git takes only as `--x=v`: the next word is git's own (a branch, a tag, a key and value, a revision).
+  const next: Array<[string, boolean]> = [
+    ["git branch --abbrev HEAD", false],
+    ["git branch --abbrev=7 -v", true],
+    ["git branch --color always", false],
+    ["git tag --column v9", false],
+    ["git tag -n5 -l", true],
+    ["git config --type bool user.name Mira", false],
+    ["git config -t bool --get user.name", true],
+    ["git log --format --ext-diff", false],
+    ["git log --format oneline -1", true],
+    ["git log --unified --output=x.patch", false],
+    ["git diff --unified --output=x.patch", false],
+    ["git diff --stat --textconv", false],
+    ["git show --abbrev --exec=x", false],
+    ["git rev-parse --since --output=x", false],
+    ["git ls-files --abbrev --with-tree HEAD", true],
+    ["git grep --color -O foo", false],
+    ["git describe --dirty --tags", true],
+    ["git blame --abbrev --textconv a.ts", false],
+    ["git shortlog --format --textconv", false],
+    ["git status --porcelain --output=x", false],
+    ["git for-each-ref --color refs/heads", true],
+    ["git ls-tree --abbrev HEAD", true],
+    ["git rev-list --filter --ext-diff HEAD", false],
+  ];
+  for (const [command, read] of next) assert.equal(reads(command), read, command);
+  // `get` and `list` are subcommands only first after `config`: `--file get` names a file to write.
+  assert.equal(reads("git config --file get user.name Mira"), false);
+  assert.deepEqual(gitWrites(["git", "config", "--file", "get", "user.name", "Mira"], "/"), ["/get"]);
+  assert.equal(reads("git config get --all user.name"), true);
+  assert.equal(reads("git config --list get"), true, "a list, with a word git ignores");
+  // An alias can stand in for whatchanged (git 2.53), so it is never a read.
+  assert.equal(reads("git whatchanged -1"), false);
+  // Wrappers that only change how a program runs keep a read a read; chained and nested commands are each judged.
+  for (const command of ["command git status", "exec git status", "nice -n 5 git status", "timeout 5 git log -1", "time git diff --stat", "git show HEAD:src/a.ts", "git diff --no-index a.txt b.txt"]) assert.equal(reads(command), true, command);
+  for (const command of ["sudo git status", "doas git status", "bash -c 'git log --output=x'", "git status; rm x", "git status && rm x", "git status || rm x", "git status | xargs rm", "git status\nrm x"]) {
+    assert.equal(reads(command), false, command);
+  }
   // A config write outside the repository is a write of that file, where both judges hold it.
   assert.deepEqual(gitWrites(["git", "config", "--global", "user.name", "Mira"], "/w"), [join(homedir(), ".gitconfig")]);
   assert.deepEqual(gitWrites(["git", "config", "--glob", "--edit"], "/w"), [join(homedir(), ".gitconfig")], "abbreviated too");
@@ -334,6 +388,13 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
     symlinkSync(join(elsewhere, "id_rsa"), join(folder, "notes"));
     mkdirSync(join(folder, "evil", ".git"), { recursive: true });
     writeFileSync(join(folder, "evil", ".git", "config"), "[core]\n\tpager = ./run.sh\n");
+    // Settings git never writes in this shape, and a hook a read can run: not quiet either.
+    mkdirSync(join(folder, "lfs", ".git"), { recursive: true });
+    writeFileSync(join(folder, "lfs", ".git", "config"), '[filter "lfs"]\n\tsmudge = ./run.sh\n');
+    mkdirSync(join(folder, "hooked", ".git", "hooks"), { recursive: true });
+    writeFileSync(join(folder, "hooked", ".git", "config"), "[core]\n\tbare = false\n");
+    writeFileSync(join(folder, "hooked", ".git", "hooks", "post-index-change"), "#!/bin/sh\n./run.sh\n");
+    chmodSync(join(folder, "hooked", ".git", "hooks", "post-index-change"), 0o755);
     // A saved "Deny for this run" answers the question each non-quiet command would put to the person.
     const prisma = { decisionRule: { findFirst: async () => ({ decision: "deny" }) } };
     const asking = (over: Partial<Ctx> = {}) => ctx({ root: folder, trusted: false, explicitTrust: false, silentWorkspace: false, job: { unattended: false }, prisma, ...over } as never);
@@ -352,6 +413,11 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
       "env GIT_EXTERNAL_DIFF=./x git diff",
       "git --config-env=core.pager=SHELL --paginate log -1",
       "cd evil && git log",
+      "cd lfs && git diff",
+      "cd hooked && git status",
+      "printf -- '--output=notes.txt' | xargs git log -1",
+      "echo -delete | xargs find .",
+      "git whatchanged -1",
       "cat notes",
       "cat *otes",
       "grep -R key .",
@@ -385,6 +451,12 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
       const answer = await judgeEngineCall(asking({ network: true } as never), { tool: "Bash", input: { command } });
       assert.equal(answer.decision, "deny", command);
       assert.match(answer.message ?? "", /denied this for the rest of the run/, command);
+    }
+    // A path glued to its option is a path: the keys file is refused as with `--file=`.
+    for (const command of [`git config -f${homedir()}/.aws/credentials --list`, `git config --file=${homedir()}/.aws/credentials --list`, `git diff --no-index ${homedir()}/.ssh/id_rsa /dev/null`]) {
+      const answer = await judgeEngineCall(asking(), { tool: "Bash", input: { command } });
+      assert.equal(answer.decision, "deny", command);
+      assert.doesNotMatch(answer.message ?? "", /denied this for the rest of the run/, `${command}: refused by the floor, not asked`);
     }
     const global = await judgeEngineCall(asking(), { tool: "Bash", input: { command: "git config --global user.name Mira" } });
     assert.equal(global.decision, "deny");

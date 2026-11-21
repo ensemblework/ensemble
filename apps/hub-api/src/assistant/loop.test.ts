@@ -295,8 +295,14 @@ test("a page named by its exact title is found; an id that names nothing, or a t
   assert.equal((await errors({ taskId: "PROJ-12" }, "jira_read_issue")).state, "ok");
 });
 
-test("a value longer than any title is matched to nothing at once, and closest matches over many records stay quick", async () => {
+test("an exact title of any length is found; a long value that is none gets no closest-match search, and that search stays quick", async () => {
   const { resolveRefs, RefLookupError } = await import("./tools/lookup.js");
+  // Task titles have no length limit: a 250-character one is still found by its exact title.
+  const long = `Prepare the quarterly board deck ${"with every appendix and its sources ".repeat(7)}`.trim();
+  const tasks = [{ id: "7d3f0c1e-5b2a-4c8d-9e6f-0a1b2c3d4e5f", title: long }];
+  const withTasks = { taskPage: { findMany: async () => [] }, task: { findMany: async () => tasks }, project: { findMany: async () => [] } } as never;
+  assert.ok(long.length > 200);
+  assert.deepEqual(await resolveRefs(withTasks, "u", { taskId: `  ${long.toUpperCase()} ` }, [["taskId", "task"]]), { taskId: tasks[0]!.id });
   const pages = Array.from({ length: 2_000 }, (_, index) => ({ id: `${String(index).padStart(8, "0")}-0000-4000-8000-000000000000`, title: `Quarterly planning notes for the operations team, part ${index} `.repeat(3).trim() }));
   const db = { taskPage: { findMany: async () => pages }, task: { findMany: async () => [] }, project: { findMany: async () => [] } } as never;
   for (const given of ["x".repeat(4_000), "Quarterly planning notes ".repeat(7)]) {

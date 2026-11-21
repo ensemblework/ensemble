@@ -16,7 +16,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LINK = /^ensemble:\/\/(page|task|project)s?\/([0-9a-f-]{36})$/i;
 const CANDIDATES = 2_000;
 const CLOSEST = 3;
-/** Longer than any title: such a value is matched to nothing, and no closest records are looked for. */
+/** A value longer than this gets no closest-match search (an exact title of any length is still found). */
 const MAX_GIVEN = 200;
 /** Cells of edit distance one lookup may fill across all its candidates, so a long value or many records never stall the server. */
 const WORK = 2_000_000;
@@ -64,7 +64,7 @@ function within(a: string, b: string, max: number): number {
 
 /**
  * The records closest to what was given: by id when it was an id (only a few characters apart), else by title (one
- * holding the other first, then titles a few edits away). A value longer than any title gets none; the work is bounded.
+ * holding the other first, then titles a few edits away). A value over `MAX_GIVEN` characters gets none; the work is bounded.
  */
 function closest(candidates: readonly Row[], given: string): Row[] {
   if (given.length > MAX_GIVEN) return [];
@@ -141,8 +141,8 @@ export async function resolveRefs(db: Db, userId: string, input: unknown, fields
     const link = LINK.exec(value.trim());
     let id: string;
     if (link && link[1]!.toLowerCase() === kind) id = link[2]!.toLowerCase();
-    else if (value.trim().length > MAX_GIVEN) throw new RefLookupError(await notFound(db, userId, kind, value.trim(), []));
     else {
+      // The exact title first, at any length (titles have none): equality is cheap. Only the closest-match search has a limit.
       const candidates = await rows(db, userId, kind);
       const key = titleKey(value);
       const same = candidates.filter((row) => titleKey(row.title) === key);

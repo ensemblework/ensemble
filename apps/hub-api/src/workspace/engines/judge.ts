@@ -107,7 +107,7 @@ export function shellSegments(command: string): string[][] {
 export async function quietCommand(root: string, parsed: ShellSegment[], sandboxed: boolean): Promise<boolean> {
   if (!parsed.some((segment) => segment.argv.length)) return false;
   for (const segment of parsed) {
-    if (segment.assigned || !within(root, segment.cwd)) return false;
+    if (segment.assigned || segment.fed || !within(root, segment.cwd)) return false;
     if (segment.redirects.some((redirect) => redirect.write && !harmlessPath(resolve(segment.cwd, expandHome(redirect.path))))) return false;
     if (!segment.argv.length) continue;
     if (!sandboxed && segment.argv[0]!.split(/[\\/]/).pop()!.replace(/\.exe$/i, "") === "git") return false;
