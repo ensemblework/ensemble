@@ -557,6 +557,65 @@ test("an own call the node's policy asks about waits for its owner's card: answe
   }
 });
 
+test("an Allow once given after its turn parked, in an unattended run, lets the call its answer wakes run, once", async () => {
+  const { settleTurns } = await import("../node/queue.js");
+  const { saveSettings } = await import("../lib/settings.js");
+  const { RunProfile } = await import("@ensemble/shared-types");
+  const waitSetting = process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
+  const mira = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: mira.id }, data: { name: "Mira" } });
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE], nodeTools: 1 });
+  await saveSettings(harness.prisma, mira.id, { runProfiles: [RunProfile.parse({ id: "main", name: "Main", engine: "claude-code", mode: "unattended", delivery: "local", deviceId: device.id })], defaultRunProfileId: "main" });
+  const { room } = await nodeOnPlan(mira);
+  const crontab = { capability: "run", target: "program:crontab", label: "crontab", scope: "folder", operation: "Run: crontab -l\nIn: ~/ensemble/projects/assistant", what: "crontab -l" };
+  const specs: NodeSpec[] = [];
+  const answers: Array<{ decision: string; waiting?: boolean; grant?: { id: string; scope: string; target: string } }> = [];
+  // Each turn's agent lists the crontab, a program that changes the system: asked about even unattended.
+  const simulated = computer(device.id, async (event, data) => {
+    if (event === "assistant.stop") {
+      await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${String(data.id)}/done`, payload: { error: { problem: "failed", message: "Stopped." } } });
+      return;
+    }
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    specs.push(((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json() as { spec: NodeSpec }).spec);
+    const asked = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/ask`, payload: crontab });
+    assert.equal(asked.statusCode, 200, asked.body);
+    answers.push(asked.json());
+    if (answers.at(-1)!.decision !== "allow") return;
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
+  });
+  const cards = async () => (await roomMessages(mira, room.id)).filter((row) => row.kind === "approval" && row.data?.type === "computer");
+  try {
+    process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = "300";
+    await postTo(mira, room.id, "Check my scheduled jobs");
+    await settleTurns();
+    assert.equal(specs[0]!.node?.attended, false, "the run profile runs unattended");
+    assert.deepEqual([answers[0]!.decision, answers[0]!.waiting], ["deny", true], "not answered in time: the turn parks");
+    const [card] = await cards();
+    assert.deepEqual(card!.data!.options, ["Allow once", "Allow for this run"]);
+
+    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${card!.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow once" } });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    await until(async () => specs.length === 2, "the node to be woken");
+    await settleTurns();
+    assert.match(specs[1]!.prompt, /Allowed: crontab -l\. Do it now\./);
+    assert.deepEqual(answers[1], { decision: "allow", grant: { id: card!.data!.decisionId, scope: "once", target: "program:crontab" } }, "the woken call runs on the late answer");
+    assert.equal((await cards()).length, 1, "without asking again");
+    assert.equal((await roomMessages(mira, room.id)).filter((row) => row.kind === "text" && row.body === "Done.").length, 1);
+
+    await postTo(mira, room.id, "Check them again");
+    await settleTurns();
+    assert.deepEqual([answers[2]!.decision, answers[2]!.waiting], ["deny", true], "Allow once was used: the next call asks again");
+    assert.equal((await cards()).length, 2);
+    assert.deepEqual(simulated.failures, []);
+  } finally {
+    if (waitSetting === undefined) delete process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
+    else process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS = waitSetting;
+    simulated.stop();
+  }
+});
+
 // A GitHub Copilot CLI 1.0.114 whose person has an MCP server of their own: it writes down how each turn started it.
 const COPILOT_WITH_SERVERS = String.raw`#!/usr/bin/env node
 const { appendFileSync, readFileSync } = require("node:fs");

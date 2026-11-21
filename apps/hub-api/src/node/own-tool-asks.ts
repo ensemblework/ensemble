@@ -3,8 +3,8 @@
  * AI plan (docs/35 §8.13). The computer judged the call by the node's folder policy and asks here
  * (subscriptions/node-own-tools.ts, `POST /api/devices/self/assistant-turns/:id/ask`). An answer the
  * owner already gave about the agent's own calls of the same kind for that folder (from then on, or for
- * this run) settles it at once, a no for this run too; never an answer given to the node's computer
- * tools. Otherwise one owner-only card in the chat where the node is talking (node/device-tool-decisions.ts:
+ * this run) settles it at once, a no for this run too, as does an Allow once given after this very call
+ * stopped waiting (used once); never an answer given to the node's computer tools. Otherwise one owner-only card in the chat where the node is talking (node/device-tool-decisions.ts:
  * one question per node, computer, folder, kind and run, answered with one press) and the call waits for it, at
  * most 90 seconds, so a proxy in front of the web never cuts the request. Not answered by then: the call
  * is refused with a note to stop, and once that has reached the computer the turn parks and the agent's
@@ -14,7 +14,7 @@
 import type { AgentDecision, NodeAgent, NodeRoom, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { ownAskKind, type OwnAnswer, type OwnAsk } from "../subscriptions/bridge.js";
-import { askOwner, awaitAnswer, computerCard, grantScope, markGrantsUsed, NODE_TOOL_DECISION, noticeAsked, ownerName, ownPlace, permissionWaitMs, waitForOwner, watchDecision, type NodeToolCard } from "./device-tool-decisions.js";
+import { askOwner, awaitAnswer, claimGrant, computerCard, grantScope, markGrantsUsed, NODE_TOOL_DECISION, noticeAsked, ownerName, ownPlace, permissionWaitMs, waitForOwner, watchDecision, type NodeToolCard } from "./device-tool-decisions.js";
 import { holdForCard, markActed, requestPark } from "./queue.js";
 import { missionOf } from "./device-tools.js";
 import type { Lineage } from "./tools.js";
@@ -37,7 +37,7 @@ export type OwnAskScope = {
   plan: { planId: string; planStep: string | null } | null;
 };
 
-const detailOf = (row: Pick<AgentDecision, "detail">) => ((row.detail && typeof row.detail === "object" && !Array.isArray(row.detail) ? row.detail : {}) as { nodeTool?: NodeToolCard });
+const detailOf = (row: Pick<AgentDecision, "detail">) => ((row.detail && typeof row.detail === "object" && !Array.isArray(row.detail) ? row.detail : {}) as { nodeTool?: NodeToolCard; command?: string | null });
 
 /** Whether an answer for `known` covers `target`: the same address or program, or a folder that holds it. */
 function covers(known: string, target: string): boolean {
@@ -50,11 +50,12 @@ function covers(known: string, target: string): boolean {
 /**
  * The owner's answer already given about this kind of call (only the agent's own calls: an answer given to
  * the node's computer tools never counts): allowed for the folder from then on or for this run, or not
- * allowed in this run. A call that names no path is asked about every time.
+ * allowed in this run; or an Allow once that came after the call stopped waiting, for this very call in this
+ * run and not used yet, taken here so it is used once. A call that names no path is otherwise asked about
+ * every time.
  */
 async function knownAnswer(prisma: Pick<PrismaClient, "agentDecision">, scope: OwnAskScope, deviceId: string, request: OwnAsk, mission: string): Promise<{ row: AgentDecision; card: NodeToolCard } | null> {
   const kind = ownAskKind(request);
-  if (kind === "unnamed") return null;
   const rows = await prisma.agentDecision.findMany({
     where: { userId: scope.node.userId, toolName: NODE_TOOL_DECISION, status: "decided", decidedAt: { gte: new Date(Date.now() - ANSWER_DAYS * 86_400_000) } },
     orderBy: { decidedAt: "desc" },
@@ -62,9 +63,14 @@ async function knownAnswer(prisma: Pick<PrismaClient, "agentDecision">, scope: O
   });
   for (const row of rows) {
     const card = detailOf(row).nodeTool;
-    if (!card?.own || (card.own.kind ?? "write") !== kind || card.nodeId !== scope.node.id || card.deviceId !== deviceId || card.scope !== request.scope || !covers(card.target, request.target)) continue;
+    if (!card?.own || (card.own.kind ?? "write") !== kind || card.nodeId !== scope.node.id || card.deviceId !== deviceId || card.scope !== request.scope) continue;
     const answer = grantScope(row);
-    if (answer === "once") continue;
+    if (answer === "once") {
+      const same = card.mission === mission && card.target === request.target && detailOf(row).command === request.operation.slice(0, 2000);
+      if (same && !card.delivered && (await claimGrant(prisma, row.id))) return { row, card };
+      continue;
+    }
+    if (kind === "unnamed" || !covers(card.target, request.target)) continue;
     if (card.mission === mission || answer === "always") return { row, card };
   }
   return null;

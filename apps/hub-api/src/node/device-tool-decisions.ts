@@ -379,6 +379,11 @@ async function parkOn(prisma: Pick<PrismaClient, "agentDecision">, id: string, l
   await changeRecord(prisma, id, (tool) => ({ ...tool, parked: [...(tool.parked ?? []).filter((row) => laneKey(row) !== laneKey(lane)), lane].slice(-10) }));
 }
 
+/** Takes an answer for one call: true only for the call that used it, so an Allow once is used once. */
+export async function claimGrant(prisma: Pick<PrismaClient, "agentDecision">, id: string): Promise<boolean> {
+  return UUID.test(id) && (await markCard(prisma, id, "delivered"));
+}
+
 /** The computer used these answers: they are not sent again. Grants that are not the owner's answers (a standing one for browsing) are not questions. */
 export async function markGrantsUsed(prisma: Pick<PrismaClient, "agentDecision">, ids: readonly string[]): Promise<void> {
   for (const id of ids) if (UUID.test(id)) await markCard(prisma, id, "delivered");
