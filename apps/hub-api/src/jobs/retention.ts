@@ -168,11 +168,14 @@ export async function runRetention(
       app.prisma.taskTransition.deleteMany({ where: { userId, at: { lt: historyCutoff } } }),
     ]);
     // How runs chose their agent sessions (workspace/session-choice) is history too, and so are node turns'
-    // traces and Node's decisions (node/trace.ts); a turn itself stays.
+    // traces, Node's decisions (node/trace.ts), its tool journal (node/journal.ts) and its steerings
+    // (node/steering.ts); a turn itself stays.
     const choices = await app.prisma.sessionChoice.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
     const traces = await app.prisma.nodeTurnTrace.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
     const decisions = await app.prisma.nodeDecision.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
-    counts.historyPurged = ledger.count + transitions.count + choices.count + traces.count + decisions.count;
+    const journal = await app.prisma.nodeToolJournal.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
+    const steers = await app.prisma.nodeSteer.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
+    counts.historyPurged = ledger.count + transitions.count + choices.count + traces.count + decisions.count + journal.count + steers.count;
   }
   const logCutoff = new Date(now.getTime() - LOG_CHUNK_RETENTION_DAYS * 86_400_000);
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);

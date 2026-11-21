@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleFrom, parseMentions, resolveMentions, uniqueHandle } from "./mentions.js";
-import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, routeRecord, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
+import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, loopBrake, routeRecord, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
 import { activeHeuristics, DEFAULT_NODE_HEURISTICS, heuristicsVersion, resetHeuristicsCache } from "./heuristics.js";
 import { cleanReply } from "./reply.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES, charterOf, nodeTemplate, paletteAvatar } from "./templates.js";
@@ -148,13 +148,48 @@ test("the brakes and fan-outs come from the heuristics config, and a decision re
     mentions: [{ kind: "node", id: "a" }, { kind: "node", id: "b" }, { kind: "node", id: "c" }],
     replyTo: { id: "m0", seq: 4, authorKind: "node" },
     leadNodeIds: [],
+    mode: "coordinated",
     nodes: [{ id: "a", active: true, authorsOwn: true }, { id: "b", active: true, authorsOwn: true }, { id: "c", active: true, authorsOwn: true }, { id: "d", active: false }],
-    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1 },
+    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1, loopWindow: 12, loopAckWords: 3 },
   });
   assert.deepEqual(record.choice, { reason: "mentioned", capped: 1, woken: [{ nodeId: "a", private: false, audience: "owner" }, { nodeId: "b", private: false, audience: "owner" }] });
   assert.ok(!JSON.stringify(record).includes("secret plans") && !JSON.stringify(record).includes("earlier words"), "never the message's words");
   const braked = routeRecord({ ...fromNode, id: "m2", roomId: "r1" }, dm, nodes, 2, tight, whoSpeaks(fromNode, dm, nodes, 2, tight));
   assert.deepEqual(braked.choice, { reason: "none", brake: "streak", woken: [] });
+});
+
+test("independent views: a message naming several nodes has each answer, and names who brings the answers together", () => {
+  const nodes = [node("lead", "mira"), node("a", "mira"), node("b", "mira"), node("ben-lead", "ben", { representative: true }), node("mira-lead", "mira", { representative: true }), node("steward", "ben")];
+  const crew = { kind: "crew" as const, leadNodeIds: ["lead"] };
+  const both = message({ authorId: "mira", mentions: [{ kind: "node", id: "a" }, { kind: "node", id: "b" }] });
+  assert.deepEqual(whoSpeaks(both, crew, nodes, 0), { reason: "lead", nodeIds: ["lead"] }, "coordinated (the default): the lead answers and coordinates");
+  assert.deepEqual(whoSpeaks(both, { ...crew, mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a", "b"], independent: { synthesizerId: "lead" } });
+  assert.deepEqual(whoSpeaks(message({ authorId: "mira", mentions: [{ kind: "node", id: "a" }] }), { ...crew, mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a"] }, "one node named: no round");
+  assert.deepEqual(whoSpeaks(both, { kind: "crew", leadNodeIds: [], mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a", "b"], independent: { synthesizerId: "a" } }, "no lead: the first named");
+  const leads = message({ authorId: "mira", mentions: [{ kind: "node", id: "ben-lead" }, { kind: "node", id: "mira-lead" }] });
+  const room = { kind: "room" as const, leadNodeIds: [] as string[], mode: "independent" as const };
+  assert.equal((whoSpeaks(leads, room, nodes, 0) as { independent?: { synthesizerId: string } }).independent?.synthesizerId, "mira-lead", "in a room: the author's own lead");
+  assert.equal((whoSpeaks(leads, { ...room, leadNodeIds: ["steward"] }, nodes, 0) as { independent?: { synthesizerId: string } }).independent?.synthesizerId, "steward", "or the room's steward");
+  const record = routeRecord({ ...both, id: "m1", roomId: "r1" }, { ...crew, mode: "independent" }, nodes, 0, DEFAULT_NODE_HEURISTICS.router, whoSpeaks(both, { ...crew, mode: "independent" }, nodes, 0));
+  assert.equal(record.inputs.mode, "independent");
+  assert.deepEqual([record.choice.independent, record.choice.synthesizerId], [true, "lead"]);
+});
+
+test("the loop brakes: two nodes both repeating their own words back and forth, or a node repeating itself at once; a repeat with new words between, or an acknowledgement, is not a loop", () => {
+  const said = (authorNodeId: string | null, body: string) => ({ authorNodeId, body });
+  assert.equal(
+    loopBrake([said("a", "@b can you check the file?"), said("b", "@a checked, over to you"), said("a", "@B Can you check the file"), said("b", "@a Checked, over to you!")]),
+    "cycle",
+    "both sides said again what they said",
+  );
+  assert.equal(loopBrake([said("p", "@h Draft the summary of the report."), said("h", "@p Here is the summary: three findings."), said("p", "@h Draft the summary of the report.")]), null, "the same brief again after a report: asked again, not a loop");
+  assert.equal(loopBrake([said("lead", "@h draft A"), said("h", "@lead Done."), said("lead", "@h now draft B"), said("h", "@lead Done.")]), null, "an acknowledgement repeated is not a loop");
+  assert.equal(loopBrake([said("a", "@b draft the intro"), said("b", "@a Done."), said("a", "@b draft the intro"), said("b", "@a Done.")]), null, "only one side repeated words that count");
+  assert.equal(loopBrake([said("a", "@b ship the release now"), said("a", "@b ship the release now!")]), "duplicate", "said twice in a row");
+  assert.equal(loopBrake([said("a", "@b ok"), said("a", "@b ok")]), null, "a short acknowledgement never counts");
+  assert.equal(loopBrake([said("b", "@a ship the release now"), said("a", "@b ship the release now")]), null, "another node's words, not its own");
+  assert.equal(loopBrake([said("a", "@b check part one"), said("b", "@a done with part one"), said("a", "@b check part two")]), null, "new words go on");
+  assert.equal(loopBrake([said("a", "@b ship the release now"), said("a", "@b ship the release now")], 6), null, "the acknowledgement length is the config's");
 });
 
 test("an override of the heuristics config changes only what it names; an invalid one is ignored and logged", () => {

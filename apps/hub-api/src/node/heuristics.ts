@@ -1,9 +1,9 @@
 /**
  * The numbers Ensemble Node decides with (docs/35 §4, §5.7, §6.2-6.3), in one versioned config: the
- * router's brakes, how big a plan may be, how far a stuck step climbs before its owner is asked, and the
- * watchdog's stall rules. None is a limit of Ensemble's own on work: they are brakes on runaway planning
- * and waiting, with generous defaults. Every decision it records (`node_decisions`, node/trace.ts) names
- * the config's version and hash, so a decision can be judged again under other numbers.
+ * router's brakes, the group modes' deadline, how big a plan may be, how far a stuck step climbs before its
+ * owner is asked, and the watchdog's stall rules. None is a limit of Ensemble's own on work: they are brakes
+ * on runaway planning and waiting, with generous defaults. Every decision it records (`node_decisions`,
+ * node/trace.ts) names the config's version and hash, so a decision can be judged again under other numbers.
  *
  * Tuning without a release: `ENSEMBLE_NODE_HEURISTICS_CONFIG` holds a JSON object with only the fields
  * to change, or the path of a file with one (read again at most once a minute). An invalid override is
@@ -17,7 +17,7 @@ const limit = (value: number) => z.number().int().min(1).max(1_000).default(valu
 
 export const NodeHeuristics = z.object({
   /** Change it with every change of the defaults; recorded on each decision. */
-  version: z.string().max(40).default("2026-11-22.1"),
+  version: z.string().max(40).default("2026-11-22.2"),
   router: z
     .object({
       /** Node messages in a row in a room (not a helper's room) after which a node's message wakes nobody. */
@@ -28,6 +28,20 @@ export const NodeHeuristics = z.object({
       humanFanout: limit(6),
       /** Nodes one node's message wakes at most. */
       nodeFanout: limit(3),
+      /**
+       * Node messages of one request (since the last person's message) that the loop brakes read: two nodes
+       * saying the same things back and forth (`cycle`), or a node saying the same thing twice at once
+       * (`duplicate`), wakes nobody.
+       */
+      loopWindow: limit(12),
+      /** A message of at most this many words is an acknowledgement ("Done.", "ok"): it never counts as a repeat. */
+      loopAckWords: z.number().int().min(0).max(20).default(3),
+    })
+    .default({}),
+  groups: z
+    .object({
+      /** Independent views (node/groups.ts): how long the nodes asked have to answer before their answers are brought together anyway. */
+      independentDeadlineSeconds: z.number().int().min(30).max(86_400).default(600),
     })
     .default({}),
   /** How big one plan may be (node/plan-contract.ts `validatePlan`, node/plans.ts `addStep`). */

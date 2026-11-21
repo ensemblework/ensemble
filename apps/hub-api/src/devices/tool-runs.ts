@@ -19,7 +19,13 @@ import { recoverNodeToolDecisions } from "../node/device-tool-decisions.js";
 import { recoverSudoCards, sudoRunEnded } from "../node/sudo.js";
 import { signInHints } from "../node/sign-in-hints.js";
 
-type Redisish = { get(key: string): Promise<string | null>; set(key: string, value: string, ...args: Array<string | number>): Promise<unknown>; del(...keys: string[]): Promise<unknown>; mget(...keys: string[]): Promise<Array<string | null>> };
+type Redisish = {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, ...args: Array<string | number>): Promise<unknown>;
+  del(...keys: string[]): Promise<unknown>;
+  mget(...keys: string[]): Promise<Array<string | null>>;
+  sadd?(key: string, ...members: string[]): Promise<unknown>;
+};
 
 /** One command a node started on a computer, while its output is kept. */
 export type ToolRunState = {
@@ -53,6 +59,8 @@ const runKey = (runId: string) => `ensemble:nodetool:run:${runId}`;
 const chunkKey = (runId: string, seq: number) => `ensemble:nodetool:out:${runId}:${seq}`;
 const wokenKey = (runId: string) => `ensemble:nodetool:woken:${runId}`;
 const quietKey = (runId: string) => `ensemble:nodetool:quiet:${runId}`;
+/** A node's commands, for a stop to find the ones still running (node/stop.ts). */
+const nodeRunsKey = (nodeId: string) => `ensemble:nodetool:node:${nodeId}`;
 const signInKey = (nodeId: string, deviceId: string, which: string) => `ensemble:nodetool:signin:${nodeId}:${deviceId}:${createHash("sha256").update(which).digest("hex").slice(0, 32)}`;
 /** A sign-in killed this close to its limit, and not successful, ran out of time. */
 const RAN_OUT_MARGIN_MS = 15_000;
@@ -71,6 +79,20 @@ const ToolChunk = z.object({
 export async function openToolRun(redis: Redisish, runId: string, state: Omit<ToolRunState, "next" | "bytes" | "done" | "exitCode">): Promise<void> {
   const full: ToolRunState = { ...state, next: 0, bytes: 0, done: false, exitCode: null };
   await redis.set(runKey(runId), JSON.stringify(full), "EX", TOOL_RUN_TTL_SECONDS);
+  await redis.sadd?.(nodeRunsKey(state.nodeId), runId);
+}
+
+/** A node's commands whose output is still kept and that have not ended; the others leave its list. */
+export async function runningToolRuns(redis: Pick<Redisish, "get"> & { smembers(key: string): Promise<string[]>; srem(key: string, ...members: string[]): Promise<unknown> }, nodeId: string): Promise<Array<{ runId: string; run: ToolRunState }>> {
+  const going: Array<{ runId: string; run: ToolRunState }> = [];
+  const gone: string[] = [];
+  for (const runId of await redis.smembers(nodeRunsKey(nodeId))) {
+    const run = await toolRunOf(redis, runId);
+    if (run && !run.done) going.push({ runId, run });
+    else gone.push(runId);
+  }
+  if (gone.length) await redis.srem(nodeRunsKey(nodeId), ...gone);
+  return going;
 }
 
 export async function toolRunOf(redis: Pick<Redisish, "get">, runId: string): Promise<ToolRunState | null> {

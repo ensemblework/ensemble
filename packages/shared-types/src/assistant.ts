@@ -338,6 +338,24 @@ export function pullRequestHeadRefusal(branch: string, base: string): string | n
 }
 
 /**
+ * Roles (beta, off by default; docs/35 §8.3): the kinds of work a node hands to an agent run, each of which
+ * may get its own agent and model (`RoleMap`, sparse: a role left out inherits). Ensemble Node resolves a
+ * plan step's run by its role (apps/hub-api/src/node/roles.ts).
+ */
+export const NODE_ROLES = ["architecture", "implementation", "research", "review", "security", "design", "test", "docs", "writing", "general"] as const;
+export type NodeRole = (typeof NODE_ROLES)[number];
+export const RoleChoice = z
+  .object({
+    agent: z.enum(CODE_ENGINES).optional(),
+    model: z.string().trim().max(240).optional(),
+    effort: ReasoningEffort.optional(),
+  })
+  .strict();
+export type RoleChoice = z.infer<typeof RoleChoice>;
+export const RoleMap = z.record(z.enum(NODE_ROLES), RoleChoice);
+export type RoleMap = z.infer<typeof RoleMap>;
+
+/**
  * A saved set of Assign options, picked in one click from the Assign dialog,
  * the board or the CLI. At most three per person; one can be the default.
  * Task-specific choices (which folder, which earlier task, a branch name) are
@@ -382,6 +400,8 @@ export const RunProfile = z.object({
   secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(20).optional(),
   /** Connected-app tools a run with this profile may not use (tools-off.ts). Empty: every connected one. */
   toolsOff: ToolsOff.optional(),
+  /** Roles (beta): this profile's agent and model per kind of delegated work, over the global ones. Used only while Roles are on. */
+  roles: RoleMap.optional(),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
@@ -574,6 +594,13 @@ export const NodeSettings = z.object({
    * in the Node chat only. Either way, what is answered or closed anywhere leaves everywhere.
    */
   needsInEnsemble: z.boolean().default(true),
+  /** Roles (beta, off by default): an agent and model per kind of work a node hands to an agent run (`global`, sparse). */
+  roles: z
+    .object({
+      enabled: z.boolean().default(false),
+      global: RoleMap.default({}),
+    })
+    .default({}),
 });
 export type NodeSettings = z.infer<typeof NodeSettings>;
 

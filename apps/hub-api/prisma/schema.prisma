@@ -2759,6 +2759,8 @@ model NodeAgent {
   decisions    NodeDecision[]
   routines     NodeRoutine[]
   sessionEvents NodeSessionEvent[]
+  toolJournal  NodeToolJournal[]
+  steers       NodeSteer[]
 
   @@unique([userId, slug])
   @@index([parentNodeId])
@@ -2945,7 +2947,7 @@ model NodeSessionEvent {
   sessionId String    @map("session_id")
   /// The run it concerns, when one: the new run, the stopped one, the one taken out of the queue.
   jobId     String?   @map("job_id")
-  /// queue | steer | replace | stop | reorder | cancel | answer | attention | adopt
+  /// queue | amend | steer | replace | stop | reorder | cancel | answer | attention | adopt
   action    String
   /// owner | node | watchdog
   actor     String
@@ -3000,8 +3002,13 @@ model NodeTurn {
   /// For a turn done for someone other than the owner: { data, billing, executionDevice, approver, askedBy } account ids.
   principals       Json      @default("{}")
   /// The first turn this one continues: a retry after a rate limit or a resume after a restart keeps
-  /// that turn's operation and peer request through it.
+  /// that turn's operation and peer request through it, and its tool calls' keys (`node_tool_journal`).
   originTurnId     String?   @map("origin_turn_id")
+  /// Independent views (node/groups.ts): the turn reads its room only up to this message, the one it was
+  /// woken for, so it answers before seeing any other member's answer.
+  snapshotSeq      Int?      @map("snapshot_seq")
+  /// Independent views: when the round's synthesis starts whether or not this turn answered.
+  deadlineAt       DateTime? @map("deadline_at")
   /// queued | running | done | failed
   status           String    @default("queued")
   /// What happened to it (node/queue.ts): queued | running | waiting_approval (a tool call waits for the
@@ -3018,10 +3025,86 @@ model NodeTurn {
   node             NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
   trace            NodeTurnTrace?
   decisions        NodeDecision[]
+  toolJournal      NodeToolJournal[]
 
   @@index([status, createdAt])
   @@index([nodeId, createdAt])
+  @@index([triggerMessageId])
   @@map("node_turns")
+}
+
+/// Each call a node turn makes to Ensemble's tools (node/journal.ts, docs/35 §5.8): written before the tool
+/// runs and settled after, so the same call again returns what the first did, and a restart knows which
+/// calls may have acted without saying so. A one-line summary of the result only, never its output.
+model NodeToolJournal {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  nodeId        String    @map("node_id")
+  /// The turn the call belongs to: the first of a turn resumed after a restart (`origin_turn_id`), so a
+  /// resumed turn's calls meet the calls its first try made.
+  turnId        String    @map("turn_id")
+  /// The turn row that made the call.
+  attemptTurnId String    @map("attempt_turn_id")
+  /// `<tool>:<sha256 of the canonical arguments>:<n>`: n counts the same call earlier in the turn.
+  callKey       String    @map("call_key")
+  tool          String
+  argsHash      String    @map("args_hash")
+  repeat        Int       @default(0)
+  /// recorded | dispatched | succeeded | failed | uncertain | not_run
+  state         String    @default("recorded")
+  /// The call can change something (not a read-only or parallel-safe look-up).
+  sideEffect    Boolean   @map("side_effect")
+  /// A short, redacted line of the call's arguments, for what a restart says may have run.
+  label         String?
+  /// The result's one line (its summary or error), cut and redacted; never its output.
+  summary       String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  dispatchedAt  DateTime? @map("dispatched_at")
+  finishedAt    DateTime? @map("finished_at")
+  node          NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  turn          NodeTurn  @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@unique([turnId, callKey])
+  @@index([attemptTurnId])
+  @@index([userId, createdAt])
+  @@map("node_tool_journal")
+}
+
+/// A steering of work already going (node/steering.ts, docs/35 §5.9): which of the five cases, what it was
+/// done to and how, and how it went. An amendment is written before it reaches its worker; one whose model
+/// call never answered is rejected, and the turn for its message answers it.
+model NodeSteer {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  nodeId    String    @map("node_id")
+  roomId    String?   @map("room_id")
+  /// follow_up | amendment | interrupt | replacement | stop
+  kind      String
+  /// turn (the node's own running turn) | session (one of its agent sessions) | conversation (a thread's work)
+  target    String
+  targetId  String    @map("target_id")
+  /// An amendment's version for its target: 1, 2, ...; 0 for the other cases.
+  version   Int       @default(0)
+  /// coalesce | queue | inject | next_turn | brief | interrupt | replace | stop | new_run
+  operation String
+  /// The owner's message it came from, when one.
+  messageId String?   @map("message_id")
+  /// The agent run that carries it, for a session.
+  jobId     String?   @map("job_id")
+  /// pending | accepted | rejected | done
+  outcome   String    @default("pending")
+  /// When an amendment was handed to its running worker, in the model call it went in.
+  handedAt  DateTime? @map("handed_at")
+  /// What it stopped and what it left running: { stopped: [{kind, id, title}], kept: [...] }.
+  children  Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  settledAt DateTime? @map("settled_at")
+  node      NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+  @@index([target, targetId])
+  @@index([userId, createdAt])
+  @@map("node_steers")
 }
 
 /// What one node turn was given and did (node/trace.ts, docs/35 §5.7): sizes, hashes, timings and the
@@ -3078,7 +3161,7 @@ model NodeDecision {
   userId        String     @map("user_id")
   nodeId        String?    @map("node_id")
   turnId        String?    @map("turn_id")
-  /// route | skill | memory | context | session | model | escalation
+  /// route | skill | memory | context | session | model | escalation | steer
   kind          String
   configVersion String     @map("config_version")
   inputs        Json       @default("{}")

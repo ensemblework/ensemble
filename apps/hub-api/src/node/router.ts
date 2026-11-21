@@ -10,15 +10,22 @@
  *     Only a mention wakes a node; only leads answer in public, as room-bound turns; a person's own
  *     other nodes answer them privately (My crew); another person's other node is answered by that
  *     person's lead; `@leads status` is a card built by code; nodes' messages wake nobody.
- *   - Elsewhere a node's message wakes only the nodes it mentions, under two brakes: consecutive
- *     node messages in the room, and the depth of the bot chain under one person's message.
+ *   - Elsewhere a node's message wakes only the nodes it mentions, under four brakes: consecutive
+ *     node messages in the room, the depth of the bot chain under one person's message, and in one
+ *     request two nodes saying the same things back and forth (`cycle`) or a node saying the same
+ *     thing twice at once (`duplicate`, `loopBrake`). A wake asked for in a turn its owner started is
+ *     never stopped by the loop brakes (node/queue.ts).
  *   - A person's message wakes the nodes it mentions; mentioning only people wakes nobody;
  *     otherwise the DM's node.
+ *   - A crew or room in the `independent` group mode (node/groups.ts): a person's message naming
+ *     several nodes has each answer on its own, and one node (`independent.synthesizerId`) brings
+ *     the answers together afterwards. `coordinated` (the default) is the rest of these rules.
  *
  * The brakes and fan-outs are the heuristics config's (node/heuristics.ts); the caller passes the active
  * one and records each decision with `routeRecord` (node_decisions, kind `route`).
  */
 import { DEFAULT_NODE_HEURISTICS, type RouterBrakes } from "./heuristics.js";
+import type { GroupMode } from "./groups.js";
 import type { Mention } from "./mentions.js";
 
 export const MAX_BOT_STREAK = DEFAULT_NODE_HEURISTICS.router.botStreak;
@@ -39,7 +46,7 @@ export type RouteMessage = {
   botDepth: number;
 };
 
-export type RouteRoom = { kind: "dm" | "crew" | "room" | "task"; leadNodeIds: readonly string[] };
+export type RouteRoom = { kind: "dm" | "crew" | "room" | "task"; leadNodeIds: readonly string[]; mode?: GroupMode };
 export type RouteNode = { id: string; ownerId: string; active: boolean; representative: boolean; role: string; handle?: string };
 
 /** One turn to start: which node, in which thread, for whom it answers. */
@@ -58,11 +65,45 @@ export type RouteTarget = {
  * `nodeFanout`), only when there were some.
  */
 export type RouteDecision =
-  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[]; targets?: RouteTarget[]; capped?: number }
+  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[]; targets?: RouteTarget[]; capped?: number; independent?: { synthesizerId: string | null } }
   | { reason: "status"; nodeIds: [] }
-  | { reason: "none"; nodeIds: []; brake?: "streak" | "depth" };
+  | { reason: "none"; nodeIds: []; brake?: Brake };
 
-const none = (brake?: "streak" | "depth"): RouteDecision => ({ reason: "none", nodeIds: [], ...(brake ? { brake } : {}) });
+export type Brake = "streak" | "depth" | "duplicate" | "cycle";
+
+const none = (brake?: Brake): RouteDecision => ({ reason: "none", nodeIds: [], ...(brake ? { brake } : {}) });
+
+/** A message's words as the loop brakes compare them: mentions, punctuation, case and spacing left out. */
+export function loopText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/@[a-z0-9][a-z0-9-]*/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * The loop brakes, for a node's message that would wake another. `chain` is its request's text messages
+ * since the last person's message (the same root message), oldest first, ending with this one, at most the
+ * heuristics' `loopWindow`. `cycle`: two nodes back and forth, each saying again what it said one round before
+ * (A, B, A again, B again); `duplicate`: its author says again, at once, what it just said. A message of at
+ * most `ackWords` words (an acknowledgement: "Done.", "ok") never counts as a repeat. Pure.
+ */
+export function loopBrake(chain: ReadonlyArray<{ authorNodeId: string | null; body: string }>, ackWords = DEFAULT_NODE_HEURISTICS.router.loopAckWords): "duplicate" | "cycle" | null {
+  const n = chain.length;
+  const last = chain[n - 1];
+  if (!last?.authorNodeId) return null;
+  const words = (row: { body: string }) => loopText(row.body);
+  const counts = (text: string) => text.split(" ").filter(Boolean).length > ackWords;
+  const said = words(last);
+  if (!counts(said)) return null;
+  const before = chain[n - 2];
+  if (before?.authorNodeId === last.authorNodeId && words(before) === said) return "duplicate";
+  const [first, other] = [chain[n - 3], chain[n - 4]];
+  if (!before?.authorNodeId || !first || !other || before.authorNodeId === last.authorNodeId) return null;
+  const answer = words(before);
+  return first.authorNodeId === last.authorNodeId && words(first) === said && other.authorNodeId === before.authorNodeId && words(other) === answer && counts(answer) ? "cycle" : null;
+}
 
 /** At most `limit` of the named nodes, with how many were left out when any were. */
 function upTo<T>(items: readonly T[], limit: number): { kept: T[]; capped?: number } {
@@ -93,7 +134,7 @@ export function botStreak(recentNewestFirst: ReadonlyArray<{ authorKind: string;
  * Rooms v2 (docs/35 §12): a room with other people. Unaddressed messages wake nobody; a lead answers
  * in public only when it is mentioned; a person's own other nodes answer them in private.
  */
-function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards: readonly string[], brakes: RouterBrakes): RouteDecision {
+function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards: readonly string[], brakes: RouterBrakes, mode: GroupMode = "coordinated"): RouteDecision {
   if (message.authorKind !== "human") return none();
   if (leadsStatus(message.text ?? "")) return { reason: "status", nodeIds: [] };
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -113,7 +154,9 @@ function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards:
     if (picked.length) {
       const { kept, capped } = upTo(picked, brakes.humanFanout);
       const ids = kept.map((node) => node.id);
-      return { reason: "mentioned", nodeIds: ids, targets: ids.map((nodeId) => ({ nodeId, private: true, audience: "owner" })), ...(capped ? { capped } : {}) };
+      const lead = message.authorId ? leadOf(message.authorId) : undefined;
+      const independent = mode === "independent" && ids.length > 1 ? { synthesizerId: lead && own(lead) ? lead.id : ids[0]! } : null;
+      return { reason: "mentioned", nodeIds: ids, targets: ids.map((nodeId) => ({ nodeId, private: true, audience: "owner" })), ...(capped ? { capped } : {}), ...(independent ? { independent } : {}) };
     }
     const lead = message.authorId ? leadOf(message.authorId) : undefined;
     return lead && own(lead) ? { reason: "lead", nodeIds: [lead.id], targets: [{ nodeId: lead.id, private: true, audience: "owner" }] } : none();
@@ -141,7 +184,12 @@ function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards:
     }
   }
   const { kept, capped } = upTo(targets, brakes.humanFanout);
-  return kept.length ? { reason: "mentioned", nodeIds: kept.map((row) => row.nodeId), targets: kept, ...(capped ? { capped } : {}) } : none();
+  if (!kept.length) return none();
+  // Independent views: the room's steward brings the public answers together, else the author's own lead, else the first node named.
+  const steward = stewards.map((id) => byId.get(id)).find((node) => node?.active);
+  const authorsLead = message.authorId ? leadOf(message.authorId) : undefined;
+  const independent = mode === "independent" && kept.length > 1 ? { synthesizerId: steward?.id ?? (authorsLead?.active ? authorsLead.id : kept[0]!.nodeId) } : null;
+  return { reason: "mentioned", nodeIds: kept.map((row) => row.nodeId), targets: kept, ...(capped ? { capped } : {}), ...(independent ? { independent } : {}) };
 }
 
 export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonly RouteNode[], streak: number, brakes: RouterBrakes = DEFAULT_NODE_HEURISTICS.router): RouteDecision {
@@ -150,7 +198,7 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
     (node) => node.active && node.id !== message.authorNodeId && (message.visibleTo.length === 0 || message.visibleTo.includes(node.ownerId)),
   );
   // In a room with other people `leadNodeIds` holds only its steward, if it has one.
-  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId), room.leadNodeIds, brakes);
+  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId), room.leadNodeIds, brakes, room.mode);
   const eligibleIds = new Set(eligible.map((node) => node.id));
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 
@@ -167,6 +215,11 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
   const lead = room.leadNodeIds.find((id) => eligibleIds.has(id));
   if (room.kind === "crew") {
     if (mentioned.length === 1) return { reason: "mentioned", nodeIds: mentioned };
+    // Independent views: each node named answers on its own, then the lead (else the first named) brings the answers together.
+    if (room.mode === "independent" && mentioned.length > 1) {
+      const { kept, capped } = upTo(mentioned, brakes.humanFanout);
+      return { reason: "mentioned", nodeIds: kept, ...(capped ? { capped } : {}), independent: { synthesizerId: lead ?? kept[0]! } };
+    }
     // Talking only to people (or only to nodes that cannot answer) wakes nobody.
     if (!mentioned.length && message.mentions.length) return none();
     if (!eligible.length) return none();
@@ -203,6 +256,7 @@ export function routeRecord(message: RouteInput, room: RouteRoom, nodes: readonl
     mentions: message.mentions.map((row) => ({ kind: row.kind, id: row.id })),
     replyTo: replyTo ? { ...(typeof replyTo.id === "string" ? { id: replyTo.id } : {}), ...(typeof replyTo.seq === "number" ? { seq: replyTo.seq } : {}), ...(typeof replyTo.authorKind === "string" ? { authorKind: replyTo.authorKind } : {}) } : null,
     leadNodeIds: [...room.leadNodeIds],
+    mode: room.mode ?? "coordinated",
     nodes: nodes.map((node) => ({ id: node.id, active: node.active, ...(node.representative ? { lead: true } : {}), ...(message.authorId && node.ownerId === message.authorId ? { authorsOwn: true } : {}) })),
     brakes: { streak, depth: message.botDepth, ...brakes },
   };
@@ -211,6 +265,7 @@ export function routeRecord(message: RouteInput, room: RouteRoom, nodes: readonl
     reason: decision.reason,
     ...(decision.reason === "none" && decision.brake ? { brake: decision.brake } : {}),
     ...("capped" in decision && decision.capped ? { capped: decision.capped } : {}),
+    ...("independent" in decision && decision.independent ? { independent: true, synthesizerId: decision.independent.synthesizerId } : {}),
     woken: targets.map((target) => ({ nodeId: target.nodeId, private: target.private, audience: target.audience, ...(target.note ? { forNamedNode: true } : {}) })),
   };
   return { inputs, choice };

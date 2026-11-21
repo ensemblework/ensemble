@@ -468,9 +468,9 @@ export const SECTIONS = {
   },
   "node/40-sessions": {
     folder: "node",
-    text: "- Your agent sessions: node_sessions lists them; other nodes' sessions are never yours.\n- The same line of work in the same repository or folder (the next step, a fix to what it just did): node_session_send to that session; it remembers the work and costs your owner less. Unrelated work, another repository, computer or agent: node_session_start. One session per piece of work.\n- While a run goes on: “then do Y” → delivery queue; “do X instead”, “also …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop. Unnamed, it is the session most recently active here; if two are equally likely, ask which.\n- Write the agent's message as your owner would: what to do and where, how to check it, what done looks like; ask it to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result.\n- A run that failed on its setup (a model or thinking level the agent refused, a folder it cannot open) is not tried again as it was: fix it once, or report it.\n- No Ensemble task first (only when your owner wants it on their board: hub_create_tasks, then pass taskId). Playbooks naming hub_assign_to_agent or hub_list_agent_sessions mean node_session_start / node_session_send and node_sessions here.",
+    text: "- Your agent sessions: node_sessions lists them; other nodes' sessions are never yours.\n- The same line of work in the same repository or folder (the next step, a fix to what it just did): node_session_send to that session; it remembers the work and costs your owner less. Unrelated work, another repository, computer or agent: node_session_start. One session per piece of work.\n- While a run goes on: “then do Y” → delivery queue; “also …” → amend; “do X instead”, “wait, change …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop. Unnamed, it is the session most recently active here; if two are equally likely, ask which.\n- Write the agent's message as your owner would: what to do and where, how to check it, what done looks like; ask it to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result.\n- A run that failed on its setup (a model or thinking level the agent refused, a folder it cannot open) is not tried again as it was: fix it once, or report it.\n- No Ensemble task first (only when your owner wants it on their board: hub_create_tasks, then pass taskId). Playbooks naming hub_assign_to_agent or hub_list_agent_sessions mean node_session_start / node_session_send and node_sessions here.",
     vars: [],
-    sha256: "9baa9d217257cf3094952a878f73470b45481bf02a6644916317194572d7565d",
+    sha256: "72ee00f5f02b1b4c8cad5d655900afe75fb3664288ec02f85f3e44c1ef2b7813",
   },
   "node/41-sessions-said": {
     folder: "node",
@@ -747,6 +747,18 @@ export const SECTIONS = {
     text: "How a review works:\n- The builder's report and green tests are input, not proof: run the checks yourself, and check what tests do not (the page in a browser, a preference such as reduced motion, the documented setup followed as written).\n- Report one check for every acceptance criterion listed, named with its id, with its verdict and strength. A pass rests on evidence of strength A or B; recollection (C) never passes a review.\n- Prove each criterion the way its proof says: test (run it), browser (open the page and sample its state), preference (emulate the preference and look again), route (follow the documented steps from a clean start, exactly as written), capture (a real recording: codec, duration, frames), delivery (the file is in the chat and opens), inspection (read the work itself).\n- A fail names the criterion, what you did and what you saw. Do not fix what you review: the builder repairs it, then you review it again.",
     vars: [],
     sha256: "0b238e1c86adc6e7fec4d15e7e83afd7c6f5341b00f9933546bfb16a170dc7e1",
+  },
+  "node/86-packet-turn": {
+    folder: "node",
+    text: "About this turn:\n{{facts}}",
+    vars: ["facts"],
+    sha256: "0884efd996a97f00fe3707cbff4b1a1fd738ccdbf042a0a0134bcb36a14af5e1",
+  },
+  "node/87-packet-steer": {
+    folder: "node",
+    text: "{{owner}} added this while you were working on it:\n{{messages}}\n\nTake it into account from here: change or add to what you are doing as it says. Keep what is already done unless it asks to undo it, and do not do anything twice.",
+    vars: ["messages","owner"],
+    sha256: "8672267e14c8c2f8d4827cf679cd963452c6dbbdbe79469797869cfb2398f6fe",
   },
 } as const satisfies Record<string, GeneratedSection>;
 

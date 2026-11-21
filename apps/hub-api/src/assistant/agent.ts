@@ -260,6 +260,41 @@ export interface AssistantTurnArgs {
   };
   /** Filled in as the turn runs, for Ensemble Node's turn trace (node/trace.ts). Kept when the turn throws. */
   trace?: LoopTrace;
+  /**
+   * Ensemble Node's tool journal (node/journal.ts): every call of the turn to Ensemble's tools, on its own
+   * loop and relayed from the owner's agent, is recorded before it runs and settled after.
+   */
+  journal?: ToolJournal;
+  /**
+   * Ensemble Node's steering (node/steering.ts): between the steps of Ensemble's own loop, what its owner
+   * added while it worked joins the turn as a user message, and how each one went is reported back.
+   */
+  steer?: TurnSteering;
+}
+
+/** One tool call as the journal sees it, before it runs. `sideEffect`: it can change something (registry.ts `readsOnly`). */
+export type JournalCall = { name: string; arguments: string; sideEffect: boolean };
+
+/** What an earlier identical call of the turn returned, given back in place of running it again. */
+export type JournalReplay = { state: "ok" | "failed"; summary: string; forModel: Record<string, unknown> };
+
+/** A call the journal recorded: `dispatched` just before the tool runs, `settle` with how it ended (`ran`: it reached the tool). */
+export interface JournalTicket {
+  dispatched(): Promise<void>;
+  settle(outcome: { state: AssistantToolCall["state"]; ran: boolean; summary: string }): Promise<void>;
+}
+
+/** Ensemble Node's tool journal at the tool gateway (node/journal.ts). */
+export interface ToolJournal {
+  begin(call: JournalCall): Promise<{ replay: JournalReplay } | { ticket: JournalTicket }>;
+}
+
+/** What the owner added while a turn on Ensemble's own loop worked (node/steering.ts). */
+export interface TurnSteering {
+  /** The additions waiting now, as one user message, or null. Taken once: they are not offered again. */
+  take(): Promise<{ text: string; ids: string[] } | null>;
+  /** The model call that carried these additions answered, before any tool of that answer runs. */
+  answered(ids: readonly string[]): Promise<void>;
 }
 
 /** One tool call as a turn's trace records it: how long it ran and how big its result was, never its input or output. */
@@ -275,6 +310,8 @@ export interface ToolCallTrace {
   offloaded: boolean;
   /** The call only looked (registry.ts `readsOnly`). */
   readOnly: boolean;
+  /** The tool journal answered with what the same call returned earlier, so it did not run again (node/journal.ts). */
+  replayed?: boolean;
 }
 
 /** One of the agent's own calls on the person's plan (its shell, files, web: subscriptions/own-tools.ts), as a node turn's trace records it. */
@@ -354,6 +391,7 @@ function callTrace(outcome: CallOutcome, tool: AnyHubTool | undefined): ToolCall
     shownChars: jsonChars(outcome.forModel),
     offloaded: outcome.offloaded ?? false,
     readOnly: readsOnly(tool),
+    ...(outcome.replayed ? { replayed: true } : {}),
   };
 }
 
@@ -919,6 +957,8 @@ async function drive(
       stop.abort();
     }
   }
+  /** Owner additions (node/steering.ts) in the messages whose model call has not answered yet; the caller handles any left. */
+  let carried: string[] = [];
   for (let step = 0; step < maxSteps; step += 1) {
     // Checked before spending anything. Between steps is the natural checkpoint.
     if (stop.signal.aborted || (await stopRequested(app.redis, userId, activityId))) {
@@ -928,6 +968,13 @@ async function drive(
     }
     await heartbeat(app.redis, userId, activityId);
     tally.steps = step + 1;
+    // What the owner added while the turn worked joins it at this boundary, after the step's tool results.
+    const steered = step > 0 && args.steer ? await args.steer.take().catch(() => null) : null;
+    if (steered) {
+      messages.push({ role: "user", content: steered.text });
+      carried.push(...steered.ids);
+      args.emit({ type: "status", text: "Taking in what was just added." });
+    }
     // The last step a budget allows, the answer that ends a stuck turn, or the checkpoint of a turn with no cap: no tools.
     const pausing = checkpoint !== null && step === checkpoint - 1 && runaway === null;
     const finalAnswer = step === maxSteps - 1 || runaway !== null || pausing;
@@ -1005,6 +1052,11 @@ async function drive(
     try {
       if (args.trace && !args.trace.tools) args.trace.tools = toolsFingerprint(finalAnswer ? [] : chatTools);
       turn = await ask();
+      if (carried.length && args.steer) {
+        const ids = carried;
+        carried = [];
+        await args.steer.answered(ids).catch((error: unknown) => app.log.warn({ err: error }, "Could not record how a steering went"));
+      }
     } catch (error) {
       const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");
       if (cancelled) {
@@ -1361,6 +1413,8 @@ interface CallOutcome {
   ms?: number;
   resultChars?: number;
   offloaded?: boolean;
+  /** The tool journal gave back an earlier identical call's result: nothing ran. */
+  replayed?: boolean;
 }
 
 /** A step's calls in the model's order: each run of reads together (registry.ts `runsInParallel`), anything else alone. */
@@ -1417,8 +1471,21 @@ async function runOne(
   outputs?: TurnOutputs,
 ): Promise<CallOutcome> {
   const started = Date.now();
-  const outcome = await runTool(base, args, requested, offered, known, outputs);
+  const journaled = args.journal ? await journalStart(args.journal, requested, offered.get(requested.name)) : null;
+  if (journaled && "outcome" in journaled) return { ...journaled.outcome, ms: Date.now() - started };
+  const ticket = journaled?.ticket;
+  let ran = false;
+  const dispatching = ticket
+    ? async () => {
+        await ticket.dispatched();
+        ran = true;
+      }
+    : undefined;
+  const outcome = await runTool(base, args, requested, offered, known, outputs, dispatching);
   const ms = Date.now() - started;
+  if (ticket) {
+    await ticket.settle({ state: outcome.call.state, ran, summary: outcome.call.error ?? outcome.call.summary ?? "" }).catch((error: unknown) => base.app.log.warn({ err: error, tool: requested.name }, "Could not settle a journaled tool call"));
+  }
   logAi({
     kind: "tool.call",
     userId: base.userId,
@@ -1433,6 +1500,35 @@ async function runOne(
   return { ...outcome, ms };
 }
 
+/**
+ * The journal's word on a call before it runs: its ticket, or (in place of running it) the answer an earlier
+ * identical call of the turn gave. A call the journal cannot record does not run.
+ */
+async function journalStart(journal: ToolJournal, requested: { id: string; name: string; arguments: string }, tool: AnyHubTool | undefined): Promise<{ ticket: JournalTicket } | { outcome: CallOutcome }> {
+  const area = tool?.area ?? "tasks";
+  let start: Awaited<ReturnType<ToolJournal["begin"]>>;
+  try {
+    start = await journal.begin({ name: requested.name, arguments: requested.arguments, sideEffect: !readsOnly(tool) });
+  } catch {
+    const call = failed(requested, area, "This call could not be recorded before it ran, so it did not run. Try it again.", tool?.isWrite ?? false);
+    return { outcome: { call, forModel: { error: call.error } } };
+  }
+  if ("ticket" in start) return start;
+  const { replay } = start;
+  let input: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(requested.arguments || "{}") as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+  } catch {
+    // An unreadable input is shown as none.
+  }
+  const call: AssistantToolCall =
+    replay.state === "ok"
+      ? { id: requested.id, name: requested.name, area, summary: replay.summary, input, state: "ok", isWrite: tool?.isWrite ?? false }
+      : { ...failed(requested, area, replay.summary, tool?.isWrite ?? false), input };
+  return { outcome: { call, forModel: replay.forModel, replayed: true } };
+}
+
 async function runTool(
   base: ToolContext,
   args: AssistantTurnArgs,
@@ -1440,6 +1536,8 @@ async function runTool(
   offered: ReadonlyMap<string, AnyHubTool>,
   known: ReadonlyMap<string, AssistantRef> = new Map(),
   outputs?: TurnOutputs,
+  /** Called just before the tool runs (after every check): the journal marks the call dispatched. */
+  dispatching?: () => Promise<void>,
 ): Promise<CallOutcome> {
   // Only what this turn offered can run: a Map lookup, never a name turned into code.
   const tool = offered.get(requested.name);
@@ -1534,6 +1632,14 @@ async function runTool(
     };
   }
 
+  if (dispatching) {
+    try {
+      await dispatching();
+    } catch {
+      const call = failed(requested, tool.area, "This call could not be recorded before it ran, so it did not run. Try it again.", tool.isWrite);
+      return { call, forModel: { error: call.error } };
+    }
+  }
   try {
     await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite, readOnly: readsOnly(tool), input });
     const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);

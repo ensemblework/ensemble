@@ -382,6 +382,50 @@ test("the session card's routes act exactly as the node's tools: read, queue, st
   assert.deepEqual(actions, ["queue:chat", "queue:card", "reorder:card", "reorder:chat", "cancel:card", "steer:card", "stop:card", "replace:card", "stop:card"]);
 });
 
+test("an amendment to a session's run is recorded first, then goes into the brief of a run not started or is the run's next turn without stopping it; a stop records what it stopped", async () => {
+  const mira = await person("Mira");
+  const { key } = await laptopFor(mira, "Mira's laptop");
+  const { node, room } = await createNode(mira, "feature-engineer");
+  script = () => startCall("Add the export button", "Add an export button to the reports page.");
+  await say(mira, room.id, "add an export button");
+  const root = await newestJob(mira);
+
+  const brief = await control(mira, root.id, { action: "amend", prompt: "Use the blue style." });
+  assert.equal(brief.statusCode, 200, brief.body);
+  assert.equal(json(brief).jobId, root.id, "not started yet: the change is in its brief");
+  assert.match((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: root.id } })).instructions ?? "", /Update from your owner: Use the blue style\./);
+
+  const running = (await claim(key))!;
+  script = () => call("node_session_send", { session: root.id, prompt: "Also add a CSV option.", delivery: "amend" });
+  await say(mira, room.id, "also add a CSV option");
+  const change = await newestJob(mira);
+  assert.equal(change.continueFromJobId, root.id);
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: root.id } })).cancelRequestedAt, null, "the run going on is not stopped");
+  assert.deepEqual((await sessionOf(mira, root.id)).queue.map((row) => row.jobId), [change.id]);
+  const joined = await control(mira, root.id, { action: "amend", prompt: "And a PDF option." });
+  assert.equal(json(joined).jobId, change.id, "a second change joins the one waiting");
+
+  await complete(key, running);
+  const next = (await claim(key))!;
+  assert.deepEqual([next.id, next.continueFromJobId, next.steer ?? null], [change.id, root.id, null], "its next turn, in the same conversation, with nothing interrupted");
+  assert.match((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: change.id } })).instructions ?? "", /Also add a CSV option\.[\s\S]*And a PDF option\./);
+
+  assert.equal((await control(mira, root.id, { action: "stop" })).statusCode, 200);
+  const steers = await h.prisma.nodeSteer.findMany({ where: { nodeId: node.id, target: "session", targetId: root.id }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(
+    steers.map((row) => [row.kind, row.operation, row.outcome, row.version, row.jobId]),
+    [
+      ["amendment", "brief", "accepted", 1, root.id],
+      ["amendment", "next_turn", "accepted", 2, change.id],
+      ["amendment", "next_turn", "accepted", 3, change.id],
+      ["stop", "stop", "done", 0, null],
+    ],
+  );
+  assert.deepEqual((steers[3]!.children as { stopped: Array<{ kind: string; id: string }> }).stopped.map((child) => [child.kind, child.id]), [["run", change.id]]);
+  const actions = (await sessionEvents(h.prisma, node.id, { sessionId: root.id })).map((row) => `${row.action}:${row.via}`).reverse();
+  assert.deepEqual(actions, ["amend:card", "amend:chat", "amend:card", "stop:card"]);
+});
+
 test("a session goes to another node when its node hands it over or from its card; a node takes over a session no node manages; the node that had it no longer sees it", async () => {
   const ama = await person("Ama");
   const { laptop } = await laptopFor(ama, "Ama's laptop");

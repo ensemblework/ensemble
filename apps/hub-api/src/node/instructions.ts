@@ -239,7 +239,7 @@ export function assembleNode(facts: NodeFacts, packet: readonly SectionRequest[]
 }
 
 /** The turn packet (the user message): the room's new messages, a note for this turn and the work board; a step's update. */
-export function packetSections(input: { work: boolean; note: string | null; room: string; lines: string[]; calledAt: number; board: string }): SectionRequest[] {
+export function packetSections(input: { work: boolean; note: string | null; room: string; lines: string[]; calledAt: number; board: string; facts?: string[] }): SectionRequest[] {
   if (input.work) return [input.note === null ? { name: "node/83-packet-continue", tier: "volatile" } : { name: "node/83-packet-step", tier: "volatile", vars: { note: input.note } }];
   return [
     input.calledAt > 0
@@ -247,6 +247,7 @@ export function packetSections(input: { work: boolean; note: string | null; room
       : { name: "node/80-packet-new", tier: "volatile", vars: { room: input.room, messages: input.lines } },
     ...(input.note ? [{ name: "node/81-packet-update", tier: "volatile", vars: { note: input.note } } satisfies SectionRequest] : []),
     ...(input.board ? [{ name: "node/82-packet-board", tier: "volatile", vars: { board: input.board } } satisfies SectionRequest] : []),
+    ...(input.facts?.length ? [{ name: "node/86-packet-turn", tier: "volatile", vars: { facts: input.facts } } satisfies SectionRequest] : []),
   ];
 }
 

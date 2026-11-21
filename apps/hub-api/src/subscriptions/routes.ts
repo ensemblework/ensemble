@@ -20,7 +20,7 @@ import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { appPresence, detectAgents } from "./detect.js";
-import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
+import { finishTurn, heard, inRelayedRequest, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
 import { OwnAskShape, OwnToolEventShape } from "./bridge.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners, thisComputer } from "./turn.js";
@@ -228,8 +228,11 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ text: TAKEN, isError: true });
     const body = ToolCall.parse(request.body);
     heard(turn);
+    // Whether the answer reached the computer: a request that ended before it means the computer's next identical call is this one again.
+    let received = false;
+    reply.raw.once("finish", () => (received = true));
     try {
-      return await turn.call(body.name, body.input);
+      return await inRelayedRequest(() => received, () => turn.call(body.name, body.input));
     } catch (error) {
       request.log.warn({ err: error }, "relayed assistant tool failed");
       return { text: JSON.stringify({ error: "The tool failed on Ensemble's side." }), isError: true };

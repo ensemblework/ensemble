@@ -254,7 +254,7 @@ function selectedOf(selected: unknown, trace: TurnTrace): Prisma.InputJsonValue 
   return compactJson({ ...(selected && typeof selected === "object" ? selected : {}), ...(tiers ? { tiers } : {}) });
 }
 
-export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation";
+export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation" | "steer";
 
 export type Decision = {
   /** The account it decided for: whose message was routed, or whose node's turn it shaped. */

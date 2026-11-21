@@ -572,7 +572,8 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
-      readOnly: true,
+      // It runs any command it is given, so it is never a read: the tool journal holds it, and it runs alone.
+      readOnly: false,
       risk: "medium",
       async run(ctx, input) {
         if (/^\s*sudo\s/.test(input.command)) throw new ToolBlockedError("A terminal screenshot does not run a command as the administrator.", "Run that part with computer_sudo first.");

@@ -22,7 +22,7 @@ import { webTaskTool } from "./web-task.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { crewMember, findCrew, notInCrew } from "./crew.js";
 import { acceptanceFor, addStep, finishStep, kindFromRole, loadPlan, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
-import { enqueueTurn } from "./queue.js";
+import { enqueueTurn, type DispatchOutcome } from "./queue.js";
 import { planTools } from "./plan-tools.js";
 import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 import { overviewTool } from "./overview.js";
@@ -45,7 +45,8 @@ export type NodeScope = {
   ownerOnly: boolean;
   /** For questions to the owner's paired computer (devices/file-relay.ts). */
   redis: Parameters<typeof askDeviceFor>[0];
-  dispatch: (message: NodeMessage) => Promise<void>;
+  /** Routes a message it posted (node/queue.ts `dispatchMessage`): who it woke, and the brake that stopped it, if one did. */
+  dispatch: (message: NodeMessage) => Promise<DispatchOutcome | void>;
   /** The turn: a plan made in it opens with its reply (node/plans.ts). */
   turnId: string;
   /** A plan's turn: a step's node doing its step, or the lead reporting (planStep null). */
@@ -81,7 +82,7 @@ export async function postAsNode(
   body: string,
   privateTo: string[] | null,
   extra: { data?: Record<string, unknown>; roomBound?: string } = {},
-): Promise<{ message: NodeMessage; drafted: boolean }> {
+): Promise<{ message: NodeMessage; drafted: boolean; routed?: DispatchOutcome }> {
   const { prisma, node, lineage } = scope;
   const owner = node.userId;
   const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
@@ -120,8 +121,16 @@ export async function postAsNode(
     rootMessageId: lineage.rootMessageId,
     botDepth: lineage.botDepth,
   });
-  await scope.dispatch(message);
-  return { message, drafted: false };
+  const routed = await scope.dispatch(message);
+  return { message, drafted: false, ...(routed ? { routed } : {}) };
+}
+
+/** Why a message a node posted did not wake the node it named (node/router.ts brakes), in words for the node. */
+function notWoken(routed: DispatchOutcome): string {
+  if (routed.brake === "duplicate" || routed.brake === "cycle") return "it repeats what was already said there, so the loop brake stopped it";
+  if (routed.brake === "streak") return "there were too many node messages in a row there";
+  if (routed.brake === "depth") return "this chain of node messages is at its limit";
+  return "it cannot take a turn now";
 }
 
 /** The crew room this node leads for its owner (else the first crew it is in), made on first use. */
@@ -375,7 +384,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
     ...own,
     show,
     skill,
-    ...helperTools(scope),
+    ...helperTools({ ...scope, dispatch: async (message) => void (await scope.dispatch(message)) }),
     ...planTools(scope),
     ...routineTools(scope),
     // My crew in a room with other people: ask someone there, through their lead (node/peer-requests.ts).
@@ -424,7 +433,11 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         if (target.parentNodeId) {
           // Your own helper works in its task room, by mention (node/helpers.ts).
           const room = await prisma.nodeRoom.findUniqueOrThrow({ where: { id: here!.roomId } });
-          const { message } = await postAsNode(scope, room, `@${here!.handle} ${input.brief}`, null, { data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } } });
+          const { message, routed } = await postAsNode(scope, room, `@${here!.handle} ${input.brief}`, null, { data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } } });
+          // Said as it is: a brief that woke nobody is in the room, and nothing more happened.
+          if (routed && !routed.woken.includes(target.id)) {
+            throw new ToolBlockedError(`Your brief is in “${room.title}”, but @${here!.handle} was not woken: ${notWoken(routed)}.`, "Tell your owner in one line. Ask again only with something new, or when they ask you to.");
+          }
           return toolOk(`Asked @${here!.handle} in “${room.title}”.`, { roomId: room.id, messageId: message.id });
         }
         // A step in this turn's plan, run in a crew: this one, the plan's when continuing it, else the crew you lead.
