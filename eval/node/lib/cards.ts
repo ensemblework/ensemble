@@ -19,8 +19,14 @@ export type Plan = { url: string; body: Record<string, unknown>; answer: string;
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
 
-/** A capability that would show or drive the owner's real screen rather than an agent's private one. */
-export function ownersScreen(capability: string): boolean {
+/**
+ * A capability that would show or drive the owner's real screen rather than an agent's private one. A
+ * `desktop` question names a sensitive app, or `screen:owner` for the owner's own pointer and keyboard:
+ * the eval's computer has no desktop session, so any app it asks about is on the agent screen.
+ */
+export function ownersScreen(capability: string, target = ""): boolean {
+  if (target === "screen:owner") return true;
+  if (capability === "desktop") return false;
   return /screen|desktop|display|portal|takeover/i.test(capability) && !/private|agent|virtual|sandbox/i.test(capability);
 }
 
@@ -32,7 +38,7 @@ export function planDecision(row: DecisionRow, scope: "session" | "once" = "sess
   const tool = record(detail.nodeTool);
   if (tool.nodeId) {
     const capability = String(tool.capability ?? "");
-    if (ownersScreen(capability)) return { url, body: { decision: "deny", scope: "once" }, answer: "declined", note: `a request for the owner's own screen (${capability}), which the eval never allows` };
+    if (ownersScreen(capability, String(tool.target ?? ""))) return { url, body: { decision: "deny", scope: "once" }, answer: "declined", note: `a request for the owner's own screen (${capability}), which the eval never allows` };
     // A question about the agent's own call offers its answer from then on beside the one for this run.
     const pick = tool.own
       ? (options.find((option) => /for this run$/i.test(option)) ?? options.find((option) => /^(allow )?once$/i.test(option)))

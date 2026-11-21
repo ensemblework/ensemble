@@ -54,4 +54,7 @@ test("a request for the owner's own screen is declined; an agent's private scree
   assert.equal((ask("agent_screen") as { answer: string }).answer, "This mission");
   assert.equal((ask("run") as { answer: string }).answer, "This mission");
   assert.equal((planCard({ id: "t", kind: "approval", data: { type: "screen_share", status: "pending" } }) as { answer: string }).answer, "declined");
+  const desktop = (target: string) => planDecision({ id: "d", source: "ensemble", event: "question", toolName: "Computer tools", detail: { options: ["Once", "This mission"], nodeTool: { nodeId: "n", capability: "desktop", target } } });
+  assert.equal((desktop("org.gnome.Settings") as { answer: string }).answer, "This mission");
+  assert.equal((desktop("screen:owner") as { answer: string }).answer, "declined");
 });

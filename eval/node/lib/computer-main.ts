@@ -8,7 +8,7 @@
 import { mkdirSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { hermetic } from "./world.js";
+import { agentScreenRoom, hermetic } from "./world.js";
 
 type Request = { id: number; op: string; apiBase?: string; code?: string; name?: string; label?: string; path?: string; access?: "read-write" | "review" };
 
@@ -18,6 +18,7 @@ const send = (message: unknown) => process.send?.(message);
 const dirs = { state: join(root, "state"), workspace: join(root, "workspace"), app: join(root, "app"), data: join(root, "data"), tmp: join(root, "tmp"), run: join(root, "run") };
 for (const dir of Object.values(dirs)) mkdirSync(dir, { recursive: true });
 hermetic(dirs);
+const room = agentScreenRoom(root, dirs.run);
 
 const { createHttpHarness } = await import("../../../apps/hub-api/src/test/http.js");
 const harness = await createHttpHarness({ logger: { level: "info", file: join(root, "computer.log") } });
@@ -95,4 +96,4 @@ process.on("message", (raw) => {
   );
 });
 process.on("disconnect", () => void shutdown().finally(() => process.exit(0)));
-send({ ready: true, sandbox: sandbox ? `${sandbox.mechanism} (${sandbox.strength})` : null });
+send({ ready: true, sandbox: sandbox ? `${sandbox.mechanism} (${sandbox.strength})` : null, pipewire: room.pipewire });

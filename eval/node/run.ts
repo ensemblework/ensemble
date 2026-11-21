@@ -51,7 +51,7 @@ const RUN_NOTES = [
   "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
   "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
   "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
-  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland, PipeWire or PulseAudio socket) and no session bus beyond the keyring. Cards asking for the owner's own screen are never approved; a desktop task that needs a screen must bring its own.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
 ];
 
 type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; summary: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
@@ -120,6 +120,14 @@ async function grade(task: Task, ev: Evidence, data: Record<string, unknown>, ju
   }
 }
 
+/**
+ * Tokens in and out: the agent's session logs, or Ensemble's own record of its model calls where that is
+ * larger. A session Ensemble replaced (a chat going on in a new one) leaves no log to read.
+ */
+function tokensOf(usage: Evidence["usage"]): { tokensIn: number; tokensOut: number } {
+  return { tokensIn: Math.max(usage.tokensIn, usage.ensembleTokensIn), tokensOut: Math.max(usage.tokensOut, usage.ensembleTokensOut) };
+}
+
 function result(task: Task, repeat: number, startedAt: string, status: RunResult["status"], ev: Evidence, graded: { checks: Check[]; claims: string[] }, errors: string[], wallMs: number, trace: string): RunResult {
   const { score, pass, verified } = scoreOf(graded.checks);
   const failedTurns = ev.turns.filter((turn) => turn.status === "failed");
@@ -143,8 +151,7 @@ function result(task: Task, repeat: number, startedAt: string, status: RunResult
       turns: ev.usage.turns,
       failedTurns: failedTurns.length,
       modelCalls: ev.usage.modelCalls,
-      tokensIn: ev.usage.tokensIn || ev.usage.ensembleTokensIn,
-      tokensOut: ev.usage.tokensOut || ev.usage.ensembleTokensOut,
+      ...tokensOf(ev.usage),
       credits: ev.usage.credits,
       ensembleCalls: ev.usage.ensembleCalls,
       ensembleTools: ev.tools.length,
@@ -354,6 +361,7 @@ async function regrade(args: Args, log: (line: string) => void): Promise<void> {
       const graded = await grade(task, ev, last.data ?? {}, async (rubric, answer) => (await judge(task.id, asked, rubric, answer ?? lastAnswer(ev))).verdict);
       const { score, pass, verified } = scoreOf(graded.checks);
       Object.assign(row, { checks: graded.checks, falseClaims: graded.claims, score, pass: pass && row.status !== "error", verifiedPass: verified && row.status !== "error" });
+      Object.assign(row.metrics, tokensOf(ev.usage));
       log(`regraded ${row.task}: ${Math.round(score * 100)}%`);
     }
     saved.notes.push(`Regraded ${new Date().toISOString().slice(0, 16)} from the evidence in the traces${wanted ? ` (${[...wanted].join(", ")})` : ""}.`);

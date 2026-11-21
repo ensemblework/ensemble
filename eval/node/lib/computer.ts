@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 export type Computer = {
   sandbox: string | null;
+  /** The agent screen can stream its frames: this user's PipeWire is linked into the computer's runtime folder. */
+  pipewire: boolean;
   pair(apiBase: string, code: string, name: string): Promise<void>;
   unpair(): Promise<void>;
   /** Shares a folder under a label, as Settings does; resolves to its real path. */
@@ -14,7 +16,7 @@ export type Computer = {
   close(): Promise<void>;
 };
 
-type Reply = { id?: number; ok?: boolean; result?: unknown; error?: string; ready?: boolean; sandbox?: string | null };
+type Reply = { id?: number; ok?: boolean; result?: unknown; error?: string; ready?: boolean; sandbox?: string | null; pipewire?: boolean };
 
 const BOOT_MS = 180_000;
 const CALL_MS = 120_000;
@@ -75,6 +77,7 @@ export async function startComputer(root: string): Promise<Computer> {
 
   return {
     sandbox: ready.sandbox ?? null,
+    pipewire: ready.pipewire === true,
     pair: async (apiBase, code, name) => void (await call("pair", { apiBase, code, name })),
     unpair: async () => void (await call("unpair")),
     share: async (label, path, access) => String(await call("share", { label, path, access })),
