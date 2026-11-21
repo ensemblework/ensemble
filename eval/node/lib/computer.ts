@@ -1,7 +1,7 @@
 /** Starts the owner's computer process (computer-main.ts), talks to it over IPC, and can kill and start it again. */
 import { fork, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,8 +17,10 @@ export type Computer = {
   /** Stops the computer's connection to Ensemble (its remote loop), and starts it again. */
   offline(): Promise<void>;
   online(): Promise<void>;
-  /** Kills the process at once (SIGKILL), waits `downMs`, and starts it again on the same folders and database. */
+  /** Kills the process and everything it started at once (SIGKILL), waits `downMs`, and starts it again on the same folders and database. */
   restart(downMs?: number): Promise<void>;
+  /** What the computer's own database still holds: runs not ended, resource claims, leases on ended runs. */
+  inspect(): Promise<{ liveJobs: number; claims: number; leases: number }>;
   close(): Promise<void>;
 };
 
@@ -28,6 +30,40 @@ type Running = { child: ChildProcess; ready: Reply; call: (op: string, args?: Re
 const BOOT_MS = 180_000;
 const CALL_MS = 120_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Every process under `pid`, read from /proc (Linux): an agent the computer started in a process group of
+ * its own is still the computer's, and goes with it. Elsewhere, none.
+ */
+export function descendants(pid: number): number[] {
+  const children = new Map<number, number[]>();
+  let names: string[] = [];
+  try {
+    names = readdirSync("/proc");
+  } catch {
+    return [];
+  }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+      const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      children.set(parent, [...(children.get(parent) ?? []), Number(name)]);
+    } catch {
+      // Gone meanwhile.
+    }
+  }
+  const out: number[] = [];
+  const walk = (at: number) => {
+    for (const child of children.get(at) ?? []) {
+      if (out.includes(child)) continue;
+      out.push(child);
+      walk(child);
+    }
+  };
+  walk(pid);
+  return out;
+}
 
 /** `durable`: the computer keeps its database on disk, so a restart finds what it had (needed only by runs that restart it). */
 export async function startComputer(root: string, options: { durable?: boolean } = {}): Promise<Computer> {
@@ -107,15 +143,25 @@ export async function startComputer(root: string, options: { durable?: boolean }
     async restart(downMs = 3000) {
       if (!options.durable) throw new Error("This run's computer keeps its database in memory: a restart would lose its pairing.");
       const old = current;
+      const pid = old.child.pid!;
+      const tree = descendants(pid);
+      for (const target of [pid, ...tree]) {
+        try {
+          process.kill(target, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
       try {
-        process.kill(-old.child.pid!, "SIGKILL");
+        process.kill(-pid, "SIGKILL");
       } catch {
-        old.child.kill("SIGKILL");
+        // Its group is gone with it.
       }
       await old.gone;
       await sleep(downMs);
       current = await spawnOne(true);
     },
+    inspect: async () => (await current.call("inspect")) as { liveJobs: number; claims: number; leases: number },
     async close() {
       if (current.exited()) return;
       await current.call("close").catch(() => undefined);

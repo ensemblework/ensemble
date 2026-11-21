@@ -219,3 +219,87 @@ export function indexEntries(text: string, titles: string[]): Array<{ title: str
 
 /** Whether the numbers never go up. */
 export const nonIncreasing = (values: number[]): boolean => values.every((value, index) => index === 0 || value <= values[index - 1]!);
+
+/** Ensemble's tools that only look (list, read, search); any other call can change something. */
+const READ_TOOL = /^(hub_(list|get|search|find|read|lookup|repo_overview|repo_read_file|web_search|read_web_page|docs)[a-z_]*|node_(show|skill|recall|read)[a-z_]*|computer_files_(list|read|find|search|stat|info)[a-z_]*|read_tool_output|web_search|web_fetch|ensemble_(context|search|list_tasks|actions))$/;
+export const isReadTool = (name: string): boolean => READ_TOOL.test(name);
+/** The agent's own tools that only look: reading files, searching, the web, its own notes on intent. */
+const OWN_READ = /^(view|read|read_file|glob|grep|rg|ls|list|list_dir|find|search|fetch|web_fetch|web_search|report_intent|think|read_bash|list_bash|update_todo|todo|skill)$/i;
+
+/**
+ * The calls that could change something: Ensemble's tools other than lookups (memory too, unless
+ * `memory` is false), and the agent's own tools other than reads (its shell counts as a change).
+ */
+export function changingCalls(ev: Evidence, options: { memory?: boolean } = {}): string[] {
+  const memory = /^(node_remember|hub_[a-z_]*memor[a-z_]*)$/;
+  const ensemble = ev.tools.filter((call) => call.ok && !isReadTool(call.name) && (options.memory !== false || !memory.test(call.name))).map((call) => call.name);
+  // The agent's log also names Ensemble's tools it called over MCP; those are counted above.
+  const own = ev.agentTools.filter((call) => !/ensemble|hub_|node_|computer_|mcp_/i.test(call.name) && !OWN_READ.test(call.name.replace(/^[a-z]+[-.]/i, ""))).map((call) => `own:${call.name}`);
+  return [...ensemble, ...own];
+}
+
+/** Work the node made for the owner: new tasks, pages, plans, runs, routines (memories are its own notes, not work). */
+export function madeWork(ev: Evidence): string[] {
+  return [
+    ...newTasks(ev).map((task) => `task “${task.title}”`),
+    ...newPages(ev).map((page) => `page “${page.title}”`),
+    ...ev.missions.map((mission) => `plan ${mission.status}`),
+    ...ev.jobs.map((job) => `run ${job.status}`),
+    ...ev.routines.map((routine) => `${routine.kind} “${routine.title}”`),
+  ];
+}
+
+/** Every message in the rooms not written by the owner (nodes, Ensemble's own notices), with when it was posted. */
+export const othersSaid = (ev: Evidence, after = ""): Evidence["messages"] => ev.messages.filter((row) => row.author !== "owner" && row.author !== "person" && row.at > after && row.body.trim());
+/** What one node wrote. */
+export const nodeSaid = (ev: Evidence, slug: string): Evidence["messages"] => ev.messages.filter((row) => row.author === `node:${slug}` && row.body.trim());
+
+/** An owner card waiting for an answer (a decision or a card in a room), described; null when none waits. */
+export async function waitingCard(ctx: TaskContext): Promise<string | null> {
+  const prisma = ctx.world.prisma;
+  const decision = await prisma.agentDecision.findFirst({ where: { userId: ctx.owner.id, status: "pending" }, orderBy: { requestedAt: "asc" }, select: { id: true, toolName: true } });
+  if (decision) return `decision ${decision.id} (${decision.toolName})`;
+  const card = await prisma.nodeMessage.findFirst({ where: { roomId: { in: Object.values(ctx.rooms) }, kind: "approval", data: { path: ["status"], equals: "pending" } }, select: { id: true } });
+  return card ? `card ${card.id}` : null;
+}
+
+/** The ids of the owner's cards waiting now (decisions and room cards). */
+export async function waitingCardIds(ctx: TaskContext): Promise<string[]> {
+  const prisma = ctx.world.prisma;
+  const decisions = await prisma.agentDecision.findMany({ where: { userId: ctx.owner.id, status: "pending" }, select: { id: true } });
+  const cards = await prisma.nodeMessage.findMany({ where: { roomId: { in: Object.values(ctx.rooms) }, kind: "approval", data: { path: ["status"], equals: "pending" } }, select: { id: true } });
+  return [...decisions, ...cards].map((row) => row.id);
+}
+
+/** The lines of a text file, without blank ones; null when it is not there. */
+export const linesOf = (path: string): string[] | null => (existsSync(path) ? readFileSync(path, "utf8").split(/\r?\n/).filter((line) => line.trim()) : null);
+
+/** A small git repository at `dir` with these files committed on `main` by a fictional owner. */
+export async function gitRepo(dir: string, files: Record<string, string>): Promise<void> {
+  mkdirSync(dir, { recursive: true });
+  for (const [name, body] of Object.entries(files)) {
+    mkdirSync(join(dir, name, ".."), { recursive: true });
+    writeFileSync(join(dir, name), body);
+  }
+  for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Mira Chen"], ["config", "user.email", "mira@example.test"], ["add", "-A"], ["commit", "-q", "-m", "Start"]]) {
+    const done = await run("git", args, { cwd: dir, timeoutMs: 30_000 });
+    if (done.code !== 0) throw new Error(`git ${args[0]} in the fixture failed: ${done.output.slice(0, 200)}`);
+  }
+}
+
+/** Files that differ from the fixture's first commit, or are new (not ignored). */
+export async function changedFiles(dir: string): Promise<string[]> {
+  const base = await run("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: dir, timeoutMs: 30_000 });
+  const since = await run("git", ["diff", "--name-only", base.output.trim().split("\n")[0] || "HEAD"], { cwd: dir, timeoutMs: 30_000 });
+  const untracked = await run("git", ["ls-files", "--others", "--exclude-standard"], { cwd: dir, timeoutMs: 30_000 });
+  return [...new Set([...since.output.split("\n"), ...untracked.output.split("\n")].map((line) => line.trim()).filter((line) => line && !line.startsWith(".ensemble/")))];
+}
+
+/** The `model.call` records of the owner's turns: provider, model and whether the turn went on in its agent session. */
+export async function modelCalls(ctx: TaskContext): Promise<Array<{ provider: string | null; model: string | null; resumed: boolean | null; at: string }>> {
+  const rows = await ctx.world.prisma.metricEvent.findMany({ where: { userId: ctx.owner.id, kind: "model.call" }, orderBy: { ts: "asc" }, select: { payload: true, ts: true } });
+  return rows.map((row) => {
+    const payload = (row.payload ?? {}) as { provider?: unknown; model?: unknown; session?: { resumed?: unknown } };
+    return { provider: typeof payload.provider === "string" ? payload.provider : null, model: typeof payload.model === "string" ? payload.model : null, resumed: typeof payload.session?.resumed === "boolean" ? payload.session.resumed : null, at: row.ts.toISOString() };
+  });
+}

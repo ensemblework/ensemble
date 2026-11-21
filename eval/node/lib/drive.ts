@@ -104,9 +104,16 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
         trace.write("computer", { action: "restarted" });
       },
       dropLink: (ms) => {
-        world.link.drop(ms);
+        world.link.drop(ms, "the task cut it");
         trace.write("computer", { action: "link dropped", ms });
       },
+      loseAnswer: (match, ms) => {
+        world.loseAnswer(match, ms);
+        trace.write("computer", { action: "next answer lost", url: match.url.source, answer: match.answer.source, ms });
+      },
+      faults: () => ({ lost: world.lostAnswers(), drops: world.link.drops() }),
+      inspect: () => world.computer.inspect(),
+      dirs: world.computer.dirs,
       isOnline: async () => {
         const device = await world.prisma.device.findUnique({ where: { id: input.deviceId }, select: { revokedAt: true, lastSeenAt: true } });
         return Boolean(device && !device.revokedAt && world.deviceOnline(device.lastSeenAt));
@@ -228,7 +235,8 @@ async function fence(drive: Drive): Promise<void> {
 async function noteSessions(drive: Drive, final = false): Promise<void> {
   const task = drive.ctx.task.id;
   const found = [
-    ...turnSessions(drive.world.dirs.state).map((row) => ({ ...row, kind: "node-turn" as const })),
+    // Turns on the subscription run in this process, or on the computer when Ensemble hands them over (a relay task).
+    ...[...turnSessions(drive.world.dirs.state), ...turnSessions(drive.world.computer.dirs.state)].map((row) => ({ ...row, kind: "node-turn" as const })),
     ...(await codingSessions(drive.world.prisma)).map((row) => ({ ...row, kind: "coding" as const })),
     ...(final ? copilotSessionsIn(drive.world.dirs.root).map((id) => ({ agent: "copilot-cli", id, folder: null, kind: "found" as const })) : []),
   ];

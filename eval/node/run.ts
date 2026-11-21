@@ -24,7 +24,7 @@ import { markdown, NO_ANSWER, suiteTable, summary, summaryTable, withMetrics } f
 import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
-import { missing } from "./lib/capabilities.js";
+import { CAPABILITIES, missing } from "./lib/capabilities.js";
 import { collectEvidence } from "./lib/evidence.js";
 import { busy, endNodes, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, traceNodeRecords, waitQuiet, waitUntil } from "./lib/drive.js";
 import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
@@ -191,7 +191,9 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   const redact = redactor({ [world.dirs.root]: "<work>", [REPO]: "<repo>", [hostname()]: "<computer>" });
   const trace = traceFile(tracePath, redact);
   const owner = await world.newOwner("Mira Chen");
-  const device = await world.pair(owner, { viaLink: task.link === true });
+  const device = await world.pair(owner, { viaLink: task.link === true || task.relay === true });
+  // A relay task: Ensemble hands the owner's turns to the computer, as hosted Ensemble does (restored after the task).
+  if (task.relay) process.env.ENSEMBLE_DESKTOP = "0";
   const dir = join(world.dirs.tasks, `${task.id}-${repeat + 1}`);
   mkdirSync(dir, { recursive: true });
   const drive = await startDrive({ world, owner, task, repeat, dir, deviceId: device.id, trace, ledger, log: (line) => log(`  ${line}`), timeoutMs: task.timeoutMs ?? (task.suite === "crew" ? 25 * 60_000 : CORE_MS) });
@@ -297,6 +299,9 @@ async function main(): Promise<void> {
   const runnable = (task: Task) => args.ignoreRequires || !missing(task.requires);
   const world = await bootWorld({ workDir: args.workDir, agent: args.agent, model: args.model, log, durableComputer: tasks.some((task) => task.restartsComputer && runnable(task)) });
   if (args.ignoreRequires) saved.notes.push("Run with --ignore-requires: tasks ran on a checkout without what they require (a harness check, not a result).");
+  saved.notes.push(`What this checkout has that some tasks require: ${Object.entries(CAPABILITIES).map(([name, capability]) => `${name} ${capability.probe() ? "yes" : "no"}`).join(", ")}.`);
+  if (world.computer.durable) saved.notes.push("The computer kept its database on disk in its own folder for this run, since a task restarts its process.");
+  if (tasks.some((task) => task.relay)) saved.notes.push("Relay tasks run the owner's turns on the paired computer, handed over by Ensemble as hosted Ensemble does (`ENSEMBLE_DESKTOP` off in the eval process for the task), with the computer paired through the harness's link; the other tasks run them in the eval process.");
   saved.notes.push(world.keyringOnly ? "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through." : "The session bus is off (no xdg-dbus-proxy here).");
   saved.notes.push(`The owner's time zone is ${world.timeZone}, the eval process's (TZ).`);
   const ledger = new SessionLedger(join(world.dirs.root, "ledger.jsonl"), before, new Set(args.protect));
@@ -322,7 +327,10 @@ async function main(): Promise<void> {
           continue;
         }
         try {
-          outcome = await runTask(world, task, repeat, { label: args.label, ledger, judge, cleanup: saved.cleanup, log, stopping: () => stopping });
+          outcome = await runTask(world, task, repeat, { label: args.label, ledger, judge, cleanup: saved.cleanup, log, stopping: () => stopping }).finally(() => {
+            process.env.ENSEMBLE_DESKTOP = "1";
+            world.loseAnswer(null);
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`  harness error: ${message}`);

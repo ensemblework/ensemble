@@ -75,12 +75,24 @@ export type ComputerControl = {
   offline: () => Promise<void>;
   /** Starts it again. */
   online: () => Promise<void>;
-  /** Kills the computer's process at once (SIGKILL) and starts it again on the same folders. */
+  /** Kills the computer's process and everything it started at once (SIGKILL) and starts it again on the same folders and database. */
   restart: (downMs?: number) => Promise<void>;
   /** Cuts every connection between the computer and Ensemble for this long; only where the task pairs through the harness's link. */
   dropLink: (ms: number) => void;
+  /**
+   * Loses the next answer Ensemble gives the computer at an address matching `url` whose text matches
+   * `answer`: what Ensemble did stays done, the connection closes before the answer goes out, and the
+   * link then stays down for `ms`. Only where the task pairs through the link.
+   */
+  loseAnswer: (match: { url: RegExp; answer: RegExp }, ms: number) => void;
+  /** The answers lost so far, and every time the link went down. */
+  faults: () => { lost: Array<{ at: string; url: string }>; drops: Array<{ at: string; ms: number; why: string | null }> };
   /** Whether the computer is online for Ensemble now. */
   isOnline: () => Promise<boolean>;
+  /** What the computer's own database still holds: runs not ended, resource claims, leases on ended runs. */
+  inspect: () => Promise<{ liveJobs: number; claims: number; leases: number }>;
+  /** The computer's folders: its state (sessions), workspace (Code's own folder) and temporary files. */
+  dirs: { root: string; state: string; workspace: string; tmp: string };
 };
 
 export type Message = {
@@ -165,6 +177,12 @@ export type Task = {
   requires?: Capability[];
   /** Pair the computer through the harness's link (lib/link.ts), so the task can cut it. */
   link?: boolean;
+  /**
+   * The owner's turns on their subscription run on the computer, handed over by Ensemble as hosted
+   * Ensemble does (subscriptions/relay.ts), instead of in the eval process: the computer's state, link and
+   * process then hold the turn. Pairs through the link.
+   */
+  relay?: boolean;
   /** The task kills and restarts the computer's process: the run then keeps the computer's database on disk. */
   restartsComputer?: boolean;
 };

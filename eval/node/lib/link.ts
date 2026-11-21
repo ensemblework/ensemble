@@ -5,11 +5,19 @@
  */
 import { connect, createServer, type Server, type Socket } from "node:net";
 
-export type Link = { base: string; drop: (ms: number) => void; drops: () => Array<{ at: string; ms: number }>; close: () => Promise<void> };
+export type LinkDrop = { at: string; ms: number; why: string | null };
+
+export type Link = {
+  base: string;
+  drop: (ms: number, why?: string) => void;
+  /** Every drop so far, oldest first. */
+  drops: () => LinkDrop[];
+  close: () => Promise<void>;
+};
 
 export async function startLink(target: { host: string; port: number }): Promise<Link> {
   const open = new Set<Socket>();
-  const history: Array<{ at: string; ms: number }> = [];
+  const history: LinkDrop[] = [];
   let downUntil = 0;
   const server: Server = createServer((client) => {
     if (Date.now() < downUntil) {
@@ -37,9 +45,9 @@ export async function startLink(target: { host: string; port: number }): Promise
   const port = (server.address() as { port: number }).port;
   return {
     base: `http://127.0.0.1:${port}`,
-    drop(ms) {
+    drop(ms, why) {
       downUntil = Date.now() + ms;
-      history.push({ at: new Date().toISOString(), ms });
+      history.push({ at: new Date().toISOString(), ms, why: why ?? null });
       for (const socket of open) socket.destroy();
       open.clear();
     },

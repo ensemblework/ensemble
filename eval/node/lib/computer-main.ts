@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { agentScreenRoom, hermetic } from "./world.js";
+import { agentScreenRoom, hermetic, LIVE_JOB } from "./world.js";
 
 type Request = { id: number; op: string; apiBase?: string; code?: string; name?: string; label?: string; path?: string; access?: "read-write" | "review" };
 
@@ -131,6 +131,15 @@ async function handle(request: Request): Promise<unknown> {
       wakeRemote();
     }
     return null;
+  }
+  // What the computer still holds once its work should be over: runs not ended, resource claims, leases.
+  if (request.op === "inspect") {
+    const [liveJobs, claims, leases] = await Promise.all([
+      harness.prisma.workspaceJob.count({ where: { status: { in: [...LIVE_JOB] } } }),
+      harness.prisma.resourceClaim.count(),
+      harness.prisma.workspaceJob.count({ where: { leaseUntil: { gt: new Date() }, status: { notIn: [...LIVE_JOB] } } }),
+    ]);
+    return { liveJobs, claims, leases };
   }
   if (request.op === "close") {
     await shutdown();
