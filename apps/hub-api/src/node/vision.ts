@@ -19,7 +19,7 @@ import { evidenceContent } from "../evidence/store.js";
 import { askRuntimeStream, type ModelMessage } from "../lib/model-turn.js";
 import { truncateText } from "../lib/text.js";
 import { checkedMedia } from "./media.js";
-import type { Check, StepReport } from "./report.js";
+import { CHECKING_KINDS, type Check, type StepReport } from "./report.js";
 
 /** Pictures judged per report, and the largest one sent. */
 const MAX_PICTURES = 4;
@@ -49,7 +49,7 @@ export function picturesAsked(requirements: readonly Requirement[], requirementI
     });
 }
 
-type Judged = { id: string; verdict: "pass" | "fail"; reason: string };
+export type Judged = { id: string; verdict: "pass" | "fail"; reason: string };
 
 /** The model's answer: one verdict per picture it was shown, by id; anything else is ignored. */
 export function parseJudgement(text: string, ids: readonly string[]): Judged[] {
@@ -73,6 +73,28 @@ export function parseJudgement(text: string, ids: readonly string[]): Judged[] {
 }
 
 type Picture = { id: string; name: string; caption: string | null; mime: string; bytes: Buffer };
+
+/**
+ * One check per picture the model judged. It is judged now, from the file itself: evidence of strength
+ * A, which a review's pass may rest on. Anywhere but a verification or review, a picture that fails only
+ * stays unshown: the step itself stands.
+ */
+export function visionChecks(judged: readonly Judged[], pictures: ReadonlyArray<Pick<Picture, "id" | "name" | "caption">>, kind: string): Check[] {
+  const verify = CHECKING_KINDS.has(kind);
+  return judged.flatMap((row) => {
+    const picture = pictures.find((item) => item.id === row.id);
+    if (!picture) return [];
+    return [
+      {
+        name: `${PREFIX} ${truncateText(picture.caption ?? picture.name, 120)} shows what was asked`,
+        verdict: row.verdict === "pass" ? "pass" : verify ? "fail" : "blocked",
+        detail: row.reason || (row.verdict === "pass" ? "It shows what was asked." : "It does not show what was asked."),
+        evidence: [row.id],
+        strength: "A",
+      } satisfies Check,
+    ];
+  });
+}
 
 /** The uploaded pictures a report could show (a video by its poster), at most four. */
 async function picturesOf(prisma: PrismaClient, ownerId: string, report: StepReport): Promise<Picture[]> {
@@ -136,18 +158,7 @@ export async function withVisionChecks(app: FastifyInstance, input: { ownerId: s
     const turn = await askRuntimeStream({ messages, model, provider: INCLUDED_PROVIDER, reasoningEffort: "low", userId: input.ownerId, activityId: `node-vision:${input.missionId}:${input.stepId}`, chatTools: [], responsesTools: [], timeoutMs: 120_000, purpose: "Node vision check" });
     const judged = parseJudgement(turn.text, pictures.map((picture) => picture.id));
     if (!judged.length) return report;
-    const verify = step.kind === "verify";
-    const checks: Check[] = judged.map((row) => {
-      const picture = pictures.find((item) => item.id === row.id)!;
-      return {
-        name: `${PREFIX} ${truncateText(picture.caption ?? picture.name, 120)} shows what was asked`,
-        // Anywhere but a verification, a picture that fails only stays unshown: the step itself stands.
-        verdict: row.verdict === "pass" ? "pass" : verify ? "fail" : "blocked",
-        detail: row.reason || (row.verdict === "pass" ? "It shows what was asked." : "It does not show what was asked."),
-        evidence: [row.id],
-      };
-    });
-    return { ...report, checks: [...(report.checks ?? []), ...checks].slice(0, 50) };
+    return { ...report, checks: [...(report.checks ?? []), ...visionChecks(judged, pictures, step.kind)].slice(0, 50) };
   } catch (error) {
     app.log.warn({ err: error, missionId: input.missionId, stepId: input.stepId }, "Node vision check could not run");
     return report;

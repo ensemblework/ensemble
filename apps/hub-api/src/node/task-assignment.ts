@@ -189,7 +189,7 @@ export async function unassignedNote(prisma: PrismaClient, task: Task, node: Nod
   const title = task.title.replace(/[[\]]/g, "");
   const [by, plans, jobs] = await Promise.all([
     change.byAccountId === node.userId ? null : prisma.user.findUnique({ where: { id: change.byAccountId }, select: { name: true } }),
-    prisma.nodeMission.findMany({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "reporting"] } }, select: { id: true } }),
+    prisma.nodeMission.findMany({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "replanning", "reporting"] } }, select: { id: true } }),
     prisma.workspaceJob.findMany({ where: { taskId: task.id, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { id: true } }),
   ]);
   const runs = jobs.length ? await prisma.nodeRun.findMany({ where: { nodeId: node.id, jobId: { in: jobs.map((job) => job.id) } }, select: { sessionId: true, jobId: true } }) : [];
@@ -256,7 +256,7 @@ export async function taskNodeWork(prisma: PrismaClient, taskId: string): Promis
   const now = Date.now();
   const running = told.some((turn) => turn.status === "running" || (turn.status === "queued" && (!turn.runAfter || turn.runAfter.getTime() <= now)));
   const [plans, jobs] = await Promise.all([
-    prisma.nodeMission.count({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "reporting"] } } }),
+    prisma.nodeMission.count({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "replanning", "reporting"] } } }),
     prisma.workspaceJob.findMany({ where: { taskId, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { id: true } }),
   ]);
   const sessions = jobs.length ? await prisma.nodeRun.count({ where: { nodeId: node.id, jobId: { in: jobs.map((job) => job.id) } } }) : 0;

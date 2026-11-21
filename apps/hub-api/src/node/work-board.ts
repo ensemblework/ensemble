@@ -10,7 +10,7 @@ import { tasksWith } from "./task-assignment.js";
 import { labelStatus } from "../services/tasks.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
-const LIVE_MISSION = ["draft", "running", "reporting"];
+const LIVE_MISSION = ["draft", "running", "replanning", "reporting"];
 
 /** Tools that only look but keep what they saw for the owner (evidence, a picture with the reply): a merge would drop it. */
 const KEEPS_WHAT_IT_SAW = new Set(["capture_screenshot", "browser_screenshot", "browser_view", "computer_terminal_screenshot"]);

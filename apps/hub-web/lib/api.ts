@@ -1098,7 +1098,7 @@ export type TurnCompletion = {
   };
   accepted: { state: "pending" | "accepted" | "rejected"; by: "owner" | "reviewer" | null; at: string | null };
   pr: { state: "none" | "opened" | "merged"; url: string | null; source: "ensemble" | "observed" | null };
-  claim: { outcome: "done" | "pass" | "fail" | "blocked" | null };
+  claim: { outcome: "done" | "pass" | "fail" | "blocked" | "partial" | "stopped" | "uncertain" | null };
 };
 
 /** What a Code tab turn's packet carried and how its agent session started (hub-api workspace/turn-packet.ts). */

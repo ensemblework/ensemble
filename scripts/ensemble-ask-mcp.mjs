@@ -199,11 +199,11 @@ const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log"
 const REPORT_TOOL = {
   name: "report_result",
   description:
-    "Report your result once, when you finish or cannot go on. outcome: done (you built or wrote it), pass or fail (you verified something: list each check with its verdict), or blocked (say why in blockedBy). Ensemble checks it (a commit or contentHash you name must exist in your folder) and keeps it as the run's result; calling it again replaces it. Attach files first with attach_evidence and name them in checks or evidence.",
+    "Report your result once, when you finish or cannot go on. outcome: done (you built or wrote all of it), pass or fail (you verified or reviewed something: list each check with its verdict), partial (part of it is done: what is left in remaining), uncertain (it ran, but you cannot tell whether it works), blocked (say why in blockedBy) or stopped. Partial and uncertain never count as done. Ensemble checks it (a commit or contentHash you name must exist in your folder) and keeps it as the run's result; calling it again replaces it. Attach files first with attach_evidence and name them in checks or evidence.",
   inputSchema: {
     type: "object",
     properties: {
-      outcome: { type: "string", enum: ["done", "pass", "fail", "blocked"] },
+      outcome: { type: "string", enum: ["done", "pass", "fail", "blocked", "partial", "stopped", "uncertain"] },
       summary: { type: "string", maxLength: 2000, description: "One paragraph: what you did and what came of it." },
       checks: {
         type: "array",
@@ -217,6 +217,7 @@ const REPORT_TOOL = {
             verdict: { type: "string", enum: ["pass", "fail", "blocked", "skipped"] },
             detail: { type: "string", maxLength: 2000, description: "What you saw: the failure, the output that matters." },
             evidence: { type: "array", maxItems: 20, items: { type: "string" }, description: "Evidence ids from attach_evidence, URLs or paths." },
+            strength: { type: "string", enum: ["A", "B", "C"], description: "How strong the evidence is: A a file or record you made and measured now, B output you saw in this session, C what you recall or assume. A review's pass needs A or B." },
             rerun: {
               type: "object",
               description: "How to run the check again without you.",
@@ -248,12 +249,21 @@ const REPORT_TOOL = {
             kind: { type: "string", enum: ["commit", "file", "url", "log", "screenshot", "video", "report", "evidence"] },
             ref: { type: "string", description: "An evidence id, a commit, a URL or a path." },
             caption: { type: "string", maxLength: 300 },
+            strength: { type: "string", enum: ["A", "B", "C"] },
           },
           required: ["kind", "ref"],
           additionalProperties: false,
         },
       },
       blockedBy: { type: "string", enum: ["needs_owner", "login_required", "missing_access", "environment", "no_report", "no_progress", "unknown"] },
+      remaining: { type: "array", maxItems: 20, items: { type: "string", maxLength: 500 }, description: "What is left, in order, when the outcome is partial or blocked." },
+      ownerDecision: { type: "string", maxLength: 500, description: "The one decision only your owner can make, when there is one." },
+      provenance: {
+        type: "object",
+        description: "Who did the work, as far as you know: your agent and the model you are (modelReported). Ensemble adds what it observed.",
+        properties: { agent: { type: "string" }, modelRequested: { type: "string" }, modelSent: { type: "string" }, modelReported: { type: "string" }, computer: { type: "string" }, session: { type: "string" } },
+        additionalProperties: false,
+      },
     },
     required: ["outcome", "summary"],
     additionalProperties: false,

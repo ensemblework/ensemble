@@ -247,7 +247,7 @@ export async function busy(drive: Drive): Promise<string[]> {
     prisma.nodeTurn.count({ where: { userId: owner, status: { in: ["queued", "running"] } } }),
     prisma.workspaceJob.count({ where: { userId: owner, status: { in: [...LIVE_JOB] } } }),
     prisma.nodeRun.count({ where: { userId: owner, reportedAt: null } }),
-    prisma.nodeMission.count({ where: { userId: owner, status: { in: ["running", "reporting"] } } }),
+    prisma.nodeMission.count({ where: { userId: owner, status: { in: ["running", "replanning", "reporting"] } } }),
   ]);
   return [
     ...(turns ? [`turns ${turns}`] : []),

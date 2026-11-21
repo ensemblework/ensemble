@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { delimiter, isAbsolute, resolve } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { parseReport, type Check, type StepReport } from "../node/report.js";
+import { parseReport, REPORT_OUTCOMES, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
 import { agentEnv } from "../subscriptions/detect.js";
 import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
@@ -296,7 +296,7 @@ export const CompletionSchema = z.object({
   checks: z.object({ state: z.enum(["none", "passed", "failed", "unverified"]), passed: z.number().int().min(0), failed: z.number().int().min(0), notRun: z.number().int().min(0), claimed: z.number().int().min(0), runs: z.array(CheckRunSchema).max(50) }),
   accepted: z.object({ state: z.enum(["pending", "accepted", "rejected"]), by: z.enum(["owner", "reviewer"]).nullable(), at: z.string().max(40).nullable() }),
   pr: z.object({ state: z.enum(["none", "opened", "merged"]), url: z.string().max(2000).nullable(), source: z.enum(["ensemble", "observed"]).nullable() }),
-  claim: z.object({ outcome: z.enum(["done", "pass", "fail", "blocked"]).nullable() }),
+  claim: z.object({ outcome: z.enum(REPORT_OUTCOMES).nullable() }),
 });
 
 export function parseCompletion(value: unknown): Completion | null {

@@ -1,19 +1,30 @@
 /**
- * The session watchdog (docs/35 §8.11): code rules over the runs of nodes' sessions, never a model. A run
- * that shows no progress for a while, keeps hitting the same error (its latest failures, not an agent
- * looking around), spends tokens without changing a file, or changes files outside its folder, and an
- * agent's question the node may answer, each give the run's node one attention turn with a note (a plan
- * step's run: in that step's own lane). That is a turn, not a chat message, and its advice is to leave a
- * working run alone. Each condition reaches the node once per run (`node_runs.watchdog`, claimed with a
- * compare-and-set).
+ * The watchdog (docs/35 §6.4, §8.11): code rules, never a model.
+ *
+ * Sessions (`checkSessions`): a run that shows no progress for a while, keeps hitting the same error (its
+ * latest failures, not an agent looking around), spends tokens without changing a file, or changes files
+ * outside its folder, and an agent's question the node may answer, each give the run's node one attention
+ * turn with a note (a plan step's run: in that step's own lane). That is a turn, not a chat message, and
+ * its advice is to leave a working run alone. Each condition reaches the node once per run
+ * (`node_runs.watchdog`, claimed with a compare-and-set).
+ *
+ * Work (`checkWork`, numbers in node/heuristics.ts `stall`): plan steps and their node turns that stopped
+ * moving, missions with no progress, the same failure again and again, and cards left waiting. Each
+ * finding is acted on once: on the step's attempt, on `node_missions.watchdog` or on the card, claimed in
+ * the transaction that acts.
  */
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { NodeRun, Prisma, PrismaClient } from "@prisma/client";
+import type { NodeMission, NodeRun, NodeStep, Prisma, PrismaClient } from "@prisma/client";
 import { truncateText } from "../lib/text.js";
 import { enqueueTurn } from "./queue.js";
 import { recordSessionEvent } from "./session-queue.js";
 import { answersQuestions, questionRefusal } from "./session-questions.js";
-import { runIsStale, stepLive } from "./plans.js";
+import { laddered, mutateMission, PLAN_DECISION_CARD, runIsStale, stepCardsWaiting, stepLive, stepRuns } from "./plans.js";
+import { escalateToOwner, lastAttempt, sameErrors, stallStep, stuck, type Attempt, type Effect } from "./missions-core.js";
+import { activeHeuristics, type StallRules } from "./heuristics.js";
+import { postMessage } from "./store.js";
+import { recordDecision } from "./trace.js";
 
 const minutes = (value: number) => value * 60_000;
 const fromEnv = (name: string, fallback: number) => {
@@ -368,6 +379,180 @@ export async function checkSessions(app: FastifyInstance, now = Date.now()): Pro
   return raised;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Work that stopped moving: plan steps, missions and the cards they wait on
+
+export type WorkFinding = { rule: "step_stalled" | "mission_stalled" | "same_error" | "card_waiting"; missionId: string; stepId?: string; action: string };
+
+const shortHash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 12);
+
+/** Takes a mission's condition once (node_missions.watchdog, compare-and-set): false when it was already raised. */
+async function claimMission(db: PrismaClient | Prisma.TransactionClient, missionId: string, condition: string): Promise<boolean> {
+  const stamp = JSON.stringify({ [condition]: new Date().toISOString() });
+  const won = await db.$executeRaw`UPDATE node_missions SET watchdog = watchdog || ${stamp}::jsonb WHERE id = ${missionId} AND (watchdog ->> ${condition}) IS NULL`;
+  return won === 1;
+}
+
+/**
+ * Whether a working step still has something of its own going on: an agent run, a card for its owner, a
+ * running turn (or one queued less than `ms` ago), a start still in the outbox, or a place in line for its folder.
+ */
+async function stepBusy(prisma: PrismaClient, missionId: string, step: Pick<NodeStep, "id">, now: number, ms: number): Promise<boolean> {
+  if ((await stepRuns(prisma, missionId, step.id)).pending > 0) return true;
+  if ((await stepCardsWaiting(prisma, missionId, step.id)) > 0) return true;
+  const turns = await prisma.nodeTurn.count({ where: { planId: missionId, planStep: step.id, OR: [{ status: "running" }, { status: "queued", createdAt: { gt: new Date(now - ms) } }] } });
+  if (turns) return true;
+  const starts = await prisma.nodeOutbox.count({ where: { missionId, deliveredAt: null, kind: "turn", payload: { path: ["stepId"], equals: step.id } } });
+  if (starts) return true;
+  return (await prisma.resourceClaim.count({ where: { missionId, stepId: step.id, state: "waiting" } })) > 0;
+}
+
+/** A working step unchanged for `stepMinutes` with nothing of its own going on: asked once to report, then ended blocked. */
+async function stalledSteps(app: FastifyInstance, mission: NodeMission & { steps: NodeStep[] }, rules: StallRules, now: number): Promise<WorkFinding[]> {
+  const found: WorkFinding[] = [];
+  const ms = rules.stepMinutes * 60_000;
+  for (const row of mission.steps) {
+    if (row.status !== "working" || now - row.updatedAt.getTime() < ms) continue;
+    if (await stepBusy(app.prisma, mission.id, row, now, ms)) continue;
+    let action: "nudge" | "block" | null = null;
+    await mutateMission({ prisma: app.prisma, app }, mission.id, (draft, _row, { rows }) => {
+      // Only a step nothing touched since it was read: another pass (or the step itself) may have moved it.
+      const fresh = rows.find((candidate) => candidate.id === row.id);
+      if (!fresh || fresh.updatedAt.getTime() !== row.updatedAt.getTime()) return false;
+      action = stallStep(draft, row.id, row.attempt, new Date(now).toISOString(), rules.stepMinutes);
+      return action ? undefined : false;
+    });
+    if (!action) continue;
+    found.push({ rule: "step_stalled", missionId: mission.id, stepId: row.id, action });
+    await recordDecision(app, { userId: mission.userId, nodeId: row.nodeId, kind: "escalation", inputs: { rule: "step_stalled", missionId: mission.id, stepId: row.id, attempt: row.attempt, minutes: rules.stepMinutes }, choice: { action } });
+  }
+  return found;
+}
+
+/**
+ * A mission with nothing working and nothing changed for `missionMinutes`, and nothing on its way (no
+ * lead turn, no undelivered effect, no card for its owner): its next move is made again. Once per state
+ * of its steps, so a move that changes nothing is not repeated.
+ */
+async function stalledMission(app: FastifyInstance, mission: NodeMission & { steps: NodeStep[] }, rules: StallRules, now: number): Promise<WorkFinding[]> {
+  const prisma = app.prisma;
+  const newest = Math.max(mission.updatedAt.getTime(), ...mission.steps.map((row) => row.updatedAt.getTime()));
+  if (now - newest < rules.missionMinutes * 60_000 || mission.steps.some((row) => row.status === "working")) return [];
+  const [turns, effects, cards] = await Promise.all([
+    prisma.nodeTurn.count({ where: { planId: mission.id, planStep: null, status: { in: ["queued", "running"] } } }),
+    prisma.nodeOutbox.count({ where: { missionId: mission.id, deliveredAt: null } }),
+    prisma.nodeMessage.count({ where: { kind: "approval", AND: [{ data: { path: ["plan", "id"], equals: mission.id } }, { data: { path: ["status"], equals: "pending" } }] } }),
+  ]);
+  if (turns || effects || cards) return [];
+  const state = shortHash(`${mission.status}|${mission.steps.map((row) => `${row.id}:${row.status}:${row.attempt}`).join(",")}`);
+  const condition = `stalled:${state}`;
+  let action = "";
+  let won = false;
+  await mutateMission({ prisma, app }, mission.id, async (draft, _row, { tx }) => {
+    const effects: Effect[] = [];
+    if (draft.mission.status === "reporting") {
+      effects.push({ kind: "report", judgement: [], key: `report:stall:${state}` });
+      action = "report_again";
+    } else if (draft.mission.status === "replanning") {
+      effects.push({ kind: "replan", steps: draft.steps.filter((step) => lastAttempt(step)?.escalation?.replan && !lastAttempt(step)?.escalation?.owner).map((step) => step.id), judgement: [], key: `replan:stall:${state}` });
+      action = "replan_again";
+    } else {
+      // An owner's card that never came: asked again. Otherwise the rules run again.
+      for (const step of draft.steps) {
+        const last = lastAttempt(step);
+        if (stuck(step) && last?.escalation?.owner && !last.decision) effects.push({ kind: "decide", stepId: step.id, attempt: step.attempt, why: last.escalation.why ?? "stuck", key: `decide:${step.id}:${step.attempt}:stall:${state}` });
+      }
+      action = effects.length ? "ask_owner_again" : "settle_again";
+    }
+    won = await claimMission(tx, mission.id, condition);
+    if (!won) return false;
+    draft.effects.push(...effects);
+    return undefined;
+  });
+  if (!won) return [];
+  await recordDecision(app, { userId: mission.userId, nodeId: mission.leadNodeId, kind: "escalation", inputs: { rule: "mission_stalled", missionId: mission.id, status: mission.status, minutes: rules.missionMinutes }, choice: { action } });
+  return [{ rule: "mission_stalled", missionId: mission.id, action }];
+}
+
+/** The same failure `sameError` times in one mission: the stuck step's owner gets the card at once, once per failure. */
+async function repeatedErrors(app: FastifyInstance, mission: NodeMission & { steps: NodeStep[] }, rules: StallRules, now: number): Promise<WorkFinding[]> {
+  if (!laddered(mission)) return [];
+  const raised = record(mission.watchdog);
+  const found: WorkFinding[] = [];
+  for (const hit of sameErrors(mission.steps.map((row) => ({ id: row.id, attempts: (Array.isArray(row.attempts) ? row.attempts : []) as unknown as Attempt[] })), rules.sameError)) {
+    const condition = `same_error:${shortHash(hit.signature)}`;
+    if (condition in raised) continue;
+    let escalated = false;
+    await mutateMission({ prisma: app.prisma, app }, mission.id, async (draft, _row, { tx }) => {
+      if (!escalateToOwner(draft, hit.stepId, "same_error", new Date(now).toISOString())) return false;
+      escalated = await claimMission(tx, mission.id, condition);
+      return escalated ? undefined : false;
+    });
+    if (!escalated) continue;
+    found.push({ rule: "same_error", missionId: mission.id, stepId: hit.stepId, action: "ask_owner" });
+    await recordDecision(app, { userId: mission.userId, nodeId: mission.leadNodeId, kind: "escalation", inputs: { rule: "same_error", missionId: mission.id, stepId: hit.stepId, count: hit.count, min: rules.sameError }, choice: { action: "ask_owner" } });
+  }
+  return found;
+}
+
+/** A card of a plan waiting for its owner for `cardMinutes`: one reminder in its conversation (background routines excepted). */
+async function waitingCards(app: FastifyInstance, missions: ReadonlyArray<NodeMission>, rules: StallRules, now: number): Promise<WorkFinding[]> {
+  const prisma = app.prisma;
+  const attended = missions.filter((row) => !row.routine);
+  if (!attended.length) return [];
+  const cards = await prisma.nodeMessage.findMany({
+    where: {
+      kind: "approval",
+      createdAt: { lt: new Date(now - rules.cardMinutes * 60_000) },
+      AND: [{ data: { path: ["status"], equals: "pending" } }, { OR: attended.map((row) => ({ data: { path: ["plan", "id"], equals: row.id } })) }],
+    },
+    take: 100,
+  });
+  const found: WorkFinding[] = [];
+  for (const card of cards) {
+    const data = record(card.data);
+    if (data.remindedAt) continue;
+    const stamp = JSON.stringify({ remindedAt: new Date(now).toISOString() });
+    const won = await prisma.$executeRaw`UPDATE node_messages SET data = data || ${stamp}::jsonb WHERE id = ${card.id} AND (data ->> 'remindedAt') IS NULL AND (data ->> 'status') = 'pending'`;
+    if (won !== 1) continue;
+    const missionId = String(record(data.plan).id ?? "");
+    const what = data.type === PLAN_DECISION_CARD ? "a decision for a stuck step" : "a card";
+    await postMessage(prisma, {
+      roomId: card.roomId,
+      userId: card.userId,
+      authorKind: "system",
+      kind: "status",
+      body: `Still waiting for your answer on ${what}: ${truncateText((card.body || "a card above").replace(/\s+/g, " "), 160)}`,
+      visibleTo: [card.userId],
+      data: { reminder: { cardId: card.id } },
+    });
+    found.push({ rule: "card_waiting", missionId, action: "remind" });
+    await recordDecision(app, { userId: card.userId, nodeId: card.authorNodeId, kind: "escalation", inputs: { rule: "card_waiting", missionId, cardId: card.id, minutes: rules.cardMinutes }, choice: { action: "remind" } });
+  }
+  return found;
+}
+
+/**
+ * One pass of the work rules (node/heuristics.ts `stall`) over missions that go on. Returns what it did;
+ * each action is also recorded as an `escalation` decision (node/trace.ts).
+ */
+export async function checkWork(app: FastifyInstance, now = Date.now()): Promise<WorkFinding[]> {
+  const rules = activeHeuristics(app.log).stall;
+  const missions = await app.prisma.nodeMission.findMany({ where: { status: { in: ["running", "replanning", "reporting"] } }, include: { steps: { orderBy: { position: "asc" } } }, orderBy: { updatedAt: "asc" }, take: 200 });
+  const found: WorkFinding[] = [];
+  for (const mission of missions) {
+    try {
+      if (mission.status === "running") found.push(...(await stalledSteps(app, mission, rules, now)));
+      found.push(...(await repeatedErrors(app, mission, rules, now)));
+      found.push(...(await stalledMission(app, mission, rules, now)));
+    } catch (error) {
+      app.log.warn({ err: error, missionId: mission.id }, "Could not check a mission for stalls");
+    }
+  }
+  found.push(...(await waitingCards(app, missions, rules, now)));
+  return found;
+}
+
 let timer: ReturnType<typeof setInterval> | null = null;
 let checking = false;
 
@@ -379,6 +564,8 @@ export function startWatchdog(app: FastifyInstance, everyMs = WATCHDOG.intervalM
     checking = true;
     void checkSessions(app)
       .catch((error: unknown) => app.log.error({ err: error }, "Node session watchdog failed"))
+      .then(() => checkWork(app))
+      .catch((error: unknown) => app.log.error({ err: error }, "Node work watchdog failed"))
       .finally(() => {
         checking = false;
       });

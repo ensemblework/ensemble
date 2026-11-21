@@ -14,7 +14,7 @@ import { sessionOfJob } from "../workspace/sessions.js";
 import { DeleteSessionInput, HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
 import { answerLoginCard, LOGIN_CARD } from "./logins.js";
-import { finishStep, planLinkOf } from "./plans.js";
+import { answerPlanDecision, finishStep, PLAN_DECISION_CARD, planLinkOf } from "./plans.js";
 import { makeCrew, makeNode, NewCrew, StoredNewNode } from "./helpers.js";
 import { CREW_ADD_CARD, joinCrew } from "./crew.js";
 import { noteTold } from "./dispatch.js";
@@ -118,6 +118,21 @@ async function followRuns(app: FastifyInstance, node: NodeAgent, card: NodeMessa
 
 export type Decision = { decision: "approve" | "discard"; callIds?: string[]; body?: string };
 
+/**
+ * A stuck plan step's card (node/outbox.ts posts it, docs/35 §6.4): one press settles the step. When the
+ * plan moved on before the answer (the step was replaced, decided or ended), the card closes as expired.
+ */
+async function settlePlanDecision(app: FastifyInstance, card: NodeMessage, input: Decision): Promise<NodeMessage> {
+  const data = await claim(app, card);
+  const current = { ...card, data: data as Prisma.JsonValue };
+  const link = planLinkOf(card.data);
+  const attempt = Number((card.data as { attempt?: unknown }).attempt ?? 0);
+  const applied = link?.planStep ? await answerPlanDecision(app, link.planId, link.planStep, attempt, input.decision) : false;
+  const answeredAt = new Date().toISOString();
+  if (!applied) return updateMessageData(app.prisma, current, { status: "expired", expiredReason: "The plan moved on before this was answered.", answeredAt });
+  return updateMessageData(app.prisma, current, { status: input.decision === "approve" ? "approved" : "discarded", answeredAt });
+}
+
 export async function settleApproval(app: FastifyInstance, accountId: string, messageId: string, input: Decision): Promise<NodeMessage> {
   const prisma = app.prisma;
   const { card, node } = await ownCard(app, accountId, messageId);
@@ -158,6 +173,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   if (type === "session") return settleSession(app, card, node, input);
   if (type === "node_proposal") return settleProposal(app, card, node, input);
   if (type === CREW_ADD_CARD) return settleCrewAdd(app, card, node, input);
+  if (type === PLAN_DECISION_CARD) return settlePlanDecision(app, card, input);
   if (type === MEDIA_PREVIEW_CARD) return settlePreview(app, card, node, input);
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);

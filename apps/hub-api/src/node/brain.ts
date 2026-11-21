@@ -32,7 +32,7 @@ import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
-import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
+import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
@@ -263,6 +263,13 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     return { status: "skipped" };
   }
+  // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
+  // its update is written from the plan as it is now. Null: the plan no longer waits for its lead. A lead turn that
+  // carries on that work (an answer to its card) takes its place and keeps its own note.
+  const planTurn = turn.reason === "plan";
+  const leadPlan = turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id, { carry: planTurn }) : undefined;
+  if (leadPlan === null && planTurn) return { status: "skipped" };
+  const note = planTurn ? (leadPlan?.note ?? turn.note) : turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
     rootMessageId: trigger ? (trigger.rootMessageId ?? (trigger.authorKind === "human" ? trigger.id : null)) : null,
@@ -294,7 +301,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // A node that was not called for a while gets a backlog: it is marked as context, apart from the message
   // it was called for, so it answers that one (a node once answered an old message instead of the new ask).
   const calledAt = trigger ? shown.findIndex((row) => row.id === trigger.id) : -1;
-  const packet = packetSections({ work, note: turn.note, room: room.title, lines: shown.map(line), calledAt, board });
+  const packet = packetSections({ work, note, room: room.title, lines: shown.map(line), calledAt, board });
   const transcript = packetText(packet);
 
   const settings = await loadSettings(prisma, spaceId);
@@ -663,7 +670,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     if (step) await finishStep(app, step.planId, step.stepId, { status: "stopped", result: "Stopped." });
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
-    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     // The stop already said so in a status line: a DM hears more only when the turn had done something.
     if (!step && room.kind === "dm" && result.toolCalls.length) {
       const said = cleanReply(result.content.replace(/\n*Stopped before finishing\.\s*$/i, ""), true);
@@ -693,7 +700,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
         if (result.interrupted) await stopPlans(app, { planId: made.message.id, userId: owner });
         else await startPlan(app, made.message.id, null);
       }
-      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     }
     return { status: "failed", model: result.model, credits: result.credits, error: result.content };
   }
@@ -740,7 +747,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // Files shown with the reply: what the node chose (node_show), and a plan's checked media in its report.
   // Only where only the owner reads, like tool chips: sharing them with others is the owner's own act.
   const media: Media[] = takeTurnMedia(turn.id);
-  if (ownerReads && turn.planId && !turn.planStep && text && text !== NO_REPLY) {
+  if (ownerReads && turn.planId && !turn.planStep && leadPlan?.kind !== "replan" && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
   const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
@@ -763,7 +770,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
   // The lead's report turn: the plan is done, unless it added steps (they start now).
-  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
   return { status: "done", model: result.model, credits: result.credits };
 }
 
