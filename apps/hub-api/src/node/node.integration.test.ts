@@ -27,6 +27,7 @@ const { sseHub } = await import("../lib/sse.js");
 const { sweepHelpers, HELPER_IDLE_MS } = await import("./helpers.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
 const { setTurnRetryDelaysForTests } = await import("./queue.js");
+const { createSpaceUser, SPACE_COOKIE } = await import("../spaces/store.js");
 after(() => h.close());
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string; rateLimited?: boolean };
@@ -192,6 +193,15 @@ test("a DM turn keeps its trace, its reply names the turn, its routing is a deci
   assert.equal((await mira.inject({ method: "GET", url: "/api/node/turns/not-a-turn/trace" })).statusCode, 404);
   assert.equal((await h.app.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace` })).statusCode, 401);
 
+  // Whichever space is open, a turn's trace is its node's owner's: with a space Ben shares with her open, Mira still reads it.
+  const launch = await createSpaceUser(h.prisma, ben.id, { name: "Launch", icon: null });
+  assert.equal((await ben.inject({ method: "POST", url: `/api/sharing/spaces/${launch}/members`, payload: { personId: mira.id, role: "viewer" } })).statusCode, 201);
+  const inLaunch = (user: HttpUser) => h.app.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace`, headers: { cookie: `${user.cookie}; ${SPACE_COOKIE}=${launch}` } });
+  const whileShared = await inLaunch(mira);
+  assert.equal(whileShared.statusCode, 200, whileShared.body);
+  assert.equal(json(whileShared).turn.id, turn.id);
+  assert.equal((await inLaunch(ben)).statusCode, 404, "the space's owner, in it, still reads only their own nodes' turns");
+
   // Traces and decisions are history (`historyRetentionDays`): they go after it, the turn stays; and they go with their node.
   const { runRetention } = await import("../jobs/retention.js");
   await runRetention(h.app, mira.id, { deletedDays: 30, completedDays: 60, historyDays: 30, now: new Date(Date.now() + 31 * 86_400_000) });
@@ -201,6 +211,35 @@ test("a DM turn keeps its trace, its reply names the turn, its routing is a deci
   await h.prisma.nodeDecision.create({ data: { userId: mira.id, nodeId: node.id, turnId: turn.id, kind: "route", configVersion: "test" } });
   assert.equal((await mira.inject({ method: "DELETE", url: `/api/node/nodes/${node.id}` })).statusCode, 204);
   assert.deepEqual([await h.prisma.nodeTurnTrace.count({ where: { turnId: turn.id } }), await h.prisma.nodeDecision.count({ where: { turnId: turn.id } })], [0, 0], "deleting the node takes its turns' traces and decisions");
+});
+
+test("a turn goes on, and answers, when where it runs cannot be written", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  // The database refuses only the turn's placement; every other write goes through.
+  const turns = h.prisma.nodeTurn;
+  const updateMany = turns.updateMany;
+  let refused = 0;
+  const refusing = ((args: { data: { placement?: unknown } }) => {
+    if (args.data.placement === undefined) return updateMany(args as never);
+    refused += 1;
+    return Promise.reject(new Error("Connection lost"));
+  }) as unknown as typeof updateMany;
+  turns.updateMany = refusing;
+  try {
+    assert.equal(h.prisma.nodeTurn.updateMany, refusing, "the stub is the client's");
+    script = () => ({ text: "Here it is." });
+    await say(mira, room.id, "what is next?");
+  } finally {
+    turns.updateMany = updateMany;
+  }
+
+  assert.equal(refused, 1, "its placement could not be written");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
+  assert.deepEqual([turn.status, turn.outcome, turn.placement, turn.error], ["done", "done", null, null]);
+  assert.ok((await read(mira, room.id)).some((row) => row.authorNodeId === node.id && row.body === "Here it is."), "the owner still gets the answer");
+  const trace = await h.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: turn.id } });
+  assert.equal((trace.placement as { loop: string }).loop, "ensemble-api", "its trace still says where it ran");
 });
 
 test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's tool calls, what the agent reported and its session", async () => {

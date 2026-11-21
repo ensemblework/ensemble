@@ -153,13 +153,16 @@ function finalPlacement(placement: Placement | null, loop: Record<string, unknow
   return { ...placement, toolsAt, conversation: typeof loop.outside === "number" && loop.outside > 0 ? "agent-app" : placement.conversation };
 }
 
-/** The placement a turn starts with, on its row, so a running turn shows where it runs. */
-export async function setPlacement(prisma: PrismaClient, turnId: string, placement: Placement | null): Promise<void> {
-  if (placement) await prisma.nodeTurn.updateMany({ where: { id: turnId }, data: { placement } });
+/** The placement a turn starts with, on its row, so a running turn shows where it runs. Best-effort: a failed write is logged and the turn goes on. */
+export async function setPlacement(app: Pick<FastifyInstance, "prisma" | "log">, turnId: string, placement: Placement | null): Promise<void> {
+  if (!placement) return;
+  await app.prisma.nodeTurn
+    .updateMany({ where: { id: turnId }, data: { placement } })
+    .catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not record where a node turn runs"));
 }
 
 /** Saves a turn's trace (once it chose a model), and the placement its loop settled. */
-export async function saveTrace(app: Pick<FastifyInstance, "prisma">, trace: TurnTrace, posted: readonly PostedMessage[], outcome?: { error?: string } | null): Promise<void> {
+export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, trace: TurnTrace, posted: readonly PostedMessage[], outcome?: { error?: string } | null): Promise<void> {
   if (!trace.started) return;
   const loop = trace.loop.loop?.() ?? null;
   const placement = finalPlacement(trace.placement, loop);
@@ -191,7 +194,7 @@ export async function saveTrace(app: Pick<FastifyInstance, "prisma">, trace: Tur
     error: error ? shortText(error, 500) : null,
   };
   await app.prisma.nodeTurnTrace.upsert({ where: { turnId: trace.turn.id }, create: { turnId: trace.turn.id, ...row }, update: row });
-  if (placement && JSON.stringify(placement) !== JSON.stringify(trace.placement)) await setPlacement(app.prisma, trace.turn.id, placement);
+  if (placement && JSON.stringify(placement) !== JSON.stringify(trace.placement)) await setPlacement(app, trace.turn.id, placement);
 }
 
 export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation";

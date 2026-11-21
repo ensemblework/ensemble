@@ -305,7 +305,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     return { status: "failed", error: choice.error };
   }
-  await setPlacement(prisma, turn.id, trace.placement);
+  await setPlacement(app, turn.id, trace.placement);
   if (choice.provider === INCLUDED_PROVIDER) {
     try {
       await assertIncludedOpen(owner, choice.model);
