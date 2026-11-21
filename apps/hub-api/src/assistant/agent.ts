@@ -271,8 +271,8 @@ export interface ToolJournal {
 export interface TurnSteering {
   /** The additions waiting now, as one user message, or null. Taken once: they are not offered again. */
   take(): Promise<{ text: string; ids: string[] } | null>;
-  /** How the additions went: `accepted` once a model call that carried them answered, `indeterminate` when it did not. */
-  settle(ids: readonly string[], outcome: "accepted" | "indeterminate"): Promise<void>;
+  /** The model call that carried these additions answered, before any tool of that answer runs. */
+  answered(ids: readonly string[]): Promise<void>;
 }
 
 /** One tool call as a turn's trace records it: how long it ran and how big its result was, never its input or output. */
@@ -759,7 +759,7 @@ async function drive(
       stop.abort();
     }
   }
-  /** Owner additions (node/steering.ts) in the messages whose model call has not answered yet; the caller settles any left. */
+  /** Owner additions (node/steering.ts) in the messages whose model call has not answered yet; the caller handles any left. */
   let carried: string[] = [];
   for (let step = 0; step < maxSteps; step += 1) {
     // Checked before spending anything. Between steps is the natural checkpoint.
@@ -857,7 +857,7 @@ async function drive(
       if (carried.length && args.steer) {
         const ids = carried;
         carried = [];
-        await args.steer.settle(ids, "accepted").catch((error: unknown) => app.log.warn({ err: error }, "Could not record how a steering went"));
+        await args.steer.answered(ids).catch((error: unknown) => app.log.warn({ err: error }, "Could not record how a steering went"));
       }
     } catch (error) {
       const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");

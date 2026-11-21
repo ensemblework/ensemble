@@ -14,7 +14,9 @@ import type { RuntimeTurn } from "../lib/model-turn.js";
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
 const { settleTurns, recoverTurns, queueTurn, dispatchMessage } = await import("./queue.js");
-const { turnJournal } = await import("./journal.js");
+const { turnJournal, journalLabel } = await import("./journal.js");
+const { readsOnly } = await import("../assistant/registry.js");
+const { RuntimeError } = await import("../lib/runtime-error.js");
 const { postMessage } = await import("./store.js");
 const { openToolRun } = await import("../devices/tool-runs.js");
 const { recordingStarted, recordingsOf } = await import("./recordings.js");
@@ -465,7 +467,25 @@ test("Roles (beta): a plan step's run takes its role's model when Roles are on, 
   assert.equal(off.decision, null, "and no role is resolved");
 });
 
-test("bot brakes: two nodes passing the same words back and forth, or one repeating itself, wake nobody, once said", async () => {
+/** A helper of `parent`, in its own task room (the parent and the owner are there too), made as node/helpers.ts makes one. */
+async function helperOf(owner: HttpUser, parent: { id: string; slug: string }, originRoomId: string) {
+  const helper = await h.prisma.nodeAgent.create({ data: { userId: owner.id, slug: `helper-${randomBytes(3).toString("hex")}`, name: "Helper", parentNodeId: parent.id } });
+  const room = await h.prisma.nodeRoom.create({ data: { userId: owner.id, kind: "task", title: "Helper's task", settings: { leadNodeIds: [parent.id], parentNodeId: parent.id, helperNodeId: helper.id, originRoomId } } });
+  await h.prisma.nodeRoomMember.createMany({
+    data: [
+      { roomId: room.id, userId: owner.id, handle: "owner" },
+      { roomId: room.id, userId: owner.id, nodeId: parent.id, handle: parent.slug },
+      { roomId: room.id, userId: owner.id, nodeId: helper.id, handle: helper.slug },
+    ],
+  });
+  return { helper, room };
+}
+
+/** The same step for every model call of a node: it reads what the call was given. */
+const always = (step: (seen: Seen) => Step | Promise<Step>) => Array.from({ length: 30 }, () => step);
+const afterTool = (turn: Seen) => turn.messages.at(-1)?.role === "tool";
+
+test("bot brakes: two nodes both saying again what they said, back and forth in one request, wake nobody; a new request starts a new chain", async () => {
   const mira = await person("Mira");
   const a = (await createNode(mira, "assistant")).node;
   const b = (await createNode(mira, "researcher")).node;
@@ -477,26 +497,223 @@ test("bot brakes: two nodes passing the same words back and forth, or one repeat
       { roomId: room.id, userId: mira.id, nodeId: b.id, handle: b.slug },
     ],
   });
-  plans.set(a.slug, [{ text: "(no reply)" }, { text: "(no reply)" }]);
-  plans.set(b.slug, [{ text: "(no reply)" }, { text: "(no reply)" }]);
-  const nodeSays = async (from: { id: string }, to: { id: string; slug: string }, body: string) => {
-    const { message } = await postMessage(h.prisma, { roomId: room.id, userId: mira.id, authorKind: "node", authorNodeId: from.id, body: `@${to.slug} ${body}`, visibleTo: [], mentions: [{ kind: "node", id: to.id }] });
+  plans.set(a.slug, always(() => ({ text: "(no reply)" })));
+  plans.set(b.slug, always(() => ({ text: "(no reply)" })));
+  const root = (await postMessage(h.prisma, { roomId: room.id, userId: mira.id, authorKind: "human", body: "work it out between you", visibleTo: [] })).message;
+  let depth = 0;
+  const nodeSays = async (from: { id: string }, to: { id: string; slug: string }, body: string, rootMessageId = root.id) => {
+    depth += 1;
+    const { message } = await postMessage(h.prisma, { roomId: room.id, userId: mira.id, authorKind: "node", authorNodeId: from.id, body: `@${to.slug} ${body}`, visibleTo: [], mentions: [{ kind: "node", id: to.id }], rootMessageId, botDepth: depth });
     await dispatchMessage(h.app, message);
     await settleTurns();
     return message;
   };
+  const woke = async (message: { id: string }) => h.prisma.nodeTurn.count({ where: { triggerMessageId: message.id } });
   await nodeSays(a, b, "can you check the file?");
-  await nodeSays(b, a, "Checked. Over to you.");
-  const looped = await nodeSays(a, b, "Can you check the file");
+  await nodeSays(b, a, "Checked it. Over to you.");
+  assert.equal(await woke(await nodeSays(a, b, "Can you check the file")), 1, "asking again after an answer is not a loop");
+  const looped = await nodeSays(b, a, "Checked it. Over to you!");
+  assert.equal(await woke(looped), 0, "both said again what they said: the second round wakes nobody");
   const route = await h.prisma.nodeDecision.findFirstOrThrow({ where: { kind: "route", inputs: { path: ["messageId"], equals: looped.id } } });
   assert.deepEqual(route.choice, { reason: "none", brake: "cycle", woken: [] });
-  assert.equal(await h.prisma.nodeTurn.count({ where: { triggerMessageId: looped.id } }), 0, "the node it named is not woken");
+  assert.deepEqual((route.inputs as { loop: unknown }).loop, { chain: 4, window: 12, ownerStarted: false });
+  assert.equal(await woke(await nodeSays(a, b, "can you check the file?")), 0);
   const lines = await h.prisma.nodeMessage.findMany({ where: { roomId: room.id, authorKind: "system", kind: "status" } });
-  assert.deepEqual(lines.map((row) => [row.body, (row.data as { brake: string }).brake]), [["Paused here: the nodes kept saying the same thing to each other. Ask the node that made this helper to continue.", "cycle"]]);
+  assert.deepEqual(lines.map((row) => [row.body, (row.data as { brake: string }).brake]), [["Paused here: the nodes kept saying the same thing to each other. Ask the node that made this helper to continue.", "cycle"]], "said once for the request");
+  const next = (await postMessage(h.prisma, { roomId: room.id, userId: mira.id, authorKind: "human", body: "once more, please", visibleTo: [] })).message;
+  assert.equal(await woke(await nodeSays(a, b, "can you check the file?", next.id)), 1, "a new request is a new chain");
+});
 
-  const again = await nodeSays(b, a, "Checked. Over to you!");
-  const repeated = await h.prisma.nodeDecision.findFirstOrThrow({ where: { kind: "route", inputs: { path: ["messageId"], equals: again.id } } });
-  assert.equal((repeated.choice as { brake: string }).brake, "cycle");
-  assert.equal(await h.prisma.nodeMessage.count({ where: { roomId: room.id, authorKind: "system", kind: "status" } }), 1, "said once until a person writes");
-  assert.equal(await h.prisma.nodeTurn.count({ where: { roomId: room.id } }), 2, "only the first two messages woke a node");
+test("a brief its owner asks for again reaches the helper; a brief a loop repeats says honestly that the helper was not woken", async () => {
+  const mira = await person("Mira");
+  const { node: parent, room: dm } = await createNode(mira, "assistant");
+  const { helper, room: taskRoom } = await helperOf(mira, parent, dm.id);
+  const brief = "Draft the summary of the release.";
+  plans.set(parent.slug, always((turn) => (afterTool(turn) ? { text: "Asked." } : /draft the summary|run it again/i.test(turn.transcript) ? { calls: [{ name: "node_delegate", arguments: { to: helper.slug, brief } }] } : { text: "(no reply)" })));
+  plans.set(helper.slug, always(() => ({ text: `@${parent.slug} The summary is drafted.` })));
+  await say(mira, dm.id, "have your helper draft the summary");
+  await say(mira, dm.id, "run it again");
+  const briefs = await h.prisma.nodeMessage.findMany({ where: { roomId: taskRoom.id, authorNodeId: parent.id }, orderBy: { seq: "asc" } });
+  assert.equal(briefs.length, 2);
+  assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: helper.id, triggerMessageId: briefs[1]!.id } }), 1, "the brief asked for again wakes the helper");
+  assert.match(toolAnswers(seen.filter((row) => row.slug === parent.slug && afterTool(row)).at(-1)!)[0]!, /Asked @helper-/);
+
+  // A loop of the parent's own turns, woken by its helper: the same brief again, after the same answer again.
+  plans.set(helper.slug, always(() => ({ text: "(no reply)" })));
+  const root = (await postMessage(h.prisma, { roomId: dm.id, userId: mira.id, authorKind: "human", body: "keep at it", visibleTo: [] })).message;
+  let depth = 0;
+  const posted = async (from: { id: string }, to: { slug: string; id: string }, body: string) => {
+    depth += 1;
+    return (await postMessage(h.prisma, { roomId: taskRoom.id, userId: mira.id, authorKind: "node", authorNodeId: from.id, body: `@${to.slug} ${body}`, visibleTo: [], mentions: [{ kind: "node", id: to.id }], rootMessageId: root.id, botDepth: depth })).message;
+  };
+  await posted(helper, parent, "I need the source file.");
+  await posted(parent, helper, brief);
+  const last = await posted(helper, parent, "I need the source file!");
+  plans.set(parent.slug, always((turn) => (afterTool(turn) ? { text: "(no reply)" } : { calls: [{ name: "node_delegate", arguments: { to: helper.slug, brief } }] })));
+  const before = await h.prisma.nodeTurn.count({ where: { nodeId: helper.id } });
+  await queueTurn(h.app, { nodeId: parent.id, roomId: taskRoom.id, reason: "mentioned", triggerMessageId: last.id });
+  await settleTurns();
+  const answer = toolAnswers(seen.filter((row) => row.slug === parent.slug && afterTool(row)).at(-1)!)[0]!;
+  assert.match(answer, /was not woken: it repeats what was already said there/);
+  assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: helper.id } }), before, "the loop is stopped");
+});
+
+test("an interrupt never stops a plan's report: the plan ends with its report, and the new message is answered after it", async () => {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher"]);
+  const [lead, member] = nodes as [{ id: string; slug: string }, { id: string; slug: string }];
+  plans.set(lead.slug, [
+    { calls: [{ name: "node_delegate", arguments: { to: member.slug, brief: "Find the three cheapest flights to Lisbon.", kind: "research" } }] },
+    { text: "Planned." },
+    async () => {
+      await sayNow(kofi, crew.id, "wait, also check trains", { steering: "interrupt" });
+      await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: lead.id, kind: "interrupt" } }), "the interrupt");
+      return { text: "Report: the three cheapest flights are in the plan." };
+    },
+    { text: "Checking trains too." },
+  ]);
+  plans.set(member.slug, [{ calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Found three flights: 89, 95 and 120 euros." } }] }, { text: "(no reply)" }]);
+  await say(kofi, crew.id, "find me the cheapest flights to Lisbon");
+
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { leadNodeId: lead.id } });
+  assert.ok(mission.reportedAt, "the report turn ran");
+  assert.notEqual(mission.status, "reporting");
+  const replies = (await read(kofi, crew.id)).filter((row) => row.authorNodeId === lead.id && row.kind === "text").map((row) => row.body);
+  assert.ok(replies.some((body) => body.includes("Report: the three cheapest flights")), "the report is posted");
+  assert.equal(replies.at(-1), "Checking trains too.", "the new message is answered after the report");
+  const steer = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: lead.id, kind: "interrupt" } });
+  assert.deepEqual([steer.operation, steer.children], ["new_run", {}], "the plan's turn was not stopped");
+});
+
+test("independent views: an amendment to one node's answer hands over only its owner's words, never a sibling's answer, and its cursor stays before them", async () => {
+  const kofi = await person("Kofi");
+  const { nodes, crew } = await crewOf(kofi, ["manager", "researcher", "assistant"]);
+  const [, first, second] = nodes as [{ id: string; slug: string }, { id: string; slug: string }, { id: string; slug: string }];
+  assert.equal((await kofi.inject({ method: "PATCH", url: `/api/node/rooms/${crew.id}`, payload: { mode: "independent" } })).statusCode, 200);
+  let amended = "";
+  plans.set(second.slug, [{ text: "B is better: it is cheaper." }]);
+  plans.set(first.slug, [
+    { calls: [createTask("Compare A and B")] },
+    async () => {
+      await until(() => h.prisma.nodeMessage.findFirst({ where: { roomId: crew.id, authorNodeId: second.id, kind: "text" } }), "the sibling's answer");
+      amended = (await sayNow(kofi, crew.id, `@${first.slug} also weigh the price`)).id;
+      await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: first.id, kind: "amendment" } }), "the amendment");
+      return { calls: [{ name: "hub_list_tasks", arguments: {} }] };
+    },
+    (turn) => ({ text: turn.transcript.includes("cheaper") ? "LEAKED the sibling's answer." : turn.transcript.includes("also weigh the price") ? "A is better, price weighed." : "No amendment." }),
+  ]);
+  const asked = await say(kofi, crew.id, `@${first.slug} @${second.slug} which is better, A or B?`);
+
+  const answers = (await read(kofi, crew.id)).filter((row) => row.authorNodeId === first.id && row.kind === "text").map((row) => row.body);
+  assert.deepEqual(answers, ["A is better, price weighed."], "one answer, with the amendment and nothing of the sibling's");
+  const steer = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: first.id, kind: "amendment" } });
+  assert.deepEqual([steer.outcome, steer.messageId], ["accepted", amended]);
+  const followUp = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: first.id, triggerMessageId: amended } });
+  assert.equal(followUp.outcome, "skipped", "the amendment was answered in the turn that took it");
+  const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: crew.id, nodeId: first.id } });
+  assert.equal(member.seenSeq, asked.seq, "its cursor stays before the sibling's answer");
+});
+
+/** A room made by `owner` with their node (their lead), joined by `guest` with theirs. */
+async function roomWith(owner: HttpUser, nodeId: string, guest: HttpUser, guestNodeId: string) {
+  const made = await owner.inject({ method: "POST", url: "/api/node/rooms", payload: { title: `Room ${randomBytes(3).toString("hex")}`, nodeIds: [nodeId], leadNodeId: nodeId, invite: [guest.email] } });
+  assert.equal(made.statusCode, 201, made.body);
+  const room = json(made).room as { id: string };
+  const invite = (json(await guest.inject({ method: "GET", url: "/api/node/invites" })).invites as Array<{ id: string; room: { id: string } }>).find((row) => row.room.id === room.id)!;
+  assert.equal((await guest.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [guestNodeId], leadNodeId: guestNodeId } })).statusCode, 201);
+  await settleTurns();
+  return room;
+}
+
+test("independent views in a room: the room's history an answer reads stops at the question", async () => {
+  const mira = await person("Mira");
+  const ben = await person("Ben");
+  const mine = (await createNode(mira, "assistant")).node;
+  const bens = (await createNode(ben, "researcher")).node;
+  for (const [user, id] of [[mira, mine.id], [ben, bens.id]] as const) assert.equal((await user.inject({ method: "PATCH", url: `/api/node/nodes/${id}`, payload: { autonomy: { sharedRooms: "auto" } } })).statusCode, 200);
+  const room = await roomWith(mira, mine.id, ben, bens.id);
+  assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/rooms/${room.id}`, payload: { mode: "independent" } })).statusCode, 200);
+  const handles = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).room.members as Array<{ kind: string; handle: string; node?: { id: string } }>).filter((row) => row.kind === "node");
+  const handleOf = (id: string) => handles.find((row) => row.node?.id === id)!.handle;
+  plans.set(bens.slug, [{ text: "Y is better: it lasts longer." }]);
+  plans.set(mine.slug, [
+    async () => {
+      await until(() => h.prisma.nodeMessage.findFirst({ where: { roomId: room.id, authorNodeId: bens.id, kind: "text" } }), "the other lead's answer");
+      return { calls: [{ name: "node_room_history", arguments: {} }] };
+    },
+    (turn) => ({ text: toolAnswers(turn).some((answer) => answer.includes("lasts longer")) ? "LEAKED the other answer." : "X is better: it is lighter." }),
+    { text: "They differ." },
+  ]);
+  await say(mira, room.id, `@${handleOf(mine.id)} @${handleOf(bens.id)} compare X and Y`);
+  const answer = (await read(mira, room.id)).find((row) => row.authorNodeId === mine.id && row.kind === "text");
+  assert.equal(answer?.body, "X is better: it is lighter.");
+});
+
+test("an amendment whose model call fails is answered by the next turn, once", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  let added = "";
+  plans.set(node.slug, [
+    { calls: [createTask("Draft the agenda")] },
+    async () => {
+      added = (await sayNow(mira, room.id, "also add a coffee break")).id;
+      await until(() => h.prisma.nodeSteer.findFirst({ where: { nodeId: node.id, kind: "amendment" } }), "the amendment's record");
+      return { calls: [{ name: "hub_list_tasks", arguments: {} }] };
+    },
+    () => {
+      throw new RuntimeError("The model could not read this request.", 400, false, "invalid");
+    },
+    (turn) => ({ text: /also add a coffee break/.test(turn.transcript) ? "Added a coffee break to the agenda." : "Nothing to add." }),
+  ]);
+  await say(mira, room.id, "draft the agenda");
+
+  const steer = await h.prisma.nodeSteer.findFirstOrThrow({ where: { nodeId: node.id, kind: "amendment" } });
+  assert.equal(steer.outcome, "rejected", "nothing ran on it");
+  const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(turns.map((row) => [row.outcome, row.triggerMessageId === added]), [["failed", false], ["done", true]]);
+  const replies = (await read(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text");
+  assert.deepEqual(replies.map((row) => row.body), ["Added a coffee break to the agenda."]);
+  const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } });
+  const rows = await h.prisma.assistantMessage.findMany({ where: { conversationId: member.conversationId!, role: "user" } });
+  assert.ok(!rows.some((row) => row.content.includes("added this while you were working")), "what was never answered leaves the conversation");
+});
+
+test("a computer tool that runs a command is never read-only, and every read-only flag on the computer tools is one checked by hand", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  const { deviceTools, captureTools } = await import("./device-tools.js");
+  const { liveTools } = await import("./live-views.js");
+  const { desktopTools } = await import("../desktop/control/node-tools.js");
+  const full = await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: node.id } });
+  const scope = { prisma: h.prisma, node: full, room: await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } }), lineage: { rootMessageId: null, botDepth: 1, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis, dispatch: async () => undefined, turnId: randomUUID(), plan: null, signal: undefined, ownerWords: "" } as never;
+  const tools = [...new Map([...deviceTools(scope), ...captureTools(scope), ...liveTools(scope), ...desktopTools(scope)].map((tool) => [tool.name, tool])).values()];
+  assert.equal(readsOnly(tools.find((tool) => tool.name === "computer_terminal_screenshot")), false, "it runs any command");
+  const reads = tools.filter((tool) => readsOnly(tool)).map((tool) => tool.name).sort();
+  assert.deepEqual(reads, [
+    "browser_console", "browser_extract", "browser_fetch", "browser_login_check", "browser_network_errors", "browser_screenshot", "browser_shop", "browser_snapshot", "browser_tabs", "browser_view", "browser_wait",
+    "capture_apps", "capture_check", "capture_screenshot", "capture_status",
+    "computer_git", "computer_run_output",
+    "desktop_apps", "desktop_observe", "desktop_status", "desktop_zoom",
+    "terminal_read",
+  ], "every read-only flag on the computer tools, checked by hand");
+});
+
+test("journal labels: secrets are taken out by key and in text, before the label is cut", () => {
+  const label = (args: unknown) => journalLabel(JSON.stringify(args)) ?? "";
+  for (const kept of [
+    label({ command: "PGPASSWORD=hunter2secret psql -h db -c 'select 1'" }),
+    label({ url: "https://api.example.test/v1", headers: { Authorization: "Bearer abcdefghijklmnop123456" } }),
+    label({ body: JSON.stringify({ password: "hunter2secret", user: "mira" }) }),
+    // Its value starts before the 240th character and ends after it.
+    label({ command: `echo ${"x".repeat(201)} && API_TOKEN=hunter2secretvalue ./deploy` }),
+    label({ env: { DB_PASSWORD: "hunter2secret" }, note: "curl -u mira:hunter2secret https://x.test -H 'Authorization: Basic aHVudGVyMnNlY3JldA=='" }),
+  ]) {
+    assert.ok(!/hunter|abcdefghijklmnop|aHVudGVy/.test(kept), kept);
+    assert.ok(kept.length <= 240, kept);
+  }
+  assert.ok(!/API_TOKEN=[^[]/.test(label({ command: `echo ${"x".repeat(201)} && API_TOKEN=hunter2secretvalue ./deploy` })), "nothing of a secret across the cut");
+  assert.match(label({ command: "PGPASSWORD=hunter2secret psql" }), /PGPASSWORD=\[redacted\]/);
+  assert.match(label({ command: "psql -h db PGPASSWORD=hunter2secret --quiet" }), /psql -h db PGPASSWORD=\[redacted\] --quiet/, "the words around it stay");
+  assert.match(label({ headers: { Authorization: "Bearer abcdefghijklmnop123456" } }), /"Authorization":"\[redacted\]"/);
+  assert.match(label({ title: "Book the venue" }), /"title":"Book the venue"/, "the rest stays");
 });

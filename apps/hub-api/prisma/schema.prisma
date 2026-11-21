@@ -3039,8 +3039,8 @@ model NodeToolJournal {
 }
 
 /// A steering of work already going (node/steering.ts, docs/35 §5.9): which of the five cases, what it was
-/// done to and how, and how it went. An amendment is written before it reaches its worker, and one whose
-/// fate is unknown (`indeterminate`) is never sent again.
+/// done to and how, and how it went. An amendment is written before it reaches its worker; one whose model
+/// call never answered is rejected, and the turn for its message answers it.
 model NodeSteer {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")
@@ -3059,9 +3059,9 @@ model NodeSteer {
   messageId String?   @map("message_id")
   /// The agent run that carries it, for a session.
   jobId     String?   @map("job_id")
-  /// pending | accepted | rejected | indeterminate | done
+  /// pending | accepted | rejected | done
   outcome   String    @default("pending")
-  /// When an amendment was handed to its running worker: from then on it is never handed over again.
+  /// When an amendment was handed to its running worker, in the model call it went in.
   handedAt  DateTime? @map("handed_at")
   /// What it stopped and what it left running: { stopped: [{kind, id, title}], kept: [...] }.
   children  Json      @default("{}")

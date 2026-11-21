@@ -220,7 +220,8 @@ export async function steerConversation(
   // The nodes it names, else all of the owner's nodes here.
   const nodeIds = ids.some((id) => named.has(id)) ? ids.filter((id) => named.has(id)) : ids;
   const lane = laneFor({ roomId: room.id, private: message.visibleTo.length > 0 });
-  const before = liveTurnsIn(nodeIds, { lane });
+  // A plan's turn and others bound to bookkeeping are never stopped by a message: they finish, and it comes next.
+  const before = liveTurnsIn(nodeIds, { lane }).filter((row) => row.interruptible);
   const stoppedTurns = interruptTurns(nodeIds, lane, input.kind);
   const kind: SteerKind = input.kind === "interrupt" ? "interrupt" : "replacement";
   const lines: string[] = [];

@@ -16,9 +16,9 @@
  *
  * A plain message from its owner to a node whose turn runs in the same thread is a follow-up or an
  * amendment by that turn's state alone (`ownerMessageCase`). Each decision is in `node_decisions` (kind
- * `steer`). An amendment's outcome: `accepted` (its worker took it), `rejected` (it could not, so the next
- * turn reads it as usual) or `indeterminate` (handed over, then the call that carried it never answered):
- * an indeterminate one is never handed over again.
+ * `steer`). An amendment's outcome: `accepted` once the model call that carried it answered (before any tool
+ * of that answer ran), or `rejected` when its worker could not take it, or the call that carried it never
+ * answered: nothing ran on it, so the turn queued for its message answers it, once.
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
@@ -26,7 +26,7 @@ import { recordDecision } from "./trace.js";
 
 export type SteerKind = "follow_up" | "amendment" | "interrupt" | "replacement" | "stop";
 export type SteerOperation = "coalesce" | "queue" | "inject" | "next_turn" | "brief" | "interrupt" | "replace" | "stop" | "new_run";
-export type SteerOutcome = "pending" | "accepted" | "rejected" | "indeterminate" | "done";
+export type SteerOutcome = "pending" | "accepted" | "rejected" | "done";
 export type SteerTarget = "turn" | "session" | "conversation";
 
 /** The worker as a steering decision reads it: nothing running, a run not started yet, or one going on. */
@@ -136,17 +136,16 @@ export async function settleSteers(app: Pick<FastifyInstance, "prisma" | "log">,
     .catch((error: unknown) => app.log.warn({ err: error }, "Could not settle a steering"));
 }
 
-/** Marks amendments as handed to their running worker: from now on they are never handed over again. */
+/** Marks amendments as handed to their running worker, in the model call about to be sent. */
 export async function steersHanded(app: Pick<FastifyInstance, "prisma">, ids: readonly string[]): Promise<void> {
   if (ids.length) await app.prisma.nodeSteer.updateMany({ where: { id: { in: [...ids] }, handedAt: null }, data: { handedAt: new Date() } });
 }
 
 /**
- * After a restart: amendments a turn had taken but whose model call never answered are indeterminate (never
- * handed over again); ones it never took are rejected, so the next turn reads their message as usual.
+ * After a restart: an amendment still pending was never answered (an answer is written with the turn's read
+ * cursor, before any of its tools run), so nothing ran on it. It is rejected, and the turn for its message,
+ * or the turn that resumes, reads it as usual.
  */
 export async function recoverSteers(app: Pick<FastifyInstance, "prisma">): Promise<void> {
-  const now = new Date();
-  await app.prisma.nodeSteer.updateMany({ where: { outcome: "pending", target: "turn", handedAt: { not: null } }, data: { outcome: "indeterminate", settledAt: now } });
-  await app.prisma.nodeSteer.updateMany({ where: { outcome: "pending", target: "turn", handedAt: null }, data: { outcome: "rejected", settledAt: now } });
+  await app.prisma.nodeSteer.updateMany({ where: { outcome: "pending", target: "turn" }, data: { outcome: "rejected", settledAt: new Date() } });
 }

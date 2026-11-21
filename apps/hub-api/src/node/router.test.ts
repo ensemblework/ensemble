@@ -150,7 +150,7 @@ test("the brakes and fan-outs come from the heuristics config, and a decision re
     leadNodeIds: [],
     mode: "coordinated",
     nodes: [{ id: "a", active: true, authorsOwn: true }, { id: "b", active: true, authorsOwn: true }, { id: "c", active: true, authorsOwn: true }, { id: "d", active: false }],
-    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1, loopWindow: 12 },
+    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1, loopWindow: 12, loopAckWords: 3 },
   });
   assert.deepEqual(record.choice, { reason: "mentioned", capped: 1, woken: [{ nodeId: "a", private: false, audience: "owner" }, { nodeId: "b", private: false, audience: "owner" }] });
   assert.ok(!JSON.stringify(record).includes("secret plans") && !JSON.stringify(record).includes("earlier words"), "never the message's words");
@@ -175,14 +175,21 @@ test("independent views: a message naming several nodes has each answer, and nam
   assert.deepEqual([record.choice.independent, record.choice.synthesizerId], [true, "lead"]);
 });
 
-test("the loop brakes: a node saying again what it said since the last person's message, alone or back and forth with one other", () => {
+test("the loop brakes: two nodes both repeating their own words back and forth, or a node repeating itself at once; a repeat with new words between, or an acknowledgement, is not a loop", () => {
   const said = (authorNodeId: string | null, body: string) => ({ authorNodeId, body });
-  assert.equal(loopBrake([said("a", "@b can you check?"), said("b", "@a checked"), said("a", "@B Can you check")]), "cycle", "the same words passed back and forth");
-  assert.equal(loopBrake([said("a", "@b ship it"), said("a", "@b ship it!")]), "duplicate", "said twice in a row");
-  assert.equal(loopBrake([said("a", "@b ship it"), said("b", "@c look"), said("c", "@a done"), said("a", "@b ship it")]), "duplicate", "repeated with more than one other in between");
-  assert.equal(loopBrake([said("a", "@b check part 1"), said("b", "@a done"), said("a", "@b check part 2")]), null, "new words go on");
-  assert.equal(loopBrake([said("b", "@a ship it"), said("a", "@b ship it")]), null, "another node's words, not its own");
-  assert.equal(loopBrake([said("a", "@b")]), null);
+  assert.equal(
+    loopBrake([said("a", "@b can you check the file?"), said("b", "@a checked, over to you"), said("a", "@B Can you check the file"), said("b", "@a Checked, over to you!")]),
+    "cycle",
+    "both sides said again what they said",
+  );
+  assert.equal(loopBrake([said("p", "@h Draft the summary of the report."), said("h", "@p Here is the summary: three findings."), said("p", "@h Draft the summary of the report.")]), null, "the same brief again after a report: asked again, not a loop");
+  assert.equal(loopBrake([said("lead", "@h draft A"), said("h", "@lead Done."), said("lead", "@h now draft B"), said("h", "@lead Done.")]), null, "an acknowledgement repeated is not a loop");
+  assert.equal(loopBrake([said("a", "@b draft the intro"), said("b", "@a Done."), said("a", "@b draft the intro"), said("b", "@a Done.")]), null, "only one side repeated words that count");
+  assert.equal(loopBrake([said("a", "@b ship the release now"), said("a", "@b ship the release now!")]), "duplicate", "said twice in a row");
+  assert.equal(loopBrake([said("a", "@b ok"), said("a", "@b ok")]), null, "a short acknowledgement never counts");
+  assert.equal(loopBrake([said("b", "@a ship the release now"), said("a", "@b ship the release now")]), null, "another node's words, not its own");
+  assert.equal(loopBrake([said("a", "@b check part one"), said("b", "@a done with part one"), said("a", "@b check part two")]), null, "new words go on");
+  assert.equal(loopBrake([said("a", "@b ship the release now"), said("a", "@b ship the release now")], 6), null, "the acknowledgement length is the config's");
 });
 
 test("an override of the heuristics config changes only what it names; an invalid one is ignored and logged", () => {

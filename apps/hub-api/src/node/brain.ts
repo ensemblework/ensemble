@@ -29,7 +29,7 @@ import { codeBuiltLog, nodeInstructions, packetSections, packetText, type NodeIn
 import { recordMetric } from "../lib/metrics.js";
 import { helperFolders, helperGrant } from "./helpers.js";
 import { RuntimeError } from "../lib/runtime-error.js";
-import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers } from "./queue.js";
+import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers, type DispatchOutcome } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
@@ -88,7 +88,7 @@ export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessi
 /** parked: the turn waits for its owner's answer on a card; it ended without a reply, and the answer wakes the node. */
 /** cancelled: its owner stopped it (Stop, a pause, a plan's Stop) while it ran. */
 export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked" | "cancelled"; model?: string; credits?: number | null; error?: string };
-export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<void>; signal?: AbortSignal };
+export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<DispatchOutcome | void>; signal?: AbortSignal };
 
 /** Background turns call Ensemble's own routes as the owner, like a signed-in request would. */
 export function internalHeaders(spaceId: string): Record<string, string> {
@@ -331,7 +331,18 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       });
   fresh.reverse();
   let readUpTo = fresh.reduce((max, row) => Math.max(max, row.seq), thread.cursor);
-  const transcriptRows = fresh.filter((row) => row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status") && !(row.data as { deleted?: unknown } | null)?.deleted);
+  // What its owner added that an earlier turn of this node took while it worked, and answered (node/steering.ts),
+  // is not answered again: in an independent answer the cursor stays before its siblings' answers, so it is still here.
+  const owners = fresh.filter((row) => row.authorKind === "human" && row.userId === owner).map((row) => row.id);
+  const taken = owners.length
+    ? new Set((await prisma.nodeSteer.findMany({ where: { nodeId: node.id, kind: "amendment", target: "turn", outcome: "accepted", messageId: { in: owners } }, select: { messageId: true } })).map((row) => row.messageId!))
+    : new Set<string>();
+  const transcriptRows = fresh.filter((row) => !taken.has(row.id) && row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status") && !(row.data as { deleted?: unknown } | null)?.deleted);
+  if (trigger && taken.has(trigger.id) && !turn.note && !transcriptRows.some((row) => row.authorKind === "human")) {
+    // The turn queued for a message already answered that way: nothing of its own to answer. Its cursor does not
+    // move, so what else came meanwhile is still new for the node's next turn.
+    return { status: "skipped" };
+  }
   if (!transcriptRows.length && !turn.note) {
     await saveCursor(readUpTo);
     return { status: "skipped" };
@@ -516,10 +527,10 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   const instructionsFor = async (pick: ChatModel): Promise<NodeInstructions | null> =>
     !instructions || isSubscriptionProvider(pick.provider) === ownLoop ? instructions : nodeInstructions(app, { ...instructionsInput, provider: pick.provider, ownTools: false });
   // What its owner adds while this turn works joins it between its steps (node/steering.ts): only on Ensemble's
-  // own loop, in a conversation turn its owner started and only they read.
-  const steerable = !work && !bound && !drafting && !fromNonOwner && ownerOnly && !ownLoop;
-  /** Amendments handed to the model whose call has not answered yet. */
-  const taken = new Set<string>();
+  // own loop, in a conversation turn its owner started and only they read; never a plan's turn, which reports.
+  const steerable = !work && !bound && !drafting && !fromNonOwner && ownerOnly && !ownLoop && !turn.planId;
+  /** Amendments handed to the model whose call has not answered yet: the user row they came in, and how far they read. */
+  const handed = new Map<string, { rowId: string; upTo: number }>();
   let steered = false;
   const steer: TurnSteering | undefined = steerable
     ? {
@@ -527,9 +538,12 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
           const offers = takeOffers(turn.id);
           if (!offers.length) return null;
           const ids = offers.map((offer) => offer.steerId);
-          const offered = await prisma.nodeMessage.findMany({ where: { id: { in: offers.map((offer) => offer.messageId) }, roomId: room.id, ...thread.where }, select: { seq: true } });
-          const upTo = Math.max(readUpTo, ...offered.map((row) => row.seq));
-          const rows = upTo > readUpTo ? await prisma.nodeMessage.findMany({ where: { roomId: room.id, seq: { gt: readUpTo, lte: upTo }, ...thread.where }, orderBy: { seq: "asc" } }) : [];
+          const offered = await prisma.nodeMessage.findMany({ where: { id: { in: offers.map((offer) => offer.messageId) }, roomId: room.id, ...thread.where }, orderBy: { seq: "asc" } });
+          // An independent answer is shown only the owner's words it is offered, never what others said since its
+          // snapshot (a sibling's answer), and its cursor does not move past them. Any other turn is shown what came
+          // in between too, and reads up to the last of them once the call that carries them answers.
+          const upTo = snapshot === null ? Math.max(readUpTo, ...offered.map((row) => row.seq)) : readUpTo;
+          const rows = snapshot !== null ? offered : upTo > readUpTo ? await prisma.nodeMessage.findMany({ where: { roomId: room.id, seq: { gt: readUpTo, lte: upTo }, ...thread.where }, orderBy: { seq: "asc" } }) : [];
           const said = rows.filter((row) => row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status") && !(row.data as { deleted?: unknown } | null)?.deleted);
           // Only its owner's own words join a turn going on: anything from someone else, or with files, waits for the next turn, which reads it with its own trust and files.
           if (!said.some((row) => row.authorKind === "human") || said.some((row) => tainted(row) || filesOf(row).length > 0)) {
@@ -537,18 +551,24 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
             return null;
           }
           const text = packetText([{ name: "node/85-packet-steer", tier: "volatile", vars: { owner: ownerName, messages: said.map(line) } }]);
-          await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "user", content: text } });
+          const row = await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "user", content: text } });
           await steersHanded(app, ids);
-          for (const id of ids) taken.add(id);
-          // Read now: the turn queued for these messages finds nothing new, so they are never answered twice.
-          readUpTo = upTo;
-          await saveCursor(readUpTo);
+          for (const id of ids) handed.set(id, { rowId: row.id, upTo });
           steered = true;
           return { text, ids };
         },
-        async settle(ids, outcome) {
-          for (const id of ids) taken.delete(id);
-          await settleSteers(app, ids, outcome);
+        async answered(ids) {
+          const upTo = Math.max(readUpTo, ...ids.map((id) => handed.get(id)?.upTo ?? readUpTo));
+          for (const id of ids) handed.delete(id);
+          // Answered: accepted, and read, together, so the turn queued for these messages never answers them again.
+          const moved = upTo > readUpTo && !work;
+          if (moved) readUpTo = upTo;
+          await prisma
+            .$transaction([
+              ...(moved ? [prisma.nodeRoomMember.update({ where: { id: self.id }, data: turn.private ? { privateSeenSeq: upTo } : { seenSeq: upTo } })] : []),
+              prisma.nodeSteer.updateMany({ where: { id: { in: [...ids] }, outcome: "pending" }, data: { outcome: "accepted", settledAt: new Date() } }),
+            ])
+            .catch((error: unknown) => app.log.warn({ err: error, turnId: turn.id }, "Could not record an answered amendment"));
         },
       }
     : undefined;
@@ -676,9 +696,14 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
   if (steerable) {
-    // No more model calls: what was never taken, the next turn reads; what was handed over without an answer is indeterminate.
+    // No more model calls: what was never taken, the next turn reads. What was handed over and never answered had
+    // nothing run on it: it leaves the conversation, and the turn queued for its message answers it, once.
     await settleSteers(app, closeSteering(turn.id).map((offer) => offer.steerId), "rejected");
-    if (taken.size) await settleSteers(app, [...taken], "indeterminate");
+    if (handed.size) {
+      await prisma.assistantMessage.deleteMany({ where: { id: { in: [...new Set([...handed.values()].map((row) => row.rowId))] } } }).catch(() => undefined);
+      await settleSteers(app, [...handed.keys()], "rejected");
+      handed.clear();
+    }
   }
   if (!failure) trace.answered(result!);
   if (deps.signal?.aborted && deps.signal.reason === "coalesce") {
@@ -713,6 +738,8 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
+    // A plan's report is never interrupted (node/queue.ts `interruptible`); should one end here, its plan still ends.
+    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
     return { status: "cancelled", model: done?.model, credits: done?.credits ?? null };
   }
   if ((deps.signal?.aborted && deps.signal.reason === "park") || parkedFor(turn.id).length) {

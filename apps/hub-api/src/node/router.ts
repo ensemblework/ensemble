@@ -11,9 +11,10 @@
  *     other nodes answer them privately (My crew); another person's other node is answered by that
  *     person's lead; `@leads status` is a card built by code; nodes' messages wake nobody.
  *   - Elsewhere a node's message wakes only the nodes it mentions, under four brakes: consecutive
- *     node messages in the room, the depth of the bot chain under one person's message, a node
- *     repeating what it already said since the last person's message (`duplicate`), and two nodes
- *     passing the same words back and forth (`cycle`, `loopBrake`).
+ *     node messages in the room, the depth of the bot chain under one person's message, and in one
+ *     request two nodes saying the same things back and forth (`cycle`) or a node saying the same
+ *     thing twice at once (`duplicate`, `loopBrake`). A wake asked for in a turn its owner started is
+ *     never stopped by the loop brakes (node/queue.ts).
  *   - A person's message wakes the nodes it mentions; mentioning only people wakes nobody;
  *     otherwise the DM's node.
  *   - A crew or room in the `independent` group mode (node/groups.ts): a person's message naming
@@ -82,23 +83,26 @@ export function loopText(text: string): string {
 }
 
 /**
- * The loop brakes, for a node's message: `chain` is the thread's text messages since the last person's
- * message, oldest first, ending with this one (at most the heuristics' `loopWindow`). `cycle`: its author
- * says again what it already said, with only one other node speaking in between (two nodes passing the same
- * words back and forth); `duplicate`: its author says again what it already said otherwise. Pure.
+ * The loop brakes, for a node's message that would wake another. `chain` is its request's text messages
+ * since the last person's message (the same root message), oldest first, ending with this one, at most the
+ * heuristics' `loopWindow`. `cycle`: two nodes back and forth, each saying again what it said one round before
+ * (A, B, A again, B again); `duplicate`: its author says again, at once, what it just said. A message of at
+ * most `ackWords` words (an acknowledgement: "Done.", "ok") never counts as a repeat. Pure.
  */
-export function loopBrake(chain: ReadonlyArray<{ authorNodeId: string | null; body: string }>): "duplicate" | "cycle" | null {
-  const last = chain[chain.length - 1];
+export function loopBrake(chain: ReadonlyArray<{ authorNodeId: string | null; body: string }>, ackWords = DEFAULT_NODE_HEURISTICS.router.loopAckWords): "duplicate" | "cycle" | null {
+  const n = chain.length;
+  const last = chain[n - 1];
   if (!last?.authorNodeId) return null;
-  const words = loopText(last.body);
-  if (!words) return null;
-  for (let index = chain.length - 2; index >= 0; index -= 1) {
-    const row = chain[index]!;
-    if (row.authorNodeId !== last.authorNodeId || loopText(row.body) !== words) continue;
-    const between = new Set(chain.slice(index + 1, -1).map((other) => other.authorNodeId));
-    return between.size === 1 && !between.has(last.authorNodeId) && !between.has(null) ? "cycle" : "duplicate";
-  }
-  return null;
+  const words = (row: { body: string }) => loopText(row.body);
+  const counts = (text: string) => text.split(" ").filter(Boolean).length > ackWords;
+  const said = words(last);
+  if (!counts(said)) return null;
+  const before = chain[n - 2];
+  if (before?.authorNodeId === last.authorNodeId && words(before) === said) return "duplicate";
+  const [first, other] = [chain[n - 3], chain[n - 4]];
+  if (!before?.authorNodeId || !first || !other || before.authorNodeId === last.authorNodeId) return null;
+  const answer = words(before);
+  return first.authorNodeId === last.authorNodeId && words(first) === said && other.authorNodeId === before.authorNodeId && words(other) === answer && counts(answer) ? "cycle" : null;
 }
 
 /** At most `limit` of the named nodes, with how many were left out when any were. */

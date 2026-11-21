@@ -23,7 +23,7 @@ import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn, type TurnOutcome } from "./brain.js";
 import type { Mention } from "./mentions.js";
-import { botStreak, loopBrake, routeRecord, whoSpeaks, type RouteDecision, type RouteInput, type RouteNode, type RouteRoom, type RouteTarget } from "./router.js";
+import { botStreak, loopBrake, routeRecord, whoSpeaks, type Brake, type RouteDecision, type RouteInput, type RouteNode, type RouteRoom, type RouteTarget } from "./router.js";
 import { activeHeuristics, heuristicsVersion } from "./heuristics.js";
 import { recordDecision } from "./trace.js";
 import { publishTo } from "./events.js";
@@ -95,6 +95,7 @@ class Slot {
  * `park`: what the turn waits for, once a tool asked to park it; it ends after its current tool calls.
  * `steerable`: the turn takes what its owner adds while it works, between its steps (node/steering.ts); `offers`
  * holds those additions until it takes them.
+ * `interruptible`: an owner's interrupt or replacement may stop it (a conversation turn bound to no bookkeeping).
  */
 type LiveTurn = {
   app: FastifyInstance;
@@ -112,6 +113,7 @@ type LiveTurn = {
   park: string[];
   steerable: boolean;
   offers: SteerOffer[];
+  interruptible: boolean;
 };
 const live = new Map<string, LiveTurn>();
 
@@ -191,6 +193,15 @@ function tainted(message: Pick<NodeMessage, "userId" | "data"> | null, owner: st
 const PERSON_REASONS = new Set(["dm", "mentioned", "lead", "relevance"]);
 /** Turns about someone else's words or a request (node/audience.ts, node/peer-requests.ts): never merged with others. */
 const BOUND_REASONS = new Set(["disclose", "answer", "request"]);
+
+/**
+ * A conversation turn an owner's interrupt or replacement may stop (node/stop.ts `steerConversation`). A plan's
+ * turn (a lead's report or re-plan), an outbox effect's, a peer request's and one about someone else's words
+ * finish: what ends them is bookkeeping that must run. The new message is answered after them.
+ */
+function interruptible(turn: Pick<NodeTurn, "planId" | "operationId" | "peerRequestId" | "reason">): boolean {
+  return !turn.planId && !turn.peerRequestId && !BOUND_REASONS.has(turn.reason) && (!turn.operationId || turn.operationId.startsWith("independent:"));
+}
 
 /** A turn bound to an effect, a request or the turn it continues, or about someone else's words. */
 function boundRequest(request: Pick<TurnRequest, "operationId" | "originTurnId" | "peerRequestId" | "reason">): boolean {
@@ -392,7 +403,7 @@ export function closeSteering(turnId: string): SteerOffer[] {
 export function interruptTurns(nodeIds: readonly string[], lane: string, why: "interrupt" | "replace" = "interrupt"): Array<{ turnId: string; nodeId: string; acted: boolean }> {
   const stopped: Array<{ turnId: string; nodeId: string; acted: boolean }> = [];
   for (const entry of live.values()) {
-    if (!nodeIds.includes(entry.nodeId) || entry.lane !== lane || entry.controller.signal.aborted) continue;
+    if (!nodeIds.includes(entry.nodeId) || entry.lane !== lane || entry.controller.signal.aborted || !entry.interruptible) continue;
     entry.controller.abort(why);
     stopped.push({ turnId: entry.turnId, nodeId: entry.nodeId, acted: entry.acted });
   }
@@ -400,10 +411,10 @@ export function interruptTurns(nodeIds: readonly string[], lane: string, why: "i
 }
 
 /** The turns of these nodes running now, in one lane or one room (null: anywhere), as steering and a stop read them. */
-export function liveTurnsIn(nodeIds: readonly string[], where: { lane: string } | { roomId: string | null }): Array<{ turnId: string; nodeId: string; acted: boolean; steerable: boolean }> {
+export function liveTurnsIn(nodeIds: readonly string[], where: { lane: string } | { roomId: string | null }): Array<{ turnId: string; nodeId: string; acted: boolean; steerable: boolean; interruptible: boolean }> {
   return [...live.values()]
     .filter((entry) => nodeIds.includes(entry.nodeId) && ("lane" in where ? entry.lane === where.lane : where.roomId === null || entry.roomId === where.roomId))
-    .map((entry) => ({ turnId: entry.turnId, nodeId: entry.nodeId, acted: entry.acted, steerable: entry.steerable }));
+    .map((entry) => ({ turnId: entry.turnId, nodeId: entry.nodeId, acted: entry.acted, steerable: entry.steerable, interruptible: entry.interruptible }));
 }
 
 /**
@@ -513,7 +524,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
     const controller = new AbortController();
     const lane = turn.lane ?? laneFor(turn);
-    live.set(turnId, { app, controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn), slot, waiting: null, park: [], steerable: false, offers: [] });
+    live.set(turnId, { app, controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn), slot, waiting: null, park: [], steerable: false, offers: [], interruptible: interruptible(turn) });
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
@@ -736,15 +747,26 @@ export async function settleTurns(): Promise<void> {
   while (chains.size || background.size) await Promise.allSettled([...chains.values(), ...background]);
 }
 
+/** Who a message woke (each node that took a turn for it), and the brake that stopped it, if one did. */
+export type DispatchOutcome = { woken: string[]; brake?: Brake };
+
+/** Whether a node's message was posted in a turn its owner's own message started (a brief they asked for). */
+async function ownerStarted(prisma: PrismaClient, message: NodeMessage): Promise<boolean> {
+  const turnId = (message.data as { turnId?: unknown } | null)?.turnId;
+  const turn = typeof turnId === "string" ? await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { userId: true, triggerMessageId: true } }) : null;
+  const trigger = turn?.triggerMessageId ? await prisma.nodeMessage.findUnique({ where: { id: turn.triggerMessageId }, select: { authorKind: true, userId: true, data: true } }) : null;
+  return Boolean(turn && trigger && trigger.authorKind === "human" && !tainted(trigger, turn.userId));
+}
+
 /**
  * Wakes the nodes that should answer a message, and records who was woken and why (`node_decisions`, kind `route`).
  * `steerNote`: what an interrupt or a replacement by this message stopped or kept (node/stop.ts), for the turns it wakes.
  */
-export async function dispatchMessage(app: FastifyInstance, message: NodeMessage, operationId?: string, steerNote?: string): Promise<void> {
-  if (message.kind !== "text" || message.authorKind === "system") return;
+export async function dispatchMessage(app: FastifyInstance, message: NodeMessage, operationId?: string, steerNote?: string): Promise<DispatchOutcome> {
+  if (message.kind !== "text" || message.authorKind === "system") return { woken: [] };
   const prisma = app.prisma;
   const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
-  if (!room || room.archivedAt) return;
+  if (!room || room.archivedAt) return { woken: [] };
   const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true } });
   // A paused node wakes only for its owner's own message to it (its DM, or a mention), which also resumes it; nothing else wakes it.
   const mentioned = new Set(((Array.isArray(message.mentions) ? message.mentions : []) as Mention[]).filter((row) => row.kind === "node").map((row) => row.id));
@@ -758,7 +780,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
     where: { roomId: room.id, seq: { lte: message.seq }, ...(message.visibleTo.length ? {} : { visibleTo: { isEmpty: true } }) },
     orderBy: { seq: "desc" },
     take: Math.max(brakes.botStreak, brakes.loopWindow) + 4,
-    select: { authorKind: true, kind: true, authorNodeId: true, body: true },
+    select: { authorKind: true, kind: true, authorNodeId: true, body: true, rootMessageId: true },
   });
   const input: RouteInput = {
     id: message.id,
@@ -775,27 +797,46 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   };
   const routeRoom: RouteRoom = { kind: room.kind as RouteRoom["kind"], leadNodeIds: roomSettings(room).leadNodeIds, mode: groupMode(room) };
   const streak = botStreak(recent);
-  // The loop brakes read the node messages since the last person's (newest last), this one included.
+  // The loop brakes read this request's chain: its node messages since the last person's message (newest last).
   const sincePerson = recent.findIndex((row) => row.authorKind === "human");
-  const chain = recent.slice(0, sincePerson < 0 ? recent.length : sincePerson).filter((row) => row.kind === "text").slice(0, brakes.loopWindow).reverse();
+  const chain = recent
+    .slice(0, sincePerson < 0 ? recent.length : sincePerson)
+    .filter((row) => row.kind === "text" && row.rootMessageId === message.rootMessageId)
+    .slice(0, brakes.loopWindow)
+    .reverse();
   const routed = whoSpeaks(input, routeRoom, nodes, streak, brakes);
-  // A node's message that would wake another wakes nobody when it only repeats what was said since then (`loopBrake`).
-  const loop = message.authorKind === "node" && routed.nodeIds.length ? loopBrake(chain) : null;
+  // A node's message that would wake another wakes nobody when it only repeats this request's chain, unless its owner's
+  // own message started the turn that posted it (a brief they asked for again).
+  const checked = message.authorKind === "node" && routed.nodeIds.length ? loopBrake(chain, brakes.loopAckWords) : null;
+  const asked = checked ? await ownerStarted(prisma, message) : false;
+  const loop = checked && !asked ? checked : null;
   const decision: RouteDecision = loop ? { reason: "none", nodeIds: [], brake: loop } : routed;
   const record = routeRecord(input, routeRoom, nodes, streak, brakes, decision);
+  const inputs = message.authorKind === "node" && routed.nodeIds.length ? { ...record.inputs, loop: { chain: chain.length, window: brakes.loopWindow, ownerStarted: asked } } : record.inputs;
   const turnIds: Array<string | null> = [];
   try {
     // `@leads status` in a room with other people: every person's status card, built by code (node/status-cards.ts).
-    if (decision.reason === "status") return await postStatusCards(app, room, message);
+    if (decision.reason === "status") {
+      await postStatusCards(app, room, message);
+      return { woken: [] };
+    }
     const targets: RouteTarget[] = decision.reason === "none" ? [] : (decision.targets ?? decision.nodeIds.map((nodeId) => ({ nodeId, private: message.visibleTo.length > 0, audience: "owner" as const })));
     if (decision.reason === "none" && decision.brake) {
-      // Said once: not again until a person writes here.
+      // Said once: not again until a person writes here; a loop brake, once per request.
+      const loops = decision.brake === "duplicate" || decision.brake === "cycle";
       const lastPerson = await prisma.nodeMessage.findFirst({ where: { roomId: room.id, authorKind: "human" }, orderBy: { seq: "desc" }, select: { seq: true } });
       const said = await prisma.nodeMessage.findFirst({
-        where: { roomId: room.id, authorKind: "system", kind: "status", seq: { gt: lastPerson?.seq ?? 0 }, OR: ["streak", "depth", "duplicate", "cycle"].map((brake) => ({ data: { path: ["brake"], equals: brake } })) },
+        where: {
+          roomId: room.id,
+          authorKind: "system",
+          kind: "status",
+          seq: { gt: lastPerson?.seq ?? 0 },
+          OR: (loops ? ["duplicate", "cycle"] : ["streak", "depth"]).map((brake) => ({ data: { path: ["brake"], equals: brake } })),
+          ...(loops ? { rootMessageId: message.rootMessageId } : {}),
+        },
         select: { id: true },
       });
-      if (said) return;
+      if (said) return { woken: [], brake: decision.brake };
       await postMessage(prisma, {
         roomId: room.id,
         userId: room.userId,
@@ -813,8 +854,9 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
                 : "Nodes paused this thread: it went too deep. Mention a node to continue.",
         data: { brake: decision.brake } as Prisma.InputJsonObject,
         visibleTo: message.visibleTo,
+        rootMessageId: message.rootMessageId,
       });
-      return;
+      return { woken: [], brake: decision.brake };
     }
     // The owner's mention resumes a paused node in a crew even when the lead answers: the lead's plan may need it.
     if (room.kind === "crew" && message.authorKind === "human") {
@@ -829,11 +871,12 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       const note = [target.note, steerNote].filter(Boolean).join("\n") || null;
       turnIds.push(await queueTurn(app, { nodeId: target.nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: target.private, audience: target.audience, note, operationId, ...(round ? round(target.nodeId) : {}) }));
     }
+    return { woken: targets.filter((_, index) => turnIds[index]).map((target) => target.nodeId) };
   } finally {
     // Each woken node's turn: the one it got, or the queued one the message joined; null when it did not take one.
     const woken = record.choice.woken.map((row, index) => ({ ...row, turnId: turnIds[index] ?? null }));
     const only = woken.length === 1 ? woken[0]! : null;
-    await recordDecision(app, { userId: message.userId, nodeId: only?.nodeId ?? null, turnId: only?.turnId ?? null, kind: "route", configVersion: heuristicsVersion(heuristics), inputs: record.inputs, choice: { ...record.choice, woken } });
+    await recordDecision(app, { userId: message.userId, nodeId: only?.nodeId ?? null, turnId: only?.turnId ?? null, kind: "route", configVersion: heuristicsVersion(heuristics), inputs, choice: { ...record.choice, woken } });
   }
 }
 

@@ -15,7 +15,7 @@ const limit = (value: number) => z.number().int().min(1).max(1_000).default(valu
 
 export const NodeHeuristics = z.object({
   /** Change it with every change of the defaults; recorded on each decision. */
-  version: z.string().max(40).default("2026-12-05.1"),
+  version: z.string().max(40).default("2026-12-06.1"),
   router: z
     .object({
       /** Node messages in a row in a room (not a helper's room) after which a node's message wakes nobody. */
@@ -27,10 +27,13 @@ export const NodeHeuristics = z.object({
       /** Nodes one node's message wakes at most. */
       nodeFanout: limit(3),
       /**
-       * Node messages since the last person's message that the loop brakes read: a node repeating what it
-       * already said there (`duplicate`), or two nodes passing the same words back and forth (`cycle`), wakes nobody.
+       * Node messages of one request (since the last person's message) that the loop brakes read: two nodes
+       * saying the same things back and forth (`cycle`), or a node saying the same thing twice at once
+       * (`duplicate`), wakes nobody.
        */
       loopWindow: limit(12),
+      /** A message of at most this many words is an acknowledgement ("Done.", "ok"): it never counts as a repeat. */
+      loopAckWords: z.number().int().min(0).max(20).default(3),
     })
     .default({}),
   groups: z

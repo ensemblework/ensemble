@@ -149,6 +149,8 @@ type BoundCtx = {
   lineage: { rootMessageId: string | null; botDepth: number };
   /** The messages this turn read from people other than the owner that it may act on (node_peer_request `from`). */
   batch: Array<{ seq: number; userId: string }>;
+  /** An independent answer (node/groups.ts): the room as it was when it was asked, up to this message. */
+  snapshotSeq: number | null;
 };
 
 /**
@@ -216,7 +218,7 @@ export async function roomBoundTurn(
     const theirs = request && request.fromAccountId === author ? request : null;
     const askCtx: BoundCtx = {
       app, node, room, members, owner, ownerName: input.ownerName, askerId: author, askerName: nameFor(author),
-      trust: publicTrust(prefs, readers, author), trigger: row ?? trigger, requestId: theirs?.id ?? null, lineage: input.lineage, batch: [],
+      trust: publicTrust(prefs, readers, author), trigger: row ?? trigger, requestId: theirs?.id ?? null, lineage: input.lineage, batch: [], snapshotSeq: turn.snapshotSeq,
     };
     const question = theirs?.text ?? row?.body ?? turn.note ?? "";
     const { card, existing } = await raiseDisclosure(askCtx, { mode: "answer", question: truncateText(question, 1000), need: "" });
@@ -234,7 +236,7 @@ export async function roomBoundTurn(
   const batch = asking.filter((row) => !gated.has(row.userId)).map((row) => ({ seq: row.seq, userId: row.userId }));
   const ctx: BoundCtx = {
     app, node, room, members, owner, ownerName: input.ownerName, askerId, askerName, trust, trigger,
-    requestId: request && !gated.has(request.fromAccountId) ? request.id : null, lineage: input.lineage, batch,
+    requestId: request && !gated.has(request.fromAccountId) ? request.id : null, lineage: input.lineage, batch, snapshotSeq: turn.snapshotSeq,
   };
   await prisma.nodeTurn.update({
     where: { id: turn.id },
@@ -368,7 +370,7 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
 
 // ── the tools of a room-bound turn ──────────────────────────────────────────────────────────
 
-/** This room's public history, from when its newest person joined. */
+/** This room's public history, from when its newest person joined; for an independent answer, only up to its question. */
 function historyTool(ctx: BoundCtx): AnyHubTool {
   const { app, room } = ctx;
   const prisma = app.prisma;
@@ -393,7 +395,7 @@ function historyTool(ctx: BoundCtx): AnyHubTool {
           visibleTo: { isEmpty: true },
           kind: { in: ["text", "status", "request"] },
           createdAt: { gte: since },
-          ...(input.before ? { seq: { lt: input.before } } : {}),
+          ...(input.before || ctx.snapshotSeq !== null ? { seq: { ...(input.before ? { lt: input.before } : {}), ...(ctx.snapshotSeq !== null ? { lte: ctx.snapshotSeq } : {}) } } : {}),
           ...(words.length ? { AND: words.map((word) => ({ body: { contains: word, mode: "insensitive" as const } })) } : {}),
         },
         orderBy: { seq: "desc" },
