@@ -123,7 +123,7 @@ The desktop tasks need a screen of the agent's own: on a computer without one (n
 
 | Task | Does | Checks |
 | --- | --- | --- |
-| `multi-file-change-with-tests` | Currency support across `src/money.js` and `src/invoice.js`, with tests for both | Both modules and both test files changed, its tests and hidden tests pass, the turn finished, and Ensemble's own verification run passed (`completion.checks.passed` on the thread's turn; a checkout without one fails this check) |
+| `multi-file-change-with-tests` | Currency support across `src/money.js` and `src/invoice.js`, with tests for both | Both modules and both test files changed, its tests and hidden tests pass, the turn finished, and Ensemble's own verification run passed (`completion.checks.state` is `passed` on the thread's turn; a checkout without one fails this check) |
 | `resume-picks-up-context-delta` | Turn 1 writes a label from a task it mentions; the task is renamed (`PATCH /api/tasks/:id`); turn 2 in the same session adds the label to the README | The first label written, the same agent session for turn 2, the README names the new label and not the old |
 | `handoff-to-another-agent` | Requires `code-tab-harness`. Turn 1 gets a code to keep; the thread is forked into a new session (`POST /api/agent/threads/:id/fork`) that is asked for the code | A handoff record went with it (`.ensemble/handoff/`), a new session, the record carries the code and says what it does not carry, the new session wrote the code, and nobody called it lossless |
 

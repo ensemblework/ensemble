@@ -164,7 +164,7 @@ const multiFile: Task = {
       check("its tests pass", tests.pass, "state", { evidence: true, note: tests.summary }),
       check("the hidden acceptance tests pass", hidden.pass, "state", { evidence: true, note: hidden.summary }),
       check("the turn finished", turn?.status === "succeeded", "state", { evidence: true, note: turn?.status ?? "no turn" }),
-      check("Ensemble's own verification run passed", checks.passed === true, "state", { evidence: true, note: turn?.completion ? `checks ${JSON.stringify(checks).slice(0, 160)}` : "no verification run recorded" }),
+      check("Ensemble's own verification run passed", checks.state === "passed", "state", { evidence: true, note: turn?.completion ? `checks ${String(checks.state)}: ${String(checks.passed ?? 0)} passed, ${String(checks.failed ?? 0)} failed, ${String(checks.notRun ?? 0)} not run` : "no verification run recorded" }),
     ];
   },
 };
