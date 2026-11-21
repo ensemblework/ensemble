@@ -217,7 +217,8 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
     assert.deepEqual((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [mira.id]);
     assert.equal(card.authorNodeId, node.id);
     const { answeredAt: _answeredAt, ...shape } = card.data;
-    assert.deepEqual(shape, { type: "computer", status: "pending", decisionId: decisions[0]!.id, capability: "git", label: "app", scope: "folder", deviceName: "Mira's laptop", call: "git status", options: ["Once", "This mission", "Always for this folder"], answer: null, private: false });
+    const asking = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
+    assert.deepEqual(shape, { type: "computer", status: "pending", decisionId: decisions[0]!.id, capability: "git", label: "app", scope: "folder", deviceName: "Mira's laptop", call: "git status", options: ["Once", "This mission", "Always for this folder"], answer: null, private: false, turnId: asking.id });
     assert.match(card.body, /@assistant wants to read git in app on Mira's laptop/);
     const notice = await h.prisma.notification.findFirstOrThrow({ where: { userId: mira.id, kind: "decision" } });
     assert.equal(notice.url, `https://node.example.test/r/${room.id}#m-${card.id}`, "the notification opens the card in the Node chat");
@@ -299,6 +300,7 @@ test("not answered in time: the turn parks without a reply, and the answer later
     assert.deepEqual(await replies(mira, room.id, node.id), [], "no reply: nothing like “please approve”");
     const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
     assert.equal(turn.status, "done");
+    assert.equal(turn.outcome, "parked", "its real outcome is kept");
     const conversation = (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).conversationId!;
     const note = await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: conversation, role: "assistant" }, orderBy: { createdAt: "desc" } });
     assert.equal(note.content, "Waiting for Mira to answer the card about git status (in app on Mira's laptop).", "the next turn knows what it waits for");
@@ -760,8 +762,10 @@ test("a CLI sign-in runs 15 minutes in the background; the code it prints is on 
     const card = cards[0]!;
     assert.equal(card.kind, "text");
     assert.equal(card.authorNodeId, node.id);
+    // The computer here answers in the turn's own process, so its card may name the turn; a real computer's request does not.
+    const { turnId: _turnId, ...shape } = card.data;
     assert.deepEqual(
-      { ...card.data, expiresAt: typeof card.data.expiresAt },
+      { ...shape, expiresAt: typeof card.data.expiresAt },
       { type: "device_code", status: "pending", url, code, command: "az login --use-device-code", computer: "Mira's laptop", deviceId: laptop.id, operation: runId, expiresAt: "string" },
     );
     assert.ok(Math.abs(Date.parse(card.data.expiresAt) - Date.now() - 15 * 60_000) < 60_000, "good for 15 minutes");

@@ -38,6 +38,8 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
+import { saveTrace, setPlacement, TurnTrace } from "./trace.js";
+import { inTurn } from "./turn-context.js";
 
 /** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
 const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
@@ -74,7 +76,8 @@ export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessi
 /** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
 /** coalesced: a newer message from the owner came before this turn acted; the next turn answers both. */
 /** parked: the turn waits for its owner's answer on a card; it ended without a reply, and the answer wakes the node. */
-export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked"; model?: string; credits?: number | null; error?: string };
+/** cancelled: its owner stopped it (Stop, a pause, a plan's Stop) while it ran. */
+export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked" | "cancelled"; model?: string; credits?: number | null; error?: string };
 export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<void>; signal?: AbortSignal };
 
 /** Background turns call Ensemble's own routes as the owner, like a signed-in request would. */
@@ -175,7 +178,27 @@ function filesOf(row: NodeMessage): Array<{ id: string; name: string }> {
   return files.flatMap((file) => (file && typeof file === "object" && typeof (file as { id?: unknown }).id === "string" ? [{ id: String((file as { id: string }).id), name: String((file as { name?: unknown }).name ?? "file") }] : []));
 }
 
+/**
+ * Runs one turn with its trace (node/trace.ts): every message it posts names it (node/turn-context.ts),
+ * and once it chose a model its trace is saved when it ends, whatever the outcome.
+ */
 export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps): Promise<TurnOutcome> {
+  const trace = new TurnTrace(turn);
+  return inTurn(turn, async (posted) => {
+    let outcome: TurnOutcome | null = null;
+    try {
+      outcome = await takeTurn(app, turn, deps, trace);
+      return outcome;
+    } catch (error) {
+      trace.failed(error);
+      throw error;
+    } finally {
+      await saveTrace(app, trace, posted, outcome).catch((error: unknown) => app.log.error({ err: error, turnId: turn.id }, "Could not save the node turn's trace"));
+    }
+  });
+}
+
+async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, trace: TurnTrace): Promise<TurnOutcome> {
   // The owner said they finished a sign-in this node waits for: its computer checks it first (node/login-check.ts).
   turn = await checkLoginOnDone(app, turn);
   const prisma = app.prisma;
@@ -274,16 +297,21 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   // A crew's lead planning or reporting thinks with the lead model, unless its owner chose one (model.ts).
   const lead = !step && !node.parentNodeId && (Boolean(turn.planId && !turn.planStep) || (await leadsACrew(prisma, node))) ? leadChatModel(node) : null;
   const choice = lead?.pick ?? chatModelFor(node, settings);
+  trace.begin("error" in choice ? null : choice);
+  trace.step = Boolean(step);
   if ("error" in choice) {
+    trace.error = choice.error;
     await ownerNotice(app, node, room.id, choice.error);
     await saveCursor(readUpTo);
     return { status: "failed", error: choice.error };
   }
+  await setPlacement(app, turn.id, trace.placement);
   if (choice.provider === INCLUDED_PROVIDER) {
     try {
       await assertIncludedOpen(owner, choice.model);
     } catch (error) {
       if (!(error instanceof IncludedLimitError)) throw error;
+      trace.error = error.message;
       await ownerNotice(app, node, room.id, error.message, { code: error.code });
       await saveCursor(readUpTo);
       return { status: "failed", error: error.message };
@@ -364,6 +392,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         packet,
       });
   const assembled = instructions?.log ?? codeBuiltLog(roomBound!.text, packet);
+  trace.instructions = assembled;
   // Every section the turn was given, once per turn; each of its model calls names only their version and hashes.
   await recordMetric(prisma, { userId: owner, kind: "node.instructions", meta: { turnId: turn.id, nodeId: node.id, ...assembled } }).catch((error: unknown) =>
     app.log.error({ err: error }, "Could not record the node's instructions"),
@@ -376,6 +405,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const verify = deliverables
     ? async (state: VerifyState) => {
         const feedback = await deliverables.verify(state);
+        trace.checked(state.round, feedback, deliverables.checks);
         // The answer goes back for more work: the reply being written starts again.
         if (feedback) {
           publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
@@ -384,8 +414,10 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         return feedback;
       }
     : undefined;
-  const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
-    (bound ? bound.run : runAssistantTurn)({
+  const ask = async (pick: ChatModel): Promise<AssistantTurnResult> => {
+    const effort = await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined);
+    trace.sending(pick, effort);
+    return (bound ? bound.run : runAssistantTurn)({
       app,
       userId: spaceId,
       conversationId: conversationId!,
@@ -395,7 +427,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       settings: turnSettings,
       model: pick.model,
       provider: pick.provider,
-      reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined),
+      reasoningEffort: effort,
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
       ...(instructions ? { nodeInstructions: instructions } : { agentPersona: roomBound!.text }),
@@ -409,6 +441,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
       ...(isSubscriptionProvider(pick.provider) ? { subscription: { node: true, group: { id: node.id, name: `${node.name} (Ensemble Node)` }, keepDays: NODE_SESSION_KEEP_DAYS, maxCalls: 60 } } : {}),
+      trace: trace.loop,
       signal: deps.signal,
       async onToolStart(call) {
         // From the first tool that changes something, the turn is not aborted to merge a newer message.
@@ -428,6 +461,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         }
       },
     });
+  };
   // A conversation turn the model's rate limit cuts off before it ran a tool tries the fast model once,
   // so the owner still gets an answer; work turns wait and try again later.
   const fallback = work ? null : fastChatModel(settings);
@@ -446,6 +480,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     }
   }
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
+  if (!failure) trace.answered(result!);
   if (deps.signal?.aborted && deps.signal.reason === "coalesce") {
     // A newer message from the owner came before this turn acted: the next turn answers both, so this one leaves no trace.
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
@@ -487,6 +522,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       return { status: "retry", error: error.message };
     }
     const shown = aborted ? "Stopped." : error instanceof IncludedLimitError ? error.message : safePublicError(error, "The model could not answer. Nothing was changed.");
+    trace.error = shown;
     result = { failed: true, content: shown, toolCalls: [], model: choice.model, credits: null, mutated: false, interrupted: aborted };
   }
   result = result!;
@@ -525,7 +561,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       const said = cleanReply(result.content.replace(/\n*Stopped before finishing\.\s*$/i, ""), true);
       if (said && said !== NO_REPLY) await postAsNode({ prisma, node, lineage, dispatch: deps.dispatch }, room, said, privateTo);
     }
-    return { status: "done", model: result.model, credits: result.credits };
+    return { status: "cancelled", model: result.model, credits: result.credits };
   }
   if (result.failed) {
     // A step that failed ends as blocked (or stopped) on its plan, which its lead reports; no notice in the room.

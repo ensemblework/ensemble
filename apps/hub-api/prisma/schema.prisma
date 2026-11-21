@@ -2722,6 +2722,7 @@ model NodeAgent {
   memberships  NodeRoomMember[]
   memories     NodeMemory[]
   turns        NodeTurn[]
+  decisions    NodeDecision[]
   routines     NodeRoutine[]
   sessionEvents NodeSessionEvent[]
 
@@ -2969,16 +2970,96 @@ model NodeTurn {
   originTurnId     String?   @map("origin_turn_id")
   /// queued | running | done | failed
   status           String    @default("queued")
+  /// What happened to it (node/queue.ts): queued | running | waiting_approval (a tool call waits for the
+  /// owner's answer on a card) | parked | coalesced | skipped | retry | done | failed | cancelled. `status`
+  /// keeps its four values. Null when it was not recorded.
+  outcome          String?
+  /// Where it ran (node/trace.ts `Placement`): { loop, inference, toolsAt, conversation }. Set when it starts.
+  placement        Json?
   model            String?
   credits          Float?
   error            String?
   createdAt        DateTime  @default(now()) @map("created_at")
   finishedAt       DateTime? @map("finished_at")
   node             NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  trace            NodeTurnTrace?
+  decisions        NodeDecision[]
 
   @@index([status, createdAt])
   @@index([nodeId, createdAt])
   @@map("node_turns")
+}
+
+/// What one node turn was given and did (node/trace.ts, docs/35 §5.6): sizes, hashes, timings and the
+/// models, never message text or tool output. Written when the turn ends; it goes with its turn, and
+/// after `historyRetentionDays` (jobs/retention.ts).
+model NodeTurnTrace {
+  turnId             String   @id @map("turn_id")
+  userId             String   @map("user_id")
+  nodeId             String   @map("node_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  /// The instructions (packages/prompts): a hash of the section files used, and of the whole text.
+  instructionVersion String?  @map("instruction_version")
+  instructionHash    String?  @map("instruction_hash")
+  /// { hashes: { stable, context, volatile }, list: [{ name, tier, chars, tokens }], dropped: [{ name, tier, reason, tokens, items? }] }
+  sections           Json?
+  /// The tools offered on the turn's first model call: a hash of their specs, and how many.
+  toolSchemaHash     String?  @map("tool_schema_hash")
+  toolCount          Int?     @map("tool_count")
+  /// The model the node's settings chose, the one the call used (a fallback after a rate limit), and the one the provider reported.
+  modelRequested     String?  @map("model_requested")
+  modelSent          String?  @map("model_sent")
+  modelReported      String?  @map("model_reported")
+  provider           String?
+  effort             String?
+  placement          Json?
+  tokensIn           Int?     @map("tokens_in")
+  tokensOut          Int?     @map("tokens_out")
+  credits            Float?
+  costUsd            Float?   @map("cost_usd")
+  /// Each tool call in order: [{ name, ms, state, resultChars, shownChars, offloaded, readOnly }].
+  calls              Json     @default("[]")
+  /// The skills, memories and context items the instructions chose, when they name them.
+  selected           Json?
+  /// The answer check's rounds (node/deliverables.ts): { checks, rounds: [{ round, problems }], passed }.
+  verification       Json?
+  /// A step's report ({ kind: step, tool, outcome, checks, summary }) or what a reply posted ({ kind: reply, messages }).
+  report             Json?
+  /// How the loop ran: Ensemble's (its config, steps, retries, compactions, runaway) or the agent's on the owner's plan (computer, session).
+  loop               Json?
+  error              String?
+  turn               NodeTurn @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("node_turn_traces")
+}
+
+/// One decision Ensemble Node made by its rules or a model (node/trace.ts `recordDecision`, docs/35 §5.6):
+/// who answers a message (`route`, node/router.ts), and the skills, memories, context, session, model or
+/// escalation a turn is given. Kept with the heuristics config's version (node/heuristics.ts), so it can
+/// be judged again; it goes with its turn or node, and after `historyRetentionDays`.
+model NodeDecision {
+  id            String     @id @default(uuid())
+  /// The account whose message or turn it decided for.
+  userId        String     @map("user_id")
+  nodeId        String?    @map("node_id")
+  turnId        String?    @map("turn_id")
+  /// route | skill | memory | context | session | model | escalation
+  kind          String
+  configVersion String     @map("config_version")
+  inputs        Json       @default("{}")
+  scores        Json?
+  choice        Json       @default("{}")
+  /// A model decided, because the rules marked the case ambiguous.
+  ambiguous     Boolean    @default(false)
+  createdAt     DateTime   @default(now()) @map("created_at")
+  node          NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  turn          NodeTurn?  @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([turnId])
+  @@index([nodeId])
+  @@map("node_decisions")
 }
 
 /// What concerns one person in a room with other people (node/room-events.ts, docs/35 §12.12): from the

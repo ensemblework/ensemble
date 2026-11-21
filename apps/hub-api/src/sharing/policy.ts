@@ -79,6 +79,7 @@ const RULES: Rule[] = [
   ["GET", "/api/devices/:id/terminal/output", "personal"],
   ["*", "/api/web-terminal/*", "personal"],
   // Ensemble Node: the signed-in person's own nodes and rooms, whichever space is open (docs/35).
+  // A turn's trace (node/trace-routes.ts) too: its handler answers only the node's owner.
   ["*", "/api/node/*", "personal"],
 
   ["*", "/api/assistant/*", "assistant"],

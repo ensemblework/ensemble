@@ -226,7 +226,7 @@ function showStatus(ownerId: string, roomId: string, nodeId: string, state: "thi
 async function withdraw(app: FastifyInstance, told: NodeTurn[], ownerId: string): Promise<boolean> {
   let started = false;
   for (const turn of told) {
-    const dropped = await app.prisma.nodeTurn.updateMany({ where: { id: turn.id, status: "queued" }, data: { status: "failed", error: "The task was taken away before this turn started.", finishedAt: new Date() } });
+    const dropped = await app.prisma.nodeTurn.updateMany({ where: { id: turn.id, status: "queued" }, data: { status: "failed", outcome: "cancelled", error: "The task was taken away before this turn started.", finishedAt: new Date() } });
     if (dropped.count) {
       if (turn.roomId) showStatus(ownerId, turn.roomId, turn.nodeId, "idle");
       continue;

@@ -69,6 +69,7 @@ import { assignable, registerTaskAssignment, taskNodeWork } from "./task-assignm
 import { nodeNeedsInEnsemble, sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
 import { answerFromChat } from "./chat-answers.js";
 import { FileQuote, registerFileWorkspace, validateFileQuotes } from "./file-workspace.js";
+import { registerTraceRoutes } from "./trace-routes.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -376,6 +377,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   await registerTakeoverRoutes(app, nodeAccount);
   // A task given to a node or a crew from its owner field: the node, or the crew's lead, hears once (node/task-assignment.ts).
   registerTaskAssignment(app);
+  // A turn's trace and the decisions about it, for the node's owner only (node/trace.ts).
+  registerTraceRoutes(app, nodeAccount);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};

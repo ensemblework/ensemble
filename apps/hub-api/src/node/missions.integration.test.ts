@@ -317,6 +317,7 @@ test("a newer message from the owner merges with a turn that has not acted yet",
   assert.deepEqual(replies.map((row) => row.body), ["Both: eggs and milk."], "one answer covering both messages");
   const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
   assert.match(turns[0]!.error ?? "", /Merged into the next turn/);
+  assert.deepEqual(turns.map((row) => [row.status, row.outcome]), [["done", "coalesced"], ["done", "done"]], "the merged turn's real outcome is kept");
 });
 
 test("a newer message never stops a turn bound to something else (an approval); a merged turn's update goes on with the turn that answers", async () => {
@@ -422,6 +423,8 @@ test("stop needs no model: it stops the conversation's work and says what stoppe
   await settleTurns();
   const after = (await read(mira, room.id)).slice(before);
   assert.deepEqual(after.map((row) => [row.authorKind, row.body]), [["human", "stop"], ["system", "Stopped the reply in progress. What was already done stays."]]);
+  const stopped = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  assert.deepEqual([stopped.status, stopped.outcome], ["done", "cancelled"], "a stopped reply keeps its real outcome");
 });
 
 test("an outbox effect delivered twice starts one turn; a restart re-runs a turn that had not acted and resumes one that had", async () => {
