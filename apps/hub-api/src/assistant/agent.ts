@@ -710,10 +710,12 @@ async function drive(
           args.emit({ type: "status", text });
         },
       };
+      // How many messages of the chat its session took part in before this one; another message of this turn keeps it.
+      const position = args.subscription?.sessionKey ? undefined : await sessionPosition(app.prisma, args.conversationId, args.messageId);
       const done = await runSubscriptionTurn({
         ...base,
         prompt: conversation.prompt,
-        ...(args.subscription?.sessionKey ? {} : { position: await sessionPosition(app.prisma, args.conversationId, args.messageId) }),
+        ...(position === undefined ? {} : { position }),
         ...(attached?.files.length
           ? {
               files: {
@@ -771,23 +773,24 @@ async function drive(
       await callMetric(done);
       /**
        * One more message in the same session of the agent, after its turn (a reply asked for, the answer check's
-       * feedback, a claim to correct): only on a computer that keeps the session, and only while the turn neither
-       * stopped nor waits for its owner. Its words count only when the agent went on in that session; a message
-       * that cannot be sent leaves the turn as it was.
+       * feedback, a claim to correct): only to the computer that ran the turn, into the session that took it (`followUp`,
+       * at the turn's own position), and only while the turn neither stopped nor waits for its owner. That computer gone,
+       * or the session no longer there, the message is not sent at all and the turn keeps what it had. Its words count
+       * only when the agent went on in that session.
        */
-      const goesOn = () => done.sessionKept && !stop.signal.aborted && !nodeTools?.parking();
+      const goesOn = () => done.resumable && !stop.signal.aborted && !nodeTools?.parking();
       const again = async (prompt: string, why: (typeof followUps)[number]): Promise<string | null> => {
         if (!goesOn()) return null;
-        followUps.push(why);
         args.onRewrite?.();
         try {
-          const run = await runSubscriptionTurn({ ...base, prompt });
+          const run = await runSubscriptionTurn({ ...base, prompt, ...(position === undefined ? {} : { position }), followUp: done.computerId ? { computerId: done.computerId } : {} });
+          followUps.push(why);
           traceUsage(args.trace, run.tokensIn, run.tokensOut, null);
           await callMetric(run, why);
           answered = run.model || answered;
           return run.resumed === true ? run.text.trim() || null : null;
         } catch (error) {
-          if (!stop.signal.aborted) app.log.warn({ err: error, agent, why }, "The agent's session could not be asked again; the turn keeps what it had");
+          if (!stop.signal.aborted) app.log.warn({ err: error, agent, why }, "Another message of the turn was not sent to the agent's session; the turn keeps what it had");
           return null;
         }
       };

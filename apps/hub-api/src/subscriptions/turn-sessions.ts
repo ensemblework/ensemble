@@ -105,14 +105,19 @@ export async function findSession(key: string, agent: SubscriptionProvider, inst
  */
 export type Declined = "expired" | "moved" | "rotated" | "instructions";
 
-/** `findSession`, and why the chat's session of this agent is not resumed when it has one. */
-export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<{ found: Found | null; declined?: Declined }> {
+/**
+ * `findSession`, and why the chat's session of this agent is not resumed when it has one. `followUp`: another
+ * message of the turn at `position` (`resume: "only"`), which only the session that took that turn may take.
+ */
+export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number, followUp = false): Promise<{ found: Found | null; declined?: Declined }> {
   return serial(async () => {
     const entry = (await read())[key];
     if (!entry || !entry.id || entry.agent !== agent) return { found: null };
     if (Date.now() - entry.at >= keepMs(entry)) return { found: null, declined: "expired" };
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
     if (position !== undefined && entry.next !== undefined && position > entry.next) return { found: null, declined: "moved" };
+    // A session that did not take the turn (its turn ran elsewhere, or could not keep its session) would miss it.
+    if (followUp && position !== undefined && entry.next !== position + 2) return { found: null, declined: "moved" };
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return { found: null, declined: "rotated" };
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return { found: null, declined: "instructions" };
     return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) } };
@@ -181,15 +186,13 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
     const retired = sameAgent ? [...(before?.retired ?? []), ...(retiring ? [before!.id] : [])].filter((one) => one && one !== id) : [];
     const continued = before && before.id === id;
     const from = continued ? before.from : opts.next === undefined ? undefined : Math.max(0, opts.next - 2);
-    // A message that went on in the same session within one turn (assistant/agent.ts) comes without a place in the chat: the session keeps its own.
-    const next = opts.next ?? (continued ? before.next : undefined);
     const dir = opts.folder ? undefined : (opts.dir ?? before?.dir);
     store[key] = {
       agent,
       id,
       instructions: instructionsHash(instructions),
       at: now,
-      ...(next === undefined ? {} : { next }),
+      ...(opts.next === undefined ? {} : { next: opts.next }),
       ...(from === undefined ? {} : { from }),
       // An agent that keeps the first message's instructions: the text, to send only what changes.
       ...(opts.perTurn ? {} : { text: instructions }),

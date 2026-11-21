@@ -6,7 +6,7 @@
  */
 import { hostname } from "node:os";
 import type { Device } from "@prisma/client";
-import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
@@ -114,6 +114,11 @@ export type SubscriptionTurnInput = {
   sessionKey?: string;
   /** How many messages the chat had before this one. */
   position?: number;
+  /**
+   * Another message of a turn that ran on `computerId` (none: this computer, on the desktop runtime), at that turn's
+   * `position`: it goes there or nowhere (`followUpComputer`), and only into the session that took the turn.
+   */
+  followUp?: { computerId?: string };
   /** An Ensemble Node's project, whose folder its chats share (agents.ts `SessionGroup`), and how long its sessions are kept unused. */
   group?: { id: string; name: string };
   keepDays?: number;
@@ -168,31 +173,60 @@ export function turnFiles(computer: TurnComputer, prompt: string, files: Subscri
 }
 
 /** The message and the chat so far: a session on the computer when it keeps one, else the chat folded in front of the message. */
-export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position" | "group" | "keepDays" | "title">): Pick<AgentTurnSpec, "prompt" | "session"> {
+export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position" | "group" | "keepDays" | "title" | "followUp">): Pick<AgentTurnSpec, "prompt" | "session"> {
   const history = input.history?.trim() ?? "";
   if (input.sessionKey && (computer.local || computer.turns >= ASSISTANT_TURN_SESSIONS)) {
     return {
       prompt: input.prompt,
       session: {
         key: input.sessionKey,
-        history,
+        // Another message of a turn never starts a session, so it needs no chat so far.
+        history: input.followUp ? "" : history,
         ...(input.position === undefined ? {} : { position: input.position }),
         ...(input.group ? { group: input.group } : {}),
         ...(input.keepDays ? { keepDays: input.keepDays } : {}),
         ...(input.title?.trim() ? { title: input.title.trim().slice(0, 200) } : {}),
+        ...(input.followUp ? { resume: "only" as const } : {}),
       },
     };
   }
   return { prompt: history ? `${history}\n\n---\n\n${input.prompt}` : input.prompt };
 }
 
+/** Another message of a turn cannot go where the turn ran (`followUpComputer`): it is not sent anywhere else. */
+export class FollowUpUnavailable extends RuntimeError {
+  constructor(name: string) {
+    super(`${name} cannot take another message of this turn now.`, 409);
+  }
+}
+
+/**
+ * The computer for another message of a turn: the one that ran it (`computerId`; none: this one, on the desktop
+ * runtime), still online, with the agent signed in, and new enough to keep that message in the turn's session
+ * (`ASSISTANT_TURN_FOLLOW_UPS`). Never another computer: another one's session of the chat did not take the turn.
+ */
+export async function followUpComputer(prisma: Prismaish, userId: string, agent: SubscriptionProvider, computerId: string | undefined): Promise<TurnComputer> {
+  if (isDesktopRuntime()) {
+    if (computerId) throw new FollowUpUnavailable("This computer");
+    return { local: true, name: hostname().replace(/\.local$/, "") || "this computer" };
+  }
+  if (!computerId) throw new FollowUpUnavailable("The computer that ran this turn");
+  const device = await prisma.device.findFirst({ where: { id: computerId, userId: { in: deviceOwners(userId) }, revokedAt: null } });
+  if (!device) throw new FollowUpUnavailable("The computer that ran this turn");
+  const { turns, agents } = computerAgents(device);
+  const found = agents.find((row) => row.id === agent) ?? null;
+  if (!deviceOnline(device.lastSeenAt) || turns < ASSISTANT_TURN_FOLLOW_UPS || !found || found.signedIn === false) throw new FollowUpUnavailable(device.name);
+  return { local: false, id: device.id, name: device.name, agent: found, turns };
+}
+
 /**
  * `ownTools`: the computer that ran the turn kept the agent's own tools (one too old for them runs it with Ensemble's only).
- * `sessionKept`: it ran in the chat's session there, so another message of the same turn can go on in it (assistant/agent.ts).
+ * `resumable`: it ran in the chat's session there and takes another message of the same turn in it (`followUp`, assistant/agent.ts).
  */
-export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise<AgentTurnResult & { computer: string; computerId?: string; ownTools: boolean; sessionKept: boolean }> {
+export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise<AgentTurnResult & { computer: string; computerId?: string; ownTools: boolean; resumable: boolean }> {
   const label = SUBSCRIPTION_INFO[input.agent].label;
-  const computer = await pickComputer(input.prisma ?? defaultPrisma, input.userId, input.agent, input.settings.models.computer ?? null);
+  const prisma = input.prisma ?? defaultPrisma;
+  const computer = input.followUp ? await followUpComputer(prisma, input.userId, input.agent, input.followUp.computerId) : await pickComputer(prisma, input.userId, input.agent, input.settings.models.computer ?? null);
   const turn = turnSession(computer, input);
   // A node's turn keeps the agent's own tools only where the computer judges them by the node's policy and asks its owner.
   const capable = computer.local || computer.turns >= ASSISTANT_TURN_NODE_TOOLS;
@@ -262,7 +296,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
       output: result.text,
       meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}), ...(result.restart ? { restart: result.restart } : {}) },
     });
-    return { ...result, computer: computer.name, ...(computer.local ? {} : { computerId: computer.id }), ownTools, sessionKept: Boolean(turn.session) };
+    return { ...result, computer: computer.name, ...(computer.local ? {} : { computerId: computer.id }), ownTools, resumable: Boolean(turn.session) && (computer.local || computer.turns >= ASSISTANT_TURN_FOLLOW_UPS) };
   } catch (error) {
     logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
     if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);

@@ -73,8 +73,10 @@ export type AgentTurnSpec = {
    * `history` is the chat so far, sent only when the turn starts a new session, and `position` how
    * many messages the chat had before this one (a session resumes only where it left the chat).
    * `title` names a new session in the agent's own app (app-sessions.ts); older computers ignore it.
+   * `resume: "only"` (`assistantTurns` 6): another message of the turn at `position`, which goes on in the
+   * session that took that turn or fails; it never starts a session.
    */
-  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number; title?: string } | null;
+  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number; title?: string; resume?: "only" } | null;
   /**
    * The agent's own web search and page reading (Claude Code's WebSearch and WebFetch, Codex's live
    * web_search, Copilot's web_search and web_fetch): on the person's plan, so a node reads the web
@@ -176,6 +178,9 @@ class SessionBusy extends Error {
 }
 /** This version of the agent cannot keep a session: the turn runs without one. */
 class SessionUnsupported extends Error {}
+
+/** Why another message of a turn was not sent (`resume: "only"`): the session that took the turn cannot go on here. */
+const NOT_KEPT = "The session that took this turn is not on this computer any more, so this message was not sent.";
 
 /** The first message of a session: Ensemble's instructions, for agents that have no system prompt, then the message. */
 const opening = (spec: AgentTurnSpec, session: TurnSession) => (session?.resume ? spec.prompt : `${spec.system}\n\n---\n\n${spec.prompt}`);
@@ -1088,7 +1093,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
     const perTurn = spec.agent === "claude-code" || spec.agent === "codex";
     const position = spec.session?.position;
-    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position) : null;
+    // Another message of a turn goes on in the session that took that turn, or is not sent: never in a new one.
+    const only = spec.session?.resume === "only";
+    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position, only) : null;
     const kept = look?.found ?? null;
     // Why the chat's earlier session, when it has one, does not go on: recorded with the turn (session-restart.ts).
     let restart: Restart | null = look?.declined ? restartOf(look.declined) : null;
@@ -1104,6 +1111,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
     if (found && update === null) restart = restartOf("instructions");
     const earlier = found && update !== null ? found.id : null;
+    if (only && !earlier) throw new AgentTurnError("failed", NOT_KEPT);
     // Stopped because the node's turn parked: the chat keeps this session, now holding the message and the wait for the
     // owner, as after a turn that ended. Claude Code and Copilot run in the session they are given; the others say theirs.
     const keepParked = async (session: TurnSession, error: unknown): Promise<void> => {
@@ -1153,6 +1161,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began, ...next }).catch(() => undefined));
       }
       if (io.signal.aborted || !key) throw error;
+      if (only) throw error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported ? new AgentTurnError("failed", NOT_KEPT) : error;
       if (error instanceof SessionGone || error instanceof SessionBusy) {
         restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
         // What the person added there before it could not be reopened still comes in.

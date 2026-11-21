@@ -287,22 +287,30 @@ test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's
   assert.ok(!JSON.stringify(trace).includes("No conversation found"), "the agent's own words stay out");
 });
 
-type PlanSpec = { prompt: string; session?: { key: string; position?: number } | null };
-type PlanAnswer = { tools?: Array<{ name: string; input: Record<string, unknown> }>; text: string; resumed?: boolean };
+type PlanSpec = { prompt: string; session?: { key: string; position?: number; resume?: string; history?: string } | null };
+type PlanAnswer = { tools?: Array<{ name: string; input: Record<string, unknown> }>; text: string; resumed?: boolean; before?: () => Promise<unknown> };
+type PlanComputer = { laptop: { id: string }; key: Awaited<ReturnType<typeof h.asToken>> };
 
-/** A node on its owner's GitHub Copilot plan, on a paired computer that keeps the chat's session (`assistantTurns` 3). */
+const COPILOT_AGENT = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true };
+
+/** A paired computer of `owner` with GitHub Copilot, on Ensemble that takes another message of a turn in its session (`assistantTurns` 6). */
+async function pairComputer(owner: HttpUser, name: string, lastSeenAt = new Date()): Promise<PlanComputer> {
+  const key = await h.asToken(owner, "device");
+  const laptop = await h.prisma.device.create({ data: { userId: owner.id, name, platform: "linux", appVersion: "cli-0.9.0", tokenId: key.id, lastSeenAt, capabilities: { assistantTurns: 6, agents: [{ ...COPILOT_AGENT, checkedAt: new Date().toISOString() }] } } });
+  return { laptop, key };
+}
+
+/** A node on its owner's GitHub Copilot plan, on one paired computer. */
 async function onPlan(name: string) {
   const owner = await person(name);
-  const key = await h.asToken(owner, "device");
-  const copilot = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true, checkedAt: new Date().toISOString() };
-  const laptop = await h.prisma.device.create({ data: { userId: owner.id, name: `${name}'s laptop`, platform: "linux", appVersion: "cli-0.8.5", tokenId: key.id, lastSeenAt: new Date(), capabilities: { assistantTurns: 3, agents: [copilot] } } });
+  const { laptop, key } = await pairComputer(owner, `${name}'s laptop`);
   const { node, room } = await createNode(owner, "assistant");
   await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
   return { owner, key, laptop, node, room };
 }
 
-/** The owner's agent on that computer: each run the web hands it (in order) calls the tools `answer` names, then answers. */
-function agentOn(plan: Awaited<ReturnType<typeof onPlan>>, answer: (spec: PlanSpec, index: number) => PlanAnswer) {
+/** The owner's agent on a computer: each run the web hands it (in order) calls the tools `answer` names, then answers. */
+function agentOn(plan: PlanComputer, answer: (spec: PlanSpec, index: number) => PlanAnswer) {
   const specs: PlanSpec[] = [];
   const failures: unknown[] = [];
   const stop = sseHub.onFrame(({ userId, frame }) => {
@@ -315,6 +323,7 @@ function agentOn(plan: Awaited<ReturnType<typeof onPlan>>, answer: (spec: PlanSp
           specs.push(spec);
           const said = answer(spec, specs.length - 1);
           for (const tool of said.tools ?? []) assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/tool`, payload: tool })).statusCode, 200);
+          await said.before?.();
           const result = { text: said.text, model: "gpt-6.1-sol", tokensIn: 10, tokensOut: 2, costUsd: null, resumed: said.resumed ?? specs.length > 1 };
           assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result } })).statusCode, 200);
         })().catch((error: unknown) => failures.push(error)),
@@ -338,7 +347,7 @@ test("on its owner's plan, an agent that did the work and wrote nothing is asked
   assert.equal(agent.specs[1]!.prompt, REPLY_PROMPT);
   assert.equal(agent.specs[1]!.session?.key, agent.specs[0]!.session?.key, "the same native session");
   assert.equal(agent.specs[0]!.session?.position, 0);
-  assert.equal(agent.specs[1]!.session?.position, undefined, "a message within the turn does not move the chat's place");
+  assert.deepEqual([agent.specs[1]!.session?.position, agent.specs[1]!.session?.resume, agent.specs[1]!.session?.history], [0, "only", ""], "at the turn's own place, only in the session that took it");
   let rows = await read(plan.owner, plan.room.id);
   assert.equal(rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)?.body, "Added “Pay rent” to your tasks.");
   assert.ok(!rows.some((row) => row.kind === "error"), "no error in the chat");
@@ -366,6 +375,50 @@ test("on its owner's plan, an agent that did the work and wrote nothing is asked
   const report = turn.trace!.report as Record<string, unknown>;
   assert.deepEqual([report.kind, report.outcome, report.emptyReply, report.verified], ["reply", "done", true, null]);
   assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
+});
+
+test("on its owner's plan, another message of a turn goes only to the computer that ran the turn: never to another one, and not at all once that one is gone", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Kofi");
+  const desktop = await pairComputer(plan.owner, "Kofi's desktop", new Date(Date.now() - 60_000));
+  const lastSeen = (computer: PlanComputer, at: number) => h.prisma.device.update({ where: { id: computer.laptop.id }, data: { lastSeenAt: new Date(at) } });
+  const other = agentOn(desktop, () => ({ text: "Wrong computer." }));
+  const task = (title: string) => [{ name: "hub_create_tasks", input: { tasks: [{ title }] } }];
+  try {
+    // The turn runs on the laptop, seen last; before it ends the desktop is seen later, so a computer chosen again would be the desktop.
+    let agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "Added “Call the bank” to your tasks." } : { tools: task("Call the bank"), text: "", resumed: false, before: () => lastSeen(desktop, Date.now() + 1000) }));
+    try {
+      await say(plan.owner, plan.room.id, "add a task to call the bank");
+    } finally {
+      agent.stop();
+    }
+    assert.deepEqual([agent.failures, other.failures], [[], []]);
+    assert.equal(other.specs.length, 0, "nothing went to the desktop");
+    assert.equal(agent.specs.length, 2);
+    assert.deepEqual([agent.specs[1]!.prompt, agent.specs[1]!.session?.key, agent.specs[1]!.session?.position, agent.specs[1]!.session?.resume], [REPLY_PROMPT, agent.specs[0]!.session?.key, 0, "only"]);
+    let reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+    assert.equal(reply.body, "Added “Call the bank” to your tasks.");
+
+    // The laptop goes before its turn ends: the message is sent nowhere, and the reply says what the turn did.
+    await lastSeen(desktop, Date.now() - 60_000);
+    await lastSeen(plan, Date.now());
+    agent = agentOn(plan, () => ({ tools: task("Water the plants"), text: "", before: () => lastSeen(plan, Date.now() - 10 * 60_000) }));
+    try {
+      await say(plan.owner, plan.room.id, "and one to water the plants");
+    } finally {
+      agent.stop();
+    }
+    assert.deepEqual([agent.failures, other.failures], [[], []]);
+    assert.deepEqual([agent.specs.length, other.specs.length], [1, 0], "no second message, on any computer");
+    const rows = await read(plan.owner, plan.room.id);
+    reply = rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+    assert.match(reply.body, /^Done: .*Water the plants/);
+    assert.ok(!rows.some((row) => row.kind === "error"), "no error in the chat");
+    const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+    assert.deepEqual([turn.outcome, (turn.trace!.report as { emptyReply?: boolean }).emptyReply, (turn.trace!.loop as { followUps?: string[] }).followUps], ["done", true, undefined]);
+  } finally {
+    other.stop();
+  }
 });
 
 test("on its owner's plan, a reply that says a screenshot is attached when none reached the chat goes back once; still false, the claim goes and a plain note says so", async () => {

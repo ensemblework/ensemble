@@ -164,10 +164,9 @@ test("why a chat's session is not resumed: expired, moved on elsewhere, rotated,
     assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 2), { found: { id: "session-1", text: null } });
     assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 6), { found: null, declined: "moved" }, "a turn ran elsewhere since");
     assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 0), { found: { id: "session-1", text: null } }, "ahead of the chat: it answered a turn the chat keeps as failed, and misses nothing");
-    // Another message of the same turn (asked for its reply, or what the answer check found missing) has no place in the chat: the session keeps its own.
-    await saveSession(key, "claude-code", "session-1", "Instructions", { perTurn: true });
-    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 6), { found: null, declined: "moved" }, "still at 2");
-    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 2), { found: { id: "session-1", text: null } });
+    // Another message of the turn at 0 goes on only in the session that took that turn: its place is right after it.
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 0, true), { found: { id: "session-1", text: null } });
+    assert.deepEqual(await lookSession(key, "claude-code", "Instructions", true, 2, true), { found: null, declined: "moved" }, "the turn at 2 never ran in it");
     assert.deepEqual(await lookSession(key, "codex", "Instructions", true, 2), { found: null }, "another agent: nothing to restart");
     assert.deepEqual(await lookSession("chat-never-0001", "claude-code", "Instructions", true, 0), { found: null });
     await saveSession(key, "claude-code", "session-1", "Instructions", { next: ROTATE_MESSAGES + 2, perTurn: true });

@@ -74,3 +74,38 @@ test("a claim nothing backs: one round of feedback, then the claim goes from the
   assert.equal(claimFeedback(deliveryClaims("I've attached report.md.")), "You said report.md is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
   for (const text of [only.feedback, only.corrected, mixed.corrected, two.corrected]) assert.doesNotMatch(text, /\u2014|--/, "no long dashes");
 });
+
+test("five replies: someone else's act and quoted or code text are no claims; a sentence ends after its abbreviations, and goes with its Markdown", () => {
+  const corrected = (text: string) => checkDelivery(text, none)?.corrected ?? text;
+  // Someone else did it: no claim of the node's own.
+  const theirs = "Your manager sent the report on Friday, and the client shared the screenshots in their reply.";
+  assert.equal(corrected(theirs), theirs);
+  // Words in quotes or code are not the node's.
+  const quoted = 'Your welcome email starts with "Here is the screenshot you asked for." and the CI bot posts `I\'ve attached the report.` after each run.';
+  assert.equal(corrected(quoted), quoted);
+  // "Dr." does not end the claim's sentence: all of it goes, and nothing of it is left behind.
+  assert.equal(corrected("I've attached the report for Dr. Rao. It covers the U.S. and U.K. offices, e.g. Austin and Leeds."), "It covers the U.S. and U.K. offices, e.g. Austin and Leeds.\n\nNo file was attached.");
+  // Neither does "e.g.": the whole sentence says more than the claim, so it stays, whole, with the note.
+  assert.equal(corrected("Attached is the screenshot, e.g. the checkout page with 3 items at $4.99 each."), "Attached is the screenshot, e.g. the checkout page with 3 items at $4.99 each.\n\nNo screenshot was attached.");
+  // A sentence goes with its emphasis and, alone on its line, with its bullet.
+  assert.equal(
+    corrected("Prices are in. **I've attached the screenshot.** Walmart is cheapest:\n\n- **Here is the screenshot.**\n- Walmart: $4.99\n- Target: $5.49"),
+    "Prices are in. Walmart is cheapest:\n\n- Walmart: $4.99\n- Target: $5.49\n\nNo screenshot was attached.",
+  );
+});
+
+test("whose act a claim is: the node's own, said with I or we or with no subject; never one someone else did or said", () => {
+  for (const text of ["I've sent you the screenshots.", "Sent you the screenshots.", "Fixed the bug and sent you the screenshots.", "I checked the page, fixed the bug and attached the screenshot.", "Hi Mira, I've attached the report.", "As requested, sent you the report.", "Done: attached the report."]) {
+    assert.equal(deliveryClaims(text).length, 1, text);
+  }
+  for (const text of ["Mira sent the screenshot yesterday.", "The client has already shared the report.", "Your manager checked the page and attached the screenshot.", "The client says the report is attached.", "Mira said here is the screenshot.", "> Here is the screenshot.", "```\nI've attached the report.\n```"]) {
+    assert.deepEqual(deliveryClaims(text), [], text);
+  }
+  // A quoted sentence ends where its quote does: the claim after it is the node's.
+  assert.deepEqual(kinds('Mira said "Thanks." Here is the screenshot.'), ["screenshot"]);
+  // A list item's number is no sentence of its own.
+  assert.equal(checkDelivery("Results:\n1. Here is the screenshot.\n2. Walmart has it for $4.99.", none)!.corrected, "Results:\n2. Walmart has it for $4.99.\n\nNo screenshot was attached.");
+  // Emphasis that holds more than the claim keeps its marks.
+  assert.equal(checkDelivery("**Prices are in. Here is the screenshot.**", none)!.corrected, "**Prices are in.**\n\nNo screenshot was attached.");
+  assert.equal(checkDelivery("**Here is the screenshot. Prices are in.**", none)!.corrected, "**Prices are in.**\n\nNo screenshot was attached.");
+});
