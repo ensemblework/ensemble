@@ -288,7 +288,7 @@ test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's
   assert.ok(!JSON.stringify(trace).includes("No conversation found"), "the agent's own words stay out");
 });
 
-type PlanSpec = { prompt: string; session?: { key: string; position?: number; resume?: string; history?: string } | null };
+type PlanSpec = { prompt: string; session?: { key: string; position?: number; resume?: string; history?: string } | null; tools?: Array<{ name: string }> };
 type PlanAnswer = { tools?: Array<{ name: string; input: Record<string, unknown> }>; text: string; resumed?: boolean; before?: () => Promise<unknown> };
 type PlanComputer = { laptop: { id: string }; key: Awaited<ReturnType<typeof h.asToken>> };
 
@@ -376,6 +376,24 @@ test("on its owner's plan, an agent that did the work and wrote nothing is asked
   const report = turn.trace!.report as Record<string, unknown>;
   assert.deepEqual([report.kind, report.outcome, report.emptyReply, report.verified], ["reply", "done", true, null]);
   assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
+});
+
+test("on its owner's plan, a tool the turn called through hub_use_tool is listed in the message that goes on in its session", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Ama");
+  const listed = (spec: PlanSpec) => (spec.tools ?? []).map((tool) => tool.name);
+  const agent = agentOn(plan, (spec) =>
+    spec.prompt === REPLY_PROMPT ? { text: "You have no routines yet." } : { tools: [{ name: "hub_use_tool", input: { name: "node_routines", input: { action: "list" } } }], text: "", resumed: false },
+  );
+  try {
+    await say(plan.owner, plan.room.id, "anything new?");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "the turn, then the reply asked for in its session");
+  assert.ok(!listed(agent.specs[0]!).includes("node_routines"), "left out of a turn its words did not call for");
+  assert.ok(listed(agent.specs[1]!).includes("node_routines"), "called once, it is shown for the rest of the turn");
 });
 
 test("on its owner's plan, another message of a turn goes only to the computer that ran the turn: never to another one, and not at all once that one is gone", async () => {

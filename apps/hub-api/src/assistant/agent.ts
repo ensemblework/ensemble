@@ -167,7 +167,7 @@ export interface AssistantTurnArgs {
   actAs?: ActAs;
   signal?: AbortSignal;
   /** Called just before a tool runs (not for held writes): Ensemble Node marks a turn that acts from this point. */
-  onToolStart?: (call: { name: string; isWrite: boolean; readOnly: boolean }) => void | Promise<void>;
+  onToolStart?: (call: { name: string; isWrite: boolean; readOnly: boolean; input: unknown }) => void | Promise<void>;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
   /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
@@ -829,7 +829,8 @@ async function drive(
         if (!goesOn()) return null;
         args.onRewrite?.();
         try {
-          const run = await runSubscriptionTurn({ ...base, prompt, ...(position === undefined ? {} : { position }), followUp: done.computerId ? { computerId: done.computerId } : {} });
+          // With the turn's tools as they are now: a hidden one it called, or a guide it loaded, is shown.
+          const run = await runSubscriptionTurn({ ...base, tools: toolSpecs(), prompt, ...(position === undefined ? {} : { position }), followUp: done.computerId ? { computerId: done.computerId } : {} });
           followUps.push(why);
           traceUsage(args.trace, run.tokensIn, run.tokensOut, null);
           await callMetric(run, why);
@@ -1482,7 +1483,7 @@ async function runTool(
   }
 
   try {
-    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite, readOnly: readsOnly(tool) });
+    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite, readOnly: readsOnly(tool), input });
     const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
