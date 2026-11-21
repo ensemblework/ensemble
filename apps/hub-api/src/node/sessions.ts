@@ -1080,6 +1080,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(_ctx, input) {
         if (input.session) {

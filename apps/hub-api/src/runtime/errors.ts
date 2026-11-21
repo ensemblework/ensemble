@@ -5,6 +5,7 @@
 
 import { INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE } from "@ensemble/shared-types";
 import { includedMessage } from "../included/errors.js";
+import { looksLikeData } from "../lib/text.js";
 
 export const DECRYPT_MESSAGE = "This stored key can't be decrypted. Re-enter it in Settings → Models.";
 
@@ -128,13 +129,14 @@ export function statusForProvider(status: number): number {
   return status === 429 || status === 503 || status === 400 || status === 404 ? status : 502;
 }
 
-/** What hub-api's HTTP client should surface for a runtime JSON error body. */
+/** What hub-api's HTTP client should surface for a runtime JSON error body: a sentence, never the body. */
 export function errorFromRuntimeBody(status: number, text: string): { message: string; statusCode: number } {
   let message = text.slice(0, 500);
   const statusCode = status === 503 || status === 400 || status === 429 || status === 404 ? status : 502;
   try {
-    const parsed = JSON.parse(text) as { detail?: unknown };
-    const detail = parsed.detail;
+    const parsed = JSON.parse(text) as unknown;
+    const detail = parsed && typeof parsed === "object" ? (parsed as { detail?: unknown }).detail : undefined;
+    message = typeof parsed === "string" ? parsed.slice(0, 500) : "";
     if (typeof detail === "string" && detail.trim()) message = detail.slice(0, 500);
     else if (detail && typeof detail === "object") {
       const record = detail as { message?: unknown };
@@ -143,6 +145,7 @@ export function errorFromRuntimeBody(status: number, text: string): { message: s
   } catch {
     // not JSON
   }
+  if (!message.trim() || looksLikeData(message)) message = `The request failed (${status}). Nothing more was changed.`;
   return { message, statusCode };
 }
 
