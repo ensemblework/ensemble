@@ -7,11 +7,29 @@
  * this process's memory: the hosted API is one process.
  */
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, runInScope } from "../sharing/context.js";
 import type { AgentTurnResult, AgentTurnSpec } from "./agents.js";
 import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "./bridge.js";
+
+/** The computer's request a relayed tool call came on: whether its answer reached the computer. */
+const relayedRequest = new AsyncLocalStorage<{ received: () => boolean }>();
+
+/** Runs a relayed tool call with how to tell, later, whether its answer reached the computer (its request may end first). */
+export function inRelayedRequest<T>(received: () => boolean, work: () => Promise<T>): Promise<T> {
+  return relayedRequest.run({ received }, work);
+}
+
+/**
+ * Inside a relayed tool call: whether its answer reached the computer (asked after the call ended); null
+ * elsewhere. Ensemble Node's tool journal (node/journal.ts) treats the computer's next identical call after
+ * an answer that never arrived as that same call again.
+ */
+export function answerReceived(): (() => boolean) | null {
+  return relayedRequest.getStore()?.received ?? null;
+}
 
 /** How long a computer has to pick a turn up before the person is told it did not. */
 export const PICKUP_MS = 20_000;

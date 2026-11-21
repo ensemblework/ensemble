@@ -13,7 +13,8 @@ import type { Device } from "@prisma/client";
 import { defineTool, ToolBlockedError, type AnyHubTool, type ToolResult } from "../../assistant/types.js";
 import { grantUpload } from "../../evidence/grants.js";
 import { DESKTOP_API, NodeDesktopAnswer } from "../../remote/contract.js";
-import { callComputer, callText, captureOperation, isResult, keepCaptures } from "../../node/device-tools.js";
+import { callComputer, callText, captureOperation, isResult, keepCaptures, missionOf } from "../../node/device-tools.js";
+import { recordingEnded, recordingStarted } from "../../node/recordings.js";
 import type { NodeScope } from "../../node/tools.js";
 import { imageMarker } from "./text.js";
 import { DESKTOP_TOOLS, desktopTimeoutMs } from "./tool-specs.js";
@@ -76,6 +77,12 @@ export function desktopTools(scope: NodeScope): AnyHubTool[] {
         if (isResult(done)) return done;
         const kept = await keepCaptures(ctx, scope, done, operation, "pictures", saving ? "video" : undefined);
         const parsed = NodeDesktopAnswer.safeParse(done.body);
+        // A recording going on is the node's until it is saved or discarded: a stop discards it (node/stop.ts).
+        if (spec.name === "desktop_record" && parsed.success && parsed.data.ok) {
+          const where = { deviceId: done.device.id, mission: missionOf(scope) };
+          if (input.action === "start") await recordingStarted(ctx.app.redis as never, node.id, where);
+          else await recordingEnded(ctx.app.redis as never, node.id, where);
+        }
         const picture = parsed.success ? parsed.data.image : undefined;
         const lines = [...kept.lines];
         if (picture && ctx.ownPlan) lines.push(imageMarker(picture.captureId));

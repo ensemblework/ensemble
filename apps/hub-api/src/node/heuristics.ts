@@ -1,6 +1,6 @@
 /**
  * The numbers Ensemble Node decides with (docs/35 §4, §5.7), in one versioned config: the router's
- * brakes. Every decision it records (`node_decisions`, node/trace.ts) names the config's version and
+ * brakes and the group modes' deadline. Every decision it records (`node_decisions`, node/trace.ts) names the config's version and
  * hash, so a decision can be judged again under other numbers.
  *
  * Tuning without a release: `ENSEMBLE_NODE_HEURISTICS_CONFIG` holds a JSON object with only the fields
@@ -15,7 +15,7 @@ const limit = (value: number) => z.number().int().min(1).max(1_000).default(valu
 
 export const NodeHeuristics = z.object({
   /** Change it with every change of the defaults; recorded on each decision. */
-  version: z.string().max(40).default("2026-11-21.1"),
+  version: z.string().max(40).default("2026-12-05.1"),
   router: z
     .object({
       /** Node messages in a row in a room (not a helper's room) after which a node's message wakes nobody. */
@@ -26,6 +26,17 @@ export const NodeHeuristics = z.object({
       humanFanout: limit(6),
       /** Nodes one node's message wakes at most. */
       nodeFanout: limit(3),
+      /**
+       * Node messages since the last person's message that the loop brakes read: a node repeating what it
+       * already said there (`duplicate`), or two nodes passing the same words back and forth (`cycle`), wakes nobody.
+       */
+      loopWindow: limit(12),
+    })
+    .default({}),
+  groups: z
+    .object({
+      /** Independent views (node/groups.ts): how long the nodes asked have to answer before their answers are brought together anyway. */
+      independentDeadlineSeconds: z.number().int().min(30).max(86_400).default(600),
     })
     .default({}),
 });

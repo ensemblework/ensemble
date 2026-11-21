@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleFrom, parseMentions, resolveMentions, uniqueHandle } from "./mentions.js";
-import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, routeRecord, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
+import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, loopBrake, routeRecord, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
 import { activeHeuristics, DEFAULT_NODE_HEURISTICS, heuristicsVersion, resetHeuristicsCache } from "./heuristics.js";
 import { cleanReply } from "./reply.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES, charterOf, nodeTemplate, paletteAvatar } from "./templates.js";
@@ -148,13 +148,41 @@ test("the brakes and fan-outs come from the heuristics config, and a decision re
     mentions: [{ kind: "node", id: "a" }, { kind: "node", id: "b" }, { kind: "node", id: "c" }],
     replyTo: { id: "m0", seq: 4, authorKind: "node" },
     leadNodeIds: [],
+    mode: "coordinated",
     nodes: [{ id: "a", active: true, authorsOwn: true }, { id: "b", active: true, authorsOwn: true }, { id: "c", active: true, authorsOwn: true }, { id: "d", active: false }],
-    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1 },
+    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1, loopWindow: 12 },
   });
   assert.deepEqual(record.choice, { reason: "mentioned", capped: 1, woken: [{ nodeId: "a", private: false, audience: "owner" }, { nodeId: "b", private: false, audience: "owner" }] });
   assert.ok(!JSON.stringify(record).includes("secret plans") && !JSON.stringify(record).includes("earlier words"), "never the message's words");
   const braked = routeRecord({ ...fromNode, id: "m2", roomId: "r1" }, dm, nodes, 2, tight, whoSpeaks(fromNode, dm, nodes, 2, tight));
   assert.deepEqual(braked.choice, { reason: "none", brake: "streak", woken: [] });
+});
+
+test("independent views: a message naming several nodes has each answer, and names who brings the answers together", () => {
+  const nodes = [node("lead", "mira"), node("a", "mira"), node("b", "mira"), node("ben-lead", "ben", { representative: true }), node("mira-lead", "mira", { representative: true }), node("steward", "ben")];
+  const crew = { kind: "crew" as const, leadNodeIds: ["lead"] };
+  const both = message({ authorId: "mira", mentions: [{ kind: "node", id: "a" }, { kind: "node", id: "b" }] });
+  assert.deepEqual(whoSpeaks(both, crew, nodes, 0), { reason: "lead", nodeIds: ["lead"] }, "coordinated (the default): the lead answers and coordinates");
+  assert.deepEqual(whoSpeaks(both, { ...crew, mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a", "b"], independent: { synthesizerId: "lead" } });
+  assert.deepEqual(whoSpeaks(message({ authorId: "mira", mentions: [{ kind: "node", id: "a" }] }), { ...crew, mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a"] }, "one node named: no round");
+  assert.deepEqual(whoSpeaks(both, { kind: "crew", leadNodeIds: [], mode: "independent" }, nodes, 0), { reason: "mentioned", nodeIds: ["a", "b"], independent: { synthesizerId: "a" } }, "no lead: the first named");
+  const leads = message({ authorId: "mira", mentions: [{ kind: "node", id: "ben-lead" }, { kind: "node", id: "mira-lead" }] });
+  const room = { kind: "room" as const, leadNodeIds: [] as string[], mode: "independent" as const };
+  assert.equal((whoSpeaks(leads, room, nodes, 0) as { independent?: { synthesizerId: string } }).independent?.synthesizerId, "mira-lead", "in a room: the author's own lead");
+  assert.equal((whoSpeaks(leads, { ...room, leadNodeIds: ["steward"] }, nodes, 0) as { independent?: { synthesizerId: string } }).independent?.synthesizerId, "steward", "or the room's steward");
+  const record = routeRecord({ ...both, id: "m1", roomId: "r1" }, { ...crew, mode: "independent" }, nodes, 0, DEFAULT_NODE_HEURISTICS.router, whoSpeaks(both, { ...crew, mode: "independent" }, nodes, 0));
+  assert.equal(record.inputs.mode, "independent");
+  assert.deepEqual([record.choice.independent, record.choice.synthesizerId], [true, "lead"]);
+});
+
+test("the loop brakes: a node saying again what it said since the last person's message, alone or back and forth with one other", () => {
+  const said = (authorNodeId: string | null, body: string) => ({ authorNodeId, body });
+  assert.equal(loopBrake([said("a", "@b can you check?"), said("b", "@a checked"), said("a", "@B Can you check")]), "cycle", "the same words passed back and forth");
+  assert.equal(loopBrake([said("a", "@b ship it"), said("a", "@b ship it!")]), "duplicate", "said twice in a row");
+  assert.equal(loopBrake([said("a", "@b ship it"), said("b", "@c look"), said("c", "@a done"), said("a", "@b ship it")]), "duplicate", "repeated with more than one other in between");
+  assert.equal(loopBrake([said("a", "@b check part 1"), said("b", "@a done"), said("a", "@b check part 2")]), null, "new words go on");
+  assert.equal(loopBrake([said("b", "@a ship it"), said("a", "@b ship it")]), null, "another node's words, not its own");
+  assert.equal(loopBrake([said("a", "@b")]), null);
 });
 
 test("an override of the heuristics config changes only what it names; an invalid one is ignored and logged", () => {

@@ -37,6 +37,8 @@ import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
 import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
+import { deliveryCase, recordSteer, settleSteers, steerOperation, type SteerChild, type Worker } from "./steering.js";
+import { parentChoice, profileChoice, resolveStepRole, rolesEnabled } from "./roles.js";
 import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction, type SessionActor, type SessionVia } from "./session-queue.js";
 import { engineNamed, makerProblem, readinessProblem } from "../lib/agent-fit.js";
 import { fitMessage, fitSessions, type Fit } from "./session-fit.js";
@@ -67,7 +69,7 @@ export type SessionEnv = {
 };
 
 const Agent = z.enum(["ensemble", ...CODE_ENGINES]);
-export const DELIVERIES = ["queue", "steer", "replace"] as const;
+export const DELIVERIES = ["queue", "amend", "steer", "replace"] as const;
 export type Delivery = (typeof DELIVERIES)[number];
 
 const options = AssignInput.omit({ taskId: true, instructions: true, session: true });
@@ -105,6 +107,7 @@ export const SendInput = z
       .default("queue")
       .describe(
         "queue: after what the session is doing and what is queued in it (now, when it is idle). " +
+          "amend: a change to the run going on that does not need to stop it: it reads the change as soon as its current turn ends, before anything queued (in its brief, when it has not started). " +
           "steer: change the run going on now: it is interrupted and goes on at once in the same conversation with this update, keeping what it did; what is queued stays after it. " +
           "replace: stop the run going on and drop what is queued, then do this instead.",
       ),
@@ -596,16 +599,36 @@ async function nodeFits(env: SessionEnv, agent: CodeEngine, deviceId: string | n
 /** A new session with one of the owner's coding agents. */
 export async function startSession(env: SessionEnv, input: StartInput): Promise<Started> {
   await refuseWhenPaused(env);
+  const profile = input.profile ? chooseProfile(env.ctx, input.profile) : nodeRunProfile(env.ctx.settings, env.node);
   // A plan step's runs go as its owner asked the lead (agent, model, thinking, context), unless named here.
   if (env.plan?.planStep) {
     const run = await stepRun(env.prisma, env.plan.planId, env.plan.planStep);
     // Written by the lead in its own words ("copilot", "GitHub Copilot"): read as the agent it names.
     const agent: z.infer<typeof Agent> | undefined = run.agent?.trim().toLowerCase() === "ensemble" ? "ensemble" : engineNamed(run.agent);
-    input = { ...input, agent: input.agent ?? agent, model: input.model ?? run.model, effort: input.effort ?? run.effort, context: input.context ?? run.context };
+    if (rolesEnabled(env.ctx.settings)) {
+      // Roles (beta): the step's kind of work picks its agent and model, in a fixed order (node/roles.ts).
+      const step = await env.prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: env.plan.planId, id: env.plan.planStep } }, select: { kind: true } });
+      const resolution = await resolveStepRole(
+        env.app,
+        { userId: env.node.userId, nodeId: env.node.id, planId: env.plan.planId, stepId: env.plan.planStep, stepKind: step?.kind ?? null },
+        {
+          explicit: { agent: input.agent, model: input.model, effort: input.effort },
+          assignment: { agent, model: run.model, effort: run.effort },
+          profileRoles: profile.roles ?? null,
+          globalRoles: env.ctx.settings.node?.roles?.global ?? null,
+          parent: parentChoice(env.node),
+          subscriptionDefault: profileChoice(profile),
+        },
+      );
+      if (!resolution.ok) throw new ToolBlockedError(resolution.error, "Tell your owner in one line what to set.");
+      const chosen = resolution.choice;
+      input = { ...input, agent: (chosen.agent as z.infer<typeof Agent> | undefined) ?? input.agent, model: chosen.model ?? input.model, effort: chosen.effort ?? input.effort, context: input.context ?? run.context };
+    } else {
+      input = { ...input, agent: input.agent ?? agent, model: input.model ?? run.model, effort: input.effort ?? run.effort, context: input.context ?? run.context };
+    }
   }
   // What was asked, as asked (the step's settings count as asked); the profile fills in the rest.
   const requested = requestedSettings(input);
-  const profile = input.profile ? chooseProfile(env.ctx, input.profile) : nodeRunProfile(env.ctx.settings, env.node);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
   // The profile's agent is only a default: a model named here that it cannot run goes to an agent that can.
@@ -657,6 +680,11 @@ async function noteAction(env: SessionEnv, sessionId: string, action: SessionAct
   await refreshSessionCards(env.prisma, env.node.userId, sessionId);
 }
 
+/** A queued run that is an amendment waiting for the run before it to end its turn (`context.amend`). */
+function amendOf(context: unknown): boolean {
+  return Boolean(context && typeof context === "object" && (context as { amend?: unknown }).amend);
+}
+
 /**
  * Adds a change to a run that has not been claimed yet: a steer's change, or the brief of any other
  * run (both are read when the computer claims it). False when it was claimed meanwhile.
@@ -703,7 +731,11 @@ async function stopOnComputer(env: SessionEnv, jobIds: string[]): Promise<string
   return live.map((job) => job.id);
 }
 
-/** The next message for one of this node's sessions: queued, steering the run going on, or replacing it. */
+/**
+ * The next message for one of this node's sessions: queued, an amendment for the run going on, steering it,
+ * or replacing it. Each is recorded first as a steering (node/steering.ts: its case from the delivery, how it
+ * is done from the session's state); an amendment that cannot be recorded is not sent.
+ */
 export async function sendToSession(env: SessionEnv, input: SendInput): Promise<Started> {
   const { prisma, node } = env;
   await refuseWhenPaused(env);
@@ -730,8 +762,42 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
   const runs = await runsOfSession(prisma, scopeOf(node), session.id);
   const chain = liveOrder(runs, session.id);
   const active = chain[0];
+  // No agent session takes a change while it runs: an amendment goes into its brief or its next turn.
+  const worker: Worker = { state: !active ? "idle" : active.status === "queued" ? "queued" : "running", acted: Boolean(active && ranOnComputer(active)), canSteer: false };
+  const kind = deliveryCase(input.delivery);
+  const replaced: SteerChild[] = input.delivery === "replace" ? chain.map((run) => ({ kind: "run" as const, id: run.id, title: truncateText(run.title, 80) })) : [];
+  const steerId = await recordSteer(env.app, {
+    userId: node.userId,
+    nodeId: node.id,
+    roomId: env.room.id,
+    kind,
+    target: "session",
+    targetId: session.id,
+    operation: steerOperation(kind, worker),
+    worker,
+    ...(replaced.length ? { children: { stopped: replaced } } : {}),
+  });
+  if (kind === "amendment" && !steerId) throw new ToolBlockedError("The change could not be recorded, so it was not sent.", "Try again in a moment.");
+  try {
+    const done = await deliver(env, input, { session, runs, chain, requested, steerId });
+    await settleSteers(env.app, steerId ? [steerId] : [], kind === "amendment" ? "accepted" : "done", { jobId: typeof done.data.jobId === "string" ? done.data.jobId : null });
+    return done;
+  } catch (error) {
+    await settleSteers(env.app, steerId ? [steerId] : [], "rejected");
+    throw error;
+  }
+}
+
+async function deliver(
+  env: SessionEnv,
+  input: SendInput,
+  known: { session: AgentSession; runs: SessionRun[]; chain: SessionRun[]; requested: SettingValues; steerId: string | null },
+): Promise<Started> {
+  const { prisma, node } = env;
+  const { session, runs, chain, requested } = known;
+  const active = chain[0];
   let delivery: Delivery = input.delivery;
-  if (delivery === "steer" && !active) delivery = "queue";
+  if ((delivery === "steer" || delivery === "amend") && !active) delivery = "queue";
   if ((delivery === "steer" || delivery === "replace") && chain.length && !env.plan?.planStep && env.via !== "card") {
     const step = await ownStep(prisma, node, session.id);
     if (step) env = { ...env, plan: step };
@@ -751,11 +817,25 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
       return { summary: `Added to the change already going in to “${active!.title}” (${where}).`, data: { session: session.id, jobId: pending.id } };
     }
   }
+  if (delivery === "amend") {
+    // Not started yet: the change goes into its brief.
+    if (active!.status === "queued" && (await amendQueued(prisma, active!.id, input.prompt))) {
+      await noteAction(env, session.id, "amend", active!.id, { title: active!.title, joined: true });
+      return { summary: `“${active!.title}” had not started yet, so the change is in its brief (${where}).`, data: { session: session.id, jobId: active!.id, delivery } };
+    }
+    // A change already waiting for the run's next turn: this one joins it, in order.
+    const pending = chain[1];
+    if (pending && pending.continueFromJobId === active!.id && amendOf((await prisma.workspaceJob.findUnique({ where: { id: pending.id }, select: { context: true } }))?.context) && (await amendQueued(prisma, pending.id, input.prompt))) {
+      await noteAction(env, session.id, "amend", pending.id, { title: active!.title, joined: true });
+      return { summary: `Added to the change already waiting for “${active!.title}” (${where}).`, data: { session: session.id, jobId: pending.id, delivery } };
+    }
+  }
 
   const steering = delivery === "steer";
+  const amending = delivery === "amend";
   const fallbackTitle = input.title ?? truncateText(input.prompt.split("\n")[0]!.trim(), 80);
-  // A steer is the same task going on; anything else is a new task in the session.
-  const task = steering
+  // A steer or an amendment is the same task going on; anything else is a new task in the session.
+  const task = steering || amending
     ? { id: active!.taskId, direct: (await prisma.nodeRun.findFirst({ where: { jobId: active!.id }, select: { direct: true } }))?.direct ?? false, made: false }
     : await taskFor(env, { taskId: input.taskId, title: fallbackTitle, prompt: input.prompt });
   const cleanup = task.made ? () => prisma.task.delete({ where: { id: task.id } }) : undefined;
@@ -769,7 +849,7 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.context ? { context: input.context } : {}),
       ...(input.mode ? { mode: input.mode } : {}),
-      ...(steering || !task.direct ? { instructions: input.prompt } : {}),
+      ...(steering || amending || !task.direct ? { instructions: input.prompt } : {}),
     });
     // Each setting is kept from the session, the agent's own default, or as named (workspace/assign.ts).
     const asked: JobRequest = {
@@ -795,7 +875,7 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
   // a replacement, the last run that reached the computer (a run never claimed has no folder there).
   // These are where it starts from; when it is claimed it continues the run that actually ran last.
   const fresh = delivery === "replace" && !chain.some(ranOnComputer) && !runs.some((row) => !LIVE_RUN.has(row.status) && ranOnComputer(row));
-  if (steering) body.continueFromJobId = active!.id;
+  if (steering || amending) body.continueFromJobId = active!.id;
   else if (delivery === "queue" && chain.length) body.continueFromJobId = chain[chain.length - 1]!.id;
   else if (delivery === "replace") {
     const anchor = chain.find(ranOnComputer) ?? [...runs].reverse().find((row) => !LIVE_RUN.has(row.status) && ranOnComputer(row));
@@ -808,7 +888,7 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
       if (first.repoUrl) body.repoUrl = first.repoUrl;
     }
   }
-  const jobId = await queueJob(env, withAppliedSettings(body, requested), steering ? { steer: { update: input.prompt } } : {}, cleanup, true);
+  const jobId = await queueJob(env, withAppliedSettings(body, requested), steering ? { steer: { update: input.prompt } } : amending ? { amend: { steerId: known.steerId } } : {}, cleanup, true);
   const sessionId = fresh ? jobId : session.id;
 
   // Only once the new run exists does anything stop. Its place in the queue is set under the session's
@@ -819,6 +899,10 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
     const now = await prisma.workspaceJob.findUnique({ where: { id: active!.id }, select: { status: true, cancelRequestedAt: true } });
     if (now && now.status !== "stopping" && !now.cancelRequestedAt) await stopJob(env.app, node.userId, active!.id);
     await quiet(env.app, [active!.id], "steered", takenBy(env));
+  } else if (amending) {
+    // The run going on is not stopped: the change is its next turn, before anything queued.
+    await prisma.workspaceJob.updateMany({ where: { continueFromJobId: active!.id, status: "queued", id: { not: jobId } }, data: { continueFromJobId: jobId } });
+    await placeInQueue(prisma, scopeOf(node), session.id, jobId, "first");
   } else if (delivery === "replace" && chain.length) {
     const ids = chain.map((row) => row.id);
     // What is queued never starts; then what is on the computer (or reached it meanwhile) stops.
@@ -830,14 +914,16 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
     await placeInQueue(prisma, scopeOf(node), session.id, jobId, "last");
   }
 
-  const title = steering ? `Update: ${active!.title}` : fallbackTitle;
+  const title = steering ? `Update: ${active!.title}` : amending ? `Change: ${active!.title}` : fallbackTitle;
   await followRun(env, { jobId, taskId: task.id, title: truncateText(title, 200), prompt: input.prompt, sessionId, direct: task.direct, delivery, requested });
   await noteAction(env, sessionId, delivery, jobId, { title: truncateText(title, 200), ...(Object.keys(requested).length ? { settings: requested } : {}) });
   if (fresh) await refreshSessionCards(prisma, node.userId, session.id);
   const waiting = delivery === "queue" && chain.length ? ` It starts after ${chain.length === 1 ? `“${chain[0]!.title}”` : `the ${chain.length} runs ahead of it`}.` : "";
   const verb = steering
     ? `Steered “${active!.title}”: it goes on with your change`
-    : delivery === "replace"
+    : amending
+      ? `Added your change for “${active!.title}”: it reads it as soon as its current turn ends, before anything queued`
+      : delivery === "replace"
       ? `Stopped what the session was doing${chain.length ? ` (${chain.length} run${chain.length === 1 ? "" : "s"})` : ""} and started this instead`
       : chain.length
         ? "Queued in the session"
@@ -860,6 +946,19 @@ export async function stopSession(env: SessionEnv, input: z.infer<typeof StopInp
   // A queued run claimed meanwhile is on its computer now: it stops too unless the queue is kept.
   const stopped = await stopOnComputer(env, input.queued === "drop" ? [...busy, ...queued.filter((id) => !dropped.includes(id))] : busy);
   const targets = [...stopped, ...dropped];
+  const child = (id: string): SteerChild => ({ kind: "run", id, title: truncateText(chain.find((row) => row.id === id)?.title ?? "", 80) || undefined });
+  await recordSteer(env.app, {
+    userId: node.userId,
+    nodeId: node.id,
+    roomId: env.room.id,
+    kind: "stop",
+    target: "session",
+    targetId: session.id,
+    operation: "stop",
+    worker: { state: busy.length ? "running" : "queued", acted: chain.some(ranOnComputer), canSteer: false },
+    outcome: "done",
+    children: { stopped: targets.map(child), ...(input.queued === "keep" && queued.length ? { kept: queued.map(child) } : {}) },
+  });
   await quiet(env.app, stopped, "stopped", takenBy(env));
   await noteAction(env, session.id, "stop", stopped[0] ?? null, { queued: input.queued, stopped: stopped.length, dropped: dropped.length });
   const titles = chain.filter((row) => targets.includes(row.id)).map((row) => `“${row.title}”`);
@@ -961,7 +1060,14 @@ function describeCall(call: SessionCall): string {
     return `Start ${agent}${where}: ${input.title}\n\n${truncateText(input.prompt, 1200)}`;
   }
   const input = call.input;
-  const verb = input.delivery === "steer" ? "Change the run going on in its session" : input.delivery === "replace" ? "Replace what its session is doing" : "Next in its session";
+  const verb =
+    input.delivery === "steer"
+      ? "Change the run going on in its session"
+      : input.delivery === "amend"
+        ? "Add a change for the run going on in its session"
+        : input.delivery === "replace"
+          ? "Replace what its session is doing"
+          : "Next in its session";
   return `${verb}${input.title ? `: ${input.title}` : ""}\n\n${truncateText(input.prompt, 1200)}`;
 }
 
@@ -1053,7 +1159,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
     area: "tasks",
     description:
       "Send the next message to one of your sessions (node_sessions): the same agent goes on in its own conversation, in the same folder, remembering what it did, and the provider reuses its cache. " +
-      "delivery queue: after what it is doing (“then do Y”); steer: change the run going on (“do X this way instead”); replace: drop what it is doing and queued, do this instead (“stop X, do Y”).",
+      "delivery queue: after what it is doing (“then do Y”); amend: a change that does not need it to stop, read as soon as its current turn ends (“also …”); steer: change the run going on now (“do X this way instead”, “wait, change …”); replace: drop what it is doing and queued, do this instead (“stop X, do Y”).",
     input: SendInput,
     isWrite: false,
     risk: "medium",

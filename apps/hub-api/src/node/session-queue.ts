@@ -161,7 +161,7 @@ export async function refreshSessionCards(prisma: PrismaClient, accountId: strin
   return view.snapshot;
 }
 
-export type SessionAction = "queue" | "steer" | "replace" | "stop" | "reorder" | "cancel" | "answer" | "attention" | "adopt";
+export type SessionAction = "queue" | "amend" | "steer" | "replace" | "stop" | "reorder" | "cancel" | "answer" | "attention" | "adopt";
 export type SessionActor = "owner" | "node" | "watchdog";
 export type SessionVia = "chat" | "card" | "watchdog";
 
@@ -202,6 +202,7 @@ export function sessionEventLine(event: Pick<NodeSessionEvent, "action" | "actor
   const from = event.via === "card" ? " from the session card" : "";
   const what: Record<string, string> = {
     queue: `queued “${detail.title ?? "a message"}”`,
+    amend: `added a change for the run going on${detail.title ? ` (“${detail.title}”)` : ""}, for its next turn`,
     steer: `steered the run going on${detail.title ? ` (“${detail.title}”)` : ""}`,
     replace: `replaced what the session was doing with “${detail.title ?? "a new message"}”`,
     stop: "stopped the session",

@@ -35,7 +35,7 @@ const Params = z.object({ id: z.string().uuid() });
 const QueueParams = z.object({ id: z.string().uuid(), jobId: z.string().uuid() });
 const Control = z
   .object({
-    action: z.enum(["queue", "steer", "replace", "stop"]),
+    action: z.enum(["queue", "amend", "steer", "replace", "stop"]),
     prompt: z.string().trim().min(1).max(6000).optional(),
     title: z.string().trim().min(1).max(120).optional(),
     queued: z.enum(["keep", "drop"]).optional(),
@@ -197,7 +197,7 @@ export function registerSessionRoutes(app: FastifyInstance): void {
     return { session: { ...view.snapshot, runs: await recentRuns(prisma, view.runs, view.session.id) } };
   });
 
-  /** Queue, steer, replace or stop, as the node's node_session_send and node_session_stop do. */
+  /** Queue, amend, steer, replace or stop, as the node's node_session_send and node_session_stop do. */
   app.post("/api/node/sessions/:id/control", async (request) => {
     const accountId = owner(request);
     const { id } = Params.parse(request.params);
@@ -208,7 +208,7 @@ export function registerSessionRoutes(app: FastifyInstance): void {
       return { ok: true };
     }
     if (!body.prompt) throw fail(400, "Say what the agent should do.");
-    const done = await acting(() => sendToSession(env, { session: env.sessionId, prompt: body.prompt!, delivery: body.action as "queue" | "steer" | "replace", ...(body.title ? { title: body.title } : {}) }));
+    const done = await acting(() => sendToSession(env, { session: env.sessionId, prompt: body.prompt!, delivery: body.action as "queue" | "amend" | "steer" | "replace", ...(body.title ? { title: body.title } : {}) }));
     return { ok: true, jobId: (done.data as { jobId?: string }).jobId };
   });
 

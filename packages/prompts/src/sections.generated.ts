@@ -366,9 +366,9 @@ export const SECTIONS = {
   },
   "node/40-sessions": {
     folder: "node",
-    text: "- Your agent sessions: node_sessions lists them; other nodes' sessions are never yours.\n- The same line of work in the same repository or folder (the next step, a fix to what it just did): node_session_send to that session; it remembers the work and costs your owner less. Unrelated work, another repository, computer or agent: node_session_start. One session per piece of work.\n- While a run goes on: “then do Y” → delivery queue; “do X instead”, “also …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop. Unnamed, it is the session most recently active here; if two are equally likely, ask which.\n- Write the agent's message as your owner would: what to do and where, how to check it, what done looks like; ask it to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result.\n- A run that failed on its setup (a model or thinking level the agent refused, a folder it cannot open) is not tried again as it was: fix it once, or report it.\n- No Ensemble task first (only when your owner wants it on their board: hub_create_tasks, then pass taskId). Playbooks naming hub_assign_to_agent or hub_list_agent_sessions mean node_session_start / node_session_send and node_sessions here.",
+    text: "- Your agent sessions: node_sessions lists them; other nodes' sessions are never yours.\n- The same line of work in the same repository or folder (the next step, a fix to what it just did): node_session_send to that session; it remembers the work and costs your owner less. Unrelated work, another repository, computer or agent: node_session_start. One session per piece of work.\n- While a run goes on: “then do Y” → delivery queue; “also …” (a change it can take after its current turn) → amend; “do X instead”, “wait, change …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop. Unnamed, it is the session most recently active here; if two are equally likely, ask which.\n- Write the agent's message as your owner would: what to do and where, how to check it, what done looks like; ask it to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result.\n- A run that failed on its setup (a model or thinking level the agent refused, a folder it cannot open) is not tried again as it was: fix it once, or report it.\n- No Ensemble task first (only when your owner wants it on their board: hub_create_tasks, then pass taskId). Playbooks naming hub_assign_to_agent or hub_list_agent_sessions mean node_session_start / node_session_send and node_sessions here.",
     vars: [],
-    sha256: "9baa9d217257cf3094952a878f73470b45481bf02a6644916317194572d7565d",
+    sha256: "945502f38fe318c4c4b2e917f543b0495e727225a77a41d42709bafa418b0619",
   },
   "node/41-sessions-said": {
     folder: "node",
@@ -621,6 +621,18 @@ export const SECTIONS = {
     text: "{{note}}",
     vars: ["note"],
     sha256: "e7731cfbef3de3e32bf9adede4faefacf4df55c659eeb994846752c23a4b82b8",
+  },
+  "node/84-packet-turn": {
+    folder: "node",
+    text: "About this turn:\n{{facts}}",
+    vars: ["facts"],
+    sha256: "0884efd996a97f00fe3707cbff4b1a1fd738ccdbf042a0a0134bcb36a14af5e1",
+  },
+  "node/85-packet-steer": {
+    folder: "node",
+    text: "{{owner}} added this while you were working on it:\n{{messages}}\n\nTake it into account from here: change or add to what you are doing as it says. Keep what is already done unless it asks to undo it, and do not do anything twice.",
+    vars: ["messages","owner"],
+    sha256: "8672267e14c8c2f8d4827cf679cd963452c6dbbdbe79469797869cfb2398f6fe",
   },
 } as const satisfies Record<string, GeneratedSection>;
 

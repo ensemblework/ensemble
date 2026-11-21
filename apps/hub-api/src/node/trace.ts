@@ -197,7 +197,7 @@ export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, tr
   if (placement && JSON.stringify(placement) !== JSON.stringify(trace.placement)) await setPlacement(app, trace.turn.id, placement);
 }
 
-export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation";
+export type DecisionKind = "route" | "skill" | "memory" | "context" | "session" | "model" | "escalation" | "steer";
 
 export type Decision = {
   /** The account it decided for: whose message was routed, or whose node's turn it shaped. */
