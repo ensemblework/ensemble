@@ -29,11 +29,12 @@ from .rpc import Deadline, Request, RpcError, error, error_response, notificatio
 from .sessionenv import complete, manager_environment_reader, session_type  # noqa: E402
 
 APP_ID = "com.ensemblework.Ensemble"
+# The portal registers an app id only when its entry's program is on the portal's own PATH, which `sh` always is.
 DESKTOP_FILE = f"""[Desktop Entry]
 Type=Application
 Name=Ensemble
 Comment=Lets your Ensemble agents see and use this desktop when you allow it
-Exec=ensemble
+Exec=sh -c ensemble
 Terminal=true
 NoDisplay=true
 """
@@ -870,8 +871,20 @@ class Helper:
         if choice is None:
             raise error("unsupported_here", "No video encoder works here.")
         self.check(deadline, request_id, "no")
+        # Made here, only this user's, before the muxer writes into it.
+        try:
+            os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        except OSError as failure:
+            raise error("invalid_params", f"The recording's file could not be made ({type(failure).__name__}).")
         recording = Recording(source, target, choice, int(param(params, "fps", (int, float), 30)), int(param(params, "max_width", (int, float), 1920)), log)
-        recording.start()
+        try:
+            recording.start()
+        except BaseException:
+            try:
+                os.unlink(target)
+            except OSError:
+                pass
+            raise
         key = f"r{int(time.time() * 1000):x}"
         self.recordings = {name: rec for name, rec in self.recordings.items() if rec.active}
         self.recordings[key] = recording

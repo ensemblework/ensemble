@@ -1126,7 +1126,7 @@ export class DesktopService {
       durationMs,
       fps: durationMs > 0 ? Math.round((checked.frames * 1000) / durationMs) : 0,
       frames: checked.frames,
-      codec: checked.codec ?? recording.codec,
+      codec: recording.codec,
       poster: await still(checked.poster),
       preview: await still(checked.preview),
       held: true,
@@ -1209,6 +1209,7 @@ export class DesktopService {
       });
     }
     const reason = input.reason ?? "other";
+    if (reason === "consent" && this.session) return { holder: this.lease.holder, returned: this.lease.holder === "agent", session: "on", detail: "Screen control is allowed already: look with desktop_observe." };
     const waitMs = Math.min(240, Math.max(0, input.waitSec ?? 60)) * 1000;
     await this.run(15_000, async (deadline) => {
       this.lease.take("handoff");

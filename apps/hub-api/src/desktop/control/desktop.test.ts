@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -259,6 +260,27 @@ test("a step the helper does not answer in time may have run; the helper is star
   const status = await h.service.status();
   assert.equal(status.helper.restarts, 1);
   assert.equal(status.helper.state, "ready");
+});
+
+test("a recording is saved under a new name, never over a file, hashed, with its poster, and held", { timeout: 30_000 }, async () => {
+  const h = harness();
+  const a = caller();
+  const evidenceDir = join(root, "evidence-recording");
+  await h.service.recordStart(a, { evidenceDir });
+  await assert.rejects(h.service.recordStart(a, { evidenceDir }), (error: unknown) => error instanceof DesktopError && error.code === "recording_active");
+  const first = await h.service.recordSave(a, { name: "Demo run" });
+  assert.equal(first.path, join(evidenceDir, "demo-run.webm"));
+  assert.equal(first.codec, "vp8");
+  assert.equal(first.durationMs, 5000);
+  assert.equal(first.held, true);
+  assert.equal(first.sha256, createHash("sha256").update(readFileSync(first.path)).digest("hex"));
+  assert.ok(first.poster && existsSync(first.poster.path));
+  await h.service.recordStart(a, { evidenceDir });
+  const second = await h.service.recordSave(a, { name: "Demo run" });
+  assert.equal(second.path, join(evidenceDir, "demo-run-2.webm"));
+  await h.service.recordStart(a, { evidenceDir });
+  await h.service.recordDiscard(a);
+  assert.deepEqual(readdirSync(evidenceDir).filter((name) => name.endsWith(".part")), [], "a discarded recording leaves nothing");
 });
 
 test("the hard floor: Ensemble's own windows and pages, password prompts and secrets typed as text", { timeout: 30_000 }, async () => {
