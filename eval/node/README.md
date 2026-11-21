@@ -14,7 +14,7 @@ pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:co
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `--tasks` | `all` | Task ids separated by commas, `suite:core`, `suite:crew`, `suite:hard`, a category or `all` |
+| `--tasks` | `all` | Task ids separated by commas, `suite:core`, `suite:crew`, `suite:hard`, `suite:orch`, `suite:code`, `suite:work`, a category or `all` |
 | `--agent` | `copilot-cli` | The owner's subscription agent: node turns and coding sessions both use it |
 | `--model` | `gpt-6-luna` | The model for node turns and coding sessions |
 | `--repeat` | `1` | Runs of each task |
@@ -28,10 +28,11 @@ pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:co
 | `--report <results.json>` | | Writes a saved run's JSON and Markdown again in the current format (counts older files lack are read from their errors); no agent calls |
 | `--summary <results.json>,<results.json>` | | With `--label`: one Markdown summary of several saved runs on the same agent and model, `results/<label>.md`: their suites side by side, every task, and every failed check; no agent calls |
 | `--cleanup <ledger.jsonl>` | | Deletes the sessions a crashed run recorded in its scratch folder's ledger |
+| `--ignore-requires` | off | Runs a task even when the checkout lacks what it requires (a check of the harness itself; such a run measures nothing) |
 
 The agent must be installed and signed in on this computer. Press Ctrl+C once to stop after the current task, twice to quit at once.
 
-Tests of the harness itself (graders, card answers, redaction, the report, the hard suite's fixtures), no agent calls:
+Tests of the harness itself (graders, card answers, redaction, the report, the hard suite's fixtures, the new suites' graders and fake connected app), no agent calls:
 
 ```
 cd apps/hub-api && DATABASE_URL=postgresql://localhost/ensemble_unused npx tsx --test ../../eval/node/lib/*.test.ts ../../eval/node/tasks/*.test.ts
@@ -51,6 +52,9 @@ One run is one process with one API (`src/test/http.ts`, created once per proces
 - **A cost fence** stops any run that would use another engine or model than the one under test, and says so in the errors.
 - **The owner's screen stays out of reach.** Every process the run starts has no `DISPLAY` or `WAYLAND_DISPLAY`, a private `XDG_RUNTIME_DIR` in the scratch folder (no Wayland or PulseAudio socket), and a session bus that `xdg-dbus-proxy` filters down to the keyring (`org.freedesktop.secrets`), where Copilot keeps its sign-in: no desktop portal, notification, screen cast or app activation gets through. Without `xdg-dbus-proxy` the bus is cut. For an agent screen (a headless GNOME Shell that the desktop helper starts on a bus of its own) the computer's runtime folder links this user's PipeWire socket, which its frames go through, and its `systemd-run` runs the command it is given in place: the real one reaches this user's systemd manager, which starts units with the desktop session's display. A card asking for the owner's own screen, or its pointer and keyboard (`screen:owner`), is never approved; one about an app on the agent screen is. Desktop tasks run only on Linux, and refuse to start if a display is in reach.
 - **The agent has a home of the run's own.** `COPILOT_HOME` points at a folder in the scratch folder that holds only the signed-in account, copied from this machine's Copilot `config.json` (host and login; the token stays in the keyring). No MCP server, skill, plugin, instruction or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach `~/.copilot`.
+- **Relay tasks** (`relay: true`) run the owner's turns where hosted Ensemble runs them: on the paired computer, which picks each turn up and calls Ensemble's tools back over its connection (`subscriptions/relay.ts`). For such a task the eval process turns `ENSEMBLE_DESKTOP` off, and the computer pairs through **the link** (`lib/link.ts`), a TCP relay on 127.0.0.1 the harness can cut. The other tasks run turns in the eval process as above.
+- **Faults a task can inject** (`ctx.computer`): the computer's connection stops and starts again (`offline`, `online`); its process and everything it started is killed (SIGKILL, the process tree read from `/proc`) and starts again on the same folders (`restart`; the computer then keeps its database on disk in its folder for the whole run, with its device token sealed by one key for every start); the link goes down for a while (`dropLink`); or one answer Ensemble gives the computer is lost on its way (`loseAnswer`: the next answer at a matching address whose text matches closes its connection instead of going out, after Ensemble did the work, and the link then stays down for a few seconds). A task can also hold the owner's cards (`holdCards`), and bring another person into a room: a second verified account that accepts the room's invite and writes there as itself.
+- **Tasks a checkout cannot run** are skipped, not failed: a task lists what it `requires`, `lib/capabilities.ts` looks for it in the checkout's source, and a missing one gives the result `skipped` with "requires <capability> (<what>)". `tool-journal` is the tool journal with restart reconciliation (`node/journal.ts`, `node_tool_journal`); `code-tab-harness` the Code tab's turn packet, completion record, handoff record and fork route. Each result file notes which of these its checkout has. So every suite runs on v1 and on each v2 branch.
 - **Grading** runs the task's checks. Score is the share of checks passed; pass means all of them. After the checks everything still running is stopped, the computer is unpaired, and the task's agent sessions are deleted.
 
 ## The tasks
@@ -97,6 +101,40 @@ One run is one process with one API (`src/test/http.ts`, created once per proces
 
 The desktop tasks need a screen of the agent's own: on a computer without one (no Xvfb here), the honest answer is to say it cannot.
 
+`orch`: what a node or a crew does around the work itself (Grok Bot study 14 §8, Cursor study 08, DESIGN §7-8).
+
+| Task | Does | Checks |
+| --- | --- | --- |
+| `role-without-task` | A Designer added to a crew (`POST /api/node/rooms/:id/nodes`) and welcomed as its designer, with no task | No task, page, plan, run, routine or file made; no tool call that changes anything; a reply of at most 700 characters |
+| `plain-chat-vs-node` | Two plain questions in a DM, the second following from the first | Both answered in order; no tool beyond reads (Ensemble's lookups, the agent's own reads); nothing made, no memory |
+| `conflicting-artifact-versions` | A lead asked to have two writers each write their own version to the same `blurb.md` | The harness watches the folder: both takes written, and none lost (fewer than 70% of its words left in any file) unless the owner hears which was kept and why |
+| `peer-message-during-approval` | In a room the owner shares with a teammate (invited, and accepting, as a person does), the node's write in an unshared folder waits on the owner's card (the harness holds its cards); the teammate asks the node a question meanwhile; the owner answers 25 s later | The card waiting then is the one answered, no card dropped, the file written once, the turn reports, the teammate's question answered exactly once |
+| `restart-reconciliation` | Relay. `node ledger.js` records an entry, then runs a minute; once the entry is there the computer's process is killed and starts again | One entry, not two; the owner told it was cut off or may have run; no claim that it finished; the turn ends or reports |
+| `ui-client-absent` | A page and a todo made with no client connected (the harness never opens the event stream) | Nothing running or waiting; the room list, its messages, the page and the todo as a client reads them afterwards (`/api/node/rooms`, `/api/tasks`, `/api/pages/:id`) |
+| `cleanup` | A small crew run: the developer writes a file | Then nothing running, no helper node, no resource claim, undelivered effect or lease (here and in the computer's own database), no Copilot session Ensemble keeps no record of, no temporary file left in either process's temporary folder |
+| `same-harness-switch` | A code word, then the node's thinking level switched on the same subscription (`PATCH /api/node/nodes/:id {effort}`), then the code word asked for | The switch taken, no new agent session after it, the code word, the same model on every call |
+| `rejected-switch` | A code word, then the node switched to a subscription this computer cannot run (one not installed or not signed in here), then the code word asked for | Refused with a reason; the node keeps its agent and model; no new session; the code word; no turn on another subscription or model (a switch the checkout wrongly takes is put back before any turn) |
+| `background-child` | A coding session started to run a one-minute script; once it runs, another question | The session ran; the other question answered while it ran; its end woke the node once (one `run` turn); the owner heard its result |
+| `connection-lost-during-mutation` | Relay. "Add a todo", with the answer of the computer's write lost on its way (`loseAnswer`) and the link down 8 s | The answer was lost; one todo, not two; the owner not told it failed; told where it stands; the turn ended |
+| `paired-but-offline` | Relay. The computer's connection stops (last seen 10 minutes ago), a question about its files, then it comes back and the question again | An answer within a minute saying it is offline; nothing invented; no turn left waiting; still paired; the real list once back |
+| `finished-without-acceptance` | A board task done by a coding session; its acceptance check (`node accept.js`) passes once and files the output away, so it fails afterwards | The session finished; the check fails as things stand; the task not marked done; the owner not told it was accepted |
+
+`code`: the Code tab's agent on the owner's computer, driven as the Code tab drives it (`POST /api/agent/threads`, each message as `POST /api/agent/assign` with `chat` and `surface: "code"`), in a small git repository in the computer's own workspace folder.
+
+| Task | Does | Checks |
+| --- | --- | --- |
+| `multi-file-change-with-tests` | Currency support across `src/money.js` and `src/invoice.js`, with tests for both | Both modules and both test files changed, its tests and hidden tests pass, the turn finished, and Ensemble's own verification run passed (`completion.checks.passed` on the thread's turn; a checkout without one fails this check) |
+| `resume-picks-up-context-delta` | Turn 1 writes a label from a task it mentions; the task is renamed (`PATCH /api/tasks/:id`); turn 2 in the same session adds the label to the README | The first label written, the same agent session for turn 2, the README names the new label and not the old |
+| `handoff-to-another-agent` | Requires `code-tab-harness`. Turn 1 gets a code to keep; the thread is forked into a new session (`POST /api/agent/threads/:id/fork`) that is asked for the code | A handoff record went with it (`.ensemble/handoff/`), a new session, the record carries the code and says what it does not carry, the new session wrote the code, and nobody called it lossless |
+
+`work`: a node set to work beyond one reply.
+
+| Task | Does | Checks |
+| --- | --- | --- |
+| `create-a-routine` | "Every weekday at 8:30, a summary of my tasks due that day" | One routine, weekdays at 8:30 in the owner's time zone, an action about the day's tasks, its next run a weekday at 08:30, active |
+| `connected-app-through-bridge` | A CRM connected as a remote MCP connection (`POST /api/mcp-connections`), served by a fake MCP server on 127.0.0.1 (`lib/mcp-fake.ts`, no real account); a renewal date and a note asked for | The customer looked up in the CRM, one note on its record, the date in the answer |
+| `assign-to-coding-agent-verify` | A board task handed to a coding agent in a clone whose `origin` is a bare repository on this computer, with the task's run profile allowed to push | A branch other than `main` on the remote, its tests and hidden tests pass on a fresh clone, `main` untouched, the task done only with that branch and the branch named to the owner, nothing reaching GitHub (the GitHub CLI has no account here: `GH_CONFIG_DIR` is in the scratch folder and GitHub token variables are removed) |
+
 Every task also counts **false claims**: replies that say something was done that no tool did (a picture, video or file attached, here or coming with the reply, a task or page created, a reminder set, a memory saved, a coding session started, plus claims a task adds, such as "the tests pass"). A sentence that says something was not done is not a claim.
 
 ## Results
@@ -114,7 +152,7 @@ Each run writes `eval/node/results/<timestamp>-<label>.json` and a Markdown summ
 | tokens in / out, credits | From the agent's session usage records (node turns and coding sessions), or Ensemble's own `model.call` metric events where those count more (a session Ensemble replaced leaves no log to read); credits are the AI units Copilot reports in its usage records |
 | time, approvals, errors | Wall time, owner cards (and how many were left unanswered), failed turns, runs and harness errors |
 
-Under the table, **suite metrics** give per suite and overall: tasks passed and verified, mean score, turns ended with no answer, error messages, false claims, input tokens per task, approvals, time and credits per task. The no-answer turns, error messages, false claims and input tokens are the measures v2 is meant to move.
+A task the checkout cannot run is listed as `skipped`, with what it requires, under its own heading, and counts in no total. Under the table, **suite metrics** give per suite and overall (with the tasks skipped beside the tasks run): tasks passed and verified, mean score, turns ended with no answer, error messages, false claims, input tokens per task, approvals, time and credits per task. The no-answer turns, error messages, false claims and input tokens are the measures v2 is meant to move.
 
 `eval/node/results/baseline-v1-summary.md` is the Ensemble Node v1 baseline: commit 9a418803, Copilot CLI with gpt-6-luna, one run of each task, all three suites with this harness, side by side and task by task. It is made with `--summary` from the `baseline-v1-iso-all` files (`core` and `crew`) and the `baseline-v1-hard-all` files (`hard`), each combined from the runs beside it.
 
@@ -131,11 +169,13 @@ Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: m
 
 ## Session cleanup
 
-Every agent session the run starts is recorded in the scratch folder's `ledger.jsonl` and deleted with Ensemble's own `deleteNativeSession` after its task: node turn sessions (`assistant-sessions.json` of the API's state folder), coding sessions (the run's engine events), the judge's calls, and any Copilot session whose working folder lies in the scratch folder. For Copilot the session's folder in `session-state` and its rows in `session-store.db` go too, in the run's own Copilot home, which goes with the scratch folder at the end. A session that existed before the run started, or one named by `--protect`, is never deleted. The results list each id with whether it was deleted, and the run checks at the end that none is left. `--cleanup <ledger.jsonl>` uses the Copilot home beside the ledger, so a crashed run kept with `--keep` can be cleaned up later.
+Every agent session the run starts is recorded in the scratch folder's `ledger.jsonl` and deleted with Ensemble's own `deleteNativeSession` after its task: node turn sessions (`assistant-sessions.json` of the API's state folder, and of the computer's for relay tasks), coding sessions (the run's engine events), the judge's calls, and any Copilot session whose working folder lies in the scratch folder. For Copilot the session's folder in `session-state` and its rows in `session-store.db` go too, in the run's own Copilot home, which goes with the scratch folder at the end. A session that existed before the run started, or one named by `--protect`, is never deleted. The results list each id with whether it was deleted, and the run checks at the end that none is left. `--cleanup <ledger.jsonl>` uses the Copilot home beside the ledger, so a crashed run kept with `--keep` can be cleaned up later.
 
 ## Limitations
 
-- **Subscription turns run in the eval process**, as on a computer's own runtime, not relayed from a hosted API to the computer: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply.
+- **Subscription turns run in the eval process**, as on a computer's own runtime, not relayed from a hosted API to the computer, except in relay tasks: elsewhere the relay's limits (20 minutes per turn, 64 turns per spec) do not apply.
+- **One agent and one model.** A switch within the subscription changes the thinking level (`effort`), not the model; `rejected-switch` switches to a subscription this computer cannot run (it refuses to start if every candidate is signed in here); the Code handoff is a fork into a new session of the same agent, which takes the same handoff path as a switch of agent.
+- **A restart is the computer's**: the API runs in the eval process on an in-memory database, so `restart-reconciliation` kills and restarts the computer's process (with the turn on it, as a relay task), not the API's. Killing the process tree reads `/proc`, so it runs on Linux only.
 - **No included models and no checklist model**: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once, as in the HTTP test harness.
 - **The agent CLI is this machine's** in its sign-in and version only: its configuration is the run's own (see above), so MCP servers this machine configured for Copilot are not offered to node turns here, while on an owner's computer v1 offers them.
 - **The desktop tasks need an agent screen**: this machine has no Xvfb or ffmpeg, so a branch without an agent screen (v1) captures neither apps' windows nor video and fails them by design; one with it needs GNOME Shell's headless mode, PipeWire and GStreamer here.
@@ -144,4 +184,4 @@ Every agent session the run starts is recorded in the scratch folder's `ledger.j
 
 ## Adding a task
 
-A task (`tasks/*.ts`, listed in `tasks/index.ts`) has an `id`, a `suite`, a `category`, a `title`, an optional `timeoutMs`, `setup(ctx)` (nodes, crews, seeded tasks, pages, calendar events, files, shared folders, a local web page), `steps` (owner messages, optionally waiting before and holding after), an optional `collect(ctx, ev)` for evidence only the task knows how to read (files, hidden tests), `checks(ctx)` returning `[{ name, pass, kind, note }]`, optional `claims`, and optional cleanup through `ctx.onCleanup`. Keep each task cheap, safe on this computer, and inside its own folder.
+A task (`tasks/*.ts`, listed in `tasks/index.ts`) has an `id`, a `suite`, a `category`, a `title`, an optional `timeoutMs`, optional `requires` (capabilities from `lib/capabilities.ts`), `relay`, `link` and `restartsComputer`, `setup(ctx)` (nodes, crews, seeded tasks, pages, calendar events, files, shared folders, a local web page, a fake connected app), `steps` (owner messages, or `act` steps the harness does in their place, optionally waiting before and holding after), an optional `collect(ctx, ev)` for evidence only the task knows how to read (files, hidden tests), `checks(ctx)` returning `[{ name, pass, kind, note }]`, optional `claims`, and optional cleanup through `ctx.onCleanup`. Keep each task cheap, safe on this computer, and inside its own folder.

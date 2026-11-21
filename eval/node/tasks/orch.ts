@@ -11,7 +11,7 @@ import { asserts, check, norm, run } from "../lib/grade.js";
 import { seedTask, shareFolder, writeFiles } from "../lib/fixtures.js";
 import { codingSessions, copilotSessionsIn, turnSessions } from "../lib/sessions.js";
 import type { Task, TaskContext } from "../lib/types.js";
-import { LIVE_JOB } from "../lib/world.js";
+import { LIVE_JOB, type Owner } from "../lib/world.js";
 import { assistant, changingCalls, codingRunningFor, dateIn, filesIn, lastAnswer, linesOf, madeWork, modelCalls, newTasks, nodeSaid, othersSaid, readText, waitingCard, waitingCardIds } from "./helpers.js";
 
 const ORCH_MS = 12 * 60_000;
@@ -196,16 +196,27 @@ const conflictingVersions: Task = {
 
 // 4 · A peer's message while a turn waits on the owner's card.
 
+/** The other person in a task's room, who can write there as themselves. */
+const peers = new WeakMap<TaskContext, Owner>();
+
 const peerDuringApproval: Task = {
   id: "peer-message-during-approval",
   suite: "orch",
   category: "orchestration",
-  title: "A peer's question arrives while a turn waits on the owner's card: the card survives, one press finishes the work, the question is answered once",
+  title: "Another person in the room asks the node something while its turn waits on the owner's card: the card survives, one press finishes the work, the question is answered once",
   timeoutMs: ORCH_MS,
   setup: async (ctx) => {
-    await ctx.makeNode("lead", "manager");
     await ctx.makeNode("ops", "assistant", { slug: "ops" });
-    await ctx.makeCrew("crew", "Ops crew", ["lead", "ops"], "lead");
+    // A room the owner shares with a teammate, who joins through the invite as a person would.
+    const theo = await ctx.world.newOwner("Theo Park");
+    const made = await ctx.api<{ room: { id: string } }>("POST", "/api/node/rooms", { title: "Launch room", nodeIds: [ctx.nodes.ops!.id], invite: [theo.email] });
+    ctx.rooms.room = made.room.id;
+    const invites = (await theo.inject({ method: "GET", url: "/api/node/invites" })).json() as { invites?: Array<{ id: string; roomId?: string; room?: { id: string } }> };
+    const invite = (invites.invites ?? []).find((row) => (row.roomId ?? row.room?.id) === made.room.id) ?? invites.invites?.[0];
+    if (!invite) throw new Error("The teammate got no invite to the room.");
+    const accepted = await theo.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: {} });
+    if (accepted.statusCode >= 300) throw new Error(`The teammate could not join the room: ${accepted.statusCode} ${accepted.body.slice(0, 160)}`);
+    peers.set(ctx, theo);
     // Not shared: the first write there asks the owner.
     ctx.data.out = join(ctx.dir, "ops-out");
     writeFiles(ctx.data.out as string, { ".keep": "" });
@@ -213,17 +224,18 @@ const peerDuringApproval: Task = {
   },
   steps: [
     {
-      room: "crew",
+      room: "room",
       wait: "none",
       say: (ctx) => `@${ctx.nodes.ops!.slug} please create a file called approval-op.txt in ${ctx.data.out as string} on my computer, containing exactly the line: operation done. Then tell me it's there.`,
     },
     {
       before: { what: "a card waiting for the owner", until: waitingCard, timeoutMs: 6 * 60_000 },
       act: {
-        what: "the lead asks @ops a question while the card waits",
+        what: "the teammate asks @ops a question while the card waits",
         run: async (ctx) => {
           ctx.data.waitingAtPeer = await waitingCardIds(ctx);
-          await ctx.peerSay("lead", "crew", `@${ctx.nodes.ops!.slug} quick question while you work on that: what is 17 + 25? Just the number, please.`);
+          const posted = await peers.get(ctx)!.inject({ method: "POST", url: `/api/node/rooms/${ctx.rooms.room!}/messages`, payload: { body: `@${ctx.nodes.ops!.slug} quick question while you work on that: what is 17 + 25? Just the number, please.` } });
+          if (posted.statusCode >= 300) throw new Error(`The teammate could not post: ${posted.statusCode} ${posted.body.slice(0, 160)}`);
           ctx.data.peerAt = new Date().toISOString();
           return `waiting: ${(ctx.data.waitingAtPeer as string[]).length}`;
         },
@@ -266,12 +278,12 @@ const peerDuringApproval: Task = {
     const reported = ops.some((row) => row.at > peerAt && /(approval-op|operation done|created|is there|in place)/i.test(row.body));
     const answers42 = ops.filter((row) => /\b42\b/.test(row.body)).length;
     return [
-      check("a card waited for the owner when the peer wrote", waiting.length > 0, "trace", { evidence: true, note: waiting.join(", ") || "none" }),
-      check("the peer's message left it waiting, and that card was the one answered", waiting.length > 0 && waiting.some((id) => still.includes(id) && answered.includes(id)), "trace", { evidence: true, note: `waiting then ${still.length}, answered ${answered.length}` }),
+      check("a card waited for the owner when the teammate wrote", waiting.length > 0, "trace", { evidence: true, note: waiting.join(", ") || "none" }),
+      check("the message left it waiting, and that card was the one answered", waiting.length > 0 && waiting.some((id) => still.includes(id) && answered.includes(id)), "trace", { evidence: true, note: `waiting then ${still.length}, answered ${answered.length}` }),
       check("no card dropped or replaced", dropped.length === 0, "state", { evidence: true, note: dropped.map((row) => `${row.id.slice(0, 8)} ${row.status}`).join(", ") || "none" }),
       check("the operation ran once", Boolean(lines && lines.length === 1 && /operation done/i.test(lines[0]!)), "state", { evidence: true, note: lines ? `${lines.length} line(s)` : "no file" }),
       check("the waiting turn finished and said so", reported, "reply"),
-      check("the peer's question answered exactly once", answers42 === 1, "reply", { note: `${answers42} answer(s) with 42` }),
+      check("the teammate's question answered exactly once", answers42 === 1, "reply", { note: `${answers42} answer(s) with 42` }),
     ];
   },
 };

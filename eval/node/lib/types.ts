@@ -64,8 +64,6 @@ export type TaskContext = {
   request: (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, payload?: unknown) => Promise<{ status: number; body: string; json: () => unknown }>;
   /** While on, the owner answers no card: they wait as for an owner who is away. */
   holdCards: (on: boolean) => void;
-  /** A message from one of the task's nodes in a room, as that node would post it (its mentions wake who they name). */
-  peerSay: (fromKey: string, roomKey: string, text: string) => Promise<string>;
   /** The owner's computer: its link to Ensemble and its own process. */
   computer: ComputerControl;
 };

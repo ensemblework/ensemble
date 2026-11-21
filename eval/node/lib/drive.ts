@@ -76,19 +76,6 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
       states.get(drive)!.holding = on;
       trace.write("hold", { cards: on });
     },
-    peerSay: async (fromKey, roomKey, text) => {
-      const from = ctx.nodes[fromKey];
-      const roomId = ctx.rooms[roomKey];
-      if (!from || !roomId) throw new Error(`No node "${fromKey}" or room "${roomKey}" in this task.`);
-      const { postMessage, mentionsFor } = await import("../../../apps/hub-api/src/node/store.js");
-      const { dispatchMessage } = await import("../../../apps/hub-api/src/node/queue.js");
-      const members = await world.prisma.nodeRoomMember.findMany({ where: { roomId } });
-      const { message } = await postMessage(world.prisma, { roomId, userId: owner.id, authorKind: "node", authorNodeId: from.id, body: text, mentions: mentionsFor(text, members, []) });
-      await dispatchMessage(world.app, message);
-      trace.write("peer", { from: from.slug, room: roomKey, text });
-      input.log(`@${from.slug} → ${roomKey}: ${text.slice(0, 120)}`);
-      return message.id;
-    },
     computer: {
       offline: async () => {
         await world.computer.offline();
