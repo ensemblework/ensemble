@@ -37,6 +37,18 @@ export const OwnAskShape = z.object({
 });
 export type OwnAsk = z.infer<typeof OwnAskShape>;
 
+/**
+ * What an answer to an ask covers, the same on the computer and on the web: changes and commands in a
+ * folder (reading there too), calls to an address, one program that changes the system (for a run at
+ * most), or one call that names no path (that call only).
+ */
+export type OwnAskKind = "write" | "origin" | "program" | "unnamed";
+export function ownAskKind(ask: Pick<OwnAsk, "target" | "scope">): OwnAskKind {
+  if (ask.target.startsWith("program:")) return "program";
+  if (ask.target.startsWith("unnamed:")) return "unnamed";
+  return ask.scope === "origin" ? "origin" : "write";
+}
+
 /** The owner's answer: allowed, with the grant this computer keeps as a rule; or not, and why (`waiting`: the turn parks). */
 export const OwnAnswerShape = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("allow"), grant: z.object({ id: z.string().min(1).max(100), scope: z.enum(["once", "mission", "always"]), target: z.string().min(1).max(4096) }) }),

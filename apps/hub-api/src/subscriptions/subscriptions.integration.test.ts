@@ -377,7 +377,8 @@ type NodeSpec = {
   prompt: string;
   maxTurns?: number;
   ownTools?: boolean;
-  node?: { id: string; slug: string; mission: string; attended: boolean; trusted: boolean; sudo: boolean };
+  ownWeb?: boolean;
+  node?: { id: string; slug: string; mission: string; attended: boolean; sudo: boolean };
   session?: { key: string; position?: number } | null;
 };
 type RoomMessage = { id: string; kind: string; body: string; authorNodeId: string | null; data: Record<string, any> | null };
@@ -431,7 +432,7 @@ test("a node's turn on its owner's plan keeps the agent's own tools where the co
     const spec = specs[0]!;
     assert.equal(spec.ownTools, true, "its shell, files and web stay on");
     assert.equal(spec.maxTurns, undefined, "no turn limit of Ensemble's own");
-    assert.deepEqual(spec.node, { id: node.id, slug: node.slug, mission: `conversation:${room.id}:shared`, attended: true, trusted: true, sudo: true });
+    assert.deepEqual(spec.node, { id: node.id, slug: node.slug, mission: `conversation:${room.id}:shared`, attended: true, sudo: true });
     assert.match(spec.system, /all your own tools: your shell, files and web/);
     assert.match(spec.system, /once per folder, on a card in this chat/);
     assert.match(spec.system, /computer_sudo: your owner types their password on a card/);
@@ -501,10 +502,10 @@ test("an own call the node's policy asks about waits for its owner's card: answe
   try {
     await postTo(mira, room.id, "Fix the title on my site");
     const card = await pendingCard();
-    assert.deepEqual([card.data!.options, card.data!.call, card.data!.label, card.data!.capability], [["Allow", "Allow for this run"], site.operation, site.label, "files"], "one press, with exactly what would change");
+    assert.deepEqual([card.data!.options, card.data!.call, card.data!.label, card.data!.capability], [["Allow changes and commands", "Allow changes and commands for this run"], site.operation, site.label, "files"], "one press, saying exactly what it allows, with exactly what would change");
     assert.match(card.body, /@assistant wants to change files in ~\/projects\/site on Mira's laptop/);
     assert.deepEqual((await harness.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [mira.id], "for the owner only");
-    const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow for this run" } });
+    const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow changes and commands for this run" } });
     assert.equal(decided.statusCode, 200, decided.body);
     await settleTurns();
     assert.deepEqual(simulated.failures, []);
@@ -531,7 +532,7 @@ test("an own call the node's policy asks about waits for its owner's card: answe
 
     const later = await pendingCard();
     assert.equal(later.data!.call, blog.operation);
-    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${later.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow" } });
+    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${later.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow changes and commands" } });
     assert.equal(allowed.statusCode, 200, allowed.body);
     await until(async () => specs.length === 3, "the node to be woken");
     await settleTurns();
@@ -542,7 +543,7 @@ test("an own call the node's policy asks about waits for its owner's card: answe
     assert.equal(woken.session?.position, specs[1]!.session!.position! + 2, "where the parked turn left it");
     assert.equal((await replies()).at(-1)!.body, "Done.");
     const settled = (await roomMessages(mira, room.id)).find((row) => row.id === later.id)!;
-    assert.deepEqual([settled.data!.status, settled.data!.answer], ["allowed", "Allow"]);
+    assert.deepEqual([settled.data!.status, settled.data!.answer], ["allowed", "Allow changes and commands"]);
     assert.deepEqual(simulated.failures, []);
   } finally {
     if (waitSetting === undefined) delete process.env.ENSEMBLE_NODE_PERMISSION_WAIT_MS;
@@ -552,7 +553,7 @@ test("an own call the node's policy asks about waits for its owner's card: answe
   }
 });
 
-test("a turn another person started must ask before the agent reads its owner's files, so only an agent whose every read Ensemble sees keeps its own tools there", async () => {
+test("a turn another person started keeps Ensemble's tools only, whatever the agent, with its own web search where it had it", async () => {
   const { settleTurns } = await import("../node/queue.js");
   const mira = await harness.asUser();
   const ben = await harness.asUser();
@@ -579,18 +580,71 @@ test("a turn another person started must ask before the agent reads its owner's 
     await settleTurns();
     const handle = (await harness.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).handle;
 
-    specs.length = 0;
-    await postTo(ben, room.id, `@${handle} what is in Mira's notes folder?`);
-    await settleTurns();
-    assert.equal(specs.length, 1, "the node answers Ben in the room");
-    assert.deepEqual([specs[0]!.ownTools, specs[0]!.node?.trusted], [true, false], "Claude Code's every read comes to the judge: its own tools stay, and reading Mira's files asks her");
+    for (const provider of ["claude-code", "codex"] as const) {
+      await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider, model: provider === "codex" ? "gpt-5.5" : "haiku" } });
+      specs.length = 0;
+      await postTo(ben, room.id, `@${handle} what is in Mira's notes folder?`);
+      await settleTurns();
+      assert.equal(specs.length, 1, "the node answers Ben in the room");
+      assert.deepEqual([specs[0]!.ownTools, specs[0]!.node, specs[0]!.ownWeb], [undefined, undefined, true], `${provider}: Ensemble's tools and its own web search, no shell or files of its own`);
+      assert.match(specs[0]!.system, /reached only through Ensemble's tools/);
+    }
+    assert.deepEqual(simulated.failures, []);
+  } finally {
+    simulated.stop();
+  }
+});
 
-    await harness.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "codex", model: "gpt-5.5" } });
-    await postTo(ben, room.id, `@${handle} and her documents?`);
+test("an answer about the agent's own calls covers only what its card says: never one given to the node's computer tools; calls asking together share one card", async () => {
+  const { settleTurns } = await import("../node/queue.js");
+  const mira = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: mira.id }, data: { name: "Mira" } });
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE], nodeTools: 1 });
+  const { node, room } = await nodeOnPlan(mira);
+  const target = "/home/mira/projects/site";
+  // Mira let the node's computer tools share files from the folder, from then on.
+  await harness.prisma.agentDecision.create({
+    data: {
+      userId: mira.id, source: "ensemble", event: "question", toolName: "Computer tools", title: "@assistant wants to share files in site on Mira's laptop", status: "decided", decision: "allow", reason: "Always for this folder", decidedAt: new Date(),
+      expiresAt: new Date(Date.now() + 86_400_000),
+      detail: { options: ["Once", "This mission", "Always for this folder"], nodeTool: { nodeId: node.id, nodeSlug: node.slug, roomId: room.id, private: false, planId: null, planStep: null, mission: `conversation:${room.id}:shared`, deviceId: device.id, deviceName: "Mira's laptop", capability: "read", target, label: "site", scope: "folder", parked: [], delivered: true, announced: true } },
+    },
+  });
+  const change = (file: string) => ({ capability: "files", target, label: "~/projects/site", scope: "folder", operation: `Change: ~/projects/site/${file}`, what: `change ${file}` });
+  const crontab = { capability: "run", target: "program:crontab", label: "crontab", scope: "folder", operation: "Run: crontab -l\nIn: ~/ensemble-workspace/projects/assistant", what: "crontab -l" };
+  const answers: Array<Record<string, any>> = [];
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` });
+    const ask = async (payload: Record<string, unknown>) => (await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/ask`, payload })).json() as Record<string, any>;
+    answers.push(...(await Promise.all([ask(change("index.html")), ask(change("about.html"))])));
+    answers.push(await ask(crontab));
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
+  });
+  const cards = async () => (await roomMessages(mira, room.id)).filter((row) => row.kind === "approval" && row.data?.type === "computer");
+  try {
+    await postTo(mira, room.id, "Tidy the site");
+    // Both changes, asked at once, wait on one card.
+    await until(async () => (await cards()).find((row) => row.data?.status === "pending"), "the card about the changes");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const shown = await cards();
+    assert.equal(shown.length, 1, "one card for both calls");
+    assert.equal(await harness.prisma.agentDecision.count({ where: { userId: mira.id, status: "pending" } }), 1);
+    const card = shown[0]!;
+    assert.ok([change("index.html").operation, change("about.html").operation].includes(card.data!.call), "showing what one of them would change");
+    assert.match(card.body, /@assistant wants to change files in ~\/projects\/site on Mira's laptop/);
+    assert.deepEqual(card.data!.options, ["Allow changes and commands", "Allow changes and commands for this run"]);
+    const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow changes and commands for this run" } });
+    assert.equal(decided.statusCode, 200, decided.body);
+
+    const program = await until(async () => (await cards()).find((row) => row.data?.status === "pending" && row.data?.call === crontab.operation), "the card about crontab");
+    assert.match(program.body, /@assistant wants to run crontab on Mira's laptop/);
+    assert.deepEqual(program.data!.options, ["Allow once", "Allow for this run"], "a program that changes the system is never allowed from then on");
+    await mira.inject({ method: "POST", url: `/api/decisions/${program.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow once" } });
     await settleTurns();
-    assert.equal(specs.length, 2);
-    assert.deepEqual([specs[1]!.ownTools, specs[1]!.node], [undefined, undefined], "Codex reads with commands it runs without asking: Ensemble's tools only here");
-    assert.match(specs[1]!.system, /reached only through Ensemble's tools/);
+    const grant = { id: card.data!.decisionId, scope: "mission", target };
+    assert.deepEqual(answers, [{ decision: "allow", grant }, { decision: "allow", grant }, { decision: "allow", grant: { id: program.data!.decisionId, scope: "once", target: "program:crontab" } }], "the computer tools' answer for the folder did not count; one answer for both changes");
     assert.deepEqual(simulated.failures, []);
   } finally {
     simulated.stop();

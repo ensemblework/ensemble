@@ -41,7 +41,7 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
-import { OWN_READS_JUDGED, OWN_WEB_AGENTS } from "../subscriptions/agents.js";
+import { OWN_WEB_AGENTS } from "../subscriptions/agents.js";
 import type { OwnToolEvent } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 
@@ -561,12 +561,11 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
   const built = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
-  // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant): the computer judges each
-  // call by the node's folder policy, and what that asks goes to the owner on a card here (node/own-tool-asks.ts).
-  // The owner's own turn (they started it and only they read it) works in the node's folders without asking. Any other
-  // turn asks before it reads their files too, so there only an agent whose every read comes to that judge keeps them.
-  const trusted = ownerOnly && !fromNonOwner && !bound;
-  const ownTools = ownLoop && (!node.parentNodeId || helperGrant(node) === "computer") && (trusted || (isSubscriptionProvider(choice.provider) && OWN_READS_JUDGED.has(choice.provider)));
+  // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant) in a turn its owner started
+  // and only they read: the computer judges each call by the node's folder policy, and what that asks goes to the owner
+  // on a card here (node/own-tool-asks.ts). Any other turn (room-bound, another person's, a disclosure draft) can carry
+  // another person's instructions, which no check of a command's text can contain: it has Ensemble's tools only.
+  const ownTools = ownLoop && ownerOnly && !fromNonOwner && !bound && (!node.parentNodeId || helperGrant(node) === "computer");
   const plan = turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null;
   const ownPolicy: NodeTurnPolicy | null = ownTools
     ? {
@@ -575,9 +574,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         mission: missionOf({ plan, room, privateTo }),
         // A routine's work, or a run profile that runs unattended: nobody watches, so everything above the floor runs.
         attended: !(turn.planId && (await prisma.nodeMission.findUnique({ where: { id: turn.planId }, select: { routine: true } }))?.routine) && (await modeFor(prisma, node)).attended,
-        trusted,
         sudo: extraTools.some((tool) => tool.name === "computer_sudo"),
-        ...(node.parentNodeId ? { folders: helperFolders(node) } : {}),
+        // A helper given folders works only in them; one given none works as its parent does (node/helpers.ts).
+        ...(node.parentNodeId && helperFolders(node).length ? { folders: helperFolders(node) } : {}),
       }
     : null;
   const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider, ownTools) } : built;
@@ -631,7 +630,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
                     ownTools: true,
                     nodeTools: {
                       policy: ownPolicy,
-                      ask: ownToolAsker(app, { node, room, privateTo, lineage, turnId: turn.id, plan, trusted }),
+                      ask: ownToolAsker(app, { node, room, privateTo, lineage, turnId: turn.id, plan }),
                       onOwnTool(event: OwnToolEvent) {
                         // From the first own call that can change something, the turn is not run again from the start.
                         if (event.phase === "start") {

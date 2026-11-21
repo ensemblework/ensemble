@@ -581,15 +581,6 @@ async function reopen(rpc: RpcConnection, method: "session/load" | "session/resu
  */
 export const OWN_WEB_AGENTS: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "codex", "copilot-cli"]);
 
-/**
- * The agents whose every own call, file reads included, comes to Ensemble's judge before it runs: Claude Code
- * (its PreToolUse hook) and Copilot CLI (its preToolUse plugin). Codex runs the commands it considers safe
- * (`cat`, `ls`, `rg`…) without asking, and Cursor's agent and the ACP agents read without asking, so in a
- * node's turn that must ask its owner before reading their files (one its owner did not start, or that
- * others read) those agents work with Ensemble's tools.
- */
-export const OWN_READS_JUDGED: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "copilot-cli"]);
-
 /** Cursor's own requests during an assistant turn: only Ensemble's tools may run. */
 export function answerCursorTurn(method: string, params: Record<string, unknown>): unknown {
   if (method === "session/request_permission") {

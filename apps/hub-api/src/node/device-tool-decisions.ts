@@ -14,9 +14,11 @@
  * as its own rules).
  *
  * The agent's own calls in a node's turn on its owner's plan ask the same way (node/own-tool-asks.ts),
- * with one press: Allow (the folder from then on), Allow for this run, or Don't allow (`own`).
+ * with one press whose words say what it allows (`OWN_CHOICES`), or Don't allow (`own`). Those questions
+ * and answers are their own: never merged with, nor answered by, one about the node's computer tools.
  */
 import { EventEmitter } from "node:events";
+import type { OwnAskKind } from "../subscriptions/bridge.js";
 import type { AgentDecision, NodeMessage, Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { decisionBus, WORK_ENDED } from "../lib/decisions.js";
@@ -40,8 +42,17 @@ const PERMISSION_WAIT_MS = 180_000;
 const WAIT_RECHECK_MS = 3_000;
 
 export const CHOICES = { once: "Once", mission: "This mission", folder: "Always for this folder", origin: "Always for this address" } as const;
-/** The answers to a question about one of the agent's own calls (node/own-tool-asks.ts); Don't allow is the card's own. */
-export const OWN_CHOICES = { always: "Allow", run: "Allow for this run" } as const;
+/**
+ * The answers to a question about one of the agent's own calls, by what it covers (bridge.ts `ownAskKind`);
+ * Don't allow is the card's own. A program that changes the system is never allowed beyond the run, and a
+ * call that names no path only once.
+ */
+export const OWN_CHOICES: Record<OwnAskKind, { always?: string; run?: string; once?: string }> = {
+  write: { always: "Allow changes and commands", run: "Allow changes and commands for this run" },
+  origin: { always: "Allow this address", run: "Allow this address for this run" },
+  program: { once: "Allow once", run: "Allow for this run" },
+  unnamed: { once: "Allow once" },
+};
 
 /** How long a tool call waits for its owner's answer (`ENSEMBLE_NODE_PERMISSION_WAIT_MS`). */
 export function permissionWaitMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -85,8 +96,8 @@ export type NodeToolCard = {
   target: string;
   label: string;
   scope: NodeToolAsk["scope"];
-  /** A question about one of the agent's own calls (its shell, files, web): what it wants to do, in a few words. */
-  own?: { what: string };
+  /** A question about one of the agent's own calls (its shell, files, web): what it wants to do, in a few words, and what an answer covers. */
+  own?: { what: string; kind?: OwnAskKind };
   /** The conversations and steps whose turn parked waiting on this question: its answer wakes each (absent on older questions: the one that asked). */
   parked?: ParkedLane[];
   /** The computer has used the answer (it keeps "this mission" and "always" itself). */
@@ -106,30 +117,36 @@ const detailOf = (row: Pick<AgentDecision, "detail">): Detail => (row.detail && 
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** What the card's answer covers: once, the mission, or always (the folder or the address). */
+/** What the card's answer covers: once, the mission, or always (the folder or the address); a question about the agent's own call only by its own answers. */
 export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "detail">): NodeToolGrant["scope"] | null {
   if (row.decision !== "allow") return null;
   const reason = (row.reason ?? "").trim();
-  if (reason === CHOICES.mission || reason === OWN_CHOICES.run) return "mission";
-  if (reason === CHOICES.folder || reason === CHOICES.origin || reason === OWN_CHOICES.always) return "always";
+  const own = detailOf(row).nodeTool?.own;
+  if (own) {
+    const choices = OWN_CHOICES[own.kind ?? "write"];
+    if (reason && reason === choices.always) return "always";
+    if (reason && reason === choices.run) return "mission";
+    return "once";
+  }
+  if (reason === CHOICES.mission) return "mission";
+  if (reason === CHOICES.folder || reason === CHOICES.origin) return "always";
   return "once";
 }
 
 const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
-/** The agent's own calls read files to read them, not to share them. */
-const OWN_VERBS: Partial<Record<NodeToolAsk["capability"], string>> = { read: "read files" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target" | "own">): string {
   if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
+  if (card.target.startsWith("unnamed:")) return `@${card.nodeSlug} wants to ${card.capability === "read" ? "read" : "change"} files it does not name on ${card.deviceName}`;
   if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
-  return `@${card.nodeSlug} wants to ${(card.own ? OWN_VERBS[card.capability] : undefined) ?? VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
+  return `@${card.nodeSlug} wants to ${VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
 }
 
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */
 export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName" | "target">): string {
-  if (card.target.startsWith("program:")) return `on ${card.deviceName}`;
+  if (card.target.startsWith("program:") || card.target.startsWith("unnamed:")) return `on ${card.deviceName}`;
   return card.scope === "origin" ? `${card.label} on ${card.deviceName}` : `in ${card.label} on ${card.deviceName}`;
 }
 
@@ -139,16 +156,25 @@ export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName
  * `noticeAsked` once its card is posted.
  */
 export async function askOwner(app: Pick<FastifyInstance, "prisma">, owner: string, card: Omit<NodeToolCard, "delivered" | "announced" | "parked">, call: string, weak: boolean): Promise<{ row: AgentDecision; created: boolean }> {
-  const prisma = app.prisma;
+  // One at a time per owner, in every process: calls that ask at once find one question.
+  return (app.prisma as PrismaClient).$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 AS held FROM pg_advisory_xact_lock(hashtext(${`ensemble:node-tool-ask:${owner}`}))`;
+    return openQuestion(tx, owner, card, call, weak);
+  });
+}
+
+async function openQuestion(prisma: Pick<PrismaClient, "agentDecision">, owner: string, card: Omit<NodeToolCard, "delivered" | "announced" | "parked">, call: string, weak: boolean): Promise<{ row: AgentDecision; created: boolean }> {
   const waiting = await prisma.agentDecision.findMany({ where: { userId: owner, toolName: NODE_TOOL_DECISION, status: "pending" }, orderBy: { requestedAt: "asc" }, take: 200 });
   const same = waiting.find((row) => {
     const known = detailOf(row).nodeTool;
-    // Within one conversation or plan: "This mission" means the same there for every call it covers.
-    return known && known.nodeId === card.nodeId && known.deviceId === card.deviceId && known.target === card.target && known.mission === card.mission;
+    // Within one conversation or plan: "This mission" means the same there for every call it covers. A question
+    // about the agent's own calls is only ever the same as one of the same kind.
+    return known && known.nodeId === card.nodeId && known.deviceId === card.deviceId && known.target === card.target && known.mission === card.mission && (known.own ? (known.own.kind ?? "write") : null) === (card.own ? (card.own.kind ?? "write") : null);
   });
   if (same) return { row: same, created: false };
   // Where the computer's sandbox is weak, "always" would not cover commands there: it is not offered. The agent's own call: one press.
-  const options = card.own ? [OWN_CHOICES.always, OWN_CHOICES.run] : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
+  const own = card.own ? OWN_CHOICES[card.own.kind ?? "write"] : null;
+  const options = own ? [own.always, own.once, own.run].filter((option): option is string => Boolean(option)) : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
   const row = await prisma.agentDecision.create({
     data: {
       userId: owner,
@@ -195,11 +221,28 @@ type CardInput = {
 
 const cardWhere = (decisionId: string): Prisma.NodeMessageWhereInput => ({ kind: "approval", AND: [{ data: { path: ["type"], equals: COMPUTER_CARD } }, { data: { path: ["decisionId"], equals: decisionId } }] });
 
+/** Card writes in this process, one at a time per question and room: calls waiting on one question at once share its card. */
+const cardWrites = new Map<string, Promise<void>>();
+
 /**
  * The question's card in this conversation: owner only, with the node's call and the answers it offers.
  * One card per question and room; a later call that waits on it renames what it tried.
  */
-export async function computerCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision, input: CardInput): Promise<NodeMessage> {
+export function computerCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision, input: CardInput): Promise<NodeMessage> {
+  const key = `${row.id}|${input.roomId}`;
+  const next = (cardWrites.get(key) ?? Promise.resolve()).then(() => postCard(app, row, input));
+  const settled = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  cardWrites.set(key, settled);
+  void settled.then(() => {
+    if (cardWrites.get(key) === settled) cardWrites.delete(key);
+  });
+  return next;
+}
+
+async function postCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision, input: CardInput): Promise<NodeMessage> {
   const prisma = app.prisma as PrismaClient;
   const tool = detailOf(row).nodeTool;
   const existing = await prisma.nodeMessage.findFirst({ where: { roomId: input.roomId, userId: input.node.userId, ...cardWhere(row.id) }, orderBy: { createdAt: "desc" } });
@@ -250,7 +293,11 @@ function answerOf(row: AgentDecision): string | null {
   const scope = grantScope(row);
   if (row.status !== "decided") return null;
   if (!scope) return "No";
-  if (detailOf(row).nodeTool?.own) return scope === "mission" ? OWN_CHOICES.run : OWN_CHOICES.always;
+  const own = detailOf(row).nodeTool?.own;
+  if (own) {
+    const choices = OWN_CHOICES[own.kind ?? "write"];
+    return (scope === "mission" ? choices.run : scope === "always" ? choices.always : choices.once) ?? "Allow";
+  }
   if (scope === "mission") return CHOICES.mission;
   if (scope === "always") return detailOf(row).nodeTool?.scope === "origin" ? CHOICES.origin : CHOICES.folder;
   return CHOICES.once;
@@ -410,7 +457,7 @@ export async function awaitAnswer(app: FastifyInstance, id: string, signal: Abor
 
 /** Where the agent's own call would act, for the note that wakes its turn: " in ~/projects/site", or nothing for a program or an address. */
 export function ownPlace(tool: Pick<NodeToolCard, "scope" | "label" | "target">): string {
-  return tool.scope === "folder" && !tool.target.startsWith("program:") ? ` in ${tool.label}` : "";
+  return tool.scope === "folder" && !tool.target.startsWith("program:") && !tool.target.startsWith("unnamed:") ? ` in ${tool.label}` : "";
 }
 
 /** The note that wakes a conversation or step parked on an answered question: the answer, and the call to make again. */

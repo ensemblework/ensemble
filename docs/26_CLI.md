@@ -322,7 +322,7 @@ The allowance is enforced on the account server (`included/accounting.ts`); dele
 
 ### Use your AI subscriptions
 
-**Your AI subscriptions.** Signed in and paired, the runtime tells Ensemble on the web which AI subscriptions it can run (Claude Code from `claude` or the Claude app, Codex from `codex` or the ChatGPT app, Cursor's agent, Copilot CLI) and answers assistant turns for a tier set to one of them, and an Ensemble Node's turns on that plan: the agent runs here on its own sign-in with Ensemble's tools, which run on the web, and its own shell, files and web, judged here (in a node's turn by the node's folder policy, which asks its owner on a card in the chat where it says so) ([30](30_ENGINES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+**Your AI subscriptions.** Signed in and paired, the runtime tells Ensemble on the web which AI subscriptions it can run (Claude Code from `claude` or the Claude app, Codex from `codex` or the ChatGPT app, Cursor's agent, Copilot CLI) and answers assistant turns for a tier set to one of them, and an Ensemble Node's turns on that plan: the agent runs here on its own sign-in with Ensemble's tools, which run on the web, and its own shell, files and web, judged here (in a node's turn, only one its owner started and only they read, by the node's folder policy, which asks its owner on a card in the chat where it says so) ([30](30_ENGINES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
 The computer must be awake with the runtime running. The Copilot adapter reads JSONL responses and per-call token events from the process Ensemble launched (`subscriptions/copilot-output.ts`); it does not query account quota, and counts stay unavailable when the process does not report them.
 

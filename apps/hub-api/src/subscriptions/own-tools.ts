@@ -134,7 +134,7 @@ const CODEX_ITEMS: Record<string, (input: Record<string, unknown>) => EngineCall
 };
 
 /** How a node's chat names an own call: by what it does, the same for every agent. */
-const CHIP: Record<string, string> = { Bash: "Shell", PowerShell: "Shell", Read: "Read", Write: "Edit", Edit: "Edit", MultiEdit: "Edit", NotebookEdit: "Edit", WebSearch: "Web search", WebFetch: "Web page" };
+const CHIP: Record<string, string> = { Bash: "Shell", PowerShell: "Shell", Read: "Read", Grep: "Search", Glob: "Search", LS: "Read", Write: "Edit", Edit: "Edit", MultiEdit: "Edit", NotebookEdit: "Edit", WebSearch: "Web search", WebFetch: "Web page" };
 
 /**
  * One of the agent's own calls as its owner's chat shows it: what it does (`name`), what it touches in a
@@ -147,9 +147,9 @@ export function ownToolShape(name: string, input: unknown, call?: EngineCall): {
   const home = homedir();
   const short = (text: string) => (home && (text === home || text.startsWith(`${home}/`) || text.startsWith(`${home}\\`)) ? `~${text.slice(home.length)}` : text);
   const line = (text: string) => short(text.replace(/\s+/g, " ").trim()).slice(0, 300);
-  const field = (...keys: string[]) => keys.map((key) => known.input[key]).find((value) => typeof value === "string" && value.trim()) as string | undefined;
+  const field = (...keys: string[]) => keys.map((key) => (Array.isArray(known.input[key]) ? (known.input[key] as unknown[])[0] : known.input[key])).find((value) => typeof value === "string" && value.trim()) as string | undefined;
   const chip = CHIP[known.tool];
-  const summary = line((field("command", "file_path", "path", "url", "query", "pattern") ?? words(given.description)) || (call ? name : ""));
+  const summary = line((field("command", "file_path", "path", "paths", "url", "query", "pattern") ?? words(given.description)) || (call ? name : ""));
   return { name: (chip ?? name).slice(0, 100) || "Tool", summary, acts: chip === "Shell" || chip === "Edit" };
 }
 

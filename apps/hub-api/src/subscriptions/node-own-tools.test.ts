@@ -1,11 +1,13 @@
 /**
- * The agent's own calls in an Ensemble Node's turn on its owner's plan, judged on the computer
- * (subscriptions/node-own-tools.ts): the hard floor refuses with why; reads, web searches and public
- * pages need nobody; commands and changes in the node's own folders, temporary folders, a folder an
- * answer covers, or an unattended run go ahead; anything else asks the owner once per folder, and a
- * call they have not answered yet parks the turn. A turn someone else started asks about every
- * command and change, and before reading the owner's files outside the node's own folders, once per
- * folder per run. sudo is sent to computer_sudo's card.
+ * The agent's own calls in an Ensemble Node's turn on its owner's plan (a turn its owner started and only
+ * they read), judged on the computer (subscriptions/node-own-tools.ts): the hard floor refuses with why;
+ * reads, web searches and public pages need nobody; commands and changes in the node's own folders,
+ * temporary folders, a folder an answer for changes covers, or an unattended run go ahead; anything else
+ * asks the owner once per folder, and a call they have not answered yet parks the turn. An answer given to
+ * the node's computer tools never counts. A read or change that names no path asks; a program that changes
+ * the system always asks, unattended too;
+ * a helper works only in the folders it was given, asking on their first use. Calls in flight together
+ * share one question. sudo is sent to computer_sudo's card.
  */
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
@@ -28,8 +30,9 @@ process.env.ENSEMBLE_WORKSPACE_ROOT = workspace;
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(home, ".local", "share", "ensemble-own-tools-test");
 after(() => removeScratch(base));
 
-const { nodeOwnJudge, sudoGuidance } = await import("./node-own-tools.js");
+const { nodeOwnJudge, OWN_RULES, sudoGuidance } = await import("./node-own-tools.js");
 const { NODE_TOOL_RULE_SOURCE } = await import("../device-tools/policy.js");
+const { acpCalls } = await import("../workspace/engines/acp.js");
 type Input = Parameters<typeof nodeOwnJudge>[0];
 type Ask = Parameters<NonNullable<Input["ask"]>>[0];
 type Answer = Awaited<ReturnType<NonNullable<Input["ask"]>>>;
@@ -53,16 +56,19 @@ function rules(initial: Rule[] = []) {
 }
 
 const MISSION = "conversation:room-1:shared";
-function judgeWith(options: { trusted?: boolean; attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Rule[] } = {}) {
+const rule = (toolName: string, pattern: string, sessionId: string | null = null): Rule => ({ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName, pattern, decision: "allow", sessionId });
+
+function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Rule[]; folders?: string[]; mission?: string; store?: ReturnType<typeof rules>; slowAsk?: boolean } = {}) {
   const asked: Ask[] = [];
   const answers = [...(options.answers ?? [])];
-  const store = rules(options.saved);
+  const store = options.store ?? rules(options.saved);
   const judge = nodeOwnJudge({
     folder: turnFolder,
-    node: { id: "node-1", slug: "ada", mission: MISSION, attended: options.attended ?? true, trusted: options.trusted ?? true, sudo: options.sudo ?? true },
+    node: { id: "node-1", slug: "ada", mission: options.mission ?? MISSION, attended: options.attended ?? true, sudo: options.sudo ?? true, ...(options.folders ? { folders: options.folders } : {}) },
     app: "claude-code",
     async ask(request) {
       asked.push(request);
+      if (options.slowAsk) await new Promise((resolve) => setTimeout(resolve, 30));
       return answers.shift() ?? { decision: "deny", message: "No answer in this test." };
     },
     db: store.db,
@@ -92,8 +98,8 @@ test("the hard floor refuses with why; reads, web searches and public pages need
   assert.deepEqual(asked, [], "nothing above needed the owner");
 });
 
-test("the node's own folders, temporary folders, a folder an answer covers and an unattended run need nobody", async () => {
-  const { judge, asked } = judgeWith({ saved: [{ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName: "folder", pattern: site, decision: "allow", sessionId: null }] });
+test("the node's own folders, temporary folders, a folder an answer for changes covers and an unattended run need nobody", async () => {
+  const { judge, asked } = judgeWith({ saved: [rule(OWN_RULES.write, site)] });
   assert.equal((await judge(write(join(turnFolder, "report.md")))).decision, "allow", "the turn's folder: the node's project folder");
   assert.equal((await judge(bash("npm install express"))).decision, "allow", "a command runs in the turn's folder");
   assert.equal((await judge(bash(`cd ${join(workspace, "nodes", "ada")} && touch notes.md`))).decision, "allow", "the node's own folder of its computer tools");
@@ -101,8 +107,7 @@ test("the node's own folders, temporary folders, a folder an answer covers and a
   assert.equal((await judge(write(join(site, "src", "app.ts")))).decision, "allow", "an answer for the repository covers its folders");
   assert.deepEqual(asked, []);
   const unattended = judgeWith({ attended: false });
-  assert.equal((await unattended.judge(write(join(notes, "today.md")))).decision, "allow", "nobody watches a routine's run: it goes ahead above the floor");
-  assert.equal((await unattended.judge(bash("crontab -l"))).decision, "allow");
+  assert.equal((await unattended.judge(write(join(notes, "today.md")))).decision, "allow", "nobody watches a routine's run: a change goes ahead above the floor");
   assert.deepEqual(unattended.asked, []);
 });
 
@@ -115,7 +120,7 @@ test("anything else asks its owner once per folder, with what would run; an answ
   });
   assert.equal((await judge(write(join(site, "src", "app.ts")))).decision, "allow");
   assert.deepEqual(asked[0], { capability: "files", target: site, label: "~/projects/site", scope: "folder", operation: "Change: ~/projects/site/src/app.ts", what: "change src/app.ts" });
-  assert.deepEqual(store.rows.map((row) => [row.pattern, row.sessionId]), [[site, MISSION]], "kept here for this run");
+  assert.deepEqual(store.rows.map((row) => [row.toolName, row.pattern, row.sessionId]), [[OWN_RULES.write, site, MISSION]], "kept here for this run, as an answer for changes and commands");
   assert.equal((await judge(bash(`cd ${site} && npm run build`))).decision, "allow", "the same folder is not asked again in this run");
   assert.equal(asked.length, 1);
 
@@ -127,69 +132,72 @@ test("anything else asks its owner once per folder, with what would run; an answ
   assert.equal(asked.length, 2, "and nothing more is asked");
 });
 
-test("a turn someone other than the owner started asks about every command and change, once per folder per run", async () => {
-  const { judge, asked } = judgeWith({
-    trusted: false,
-    saved: [{ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName: "folder", pattern: site, decision: "allow", sessionId: null }],
-    answers: [
-      { decision: "allow", grant: { id: "decision-2", scope: "always", target: turnFolder } },
-      { decision: "deny", message: "Your owner chose not to allow this: change src/app.ts in ~/projects/site." },
-    ],
-  });
-  assert.equal((await judge(bash("ls"))).decision, "allow");
-  assert.deepEqual([asked[0]!.capability, asked[0]!.target], ["run", turnFolder], "even a command in the node's own folder asks");
-  assert.equal((await judge(write(join(turnFolder, "notes.md")))).decision, "allow", "answered for this run: not asked again");
-  assert.equal(asked.length, 1);
-  const refused = await judge(write(join(site, "src", "app.ts")));
-  assert.deepEqual([refused.decision, asked.length, asked[1]!.target], ["deny", 2, site], "an answer for the folder from then on does not count for another person's turn");
+test("an answer given to the node's computer tools, which run in the OS sandbox, never counts for the agent's own calls", async () => {
+  const { judge, asked } = judgeWith({ saved: [rule("folder", site), rule("folder", notes, MISSION)] });
+  assert.equal((await judge(write(join(site, "src", "app.ts")))).decision, "deny");
+  assert.deepEqual([asked[0]!.capability, asked[0]!.target], ["files", site], "the computer tools' answer for the folder from then on");
+  assert.equal((await judge(bash(`cd ${notes} && touch today.md`))).decision, "deny");
+  assert.deepEqual([asked[1]!.capability, asked[1]!.target], ["run", notes], "nor theirs for this run");
 });
 
-test("a turn someone other than the owner started asks before reading the owner's files; the node's folders, temporary folders and public pages stay open", async () => {
-  const { judge, asked } = judgeWith({
-    trusted: false,
-    answers: [
-      { decision: "allow", grant: { id: "decision-4", scope: "mission", target: site } },
-      { decision: "deny", message: "Your owner chose not to allow this: read ~/notes." },
-      { decision: "allow", grant: { id: "decision-5", scope: "mission", target: turnFolder } },
-    ],
-  });
-  const read = (path: string) => judge([{ tool: "Read", input: { file_path: path } }]);
-  assert.equal((await read(join(turnFolder, "brief.md"))).decision, "allow", "the node's own folder");
-  assert.equal((await read(join(workspace, "nodes", "ada", "notes.md"))).decision, "allow", "its folder for its computer tools");
-  assert.equal((await read("/tmp/ensemble-own-tools/scratch.txt")).decision, "allow", "a temporary folder");
-  assert.equal((await judge([{ tool: "WebFetch", input: { url: "https://93.184.215.14/pricing" } }])).decision, "allow", "a public page");
-  assert.equal((await judge([{ tool: "WebSearch", input: { query: "launch checklist" } }])).decision, "allow");
-  assert.equal(asked.length, 0);
-
-  assert.equal((await read(join(site, "src", "app.ts"))).decision, "allow");
-  assert.deepEqual(asked[0], { capability: "read", target: site, label: "~/projects/site", scope: "folder", operation: "Read: ~/projects/site/src/app.ts", what: "read src/app.ts" });
-  assert.equal((await judge([{ tool: "Grep", input: { pattern: "TODO", path: join(site, "src") } }])).decision, "allow", "answered for this run: the folder is not asked about again");
-  assert.equal(asked.length, 1);
-  const glob = await judge([{ tool: "Glob", input: { pattern: `${notes}/**/*.md` } }]);
-  assert.deepEqual([glob.decision, asked.length, asked[1]!.capability, asked[1]!.target], ["deny", 2, "read", notes], "a glob asks about where it looks");
-
-  // A command asks about the folder it runs in, and about the folders it reads: here, one already answered.
-  assert.equal((await judge(bash(`cat ${join(site, "README.md")}`))).decision, "allow");
-  assert.deepEqual([asked.length, asked[2]!.capability, asked[2]!.target], [3, "run", turnFolder]);
-  assert.equal((await judge(bash(`head -5 ${join(notes, "today.md")}`))).decision, "deny", "it reads a folder nobody allowed");
-  assert.equal(asked[3]!.target, notes);
-
-  const owners = judgeWith();
-  assert.equal((await owners.judge([{ tool: "Read", input: { file_path: join(notes, "today.md") } }])).decision, "allow", "the owner's own turn reads without asking");
-  assert.equal((await owners.judge(bash(`cat ${join(notes, "today.md")}`))).decision, "allow");
-  assert.deepEqual(owners.asked, []);
+test("a read or a change that names no path asks, as exactly as the agent gave it", async () => {
+  const { judge, asked } = judgeWith({ answers: [{ decision: "allow", grant: { id: "decision-2", scope: "once", target: "unused" } }] });
+  assert.equal((await judge([{ tool: "Write", input: {} }])).decision, "allow");
+  assert.deepEqual([asked[0]!.capability, asked[0]!.scope, asked[0]!.label], ["files", "folder", "files it does not name"]);
+  assert.match(asked[0]!.target, /^unnamed:/);
+  assert.equal((await judge([{ tool: "Read", input: {} }])).decision, "deny");
+  assert.equal(asked[1]!.capability, "read");
+  const edit = acpCalls({ kind: "edit", title: "Apply the change", rawInput: { description: "rewrite the config" } } as Parameters<typeof acpCalls>[0]);
+  assert.equal((await judge(edit)).decision, "deny");
+  assert.deepEqual([asked.length, asked[2]!.capability], [3, "files"], "an ACP agent's edit with no path it can be located by");
+  assert.match(asked[2]!.operation, /rewrite the config/);
+  assert.equal((await judge([{ tool: "Grep", input: { pattern: "TODO" } }])).decision, "allow", "a search with no folder looks in the turn's folder");
+  assert.equal(asked.length, 3);
 });
 
-test("sudo is sent to computer_sudo's card; a program that changes the system asks on its own", async () => {
-  const { judge, asked } = judgeWith({ answers: [{ decision: "allow", grant: { id: "decision-3", scope: "always", target: "program:crontab" } }] });
+test("a program that changes the system always asks, unattended too, and an answer lasts at most for the run", async () => {
+  const unattended = judgeWith({ attended: false });
+  assert.equal((await unattended.judge(bash("crontab -l"))).decision, "deny", "not answered: not run");
+  assert.deepEqual([unattended.asked[0]!.target, unattended.asked[0]!.label, unattended.asked[0]!.capability], ["program:crontab", "crontab", "run"], "asked, never allowed by the run being unattended");
+
+  const store = rules();
+  const run = judgeWith({ store, answers: [{ decision: "allow", grant: { id: "decision-3", scope: "always", target: "program:launchctl" } }] });
+  assert.equal((await run.judge(bash("launchctl list"))).decision, "allow");
+  assert.equal((await run.judge(bash("launchctl print system"))).decision, "allow", "the answer covers this run");
+  assert.equal(run.asked.length, 1);
+  assert.deepEqual(store.rows.map((row) => [row.toolName, row.sessionId]), [[OWN_RULES.program, MISSION]], "kept for this run only, whatever the answer said");
+  const next = judgeWith({ store, mission: "conversation:room-1:private" });
+  assert.equal((await next.judge(bash("launchctl list"))).decision, "deny");
+  assert.equal(next.asked.length, 1, "another run asks again");
+});
+
+test("calls in flight together share one question and its answer", async () => {
+  const { judge, asked } = judgeWith({ slowAsk: true, answers: [{ decision: "allow", grant: { id: "decision-4", scope: "mission", target: site } }] });
+  const [one, two] = await Promise.all([judge(write(join(site, "a.md"))), judge(write(join(site, "src", "b.md")))]);
+  assert.deepEqual([one.decision, two.decision, asked.length], ["allow", "allow", 1]);
+});
+
+test("a helper works only in the folders it was given, and their first use asks", async () => {
+  const { judge, asked } = judgeWith({ folders: [site], answers: [{ decision: "allow", grant: { id: "decision-5", scope: "mission", target: site } }] });
+  assert.equal((await judge(write(join(site, "src", "app.ts")))).decision, "allow");
+  assert.deepEqual([asked.length, asked[0]!.target], [1, site], "a folder it was given is not its own: its first use asks");
+  assert.equal((await judge([{ tool: "Read", input: { file_path: join(site, "README.md") } }])).decision, "allow");
+  assert.equal((await judge(bash("ls"))).decision, "allow", "its own scratch folder");
+  assert.equal((await judge(write("/tmp/ensemble-own-tools/helper.txt"))).decision, "allow");
+  const outside = await judge(write(join(notes, "today.md")));
+  assert.equal(outside.decision, "deny");
+  assert.match(outside.message!, /only .*projects\/site/);
+  assert.equal((await judge([{ tool: "Read", input: { file_path: join(notes, "today.md") } }])).decision, "deny", "nor reads elsewhere");
+  assert.equal((await judge(bash(`cat ${join(notes, "today.md")}`))).decision, "deny");
+  assert.equal(asked.length, 1, "nothing outside them is asked about");
+});
+
+test("sudo is sent to computer_sudo's card", async () => {
+  const { judge, asked } = judgeWith();
   const sudo = await judge(bash("sudo apt install jq"));
   assert.deepEqual([sudo.decision, sudo.message], ["deny", sudoGuidance(true)]);
   assert.match(sudo.message!, /computer_sudo/);
   assert.match((await judgeWith({ sudo: false }).judge(bash("doas pkg_add jq"))).message!, /not run from this turn/);
   assert.equal((await judge(bash("sudo -i"))).decision, "deny", "a root shell stays the hard floor");
   assert.equal(asked.length, 0);
-  assert.equal((await judge(bash("crontab -e"))).decision, "allow");
-  assert.deepEqual([asked[0]!.target, asked[0]!.label, asked[0]!.capability], ["program:crontab", "crontab", "run"], "asked about crontab itself, even in the node's own folder");
-  assert.equal((await judge(bash("crontab -l"))).decision, "allow", "and allowed from then on");
-  assert.equal(asked.length, 1);
 });

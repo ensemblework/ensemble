@@ -144,7 +144,10 @@ export function lastAssistantText(text) {
   return null;
 }
 
-/** Copilot CLI sends `toolArgs` as a JSON string; everyone else sends `tool_input`. */
+/**
+ * Copilot CLI sends `toolArgs` as a JSON string; everyone else sends `tool_input`. Arguments that are not an
+ * object (a patch sent as plain text) arrive as `{ value }`, so the judge reads what they name.
+ */
 export function normalizePayload(payload) {
   if (payload.toolArgs !== undefined && payload.tool_input === undefined) {
     let input = payload.toolArgs;
@@ -155,6 +158,7 @@ export function normalizePayload(payload) {
         input = { value: input };
       }
     }
+    if (typeof input !== "object" || input === null || Array.isArray(input)) input = { value: input };
     return { ...payload, tool_name: payload.tool_name ?? payload.toolName, tool_input: input };
   }
   return payload;

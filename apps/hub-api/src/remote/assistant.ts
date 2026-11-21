@@ -60,7 +60,6 @@ const Spec = z.object({
       slug: z.string().max(80),
       mission: z.string().min(1).max(200),
       attended: z.boolean(),
-      trusted: z.boolean(),
       sudo: z.boolean(),
       folders: z.array(z.string().min(1).max(4096)).max(20).optional(),
     })

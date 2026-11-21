@@ -35,7 +35,7 @@ import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
-import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
+import { judgeEngineCall, patchPaths, type EngineAnswer, type EngineCall } from "./judge.js";
 import { engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
@@ -242,8 +242,9 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 /**
  * An ACP tool call in the judge's terms, one call per path it touches. Agents name things their own
  * way: a command in `rawInput.command` (a string or argv) or a backticked title, a path in
- * `locations`, a diff's `path` or `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`),
- * and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * `locations`, a diff's `path`, `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`) or
+ * the files a patch in it names, and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * A read or a change it cannot be located by carries what the agent said of it (`described`).
  */
 export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineCall[] {
   const raw = record(toolCall.rawInput);
@@ -259,10 +260,12 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
         str(raw.filePath),
         str(raw.fileName),
         str(raw.absolute_path),
+        ...Object.values(raw).flatMap((value) => patchPaths(value)),
         ...extra,
       ].filter((path): path is string => Boolean(path)),
     ),
   ];
+  const described = [title, JSON.stringify(raw)].filter((part) => part && part !== "{}").join(" ").slice(0, 1500);
   switch (toolCall.kind) {
     case "execute": {
       const argv = Array.isArray(raw.command) ? raw.command.filter((item): item is string => typeof item === "string") : [];
@@ -274,12 +277,16 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
     case "delete":
     case "move": {
       const paths = pathsFrom(quoted);
-      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: {} }];
+      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: { described } }];
     }
-    case "read":
+    case "read": {
+      const paths = pathsFrom();
+      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: { described } }];
+    }
+    // A search that names no folder looks in the agent's working folder.
     case "search": {
       const paths = pathsFrom();
-      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: {} }];
+      return [{ tool: "Grep", input: paths.length ? { paths } : {} }];
     }
     case "fetch":
       return [{ tool: "WebFetch", input: { url: str(raw.url) ?? quoted ?? title } }];

@@ -153,7 +153,7 @@ test("the files on the turn are read from the web, each only up to the size the 
 });
 
 test("a node's turn has no turn limit; the agent's own calls ask the web when its policy says so, and go with the reply", async () => {
-  const node = { id: "node-1", slug: "ada", mission: "conversation:room-1:shared", attended: true, trusted: true, sudo: true };
+  const node = { id: "node-1", slug: "ada", mission: "conversation:room-1:shared", attended: true, sudo: true };
   const { maxTurns: _limit, ...uncapped } = SPEC;
   const fake = fakeClient({ spec: { ...uncapped, ownTools: true, node } });
   const ask: OwnAsk = { capability: "files", target: "/home/mira/notes", label: "~/notes", scope: "folder", operation: "Change: ~/notes/today.md", what: "change today.md" };
