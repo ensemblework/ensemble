@@ -37,6 +37,7 @@ Read these guides at [docs.ensemblework.com](https://docs.ensemblework.com). Sea
 | [32 · Files](32_FILES.md) | Originals and blob storage, previews, edits, extraction, caps |
 | [33 · Included AI](33_INCLUDED_AI.md) | Operator-provided models, monthly credits, reservations |
 | [35 · Ensemble Node](35_ENSEMBLE_NODE.md) | AI teammates in DMs, crews and rooms with other people: requests to join, search, pins, shared sign-in, credits, tools and computer jobs |
+| [42 · Ensemble Node evals](42_NODE_EVALS.md) | The task suite that runs Ensemble Node on the owner's own subscription and this computer, graders, metrics, session clean-up |
 
 ## Clients and shared systems
 
