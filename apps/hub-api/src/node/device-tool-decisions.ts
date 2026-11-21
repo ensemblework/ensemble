@@ -280,6 +280,8 @@ async function postCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision
       deviceName: tool?.deviceName ?? null,
       call: input.call.slice(0, 500),
       options,
+      // A question about one of the agent's own calls says which kind (own-tool-asks.ts): what its answers cover.
+      ...(tool?.own ? { own: { kind: tool.own.kind ?? "write" } } : {}),
       answer: null,
       answeredAt: null,
       private: input.private,

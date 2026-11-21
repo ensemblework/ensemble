@@ -768,12 +768,14 @@ test("an answer about the agent's own calls covers only what its card says: neve
     assert.ok([change("index.html").operation, change("about.html").operation].includes(card.data!.call), "showing what one of them would change");
     assert.match(card.body, /@assistant wants to change files in ~\/projects\/site on Mira's laptop/);
     assert.deepEqual(card.data!.options, ["Allow changes and commands", "Allow changes and commands for this run"]);
+    assert.deepEqual(card.data!.own, { kind: "write" }, "the card says what kind of the agent's own calls it is about");
     const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow changes and commands for this run" } });
     assert.equal(decided.statusCode, 200, decided.body);
 
     const program = await until(async () => (await cards()).find((row) => row.data?.status === "pending" && row.data?.call === crontab.operation), "the card about crontab");
     assert.match(program.body, /@assistant wants to run crontab on Mira's laptop/);
     assert.deepEqual(program.data!.options, ["Allow once", "Allow for this run"], "a program that changes the system is never allowed from then on");
+    assert.deepEqual(program.data!.own, { kind: "program" });
     await mira.inject({ method: "POST", url: `/api/decisions/${program.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow once" } });
     await settleTurns();
     const grant = { id: card.data!.decisionId, scope: "mission", target };
