@@ -25,7 +25,7 @@ import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
 import { collectEvidence } from "./lib/evidence.js";
-import { busy, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, traceNodeRecords, waitQuiet, waitUntil } from "./lib/drive.js";
+import { busy, endNodes, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, traceNodeRecords, waitQuiet, waitUntil } from "./lib/drive.js";
 import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
 import { lastAnswer } from "./tasks/helpers.js";
 import { selectTasks, TASKS } from "./tasks/index.js";
@@ -245,9 +245,10 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   };
   const graded = await grade(task, ev, ctx.data, judge);
   const wallMs = Date.now() - started;
-  // Leave nothing running, then end the pairing and delete this task's agent sessions.
+  // Leave nothing running, delete the task's nodes, then end the pairing and delete this task's agent sessions.
   await stopEverything(drive).catch((error: unknown) => drive.errors.push(`harness: stop: ${error instanceof Error ? error.message : String(error)}`));
   await runCleanups(drive);
+  await endNodes(drive).catch((error: unknown) => drive.errors.push(`harness: end nodes: ${error instanceof Error ? error.message : String(error)}`));
   await world.unpair().catch((error: unknown) => drive.errors.push(`harness: unpair: ${error instanceof Error ? error.message : String(error)}`));
   await finalSessions(drive);
   const done = await deleteSessions(ledger, ledger.entries(task.id).filter((row) => row.kind !== "judge"), log);

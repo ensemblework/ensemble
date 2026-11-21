@@ -338,6 +338,15 @@ export async function finalSessions(drive: Drive): Promise<void> {
   await noteSessions(drive, true).catch(() => undefined);
 }
 
+/**
+ * Deletes the owner's nodes once the task is graded (their turns stop first): a node can be woken after
+ * its task, for a run whose computer has gone, and would then run during the next task.
+ */
+export async function endNodes(drive: Drive): Promise<void> {
+  const nodes = await drive.world.prisma.nodeAgent.findMany({ where: { userId: drive.owner.id }, select: { id: true } });
+  for (const node of nodes) await drive.owner.inject({ method: "DELETE", url: `/api/node/nodes/${node.id}` }).catch(() => undefined);
+}
+
 /** Stops everything the owner's nodes still do (the room's Stop, everywhere) and waits for the computer to end its runs. */
 export async function stopEverything(drive: Drive): Promise<void> {
   const prisma = drive.world.prisma;
