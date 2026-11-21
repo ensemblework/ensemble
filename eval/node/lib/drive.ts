@@ -94,6 +94,10 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
         world.link.drop(ms, "the task cut it");
         trace.write("computer", { action: "link dropped", ms });
       },
+      restoreLink: () => {
+        world.link.restore();
+        trace.write("computer", { action: "link restored" });
+      },
       loseAnswer: (match, ms) => {
         world.loseAnswer(match, ms);
         trace.write("computer", { action: "next answer lost", url: match.url.source, answer: match.answer.source, ms });

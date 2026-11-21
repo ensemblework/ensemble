@@ -10,6 +10,8 @@ export type LinkDrop = { at: string; ms: number; why: string | null };
 export type Link = {
   base: string;
   drop: (ms: number, why?: string) => void;
+  /** Ends a drop early: new connections go through again. */
+  restore: () => void;
   /** Every drop so far, oldest first. */
   drops: () => LinkDrop[];
   close: () => Promise<void>;
@@ -50,6 +52,9 @@ export async function startLink(target: { host: string; port: number }): Promise
       history.push({ at: new Date().toISOString(), ms, why: why ?? null });
       for (const socket of open) socket.destroy();
       open.clear();
+    },
+    restore() {
+      downUntil = 0;
     },
     drops: () => [...history],
     close: () =>

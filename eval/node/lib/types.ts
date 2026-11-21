@@ -77,6 +77,8 @@ export type ComputerControl = {
   restart: (downMs?: number) => Promise<void>;
   /** Cuts every connection between the computer and Ensemble for this long; only where the task pairs through the harness's link. */
   dropLink: (ms: number) => void;
+  /** Ends a cut early: the computer reconnects by itself. */
+  restoreLink: () => void;
   /**
    * Loses the next answer Ensemble gives the computer at an address matching `url` whose text matches
    * `answer`: what Ensemble did stays done, the connection closes before the answer goes out, and the
