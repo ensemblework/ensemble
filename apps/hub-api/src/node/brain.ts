@@ -13,6 +13,7 @@ import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, Prisma
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn, type AssistantTurnResult, type VerifyState } from "../assistant/agent.js";
 import { getTool } from "../assistant/registry.js";
+import { pauseQuestion } from "../assistant/runaway.js";
 import { env } from "../config.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
@@ -562,7 +563,13 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       const runs = await stepRuns(prisma, step.planId, step.stepId);
       const cards = await stepCardsWaiting(prisma, step.planId, step.stepId);
       const mission = await prisma.nodeMission.findUnique({ where: { id: step.planId }, select: { contract: true } });
-      if (runs.pending || held.length || cards) {
+      if (result.paused) {
+        // Paused at the loop's checkpoint (docs/11, Turn limits): the step is not done and stays working. The pause
+        // leads its progress, so the plan card and the lead's work board show it however long the reply is.
+        const pause = pauseQuestion(result.paused.steps);
+        const rest = said.replace(pause, "").trim();
+        await stepProgress(prisma, step.planId, step.stepId, rest && rest !== NO_REPLY ? `${pause} ${rest}` : pause);
+      } else if (runs.pending || held.length || cards) {
         if (said) await stepProgress(prisma, step.planId, step.stepId, said);
       } else if ((mission?.contract ?? 3) < 3) {
         await finishStep(app, step.planId, step.stepId, said ? { status: "done", result: said } : { status: "blocked", result: `@${node.slug} ended its step without a report.` });

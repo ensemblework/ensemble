@@ -147,9 +147,14 @@ export function checkpointFinal(steps: number): string {
   return `You have worked for ${steps} steps in this turn, so it pauses here and no more tools run now. Answer the person now: say what you did, what you found, and what is left. They say whether you go on.`;
 }
 
+/** What a paused turn asks: the last line of its reply, or its first when the model said nothing. */
+export function pauseQuestion(steps: number): string {
+  return `I paused after ${steps} steps. Say continue to go on.`;
+}
+
 /** The line that ends a paused turn, with what it did when the model said nothing. */
 export function pausedReply(steps: number, text: string, done: readonly string[]): string {
-  const ask = `I paused after ${steps} steps. Say continue to go on.`;
+  const ask = pauseQuestion(steps);
   if (text.trim()) return `${text.trim()}\n\n${ask}`;
   return done.length ? `${ask} What I did: ${done.join("; ")}.` : ask;
 }

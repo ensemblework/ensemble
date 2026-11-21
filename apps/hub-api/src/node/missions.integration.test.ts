@@ -22,7 +22,8 @@ const { RunProfile } = await import("@ensemble/shared-types");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
-type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void> };
+/** `again`: the calls are made again after their results too, for a turn that keeps working step after step. */
+type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void>; again?: boolean };
 type Seen = { slug: string; transcript: string; system: string; tools: string[] };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
@@ -46,8 +47,9 @@ setAskRuntimeStreamForTests(async (args) => {
       throw error;
     }
   }
-  const calls = second ? [] : (step.calls ?? []);
-  const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
+  const later = second && !step.again;
+  const calls = later ? [] : (step.calls ?? []);
+  const text = later ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
     text,
     toolCalls: calls.map((call, index) => ({ id: `call-${randomBytes(4).toString("hex")}-${index}`, name: call.name, arguments: JSON.stringify(call.arguments) })),
@@ -249,6 +251,46 @@ test("the node keeps answering while its own work runs, and the work goes on", a
   assert.equal(work.data.status, "succeeded");
   const nodeMessages = final.filter((row) => row.authorNodeId === node.id && row.kind === "text");
   assert.equal(nodeMessages.length, 2, "one answer to the question and one result: no chatter");
+});
+
+test("a work turn that pauses at its checkpoint leaves its step working, led by the pause, until its owner says to go on", async () => {
+  // The owner's own API key has no step cap: a long turn pauses at its checkpoint (docs/11, Turn limits).
+  process.env.ENSEMBLE_LOOP_CONFIG = JSON.stringify({ checkpointSteps: 10 });
+  try {
+    const mira = await person("Mira");
+    const { node, room } = await createNode(mira, "researcher");
+    await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "openai", model: "gpt-test" } });
+    let requests = 0;
+    let workId = "";
+    script = (turn) => {
+      if (turn.slug !== "researcher") return { text: "unexpected" };
+      if (turn.transcript.includes("Your owner adds, for this step: continue")) return report("done", "Compared Obsidian, Notion and Bear.");
+      if (turn.transcript.includes("Your step in @researcher's plan (your own work")) {
+        requests += 1;
+        return turn.tools.length ? { calls: [{ name: "hub_list_tasks", arguments: { query: `note app ${requests}` } }], again: true } : { text: "Compared Obsidian and Notion; Bear is left." };
+      }
+      if (turn.transcript.includes("Your own work ended")) return { text: "The comparison is ready: Obsidian, Notion and Bear compared." };
+      if (/\] continue$/m.test(turn.transcript)) return { calls: [{ name: "node_work_steer", arguments: { work: workId, note: "continue" } }], then: "(no reply)" };
+      if (turn.transcript.includes("compare three note apps")) return { calls: [{ name: "node_work_start", arguments: { title: "Compare note apps", brief: "Compare three note apps.", kind: "research" } }], then: "(no reply)" };
+      return { text: "unexpected" };
+    };
+    await say(mira, room.id, "please compare three note apps for me");
+    assert.equal(requests, 10, "nine steps of work, then the checkpoint's answer");
+    let work = await planCard(mira, room.id);
+    workId = work.id;
+    assert.equal(work.data.status, "running");
+    assert.equal(work.data.steps[0].status, "working", "a paused turn is not a finished step");
+    assert.equal(work.data.steps[0].progress, "I paused after 10 steps. Say continue to go on. Compared Obsidian and Notion; Bear is left.");
+    assert.ok(!seen.some((row) => row.transcript.includes("not reported yet")), "nor a reply in prose: it is not asked to report");
+
+    await say(mira, room.id, "continue");
+    work = await planCard(mira, room.id);
+    assert.equal(work.data.status, "succeeded");
+    assert.deepEqual([work.data.steps[0].status, work.data.steps[0].result], ["done", "Compared Obsidian, Notion and Bear."]);
+    assert.ok((await read(mira, room.id)).some((row) => row.body.startsWith("The comparison is ready")));
+  } finally {
+    delete process.env.ENSEMBLE_LOOP_CONFIG;
+  }
 });
 
 test("a newer message from the owner merges with a turn that has not acted yet", async () => {

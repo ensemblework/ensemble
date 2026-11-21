@@ -382,6 +382,7 @@ function historyTool(ctx: BoundCtx): AnyHubTool {
       limit: z.number().int().min(1).max(50).optional(),
     }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       const since = await sharedSince(prisma, room.id);
@@ -418,6 +419,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     description: `${ownerName}'s status card for this room, built from their work for this room, at the detail they chose: what you may say about their status here.`,
     input: z.object({}).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run() {
       const card = await statusCard(prisma, room, owner, { room: true });
@@ -432,6 +434,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     description: `Items ${ownerName} marked shareable in this room: the list, or what one of them says (give its id).`,
     input: z.object({ item: z.string().max(80).optional().describe("The item's id, from the list.") }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       const items = prefsOf(await personIn(prisma, room.id, owner)).shareable ?? [];
