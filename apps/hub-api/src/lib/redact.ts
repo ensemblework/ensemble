@@ -73,11 +73,13 @@ const SECRET_WORDS = new Set([
 ]);
 /** Two words in a row that do: `api key`, `X-Api-Key`, `access_key`. */
 const SECRET_PAIRS: ReadonlyArray<readonly [string, string]> = [["api", "key"], ["access", "key"], ["private", "key"], ["secret", "key"], ["session", "token"]];
+/** Endings that do in a name run together: `PGPASSWORD`, `clientsecret`, `csrftoken`. */
+const SECRET_ENDINGS = ["password", "passwd", "passphrase", "secret", "token", "apikey", "credential", "credentials"];
 
-/** Whether a name says its value is a secret: `apiKey`, `X-Api-Key`, `DB_PASSWORD`, `pin`, `sig`, `X-Amz-Signature`; not `author`, `pinned`, `key`. */
+/** Whether a name says its value is a secret: `apiKey`, `X-Api-Key`, `DB_PASSWORD`, `PGPASSWORD`, `pin`, `sig`, `X-Amz-Signature`; not `author`, `pinned`, `key`. */
 export function secretName(name: string): boolean {
   const words = name.slice(0, 200).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  if (words.some((word) => SECRET_WORDS.has(word))) return true;
+  if (words.some((word) => SECRET_WORDS.has(word) || SECRET_ENDINGS.some((ending) => word.endsWith(ending)))) return true;
   return SECRET_PAIRS.some(([first, second]) => words.some((word, index) => word === first && words[index + 1] === second));
 }
 
@@ -88,6 +90,8 @@ const CREDENTIAL = /\b(bearer|basic|token)\s{1,8}[A-Za-z0-9._~+/=-]{6,4096}/gi;
 const ASSIGNED = /([A-Za-z_][A-Za-z0-9_.-]{0,63})(["']?\s{0,4}[=:](?!\/\/)\s{0,4})("[^"\n]{0,512}"?|'[^'\n]{0,512}'?|[^\s"'&,;)?#]{1,4096})/g;
 /** `--token value`, `-password value`: a flag whose name says secret, then its value. */
 const FLAG_VALUE = /(--?[A-Za-z][A-Za-z0-9-]{0,40})\s{1,8}([^\s"'-][^\s"']{0,4096})/g;
+/** `-u user:password`, `--user user:password` (curl and the like): the password after the user's name. */
+const USER_PASSWORD = /(\s(?:-u|--user)(?:\s{1,8}|=)["']?)([^\s:'"]{1,256}):[^\s'"]{1,512}/g;
 /** URL parameters that carry a key or a code under a plain name. */
 const URL_SECRET = /([?&;](?:key|code|state|ticket)=)[^&#\s"']{1,4096}/gi;
 const URL_LOGIN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]{1,256}:)[^\s@/]{1,256}@/gi;
@@ -100,6 +104,7 @@ function redactString(text: string): string {
     .replace(URL_LOGIN, "$1[redacted]@")
     .replace(CREDENTIAL, "$1 [redacted]")
     .replace(URL_SECRET, "$1[redacted]")
+    .replace(USER_PASSWORD, "$1$2:[redacted]")
     // `Authorization: Bearer [redacted]` keeps its scheme: the credential after it is already gone.
     .replace(ASSIGNED, (all, name: string, between: string, value: string) => (secretName(name) && !/^(?:bearer|basic|token)$/i.test(value) ? `${name}${between}[redacted]` : all))
     .replace(FLAG_VALUE, (all, flag: string, value: string) => (secretName(flag) && value !== "[redacted]" ? `${flag} [redacted]` : all))
@@ -111,7 +116,7 @@ function redactString(text: string): string {
  * replaced by `[redacted]`. A value under a key whose name says secret (`password`, `pass`, `passphrase`, `auth`, `pin`,
  * `token`, `apiKey`, `X-Api-Key`, `sig`…: `secretName`) is replaced at any depth, and in a JSON string that holds an object
  * or a list too. In any other string: `NAME=value`, `NAME: value` and `--name value` whose name says secret (a header
- * inside a command, an env assignment, a flag), `Bearer`/`Basic` credentials, secret URL parameters (`token=`, `sig=`,
+ * inside a command, an env assignment, a flag), a user's password after `-u` or `--user`, `Bearer`/`Basic` credentials, secret URL parameters (`token=`, `sig=`,
  * `X-Amz-Signature=`, `key=`), passwords in URLs, private key blocks, known token shapes and the saved run secrets.
  * Linear in the input's length. Nothing is cut: callers cut after.
  */

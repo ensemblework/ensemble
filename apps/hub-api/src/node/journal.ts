@@ -21,7 +21,7 @@ import type { JournalCall, JournalReplay, JournalTicket, ToolJournal } from "../
 import { answerReceived } from "../subscriptions/relay.js";
 import { stableJson } from "./session-queue.js";
 import { shortText } from "./trace.js";
-import { redactText } from "../lib/redact.js";
+import { redactArgs } from "../lib/redact.js";
 
 export type JournalState = "recorded" | "dispatched" | "succeeded" | "failed" | "uncertain" | "not_run";
 
@@ -43,54 +43,15 @@ export function callKeyOf(tool: string, hash: string, repeat: number): string {
   return `${tool}:${hash}:${repeat}`;
 }
 
-/** Keys whose value is a secret, at any depth of a call's input. */
-const SECRET_KEY = /token|secret|passw(?:or)?d|pwd|authorization|cookie|api[-_]?key|credential|private[-_]?key|session[-_]?id/i;
-/** Names of inline assignments whose value is a secret: `PGPASSWORD=…`, `API_TOKEN="…"`. */
-const SECRET_NAME = /token|secret|passw(?:or)?d|pwd|api_?key|auth|credential|private_?key|access_?key|cookie/i;
-const ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s"'&;|,)}\]]{1,512})/g;
-/** A credential after its scheme, anywhere: `Bearer …`, `Basic …`, `Token …`. */
-const SCHEME = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
-/** Credentials as command-line options: `-u user:password`, `--user user:password`, `--password …`, `--token …`. */
-const USER_OPTION = /(\s(?:-u|--user)[\s=]+)([^\s:'"]{1,256}):[^\s'"]{1,512}/g;
-const SECRET_OPTION = /(\s--?(?:password|passwd|pass|token|secret|api-?key|auth)(?:[\s=]+))("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s'"]{1,512})/gi;
-/** A string past this is never shown in a label or a summary, so the patterns stop here. */
-const SCANNED = 2_000;
-
-/** A string with its secrets out: a JSON object or list in it by key, inline assignments, credentials after their scheme or option. */
-function redactString(text: string, depth: number): string {
-  const trimmed = text.trim();
-  if (depth < 6 && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
-    try {
-      return JSON.stringify(redactValue(JSON.parse(trimmed), depth + 1));
-    } catch {
-      // Not JSON: read as text.
-    }
-  }
-  return redactText(
-    text
-      .slice(0, SCANNED)
-      .replace(ASSIGNMENT, (whole, name: string) => (SECRET_NAME.test(name) ? `${name}=[redacted]` : whole))
-      .replace(SCHEME, "$1 [redacted]")
-      .replace(USER_OPTION, "$1$2:[redacted]")
-      .replace(SECRET_OPTION, "$1[redacted]"),
-  );
-}
-
-/** A call's input with every secret out: by key at any depth, and in every string. */
-function redactValue(value: unknown, depth: number): unknown {
-  if (typeof value === "string") return redactString(value, depth);
-  if (depth >= 8 || value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.slice(0, 100).map((item) => redactValue(item, depth + 1));
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .slice(0, 100)
-      .map(([key, item]) => [key, SECRET_KEY.test(key) && item !== null && typeof item !== "boolean" ? "[redacted]" : redactValue(item, depth + 1)]),
-  );
+/** A string with its secrets out (lib/redact.ts `redactArgs`: a JSON object or list in it by key, and in the text). */
+function redactedText(text: string): string {
+  return String(redactArgs(text));
 }
 
 /**
  * The short label a call that can change something keeps (`node_tool_journal.label`): its input with every
- * secret taken out first (by key, in text), then written canonically, then cut to 240 characters.
+ * secret taken out first (lib/redact.ts `redactArgs`: by key at any depth, and in text), then written canonically,
+ * then cut to 240 characters.
  */
 export function journalLabel(raw: string): string {
   let value: unknown;
@@ -99,7 +60,7 @@ export function journalLabel(raw: string): string {
   } catch {
     value = raw;
   }
-  const redacted = redactValue(value, 0);
+  const redacted = redactArgs(value);
   return shortText(typeof redacted === "string" ? redacted : stableJson(redacted), 240);
 }
 
@@ -261,7 +222,7 @@ export class TurnJournal implements ToolJournal {
         await prisma.nodeToolJournal.update({ where, data: { state: "dispatched", dispatchedAt: new Date() } });
       },
       async settle(outcome: { state: AssistantToolCall["state"]; ran: boolean; summary: string }) {
-        const settled: Settled = { state: outcome.state === "ok" ? "ok" : "failed", summary: shortText(redactString(outcome.summary || (outcome.state === "ok" ? "Done." : "It failed."), 0), 500) };
+        const settled: Settled = { state: outcome.state === "ok" ? "ok" : "failed", summary: shortText(redactedText(outcome.summary || (outcome.state === "ok" ? "Done." : "It failed.")), 500) };
         const state: JournalState = !outcome.ran ? "not_run" : outcome.state === "ok" ? "succeeded" : "failed";
         if (call.sideEffect && outcome.ran) repeats.answered.push({ settled, received });
         done({ ...settled, ran: outcome.ran });

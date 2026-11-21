@@ -89,8 +89,17 @@ test("redactArgs: secrets by key at any depth and in JSON strings, and inline in
   for (const name of ["author", "pinned", "key", "sessionKey", "signal", "design", "passenger"]) assert.ok(!secretName(name), name);
 });
 
+test("redactArgs: a secret word run into a name (PGPASSWORD) and the password after -u or --user", () => {
+  assert.equal(redactArgs("PGPASSWORD=hunter2secret psql -h db"), "PGPASSWORD=[redacted] psql -h db");
+  assert.deepEqual(redactArgs({ pgpassword: "a1b2c3", clientsecret: "a1b2c3", csrftoken: "a1b2c3" }), { pgpassword: "[redacted]", clientsecret: "[redacted]", csrftoken: "[redacted]" });
+  assert.equal(redactArgs("curl -u mira:hunter2secret https://x.test"), "curl -u mira:[redacted] https://x.test");
+  assert.equal(redactArgs("curl --user 'mira:hunter2secret' https://x.test"), "curl --user 'mira:[redacted]' https://x.test");
+  assert.equal(redactArgs("git push -u origin main"), "git push -u origin main");
+  for (const name of ["PGPASSWORD", "MYSQLPASSWORD", "clientsecret", "csrftoken"]) assert.ok(secretName(name), name);
+});
+
 test("redactArgs takes time in proportion to the input, even for lines built to make a pattern backtrack", () => {
-  for (const text of ["x".repeat(20_000), "a=".repeat(25_000), 'password="'.repeat(5_000), "Authorization: ".repeat(4_000), "--token ".repeat(6_000), "https://u:".repeat(5_000)]) {
+  for (const text of ["x".repeat(20_000), "a=".repeat(25_000), 'password="'.repeat(5_000), "Authorization: ".repeat(4_000), "--token ".repeat(6_000), "https://u:".repeat(5_000), " --user ".repeat(5_000), " -u a:".repeat(8_000)]) {
     const started = performance.now();
     redactArgs({ text });
     const ms = performance.now() - started;
