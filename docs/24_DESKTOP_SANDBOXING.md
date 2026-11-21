@@ -12,7 +12,7 @@ Settings saved before the sandbox became a beta hold it on by default. At startu
 
 ## 4. Trust and run modes
 
-Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me.
+Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 for Ensemble's own agent and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me. A coding agent's program that runs as the administrator or changes the computer is asked about in every mode, Run unattended too ([30 §1](30_ENGINES.md#1-claude-code-as-the-engine-implementation-reference)).
 
 | Mode | Behaviour |
 | --- | --- |
@@ -201,7 +201,7 @@ The hard floor's list of dangerous commands (`device-tools/dangerous.ts`: wiping
 
 Ensemble's agent's `run_command` takes a program and arguments, not a shell string: no pipes, redirects or `&&`; `sh -c` and shell scripts run only in the OS sandbox.
 
-An agent may start any program on the PATH (`checkProgram` in `workspace/guard.ts`; wrappers such as `env`, `nohup` and `timeout` are judged by the program they start) except the never-run list: privilege (`sudo`, `su`, `doas`), persistence and system settings (`crontab`, `launchctl`, `defaults`, `security`, `osascript`…), the machine's power and disks, and killing programs by name (`pkill`, `killall`).
+Ensemble's own agent may start any program on the PATH (`checkProgram` in `workspace/guard.ts`; wrappers such as `env`, `nohup` and `timeout` are judged by the program they start) except the never-run list: privilege (`sudo`, `su`, `doas`), persistence and system settings (`crontab`, `launchctl`, `defaults`, `security`, `osascript`…), the machine's power and disks, and killing programs by name (`pkill`, `killall`). A coding agent's command with one of these programs is asked about on a card instead (`systemProgram` in `workspace/engines/judge.ts`).
 
 The person's terminal keeps its allow-list ([16](16_CODE_TAB.md)). Programs that reach another computer (`ssh`, `scp`, `sftp`, `nc`…) need the internet and follow the mode (§4). Interpreters still run code, so the OS sandbox must contain their subprocesses.
 

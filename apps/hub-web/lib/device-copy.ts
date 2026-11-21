@@ -109,8 +109,9 @@ export type RerunSource = {
   executionMode?: "sandbox" | "native";
   networkAccess?: boolean;
   markDone?: boolean;
-  maxMinutes?: number;
-  maxTurns?: number;
+  /** The owner's limits for the run; null: none. */
+  maxMinutes?: number | null;
+  maxTurns?: number | null;
   maxToolCalls?: number;
   pullRequest?: { base: string; merge: "ask" | "auto" | "never" } | null;
 };
@@ -139,8 +140,8 @@ export function rerunAssignInput(job: RerunSource) {
     sandbox: job.executionMode !== "native",
     network: job.networkAccess,
     markDone: job.markDone,
-    maxMinutes: job.maxMinutes,
-    maxTurns: job.maxTurns,
+    ...(job.maxMinutes ? { maxMinutes: job.maxMinutes } : {}),
+    ...(job.maxTurns ? { maxTurns: job.maxTurns } : {}),
     maxToolCalls: job.maxToolCalls,
     ...(job.pullRequest ? { pullRequest: { base: job.pullRequest.base, merge: job.pullRequest.merge } } : {}),
   };

@@ -40,6 +40,13 @@ export function withoutAttached(instructions: string): string {
   return at < 0 ? instructions : instructions.slice(0, at);
 }
 
+/** The person's own words in a message, without the mentions and attached content written after them. */
+export function ownWords(instructions: string): string {
+  const plain = withoutAttached(instructions);
+  const at = plain.indexOf(MENTIONS_MARK);
+  return (at >= 0 ? plain.slice(0, at) : plain).trim();
+}
+
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…` : text);
 
 function docOf(content: unknown): PageDocument | null {

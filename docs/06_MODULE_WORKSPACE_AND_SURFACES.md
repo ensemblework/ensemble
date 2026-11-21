@@ -42,7 +42,7 @@ Ask, Review only or Run unattended; none needs a trusted folder ([24 §4](24_DES
 
 ### More options
 
-Instructions for this attempt; Git: No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, from a repository named there for its own checkout, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); Ask before each commit (off by default); Branch: the agent decides, or an existing or new one by exact name ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); sandbox (marked Beta and off by default, [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta); the OS capability actually present), internet, outside the workspace (read / read-write / none) and *Use my git sign-in*; opening in the tool's own app or a terminal; budgets (minutes, tool calls, model turns; time waiting on a person is excluded); Move the task to Done
+Instructions for this attempt; Git: No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, from a repository named there for its own checkout, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); Ask before each commit (off by default); Branch: the agent decides, or an existing or new one by exact name ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); sandbox (marked Beta and off by default, [24 §1](24_DESKTOP_SANDBOXING.md#1-the-os-sandbox-is-in-beta); the OS capability actually present), internet, outside the workspace (read / read-write / none) and *Use my git sign-in*; opening in the tool's own app or a terminal; budgets (minutes, tool calls, model turns; minutes and turns have no limit unless set here, in the run profile or in Settings, Task limits; time waiting on a person is excluded); Move the task to Done
 
 Outside access is per run, not stored in a profile. The dialog and API validate the combination rather than invent a missing folder, engine or model; an agent or computer with no OS sandbox runs with it off, and the dialog says so.
 
@@ -54,7 +54,7 @@ Settings → Assistant → Models uses the same picker for each complexity tier 
 
 An external folder can be worked in place and need not be a Git repository.
 
-Mode and trust decide which operations wait. A denied call returns a readable result, not a hint to try another path. Budgets stop work and keep partial progress. Unattended picks recommended answers and reports them; it gains no filesystem or Git authority. Engines launched by Ensemble keep its tool-call enforcement; a tool opened in its own app or terminal uses its own settings.
+Mode and trust decide which operations wait. A denied call returns a readable result, not a hint to try another path. Budgets the owner set stop work and keep partial progress; without one a run has no minutes or turn limit of Ensemble's own (Ensemble's own model loop stops a runaway at 200 turns, `RUNAWAY_TURNS`, and keeps its tool-call budget). Unattended picks recommended answers and reports them; it gains no filesystem or Git authority. Engines launched by Ensemble keep its tool-call enforcement; a tool opened in its own app or terminal uses its own settings.
 
 Another editor writing the same folder can change it, so do not edit a folder an active task holds.
 
@@ -85,6 +85,8 @@ Queue, assignment, tool, decision, engine and device tests sit beside their modu
 `components/agent/assign-dialog.tsx` and `workspace/assign.ts` persist the assignment as a `WorkspaceJob`. The runner is `workspace/agent.ts`, behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). `RunStep` stores the engine’s tool, thinking and message events.
 
 ### 2. Context and preparation
+
+A Code tab turn gets its turn packet instead of the brief (`workspace/code-turn.ts`, `workspace/turn-packet.ts`; [16 §9](16_CODE_TAB.md#what-the-agent-gets-with-each-message)), and when it ends Ensemble runs the checks it reported again and keeps the turn's states apart on its run (`workspace/completion.ts`).
 
 `brief()` in `workspace/agent.ts` assembles the task as the person wrote it: the title as a heading, the description, linked project/repo and source link, the task page, **Context from Ensemble** (the task's context packet from `context/graph/packet.ts`, at most 5,000 characters: the meeting it came from and the words asked, people and roles, dependencies, related open work, how similar work went; a copy of a task claimed from the web carries it in its description instead), connected-app items and files, this attempt's instructions, the earlier task it continues, the skills linked to the task (never one with `scope.purpose`) and today's date. A coding agent (Claude Code, Codex, Copilot, Cursor, the ACP agents) gets it followed by how the run works (`workingNotes`): the folder and what it may change beyond it, only the limits that apply (no internet, read-only, git short of No limits, a pull request Ensemble opens), how to ask (or, unattended, to decide and list decisions), secrets, and the summary to end with.
 

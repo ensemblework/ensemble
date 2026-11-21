@@ -52,6 +52,7 @@ import { expandHome, gitHardening, within } from "../workspace/guard.js";
 import { runTrustedGit } from "../workspace/git-gate.js";
 import { pushWithSignIn } from "../workspace/publish.js";
 import { flagPlanted, type PlantedHit } from "../workspace/planted.js";
+import { markAccepted } from "../workspace/completion.js";
 
 const REVIEW_TTL_DAYS = 14;
 /** The decision row that keeps a file's accepted changes: `blob:<sha>` of the text they add up to. */
@@ -297,7 +298,11 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/code/reviews/:id/complete", async (request) => {
     const { id } = request.params as { id: string };
     await prisma.codeReview.updateMany({ where: { id, userId: request.userId }, data: { completedAt: new Date() } });
-    return { ok: true };
+    // Reviewed change by change: rejected when every decided change was rejected, else accepted (the run's completion record).
+    const review = await prisma.codeReview.findFirst({ where: { id, userId: request.userId }, select: { jobId: true, decisions: { select: { decision: true } } } });
+    const accepted = review?.decisions.length && review.decisions.every((row) => row.decision === "rejected") ? ("rejected" as const) : ("accepted" as const);
+    if (review) await markAccepted(prisma, review.jobId, accepted, "owner").catch(() => false);
+    return { ok: true, accepted };
   });
 
   /** The paths that exist on disk or that git tracks (a tracked file deleted on disk is staged as a deletion). */
@@ -347,6 +352,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     if (review.job.task.status === "waiting_approval" && review.job.markDone) {
       await prisma.task.update({ where: { id: review.job.taskId }, data: { status: "done", completedAt: new Date() } });
     }
+    await markAccepted(prisma, review.job.id, "accepted", "owner").catch(() => false);
     await appendLedger({ userId: request.userId, actor: "me", action: "code.review.accept", taskId: review.job.taskId, payload: { review: review.id, commit, branch } });
     return {
       ok: true,
@@ -375,6 +381,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     if (review.job.task.owner === "agent" && ["waiting_approval", "done"].includes(review.job.task.status)) {
       await prisma.task.update({ where: { id: review.job.taskId }, data: { status: "todo", completedAt: null } });
     }
+    await markAccepted(prisma, review.job.id, "rejected", "owner").catch(() => false);
     await appendLedger({ userId: request.userId, actor: "me", action: "code.review.discard", taskId: review.job.taskId, payload: { review: review.id, paths, keptCommits } });
     return { ok: true, restored: paths.length, keptCommits };
   });

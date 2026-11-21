@@ -34,9 +34,9 @@ export function repeatAssignment(old: WorkspaceJob) {
         markDone: old.markDone,
         mode: old.unattended ? "unattended" : old.accessMode === "auto" ? "review" : "ask",
         accessMode: old.accessMode === "review" ? "review" : "read-write",
-        maxMinutes: old.maxMinutes,
+        maxMinutes: old.maxMinutes ?? undefined,
         maxToolCalls: old.maxToolCalls,
-        maxTurns: old.maxTurns,
+        maxTurns: old.maxTurns ?? undefined,
         // A resumed, repeated or follow-up run keeps the apps its run had switched off.
         ...(jobToolsOff(old.context).length ? { toolsOff: jobToolsOff(old.context) } : {}),
       });

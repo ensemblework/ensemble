@@ -5,7 +5,7 @@ import { AlertTriangle, ChevronRight, RotateCcw, Trash2, X } from "lucide-react"
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding } from "@ensemble/shared-types";
+import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding, runLimits } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useHostCode, useModuleOn } from "@/lib/use-module";
 import { isApplePlatform } from "@/lib/platform";
@@ -88,27 +88,30 @@ type OrchestrationSet = (value: Partial<Settings["orchestration"]>) => void;
 export function TaskLimitsSection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set: OrchestrationSet = (value) => patch({ orchestration: value });
-  const number = (key: "maxConcurrentJobs" | "maxTurns" | "maxMinutes", min: number, max: number, unit?: string) => (
+  // The owner's own limits on a run: none unless they set one (an empty box). One typed here is theirs, even 60 minutes.
+  const limits = runLimits(orchestration);
+  const limit = (key: "maxTurns" | "maxMinutes", min: number, max: number, unit: string) => (
     <NumberField
-      label={{ maxConcurrentJobs: "Tasks that run at once", maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
+      label={{ maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
       min={min}
       max={max}
       unit={unit}
-      value={orchestration[key]}
-      onChange={(value) => set({ [key]: value })}
+      empty="No limit"
+      value={limits[key]}
+      onChange={(value) => set({ [key]: value, ownLimits: [...new Set([...(orchestration.ownLimits ?? []), key])] })}
     />
   );
   return (
     <SectionCard title="Task limits" description="Agent tasks queue in the order you assign them." info="Work in the same project or folder runs one task at a time. A question that has waited long can release one extra slot.">
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Tasks that run at once" description="Tasks in the same project or folder wait their turn.">
-          {number("maxConcurrentJobs", 1, 8)}
+          <NumberField label="Tasks that run at once" min={1} max={8} value={orchestration.maxConcurrentJobs} onChange={(maxConcurrentJobs) => set({ maxConcurrentJobs })} />
         </SettingRow>
-        <SettingRow title="Model turns per task" description="A task stops here and keeps its progress." info="You can raise it for one task when you assign it.">
-          {number("maxTurns", 5, 200, "turns")}
+        <SettingRow title="Model turns per task" description="Empty: no limit. With one, a task stops there and keeps its progress." info="A coding agent (Claude Code) gets it as its own turn limit. You can set one for a single task when you assign it.">
+          {limit("maxTurns", 5, 200, "turns")}
         </SettingRow>
-        <SettingRow title="Minutes per task" description="A slower task stops; its work is kept.">
-          {number("maxMinutes", 5, 480, "min")}
+        <SettingRow title="Minutes per task" description="Empty: no limit. With one, a slower task stops; its work is kept." info="Time waiting for your answer on a card does not count.">
+          {limit("maxMinutes", 5, 480, "min")}
         </SettingRow>
       </div>
     </SectionCard>
