@@ -26,6 +26,7 @@ Find the application or package responsible for a change before editing. Start w
 | Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
 | What the assistant or a node is told (their instructions) | `packages/prompts/sections/`, then `pnpm prompts:build`; which sections a node turn gets: `apps/hub-api/src/node/instructions.ts` ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)) |
+| Ensemble's bundled skills; what a node turn is given from the workspace, its memories and the skills catalogue | `skills/<name>/SKILL.md`, then `pnpm prompts:build` ([04 §2.1](04_MODULE_SKILL_FORGE.md#21-ensembles-bundled-skills)); `apps/hub-api/src/context/retrieve.ts`, `context/config.ts`, `src/node/memory.ts`, `src/node/skills.ts` ([35 §5.6](35_ENSEMBLE_NODE.md#56-context-db-memory-and-skills-implementation-reference)) |
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
 | Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
@@ -54,7 +55,8 @@ ensemble/
 │   ├── block-diagrams/    Diagram DSL: parse, layout, SVG, Mermaid (docs/21)
 │   ├── ide-theme/         VS Code theme conversion and built-in Code-tab themes
 │   └── prompts/           The models' instructions as Markdown sections (constitution, node, assistant),
-│                          their generated module and assemble() (packages/prompts/README.md)
+│                          the bundled skills embedded from skills/, their generated modules and
+│                          assemble() (packages/prompts/README.md)
 ├── infra/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions: vector, pg_trgm, uuid-ossp
@@ -70,7 +72,7 @@ ensemble/
 │                          agents/, skills/ (block-diagrams, ensemble-context), copilot-instructions.md
 ├── data/import/           Git-ignored local import drop zone
 ├── eval/node/             Ensemble Node task suite, harness and results (docs/42)
-├── skills/                Empty placeholder (.gitkeep)
+├── skills/                Ensemble's bundled skills: <name>/SKILL.md, embedded by packages/prompts (docs/04 §2.1)
 ├── private/               Git-ignored operator runbooks; never publish secrets
 ├── release.json           Canonical version for every surface
 ├── AGENTS.md              Instructions for coding agents (CLAUDE.md and .github/copilot-instructions.md point here)

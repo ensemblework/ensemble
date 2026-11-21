@@ -1,5 +1,5 @@
 /**
- * A node turn's trace for its owner (docs/35 §5.6): `GET /api/node/turns/:turnId/trace`, the turn's
+ * A node turn's trace for its owner (docs/35 §5.7): `GET /api/node/turns/:turnId/trace`, the turn's
  * outcome and placement, its trace and the decisions about it (node/trace.ts). Sharing class `personal`
  * (src/sharing/policy.ts), like every Node route: whichever space is open, a turn of someone else's node,
  * or none at all, answers 404.

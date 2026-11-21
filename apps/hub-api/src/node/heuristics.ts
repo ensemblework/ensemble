@@ -1,5 +1,5 @@
 /**
- * The numbers Ensemble Node decides with (docs/35 §4, §5.6), in one versioned config: the router's
+ * The numbers Ensemble Node decides with (docs/35 §4, §5.7), in one versioned config: the router's
  * brakes. Every decision it records (`node_decisions`, node/trace.ts) names the config's version and
  * hash, so a decision can be judged again under other numbers.
  *

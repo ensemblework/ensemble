@@ -9,6 +9,7 @@ import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/cli
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
 import type { Device } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
+import { truncateText } from "../lib/text.js";
 import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { CodeAnswer } from "../remote/contract.js";
@@ -28,8 +29,8 @@ import { overviewTool } from "./overview.js";
 import { routineTools } from "./routine-tools.js";
 import { attachToTurn, MAX_MEDIA, ownerMedia } from "./media.js";
 import { peerRequestTool } from "./peer-requests.js";
-
-export const MAX_MEMORIES = 200;
+import { KEY_CHARS, MEMORY_CHARS, MEMORY_SCOPES, MemoryRefused, rememberAsNode } from "./memory.js";
+import { skillTool } from "./skills.js";
 
 export type Lineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
 
@@ -223,24 +224,71 @@ async function pickComputer(prisma: PrismaClient, ownerId: string, name: string 
   return device;
 }
 
+/** A project memory's project in the owner's space: by its id, its link or its name. */
+async function projectNamed(prisma: PrismaClient, userId: string, ref: string | undefined): Promise<string> {
+  const text = ref?.trim() ?? "";
+  if (!text) throw new ToolBlockedError("A project memory names its project.", "Pass project: its id, link or name.");
+  const id = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(text)?.[0];
+  const row = await prisma.project.findFirst({ where: { userId, deletedAt: null, ...(id ? { id } : { name: { equals: text, mode: "insensitive" } }) }, select: { id: true } });
+  if (!row) throw new ToolBlockedError(`There is no project “${truncateText(text, 80)}”.`, "Pass its id or link from hub_list_projects.");
+  return row.id;
+}
+
 export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
+  // When the turn began: a memory its owner changed since then is theirs to keep (node/memory.ts).
+  const since = new Date();
   const remember = defineTool({
     name: "node_remember",
     area: "tasks",
     description:
-      "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Call it at once when they state a lasting preference (“only use the MAI model”, “always …”, “never …”, “from now on …”), in their words. Your owner can see and delete every memory.",
-    input: z.object({ content: z.string().min(1).max(500) }).strict(),
+      "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Call it at once when they state a lasting preference (“only use the MAI model”, “always …”, “never …”, “from now on …”), in their words. " +
+      "key: what it is about, in a few words (“preferred model”); saving the same key again replaces that fact (the old one stays as history), so a changed preference is one call with its key. " +
+      "scope: owner (about your owner, read by all their nodes), node (yours, the default), room (only in this conversation), project (only when that project is open; pass project). Your owner sees, edits, pins and deletes every memory; a pinned one only they change.",
+    input: z
+      .object({
+        content: z.string().min(1).max(MEMORY_CHARS),
+        key: z.string().min(1).max(KEY_CHARS).optional().describe("What the fact is about, a few words (“preferred model”): the same key replaces the fact."),
+        scope: z.enum(MEMORY_SCOPES).optional().describe("owner, node (the default), room or project."),
+        project: z.string().min(1).max(200).optional().describe("With scope project: the project's id, link or name."),
+      })
+      .strict(),
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
       if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can ask you to remember something.");
-      await prisma.nodeMemory.create({ data: { userId: node.userId, nodeId: node.id, content: input.content.trim() } });
-      const extra = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" }, skip: MAX_MEMORIES, select: { id: true } });
-      if (extra.length) await prisma.nodeMemory.deleteMany({ where: { id: { in: extra.map((row) => row.id) } } });
-      return toolOk("Remembered.");
+      const projectId = input.scope === "project" ? await projectNamed(prisma, node.userId, input.project) : null;
+      const turn = await prisma.nodeTurn.findUnique({ where: { id: scope.turnId }, select: { triggerMessageId: true } });
+      try {
+        const saved = await rememberAsNode(prisma, {
+          node,
+          roomId: scope.room.id,
+          turnId: scope.turnId,
+          sourceMessageId: turn?.triggerMessageId ?? null,
+          content: input.content,
+          key: input.key ?? null,
+          ...(input.scope ? { scope: input.scope } : {}),
+          projectId,
+          since,
+        });
+        const archived = saved.archived ? ` ${saved.archived} old unused memor${saved.archived === 1 ? "y was" : "ies were"} archived; your owner can bring them back.` : "";
+        const said =
+          saved.status === "same"
+            ? "Already remembered."
+            : saved.status === "restored"
+              ? "Remembered: it was archived and is back."
+              : saved.status === "revised" && saved.replaced
+                ? `Remembered. It replaces “${truncateText(saved.replaced.content, 120)}”, kept as history.`
+                : "Remembered.";
+        return toolOk(`${said}${archived}`, { id: saved.memory.id, key: saved.memory.key, scope: saved.memory.scope, status: saved.status });
+      } catch (error) {
+        if (error instanceof MemoryRefused) throw new ToolBlockedError(error.message, error.hint);
+        throw error;
+      }
     },
   });
+  // Any skill's full text (node/skills.ts): its catalogue line is in the turn's context.
+  const skill = skillTool(scope);
   // A temporary helper answers only the node that made it: read-only assistant tools, plus what its parent granted.
   const grant = helperGrant(node);
   const hands = deviceTools(scope);
@@ -301,7 +349,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
           return report(ctx, { outcome: "blocked", summary: input.reason, ...(input.blockedBy ? { blockedBy: input.blockedBy } : {}) });
         },
       }),
-      ...(node.parentNodeId ? [] : [remember]),
+      ...(node.parentNodeId ? [] : [remember, skill]),
     ];
   }
   if (node.parentNodeId) return own;
@@ -325,6 +373,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   return [
     ...own,
     show,
+    skill,
     ...helperTools(scope),
     ...planTools(scope),
     ...routineTools(scope),

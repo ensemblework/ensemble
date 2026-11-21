@@ -463,8 +463,8 @@ async function drive(
     playbooks,
     ...(args.spaces ? { spaces: await args.spaces.instructions() } : {}),
     ...(args.where ? { where: args.where } : {}),
-    // A node's own instructions carry the shared rules (packages/prompts constitution).
-    ...(args.nodeInstructions ? { rules: false } : {}),
+    // A node's own instructions carry the shared rules (packages/prompts constitution), and its owner's skills in its catalogue (node/skills.ts).
+    ...(args.nodeInstructions ? { rules: false, skills: false } : {}),
   });
   const context = turnContext(openPage, {
     today: clock.date,

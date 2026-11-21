@@ -100,6 +100,8 @@ export type InstructionsInput = {
   where?: string;
   /** False when the turn's own instructions carry the shared rules (an Ensemble Node turn, node/instructions.ts). */
   rules?: boolean;
+  /** False when the turn lists the person's skills itself (an Ensemble Node turn's skills catalogue, node/skills.ts). */
+  skills?: boolean;
 };
 
 /**
@@ -121,7 +123,7 @@ export function assistantInstructions(state: HubState, input: InstructionsInput)
         ? renderSection("assistant/00-where-space", { name, space })
         : renderSection("assistant/00-where", { name }));
   const rules = input.rules !== false;
-  const skills = state.skills.length
+  const skills = state.skills.length && input.skills !== false
     ? renderSection("assistant/50-skills", { name, skills: state.skills.map((skill) => `- ${skill.name} (${skill.id})${skill.description ? `: ${truncateText(skill.description, 110)}` : ""}`) })
     : "";
   return [

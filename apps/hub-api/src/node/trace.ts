@@ -1,5 +1,5 @@
 /**
- * What Ensemble Node records about its own work (docs/35 §5.6): one trace per turn (`node_turn_traces`),
+ * What Ensemble Node records about its own work (docs/35 §5.7): one trace per turn (`node_turn_traces`),
  * where each turn ran (`node_turns.placement`), and the decisions Node makes (`node_decisions`), read by
  * the turn's owner at `GET /api/node/turns/:turnId/trace` (node/trace-routes.ts).
  *
