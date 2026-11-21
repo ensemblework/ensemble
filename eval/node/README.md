@@ -92,11 +92,13 @@ Each run writes `eval/node/results/<timestamp>-<label>.json` and a Markdown summ
 | tokens in / out, credits | From the agent's session usage records (node turns and coding sessions), or Ensemble's own `model.call` metric events where the agent kept none; credits are the AI units Copilot reports in its usage records |
 | time, approvals, errors | Wall time, owner cards (and how many were left unanswered), failed turns, runs and harness errors |
 
+`eval/node/results/2026-11-21T14-52-32-baseline-v1-all.md` is the Ensemble Node v1 baseline (commit 9a418803, Copilot CLI, gpt-6-luna), combined from the runs beside it.
+
 Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: messages, turns, runs, plans, cards and sessions as they happen, then the checks, the metrics, and the evidence the grader read (kept small and with home folders, keys and tokens redacted). `--regrade` reads that last line.
 
 ## Cost and safety
 
-- Every node turn, coding session and judge call is a call on the owner's own subscription. A `core` run is about 12 Copilot sessions plus 2 judge calls; a `crew` task starts several turns and coding sessions. Use a cheap model.
+- Every node turn, coding session and judge call is a call on the owner's own subscription. On Copilot CLI with gpt-6-luna the `core` suite took about 12 minutes, 14 sessions (2 of them the judge's), 1.6 million input tokens and 6 credits; the `crew` suite about 21 minutes, 18 sessions, 3.6 million input tokens and 13 credits. Use a cheap model.
 - Runs are sequential: one task at a time, one agent process at a time where the product allows it.
 - Included models and Ensemble's own agent get no runtime here (`AGENT_RUNTIME_URL` points nowhere), so those calls fail at once and cost nothing.
 - Variables that could reach real keys or a screen are removed before Ensemble loads; every folder Ensemble writes (state, workspace, app data, temporary files) is in the scratch folder.

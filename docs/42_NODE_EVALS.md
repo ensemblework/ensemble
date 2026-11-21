@@ -10,7 +10,7 @@
 | `eval/node/lib/world.ts` | The API in the eval process on an in-memory PGlite database, turns on the owner's subscription on this computer (`ENSEMBLE_DESKTOP=1`) |
 | `eval/node/lib/computer-main.ts` | The owner's computer: a second process with its own in-memory database, paired through the real remote loop, running device tools, coding sessions and the browser on this machine |
 | `eval/node/tasks/` | The `core` suite (11 tasks, a DM with one node) and the `crew` suite (4 tasks, a lead, a developer and a tester) |
-| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces |
+| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; the `baseline-v1-all` files are the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna |
 
 ## Running it
 
