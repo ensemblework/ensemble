@@ -214,7 +214,12 @@ const peerDuringApproval: Task = {
     const invites = (await theo.inject({ method: "GET", url: "/api/node/invites" })).json() as { invites?: Array<{ id: string; roomId?: string; room?: { id: string } }> };
     const invite = (invites.invites ?? []).find((row) => (row.roomId ?? row.room?.id) === made.room.id) ?? invites.invites?.[0];
     if (!invite) throw new Error("The teammate got no invite to the room.");
-    const accepted = await theo.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: {} });
+    // A person joins a room with one of their own nodes.
+    const own = await theo.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant", name: "Theo's desk", slug: "theo-desk" } });
+    if (own.statusCode >= 300) throw new Error(`The teammate could not make a node: ${own.statusCode} ${own.body.slice(0, 160)}`);
+    const theoNode = (own.json() as { node: { id: string } }).node.id;
+    await ctx.world.prisma.nodeAgent.update({ where: { id: theoNode }, data: { provider: ctx.world.agent, model: ctx.world.model } });
+    const accepted = await theo.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [theoNode] } });
     if (accepted.statusCode >= 300) throw new Error(`The teammate could not join the room: ${accepted.statusCode} ${accepted.body.slice(0, 160)}`);
     peers.set(ctx, theo);
     // Not shared: the first write there asks the owner.
@@ -779,7 +784,7 @@ const finishedWithoutAcceptance: Task = {
     const runs = (ev.extra.runs as Array<{ at: string; pass: boolean }>) ?? [];
     const ended = jobs.map((row) => row.finishedAt ?? "").sort().at(-1) ?? "";
     // Accepted on evidence, not on the session's word: the check passed when run after the last coding session ended, or in the node's own run of it.
-    const nodeRuns = ev.tools.filter((call) => /accept\.js/.test(call.input));
+    const nodeRuns = ev.tools.filter((call) => /accept\.js/.test(call.input) && !/session|assign|cod(e|ing)|delegate|agent/i.test(call.name));
     const verified = runs.some((row) => row.pass && ended && row.at > ended) || nodeRuns.some((call) => /AC-1 passed/.test(call.output));
     const answer = lastAnswer(ev).replace(/[‘’]/g, "'");
     const own = ownVoice(answer);
