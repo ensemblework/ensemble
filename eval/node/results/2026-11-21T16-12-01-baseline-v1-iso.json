@@ -1,0 +1,119 @@
+{
+ "label": "baseline-v1-iso",
+ "stamp": "2026-11-21T16-12-01",
+ "commit": "6e522f95",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "plan-my-day"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T16:12:01.494Z",
+ "finishedAt": "2026-11-21T16:12:57.897Z",
+ "results": [
+  {
+   "task": "plan-my-day",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.6,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "names the overdue task",
+     "pass": false,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's task",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's meetings",
+     "pass": true,
+     "kind": "reply",
+     "note": "3 of 3"
+    },
+    {
+     "name": "read the board and the calendar",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "judge ≥ 0.6",
+     "pass": false,
+     "kind": "judge",
+     "note": "0.5: It lists today’s meetings and the Q4 budget task, but omits the overdue domain renewal and does not schedule work around the meetings."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 41150,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 42191,
+    "tokensOut": 638,
+    "credits": 0.207443,
+    "ensembleCalls": 1,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_due",
+    "hub_list_reminders",
+    "hub_list_events"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_events",
+    "ensemble-hub_list_due",
+    "ensemble-hub_list_reminders"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "2272509e-ee29-480e-8d8c-659f3a0c5991"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-iso/plan-my-day--1.jsonl",
+   "startedAt": "2026-11-21T16:12:16.091Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "8d9b6822-1675-481e-b74b-bed19e4ee6e1",
+   "kind": "judge",
+   "task": "plan-my-day",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "2272509e-ee29-480e-8d8c-659f3a0c5991",
+   "kind": "node-turn",
+   "task": "plan-my-day",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland, PipeWire or PulseAudio socket) and no session bus beyond the keyring. Cards asking for the owner's own screen are never approved; a desktop task that needs a screen must bring its own.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through."
+ ]
+}

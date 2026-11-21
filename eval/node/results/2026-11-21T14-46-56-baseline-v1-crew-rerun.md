@@ -12,9 +12,9 @@ Score is the share of a task's checks that passed; a task passes when all do. Ve
 
 ## Suite metrics
 
-| suite | tasks | passed | mean score | turns ended with no answer | error messages | false claims | input tokens per task | credits per task |
-|---|---|---|---|---|---|---|---|---|
-| crew | 2 | 2 | 100% | 0 | 0 | 0 | 354k | 1.48 |
+| suite | tasks | passed | verified | mean score | turns ended with no answer | error messages | false claims | input tokens per task | approvals | time | credits per task |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| crew | 2 | 2 | 2 | 100% | 0 | 0 | 0 | 354k | 0 | 5.0 min | 1.48 |
 
 ## Failed checks, false claims and errors
 
