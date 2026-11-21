@@ -39,6 +39,18 @@ test("without session ids (macOS), a session is its group, what its members star
   assert.deepEqual(sessionTree([300], ps), []);
 });
 
+test("a command run as the agent's own ran gets the PATH and HOME the agent had, not the scratch ones", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-runner-env-"));
+  try {
+    const scratch = await runCommand({ argv: ["sh", "-c", 'printf "%s" "$HOME"'], cwd: root, root, sandboxed: false, network: false, useCredentials: false, who: "agent", timeoutMs: 10_000, extraEnv: { HOME: "/home/mira" } });
+    assert.notEqual(scratch.output, "/home/mira", "a saved secret named HOME does not change it");
+    const own = await runCommand({ argv: ["sh", "-c", 'printf "%s|%s" "$HOME" "$PATH"'], cwd: root, root, sandboxed: false, network: false, useCredentials: false, who: "agent", timeoutMs: 10_000, engineEnv: { HOME: "/home/mira", PATH: "/usr/bin:/bin" } });
+    assert.equal(own.output, "/home/mira|/usr/bin:/bin");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a command is over when its own process exits, even if a process it started keeps the output open", { skip: process.platform === "win32" }, async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-runner-"));
   try {

@@ -15,6 +15,7 @@ import { redactText } from "../lib/redact.js";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { activeHeuristics, heuristicsVersion } from "./heuristics.js";
 import type { InstructionsLog } from "./instructions.js";
+import { remainingIn, replyOutcome, statedOutcome, type ReplyOutcome } from "./reply-report.js";
 import type { PostedMessage } from "./turn-context.js";
 
 /** Where a turn ran (DESIGN §3.2): which loop, who pays for the model, where its tools act, who keeps the conversation. */
@@ -80,7 +81,18 @@ export class TurnTrace {
   step = false;
   toolCalls: readonly AssistantToolCall[] = [];
   replyChars: number | null = null;
-  verification: { checks: string[]; rounds: Array<{ round: number; problems: string | null }> } | null = null;
+  /** The answer check: the kinds it checked, each round that sent the reply back (or passed it), and whether the reply the turn ended with passed. */
+  verification: { checks: string[]; rounds: Array<{ round: number; problems: string | null }>; passed: boolean | null } | null = null;
+  /** The model ended without words, also when asked again: the reply says what its tools did (assistant/empty-reply.ts). */
+  emptyReply = false;
+  /** Claims of something sent into the chat that never reached it, taken out of the reply (node/delivery-claims.ts). */
+  falseClaims = 0;
+  /** How the reply says the work ended, and what it says is left (node/reply-report.ts). */
+  stated: ReplyOutcome | null = null;
+  remaining: string | null = null;
+  /** Files that reached the chat with the turn's messages (evidence ids), and files it saved into the owner's Ensemble Files. */
+  shown: Array<{ id: string; kind: string }> = [];
+  saved: string[] = [];
   error: string | null = null;
 
   constructor(readonly turn: Pick<NodeTurn, "id" | "userId" | "nodeId">) {}
@@ -99,19 +111,37 @@ export class TurnTrace {
     this.placement = placementFor(pick.provider);
   }
 
-  answered(result: { model?: string | null; credits?: number | null; toolCalls?: readonly AssistantToolCall[]; content?: string }): void {
+  answered(result: { model?: string | null; credits?: number | null; toolCalls?: readonly AssistantToolCall[]; content?: string; emptyReply?: boolean; falseClaims?: number }): void {
     this.reported = result.model ?? null;
     this.credits = result.credits ?? null;
     this.toolCalls = result.toolCalls ?? [];
     this.replyChars = typeof result.content === "string" ? result.content.length : null;
+    this.emptyReply = result.emptyReply === true;
+    this.falseClaims = result.falseClaims ?? 0;
+    // A reply built from the tool log says nothing of its own.
+    const words = this.emptyReply ? "" : (result.content ?? "");
+    this.stated = statedOutcome(words);
+    const remaining = remainingIn(words);
+    this.remaining = remaining ? shortText(remaining, 200) : null;
+    this.saved = this.toolCalls.filter((call) => call.name === "hub_save_file" && call.state === "ok").flatMap((call) => (call.refs ?? []).filter((ref) => ref.kind === "file").map((ref) => ref.id));
   }
 
-  /** One round of the answer check (node/deliverables.ts): what it found missing, if anything. */
-  checked(round: number, feedback: string | null, checks: ReadonlyArray<{ kind: string }>): void {
-    const verification = (this.verification ??= { checks: [], rounds: [] });
+  /**
+   * One check of the answer (node/deliverables.ts): what it found missing, if anything. A round sent the reply back
+   * (or passed it); the `final` check, of the reply the turn ended with after its rounds, only says whether it passed.
+   */
+  checked(round: number, feedback: string | null, checks: ReadonlyArray<{ kind: string }>, final = false): void {
+    const verification = (this.verification ??= { checks: [], rounds: [], passed: null });
     verification.checks = [...new Set(checks.map((check) => check.kind))];
+    verification.passed = !feedback;
+    if (final) return;
     const problems = feedback ? shortText(feedback.replace(/^Not done yet:\s*/i, "").replace(/\s*Do it now with your tools.*$/i, "")) : null;
     verification.rounds.push({ round, problems });
+  }
+
+  /** Files posted with the turn's messages. */
+  delivered(media: ReadonlyArray<{ evidenceId: string; kind: string }>): void {
+    for (const item of media) if (!this.shown.some((row) => row.id === item.evidenceId)) this.shown.push({ id: item.evidenceId, kind: item.kind });
   }
 
   failed(error: unknown): void {
@@ -120,8 +150,13 @@ export class TurnTrace {
   }
 }
 
-/** A step's report (its `node_step_report` call), or what a conversation turn posted. */
-function reportOf(trace: TurnTrace, posted: readonly PostedMessage[]): Prisma.InputJsonValue | null {
+/**
+ * A step's report (its `node_step_report` call), or a conversation turn's (DESIGN §6.2): how it ended (`outcome`; `stated`:
+ * what the reply said), what it posted, the files that reached the chat or the owner's Files (`artifacts`), what the reply
+ * says is left, whether the answer check passed (null: not checked), and whether the reply was built from the tool log or
+ * had false claims taken out.
+ */
+function reportOf(trace: TurnTrace, posted: readonly PostedMessage[], ended?: string | null): Prisma.InputJsonValue | null {
   if (trace.step) {
     const call = [...trace.toolCalls].reverse().find((row) => STEP_TOOLS.has(row.name) && row.state === "ok");
     if (!call) return { kind: "step", reported: false };
@@ -138,11 +173,19 @@ function reportOf(trace: TurnTrace, posted: readonly PostedMessage[]): Prisma.In
     };
   }
   if (!posted.length && trace.replyChars === null) return null;
+  const verified = trace.verification?.passed ?? null;
   return {
     kind: "reply",
+    outcome: replyOutcome({ ended, error: Boolean(trace.error), stated: trace.stated, verified, falseClaims: trace.falseClaims, remaining: Boolean(trace.remaining) }),
+    ...(trace.stated ? { stated: trace.stated } : {}),
     ...(trace.replyChars !== null ? { chars: trace.replyChars } : {}),
     held: trace.toolCalls.filter((call) => call.state === "awaiting_approval").length,
     messages: posted.map((row) => ({ id: row.id, kind: row.kind, ...(row.type ? { type: row.type } : {}) })),
+    artifacts: [...trace.shown.map((row) => ({ ...row, to: "chat" })), ...trace.saved.map((id) => ({ id, kind: "file", to: "files" }))],
+    ...(trace.remaining ? { remaining: trace.remaining } : {}),
+    verified,
+    ...(trace.emptyReply ? { emptyReply: true } : {}),
+    ...(trace.falseClaims ? { falseClaims: trace.falseClaims } : {}),
   };
 }
 
@@ -162,7 +205,7 @@ export async function setPlacement(app: Pick<FastifyInstance, "prisma" | "log">,
 }
 
 /** Saves a turn's trace (once it chose a model), and the placement its loop settled. */
-export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, trace: TurnTrace, posted: readonly PostedMessage[], outcome?: { error?: string } | null): Promise<void> {
+export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, trace: TurnTrace, posted: readonly PostedMessage[], outcome?: { status?: string; error?: string } | null): Promise<void> {
   if (!trace.started) return;
   const loop = trace.loop.loop?.() ?? null;
   const placement = finalPlacement(trace.placement, loop);
@@ -189,7 +232,7 @@ export async function saveTrace(app: Pick<FastifyInstance, "prisma" | "log">, tr
     calls: trace.loop.calls as unknown as Prisma.InputJsonValue,
     selected: json(log?.selected === undefined ? null : compactJson(log.selected)),
     verification: json(trace.verification),
-    report: json(reportOf(trace, posted)),
+    report: json(reportOf(trace, posted, outcome?.status ?? null)),
     loop: json(loop ? compactJson(loop) : null),
     error: error ? shortText(error, 500) : null,
   };

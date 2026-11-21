@@ -9,7 +9,7 @@
  * a helper works only in the folders it was given, asking on their first use. Calls in flight together
  * share one question. sudo is sent to computer_sudo's card. The person's own MCP tools meet the same
  * floor and folders where their input names a command or files, and any other tool asks once a run;
- * a `cd` holds for the shell's next command.
+ * a `cd` holds for the shell's next command. How each call was answered reaches the call the agent reported, for the turn's trace.
  */
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
@@ -60,7 +60,7 @@ function rules(initial: Rule[] = []) {
 const MISSION = "conversation:room-1:shared";
 const rule = (toolName: string, pattern: string, sessionId: string | null = null): Rule => ({ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName, pattern, decision: "allow", sessionId });
 
-function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Rule[]; folders?: string[]; mission?: string; store?: ReturnType<typeof rules>; slowAsk?: boolean; servers?: Input["mcpServers"] } = {}) {
+function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Rule[]; folders?: string[]; mission?: string; store?: ReturnType<typeof rules>; slowAsk?: boolean; servers?: Input["mcpServers"]; onVerdict?: Input["onVerdict"] } = {}) {
   const asked: Ask[] = [];
   const answers = [...(options.answers ?? [])];
   const store = options.store ?? rules(options.saved);
@@ -69,6 +69,7 @@ function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answ
     node: { id: "node-1", slug: "ada", mission: options.mission ?? MISSION, attended: options.attended ?? true, sudo: options.sudo ?? true, ...(options.folders ? { folders: options.folders } : {}) },
     app: "claude-code",
     ...(options.servers ? { mcpServers: options.servers } : {}),
+    ...(options.onVerdict ? { onVerdict: options.onVerdict } : {}),
     async ask(request) {
       asked.push(request);
       if (options.slowAsk) await new Promise((resolve) => setTimeout(resolve, 30));
@@ -99,6 +100,16 @@ test("the hard floor refuses with why; reads, web searches and public pages need
   assert.equal((await judge([{ tool: "WebFetch", input: { url: "https://93.184.215.14/pricing" } }])).decision, "allow");
   assert.equal((await judge([{ tool: "mcp__ensemble__hub_list_tasks", input: {} }])).decision, "allow", "Ensemble's own tools are judged where they run");
   assert.deepEqual(asked, [], "nothing above needed the owner");
+});
+
+test("git that only reads is a read anywhere above the floor, -C included; git that changes a repository asks", async () => {
+  const { judge, asked } = judgeWith({ answers: [{ decision: "deny", message: "Mira said no." }] });
+  for (const command of [`git -C ${site} status --short --branch`, `git -C ${site} log --oneline -5`, `cd ${site} && git branch -a && git remote -v`, `git -C ${site} diff --stat`]) {
+    assert.equal((await judge(bash(command))).decision, "allow", command);
+  }
+  assert.equal(asked.length, 0, "reads ask nobody");
+  assert.equal((await judge(bash(`git -C ${site} commit -m wip`))).decision, "deny");
+  assert.deepEqual([asked.length, asked[0]!.target], [1, site], "a commit in that repository asks about its folder");
 });
 
 test("the node's own folders, temporary folders, a folder an answer for changes covers and an unattended run need nobody", async () => {
@@ -178,6 +189,36 @@ test("calls in flight together share one question and its answer", async () => {
   const { judge, asked } = judgeWith({ slowAsk: true, answers: [{ decision: "allow", grant: { id: "decision-4", scope: "mission", target: site } }] });
   const [one, two] = await Promise.all([judge(write(join(site, "a.md"))), judge(write(join(site, "src", "b.md")))]);
   assert.deepEqual([one.decision, two.decision, asked.length], ["allow", "allow", 1]);
+});
+
+test("how each call was answered reaches the call the agent reported, whichever came first, with its time and sizes", async () => {
+  const { OwnToolLog, OwnVerdicts } = await import("./own-tools.js");
+  const verdicts = new OwnVerdicts();
+  const events: Array<Record<string, unknown>> = [];
+  const log = new OwnToolLog("claude-code", (event) => events.push(event), verdicts);
+  const { judge, asked } = judgeWith({ answers: [{ decision: "allow", grant: { id: "decision-9", scope: "once", target: site } }], onVerdict: verdicts.note });
+  // Claude Code reports a call before its hook is judged; Codex is judged first.
+  const readme = { file_path: join(site, "README.md") };
+  log.start("read-1", "Read", readme);
+  assert.equal((await judge([{ tool: "Read", input: readme }])).decision, "allow");
+  log.end("read-1", "# Site", true);
+  assert.equal((await judge(write(join(site, "a.md")))).decision, "allow");
+  log.start("write-1", "Write", { file_path: join(site, "a.md"), content: "hello" });
+  log.end("write-1", "Saved.", true);
+  const key = { file_path: join(home, ".ssh", "id_ed25519") };
+  log.start("key-1", "Read", key);
+  assert.equal((await judge([{ tool: "Read", input: key }])).decision, "deny");
+  log.end("key-1", "Refused.", false);
+  log.start("ls-1", "Bash", { command: "ls" });
+  log.end("ls-1", "README.md", true);
+  assert.equal(asked.length, 1);
+  const ends = events.filter((event) => event.phase === "end");
+  assert.deepEqual(
+    ends.map((event) => [event.id, event.name, event.ok, event.verdict]),
+    [["read-1", "Read", true, "allowed"], ["write-1", "Edit", true, "asked"], ["key-1", "Read", false, "refused"], ["ls-1", "Shell", true, "allowed"]],
+  );
+  assert.deepEqual([ends[0]!.inChars, ends[0]!.outChars], [JSON.stringify(readme).length, "# Site".length]);
+  assert.ok(ends.every((event) => typeof event.ms === "number"), "how long each ran");
 });
 
 test("a helper works only in the folders it was given, and their first use asks", async () => {

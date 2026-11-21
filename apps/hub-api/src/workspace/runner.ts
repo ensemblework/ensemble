@@ -45,6 +45,11 @@ export interface RunOptions {
   group?: string;
   onChunk?: (text: string) => void;
   extraEnv?: Record<string, string>;
+  /**
+   * The PATH and HOME (and toolchain folders) a coding agent's own commands had, in place of the fixed
+   * PATH and scratch HOME: a check Ensemble runs again as the agent ran it (completion.ts).
+   */
+  engineEnv?: Record<string, string>;
   /** Variables of the agent environment the command does not get (a terminal shows colours: no `NO_COLOR`). */
   unsetEnv?: string[];
   /** The command's raw output bytes, as they arrive (a terminal decodes them itself). */
@@ -231,6 +236,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
   const env = { ...baseEnv, ...options.extraEnv };
   for (const key of options.unsetEnv ?? []) delete env[key];
   if (options.who === "agent" && baseEnv.HOME) env.HOME = baseEnv.HOME;
+  Object.assign(env, options.engineEnv);
   const program = await findProgram(options.argv[0]!, env.PATH ?? "", options.root);
   await mkdir(env.TMPDIR ?? env.TEMP!, { recursive: true });
   const cache = await cacheDir();

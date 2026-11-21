@@ -3,16 +3,17 @@ them. On Wayland every extent is relative to its window (GNOME does not tell a c
 are), so element boxes are window-relative and never screen positions."""
 from __future__ import annotations
 
+import os
 import time
 import warnings
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import gi
 
 gi.require_version("Atspi", "2.0")
-from gi.repository import Atspi, GLib  # noqa: E402
+from gi.repository import Atspi, Gio, GLib  # noqa: E402
 
 from .apps import app_id_for_pid, normalize  # noqa: E402
 from .rpc import error  # noqa: E402
@@ -49,6 +50,8 @@ PAGE_WINDOW_ROLES = {"frame", "window"}
 PRESS_ACTIONS = ("press", "click", "activate", "jump", "toggle", "open", "select")
 SELECT_ACTIONS = ("select", "activate", "click", "press")
 TOGGLE_ACTIONS = ("toggle", "click", "press", "activate")
+# A bus that could not be reached is looked for again after this long.
+BUS_RECHECK_S = 10.0
 MAX_NAME = 120
 MAX_VALUE = 200
 TREES_KEPT = 4
@@ -142,13 +145,57 @@ def _doc_url(node) -> str | None:
     return None
 
 
+def bus_problem(env: Mapping[str, str] = os.environ) -> str | None:
+    """Why no accessibility bus can be reached, or None when one can. libatspi aborts the whole process
+    when it finds none, so this asks D-Bus the way libatspi would before libatspi is ever called."""
+    flags = Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION
+    address = env.get("AT_SPI_BUS_ADDRESS")
+    if not address:
+        try:
+            session = Gio.DBusConnection.new_for_address_sync(Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION, None), flags, None, None)
+        except GLib.Error as failure:
+            return f"there is no session bus ({clean(failure.message, 160)})"
+        try:
+            reply = session.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None, GLib.VariantType("(s)"), Gio.DBusCallFlags.NONE, 3000, None)
+            address = reply.unpack()[0]
+        except GLib.Error as failure:
+            return f"the session bus offers no accessibility bus ({clean(failure.message, 160)})"
+        finally:
+            try:
+                session.close_sync(None)
+            except GLib.Error:
+                pass
+    try:
+        Gio.DBusConnection.new_for_address_sync(address, flags, None, None).close_sync(None)
+    except GLib.Error as failure:
+        return f"the accessibility bus does not answer ({clean(failure.message, 160)})"
+    return None
+
+
 class A11y:
     def __init__(self, clock=time.monotonic):
         self._clock = clock
         self._trees: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._next = 0
+        self._bus_ready = False
+        self._bus_problem: str | None = None
+        self._bus_checked: float | None = None
+
+    def _ensure_bus(self) -> None:
+        """Raises `a11y_unavailable` unless an accessibility bus can be reached (checked before libatspi is)."""
+        if self._bus_ready:
+            return
+        now = self._clock()
+        if self._bus_checked is None or now - self._bus_checked >= BUS_RECHECK_S:
+            self._bus_problem = bus_problem()
+            self._bus_checked = now
+            if self._bus_problem is None:
+                self._bus_ready = True
+                return
+        raise error("a11y_unavailable", f"Accessibility is unavailable here: {self._bus_problem}. Desktop control needs a desktop session with its accessibility bus.")
 
     def desktop(self):
+        self._ensure_bus()
         try:
             desk = Atspi.get_desktop(0)
         except GLib.Error as failure:

@@ -1,8 +1,9 @@
 /**
  * Ensemble's own loop with a scripted model (docs/11, Turn limits): reads that run together, writes in
  * order, long results kept for read_tool_output, runaway detection, step budgets by model class and the
- * checkpoint of an uncapped turn, compaction, the history budget, and model calls asked again after a
- * failure the runtime does not retry itself.
+ * checkpoint of an uncapped turn, compaction, the history budget, model calls asked again after a
+ * failure the runtime does not retry itself, a turn that ends without words, and a reply's claims of
+ * what reached the chat.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -20,6 +21,7 @@ import { resetLoopConfigCache } from "./loop-config.js";
 import { readableText } from "./tool-output.js";
 import { CHARS_PER_TOKEN, compactMessages, estimateTokens, HISTORY_LEFT_OUT } from "./compaction.js";
 import { resultDigest, RunawayGuard } from "./runaway.js";
+import { checkDelivery, deliveredWith } from "../node/delivery-claims.js";
 
 type Call = { name: string; input?: Record<string, unknown> };
 type Reply = { calls?: Call[]; text?: string } | Error;
@@ -222,6 +224,77 @@ test("steps where every call fails end the turn; with no answer from the model i
   assert.deepEqual(seen[8]!.tools, []);
   assert.equal(result.content, "I stopped because every step I tried kept failing. Nothing was changed.");
   assert.ok(!/[{}]/.test(result.content));
+});
+
+test("a call that failed keeps what it was sent, with secrets' shapes removed and long values cut", async () => {
+  const sent = { pageId: "1ea55b02-92b2-4ea8-a841-82525a4c7093", note: "Authorization: Bearer abcdefghijklmnop", password: "hunter2", body: "x".repeat(2_000) };
+  script((current) => (current.messages.some((message) => message.role === "tool") ? { text: "That page could not be read." } : { calls: [{ name: "read_broken", input: sent }] }));
+  const result = await turn({
+    provider: "openai",
+    tools: [
+      read("read_broken", async () => {
+        throw new Error("No page with that id.");
+      }),
+    ],
+  });
+  const call = result.toolCalls[0]!;
+  assert.equal(call.state, "failed");
+  assert.equal(call.input?.pageId, sent.pageId, "what was sent, so a trace shows the id the model used");
+  assert.equal(call.input?.note, "Authorization: Bearer [redacted]");
+  assert.equal(call.input?.password, "[redacted]");
+  assert.equal(String(call.input?.body).length, 501, "a long value is cut");
+});
+
+test("a page named by its exact title is found; an id that names nothing, or a title with no page, gets the closest pages with their ids", async () => {
+  const pages = [
+    { id: "1ea55b02-92b2-4ea8-841a-82525a4c7093", title: "Launch checklist" },
+    { id: "7d3f0c1e-5b2a-4c8d-9e6f-0a1b2c3d4e5f", title: "Product sync" },
+    { id: "8e4a1d2f-6c3b-4d9e-8f7a-1b2c3d4e5f60", title: "Product sync" },
+  ];
+  const base = fakeApp();
+  const app = {
+    ...base,
+    prisma: new Proxy(base.prisma as object, {
+      get: (target, prop) =>
+        prop === "taskPage"
+          ? { findMany: async () => pages.map(({ id, title }) => ({ id, title })), findFirst: async ({ where }: { where: { id: string } }) => pages.find((page) => page.id === where.id) ?? null }
+          : Reflect.get(target, prop),
+    }),
+  } as unknown as FastifyInstance;
+  const reads: string[] = [];
+  const readPage = defineTool({
+    name: "read_page",
+    area: "projects",
+    description: "Read a page by pageId.",
+    input: z.object({ pageId: z.string().uuid() }),
+    isWrite: false,
+    risk: "low",
+    async run(_ctx, input) {
+      reads.push(input.pageId);
+      if (!pages.some((page) => page.id === input.pageId)) throw Object.assign(new Error("No page with that id. Call hub_list_pages and use an id it returns."), { statusCode: 404 });
+      return toolOk("Read it.", { id: input.pageId });
+    },
+  });
+  // Another app's task id is no Ensemble id: it is passed on as it is.
+  const appTask = defineTool({ name: "jira_read_issue", area: "apps", description: "Read an issue.", input: z.object({ taskId: z.string() }), isWrite: false, risk: "low", run: async (_ctx, input) => toolOk(`Read ${input.taskId}.`, { taskId: input.taskId }) });
+  const errors = async (input: Record<string, unknown>, name = "read_page") => {
+    script((current) => (current.messages.some((message) => message.role === "tool") ? { text: "ok" } : { calls: [{ name, input }] }));
+    const result = await turn({ app, provider: "openai", tools: [readPage, appTask] });
+    return result.toolCalls[0]!;
+  };
+  assert.equal((await errors({ pageId: " “launch   CHECKLIST” " })).state, "ok");
+  assert.deepEqual(reads, [pages[0]!.id], "the exact title, case and spacing aside, is its id");
+  assert.equal((await errors({ pageId: "ensemble://page/1ea55b02-92b2-4ea8-841a-82525a4c7093" })).state, "ok", "a link is its id");
+  // The live run's mistake: two groups of the id swapped.
+  const swapped = await errors({ pageId: "1ea55b02-92b2-4ea8-a841-82525a4c7093" });
+  assert.equal(swapped.state, "failed");
+  assert.match(swapped.error ?? "", /^No page with that id\..* No page has the id 1ea55b02-92b2-4ea8-a841-82525a4c7093\. Closest: “Launch checklist” \(1ea55b02-92b2-4ea8-841a-82525a4c7093\)\./);
+  const typo = await errors({ pageId: "Lanch checklist" });
+  assert.match(typo.error ?? "", /^No page is called “Lanch checklist”\. Closest: “Launch checklist” \(1ea55b02-92b2-4ea8-841a-82525a4c7093\)\. Pass one of these ids, or a page's exact title\./);
+  const two = await errors({ pageId: "Product sync" });
+  assert.match(two.error ?? "", /^2 pages are called “Product sync”: “Product sync” \(7d3f0c1e-[^)]+\), “Product sync” \(8e4a1d2f-[^)]+\)\. Pass the id of the one you mean\./);
+  assert.equal(reads.length, 3, "a title that names no single page runs nothing");
+  assert.equal((await errors({ taskId: "PROJ-12" }, "jira_read_issue")).state, "ok");
 });
 
 test("an included model has 24 steps, the last a forced answer; an owner's key has no cap unless their config sets one", async () => {
@@ -495,4 +568,62 @@ test("progress is what calls return: the same call with the same result repeats,
   assert.deepEqual(round(), { kind: "nudge", tool: "browser_click, browser_snapshot", times: 3, round: 2 });
   assert.equal(round(), null);
   assert.deepEqual(round(), { kind: "stop", why: "repeat", tool: "browser_click, browser_snapshot", times: 5, round: 2 });
+});
+
+test("a model that acts and then says nothing is asked once for its reply; still nothing, and the reply says what its tools did", async () => {
+  const save = defineTool({ name: "save_note", area: "tasks", description: "Save a note.", input: z.object({ title: z.string() }), isWrite: true, risk: "low", run: async (_ctx, input) => toolOk(`Created note “${input.title}”.`) });
+  const look = read("read_inbox", async () => toolOk("Read 3 emails.", { count: 3 }));
+  let seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }, { name: "save_note", input: { title: "Launch plan" } }] } : { text: "" }));
+  const result = await turn({ provider: "openai", tools: [look, save] });
+  assert.equal(seen.length, 3, "the work, the empty answer, and the one request for the reply");
+  assert.ok(seen[2]!.messages.some((message) => message.role === "user" && /you wrote nothing/.test(String(message.content))));
+  assert.equal(result.content, "Done: created note “Launch plan”.", "what it did, in plain words, never an error");
+  assert.equal(result.emptyReply, true);
+  assert.equal(result.failed, undefined);
+
+  // Only lookups: what it looked at.
+  seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }] } : { text: "" }));
+  assert.equal((await turn({ provider: "openai", tools: [look] })).content, "Looked at: read 3 emails.");
+
+  // Asked again, the model answers: that is the reply.
+  seen = script((_current, index) => (index === 0 ? { calls: [{ name: "read_inbox" }] } : index === 1 ? { text: "" } : { text: "You have 3 new emails." }));
+  const answered = await turn({ provider: "openai", tools: [look] });
+  assert.equal(answered.content, "You have 3 new emails.");
+  assert.equal(answered.emptyReply, undefined);
+});
+
+test("a model that does nothing and says nothing fails, in plain words", async () => {
+  script(() => ({ text: "" }));
+  await assert.rejects(turn({ provider: "openai", tools: [] }), (error: Error) => error.message === "The model ended its turn without replying or doing anything. Try again, or choose another model.");
+});
+
+test("a reply that says something reached the chat when nothing did goes back once; still claimed, the claim is taken out with a plain note", async () => {
+  const look = read("read_page", async () => toolOk("Opened the status page.", { title: "Status" }));
+  const ask = (reply: (seen: Seen, index: number) => Reply) => {
+    const seen = script(reply);
+    const run = runAssistantTurn({
+      app: fakeApp(),
+      userId: "loop-user",
+      conversationId: "loop-conversation",
+      message: "Send me a screenshot of the status page.",
+      settings: DEFAULT_SETTINGS,
+      model: "test-model",
+      provider: "openai",
+      extraTools: [look],
+      claims: ({ text }) => checkDelivery(text, deliveredWith([], text)),
+      emit: () => undefined,
+    });
+    return { seen, run };
+  };
+  const stubborn = ask((_current, index) => (index === 0 ? { calls: [{ name: "read_page" }] } : { text: "Here is the screenshot. The page shows 3 services up." }));
+  const result = await stubborn.run;
+  assert.equal(stubborn.seen.length, 3, "the work, the claim, and one round to fix it");
+  assert.equal(String(stubborn.seen[2]!.messages.at(-1)!.content), "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  assert.equal(result.content, "The page shows 3 services up.\n\nNo screenshot was attached.");
+  assert.equal(result.falseClaims, 1);
+
+  const fixed = ask((_current, index) => (index === 0 ? { calls: [{ name: "read_page" }] } : index === 1 ? { text: "Here is the screenshot." } : { text: "I could not take a screenshot: no browser here. The page shows 3 services up." }));
+  const corrected = await fixed.run;
+  assert.equal(corrected.content, "I could not take a screenshot: no browser here. The page shows 3 services up.");
+  assert.equal(corrected.falseClaims, undefined);
 });

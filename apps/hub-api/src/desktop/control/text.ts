@@ -66,7 +66,7 @@ export function actText(result: ActResult): string {
 function screenStatus(status: DesktopStatus): string[] {
   const lines = Object.entries(status.facts).map(([name, fact]) => `- ${name}: ${fact.state}${fact.detail ? `, ${fact.detail}` : ""}${fact.fix ? ` Fix: ${fact.fix}` : ""}`);
   lines.push(`- screen control: ${status.session.state}${status.session.displays.length ? ` (${status.session.displays.map((display) => `${display.id} ${display.width}×${display.height}${display.primary ? " main" : ""}`).join(", ")})` : ""}.`);
-  if (status.screen === "owner") lines.push(status.lease.holder === "owner" ? `- Your owner has the computer (since ${status.lease.since.slice(11, 16)}): your input and screenshots there wait; elements-only looks and background steps go on.` : "- You may use it when it is your turn.");
+  if (status.screen === "owner" && status.session.state !== "unavailable") lines.push(status.lease.holder === "owner" ? `- Your owner has the computer (since ${status.lease.since.slice(11, 16)}): your input and screenshots there wait; elements-only looks and background steps go on.` : "- You may use it when it is your turn.");
   if (status.controller) lines.push(`- In use by ${status.controller.label} (since ${status.controller.since.slice(11, 16)}).`);
   if (status.recording) lines.push(`- A recording ${status.recording.ended ? `ended (${status.recording.ended}) and waits to be saved` : "is running"}.`);
   return lines;
@@ -99,7 +99,15 @@ export function appsText(lists: readonly AppsResult[]): string {
 
 export function openText(opened: OpenResult): string {
   const done = Object.entries(opened.stages).filter(([, ok]) => ok).map(([stage]) => stage);
-  const state = opened.stages.window ? (opened.focused ? "is open and in front" : "is open but not in front (click its window, or look first)") : opened.stages.accepted ? "was started but shows no window yet (look again in a moment)" : "did not start";
+  const state = opened.stages.window
+    ? opened.focused
+      ? "is open and in front"
+      : opened.via === "background"
+        ? "is open behind your owner's windows (read it with desktop_observe app and screenshot false, and act on its element ids)"
+        : "is open but not in front (click its window, or look first)"
+    : opened.stages.accepted
+      ? "was started but shows no window yet (look again in a moment)"
+      : "did not start";
   return `${opened.app.name} (${opened.app.id}) ${state} on ${SCREEN_WORDS[opened.screen]}. Reached: ${done.join(", ") || "nothing"}. Look with desktop_observe before acting.`;
 }
 

@@ -22,6 +22,7 @@ import { fileAnswers, publishFileAnswer } from "./revoke-notify.js";
 import { ownDevice } from "./routes.js";
 import { currentDevice } from "./successor.js";
 import { rememberRun, requireUnlocked, requireWebPerson, webUnlockRoutes } from "./web-unlock.js";
+import { markAccepted } from "../workspace/completion.js";
 
 const ASK_MS = 20_000;
 const SLOW_MS = 55_000;
@@ -90,6 +91,16 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
     return { answered: true as const, answer: answer.data, send: () => reply.code(answer.data.status).send(answer.data.body ?? {}) };
   }
 
+  /** The owner accepted, discarded or finished reviewing a run's changes on its computer: the web's run records it too (workspace/completion.ts). */
+  async function reviewAnswered(userId: string, path: string, answer: unknown): Promise<void> {
+    const match = /^\/api\/code\/reviews\/([0-9a-f-]{36})\/(accept|discard|complete)$/i.exec(path);
+    if (!match) return;
+    const said = (answer as { accepted?: unknown } | null)?.accepted;
+    const state = match[2] === "discard" || (match[2] === "complete" && said === "rejected") ? "rejected" : "accepted";
+    const job = await prisma.workspaceJob.findFirst({ where: { userId, evidence: { path: ["reviewId"], equals: match[1] } }, select: { id: true } });
+    if (job) await markAccepted(prisma, job.id, state, "owner");
+  }
+
   // One call to the computer's own Code API: reviews, diffs, files, accept/reject, edit, source control.
   app.post("/api/devices/:id/code", async (request, reply) => {
     const device = await computer(request, "code");
@@ -103,6 +114,7 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
     const result = await relay(reply, device, "code.request", { method: body.method, path: body.path, query: body.query, ...(body.body === undefined ? {} : { body: body.body }) }, entry.slow ? SLOW_MS : ASK_MS);
     if (entry.write && result.answered && result.answer.status < 400) {
       await appendLedger({ userId: accountIdOf(request), actor: "me", action: "code.web", payload: { deviceId: device.id, call: `${body.method} ${body.path}` } });
+      await reviewAnswered(accountIdOf(request), body.path, result.answer.body).catch((error: unknown) => request.log.warn({ err: error }, "could not record the review's answer on the run"));
     }
     return result.send();
   });

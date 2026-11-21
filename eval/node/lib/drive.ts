@@ -247,7 +247,7 @@ export async function busy(drive: Drive): Promise<string[]> {
     prisma.nodeTurn.count({ where: { userId: owner, status: { in: ["queued", "running"] } } }),
     prisma.workspaceJob.count({ where: { userId: owner, status: { in: [...LIVE_JOB] } } }),
     prisma.nodeRun.count({ where: { userId: owner, reportedAt: null } }),
-    prisma.nodeMission.count({ where: { userId: owner, status: { in: ["running", "reporting"] } } }),
+    prisma.nodeMission.count({ where: { userId: owner, status: { in: ["running", "replanning", "reporting"] } } }),
   ]);
   return [
     ...(turns ? [`turns ${turns}`] : []),
@@ -322,7 +322,8 @@ export async function traceNodeRecords(drive: Drive): Promise<void> {
       model: { requested: row.modelRequested ?? null, sent: row.modelSent ?? null, reported: row.modelReported ?? null, provider: row.provider ?? null, effort: row.effort ?? null },
       placement: row.placement ?? null,
       tokens: { in: row.tokensIn ?? null, out: row.tokensOut ?? null },
-      calls: calls.slice(0, 60).map((call) => `${String(call.name)}:${String(call.state)}`),
+      // The agent's own calls on the owner's plan (its shell, files, web) with how Ensemble answered them.
+      calls: calls.slice(0, 60).map((call) => (call.kind === "own" ? `own:${String(call.name)}:${String(call.state)}:${String(call.verdict)}` : `${String(call.name)}:${String(call.state)}`)),
       loop: row.loop ?? null,
       ...(row.report ? { report: row.report } : {}),
       ...(row.error ? { error: row.error } : {}),
@@ -336,6 +337,15 @@ export async function traceNodeRecords(drive: Drive): Promise<void> {
 /** Records the last sessions (including any Copilot session found by its folder). */
 export async function finalSessions(drive: Drive): Promise<void> {
   await noteSessions(drive, true).catch(() => undefined);
+}
+
+/**
+ * Deletes the owner's nodes once the task is graded (their turns stop first): a node can be woken after
+ * its task, for a run whose computer has gone, and would then run during the next task.
+ */
+export async function endNodes(drive: Drive): Promise<void> {
+  const nodes = await drive.world.prisma.nodeAgent.findMany({ where: { userId: drive.owner.id }, select: { id: true } });
+  for (const node of nodes) await drive.owner.inject({ method: "DELETE", url: `/api/node/nodes/${node.id}` }).catch(() => undefined);
 }
 
 /** Stops everything the owner's nodes still do (the room's Stop, everywhere) and waits for the computer to end its runs. */

@@ -155,6 +155,8 @@ export type RunMetrics = {
   noAnswerTurns?: number;
   /** Error messages posted in the chat for the owner to read. Absent in older result files. */
   errorMessages?: number;
+  /** Plan steps that got stuck and reached the owner's card (`plan_decision`). Absent in older result files. */
+  stuckSteps?: number;
 };
 
 export type RunResult = {

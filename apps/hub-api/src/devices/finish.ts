@@ -14,6 +14,7 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import type { StepReport } from "../node/report.js";
+import { keepCodeTurnResult, type CodeTurnResult } from "../workspace/code-turn.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -45,7 +46,7 @@ function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelle
 export async function finishDeviceJob(
   prisma: PrismaClient,
   job: WorkspaceJob & { task: { id: string; title: string; status: string; owner: string } },
-  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals; report?: StepReport | null },
+  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals; report?: StepReport | null; codeTurn?: CodeTurnResult | null },
 ): Promise<boolean> {
   await requireVerifiedUser(job.userId);
   const summary = redactText(input.summary).slice(0, 20_000);
@@ -113,6 +114,8 @@ export async function finishDeviceJob(
         result: summary || null,
       },
     });
+    // A Code tab turn: what its packet sent, the checks the computer ran again, and its handoff record.
+    if (input.codeTurn) await keepCodeTurnResult(tx, job, runId, input.codeTurn);
     const next = taskStatusFor(outcome, job.markDone);
     const fresh = await tx.task.findUnique({ where: { id: job.taskId }, select: { status: true, owner: true } });
     if (fresh && fresh.owner === "agent" && fresh.status !== next) {

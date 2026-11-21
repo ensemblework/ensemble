@@ -15,7 +15,9 @@ export const SCREENS = ["agent", "owner"] as const;
 const screen = z
   .enum(SCREENS)
   .optional()
-  .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent.");
+  .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent. A Mac has no agent screen: there it is always owner.");
+
+const share = z.boolean().optional().describe("true: also send this picture to your owner in this chat, held for them to preview first. Use it whenever they want to see the screen.");
 
 export const STEP_ACTIONS = ["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key", "press", "set_text", "select", "toggle", "focus", "wait", "open"] as const;
 export type StepAction = (typeof STEP_ACTIONS)[number];
@@ -33,7 +35,7 @@ export const DesktopStep = z
     direction: z.enum(["up", "down", "left", "right"]).optional().describe("scroll: which way. With an element instead, scroll brings it into view."),
     amount: z.number().int().min(1).max(30).optional().describe("scroll: how many notches (default 3)."),
     text: z.string().max(5_000).optional().describe("type or set_text: the text. A saved secret goes by its name, $NAME, and only into a password field."),
-    keys: z.string().max(80).optional().describe("key: one key or a combination, such as Return, Escape, ctrl+s, alt+Tab, ctrl+shift+t."),
+    keys: z.string().max(80).optional().describe("key: one key or a combination, such as Return, Escape, ctrl+s, alt+Tab, ctrl+shift+t (on a Mac cmd+s; with an element there, the keys go to that element in the background)."),
     repeat: z.number().int().min(1).max(30).optional(),
     name: z.string().max(60).optional().describe("press, select or toggle: which of the element's actions, when it has several."),
     ms: z.number().int().min(0).max(10_000).optional().describe("wait: milliseconds."),
@@ -108,7 +110,7 @@ export const DESKTOP_TOOLS = [
   {
     name: "desktop_open",
     description:
-      "Open an installed app by its id from desktop_apps and wait until its window can be read. By default it opens on your private agent screen, where you work without disturbing your owner; on their screen (screen owner) it takes the front, so your owner is asked once for this work. Blocks up to about 25 seconds, more when the agent screen starts. A password manager, terminal, system settings or banking app asks your owner first, once per app in this work.",
+      "Open an installed app by its id from desktop_apps and wait until its window can be read. By default it opens on your private agent screen, where you work without disturbing your owner; on their screen (screen owner) it takes the front, so your owner is asked once for this work. On a Mac it opens behind your owner's windows without asking: work in it through its element ids. Blocks up to about 25 seconds, more when the agent screen starts. A password manager, terminal, system settings or banking app asks your owner first, once per app in this work.",
     input: z
       .object({
         app: z.string().min(1).max(200).describe("The app's id or name."),
@@ -121,7 +123,7 @@ export const DESKTOP_TOOLS = [
     name: "desktop_observe",
     readOnly: true,
     description:
-      "Look at a screen: a screenshot with its captureId, the app in front and its accessibility elements (ids e1, e2…). Aim desktop_act at those ids (exact, and the only way to act in the background on your owner's screen), or at x,y in this screenshot with its captureId. Look again after the screen changes: coordinates on an older screenshot are refused. Takes up to about 10 seconds; the first screenshot of your owner's screen may wait for them to allow screen control, and the first look at the agent screen starts it (about 5 seconds).",
+      "Look at a screen: a screenshot with its captureId, the app in front and its accessibility elements (ids e1, e2…). Aim desktop_act at those ids (exact, and the only way to act in the background on your owner's screen), or at x,y in this screenshot with its captureId. Look again after the screen changes: coordinates on an older screenshot are refused. Your owner sees none of it unless share is true, which sends this screenshot to them in this chat: the only way to show them a screen, so never say one is attached otherwise. Takes up to about 10 seconds; the first screenshot of your owner's screen may wait for them to allow screen control, and the first look at the agent screen starts it (about 5 seconds).",
     input: z
       .object({
         screen,
@@ -130,6 +132,7 @@ export const DESKTOP_TOOLS = [
         elements: z.boolean().optional().describe("Read the accessibility elements (default true)."),
         screenshot: z.boolean().optional().describe("false: read one app's elements without a picture. Needs no screen control, and works while your owner uses the computer."),
         maxElements: z.number().int().min(10).max(200).optional(),
+        share,
       })
       .strict(),
   },
@@ -150,11 +153,12 @@ export const DESKTOP_TOOLS = [
   {
     name: "desktop_zoom",
     readOnly: true,
-    description: "A closer, sharper look at part of a screenshot: its captureId and a box [x0, y0, x1, y1] in its pixels. Returns a new image with its own captureId, which clicks can aim at too. Answers in a few seconds.",
+    description: "A closer, sharper look at part of a screenshot: its captureId and a box [x0, y0, x1, y1] in its pixels. Returns a new image with its own captureId, which clicks can aim at too; share true sends it to your owner as well. Answers in a few seconds.",
     input: z
       .object({
         captureId,
         box: z.tuple([coordinate, coordinate, coordinate, coordinate]).describe("[x0, y0, x1, y1] in the screenshot's pixels."),
+        share,
       })
       .strict(),
   },

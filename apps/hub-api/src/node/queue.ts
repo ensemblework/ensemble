@@ -643,7 +643,7 @@ export async function stopTurns(app: FastifyInstance, nodeIds: readonly string[]
     }
   }
   const where = { ...(roomId === null ? {} : { roomId }), nodeId: { in: [...nodeIds] }, status: "queued" };
-  const planTurns = await app.prisma.nodeTurn.findMany({ where: { ...where, planId: { not: null } }, select: { planId: true, planStep: true } });
+  const planTurns = await app.prisma.nodeTurn.findMany({ where: { ...where, planId: { not: null } }, select: { id: true, planId: true, planStep: true } });
   const dropped = await app.prisma.nodeTurn.updateMany({ where, data: { status: "failed", outcome: "cancelled", error: "Stopped.", finishedAt: new Date() } });
   for (const turn of planTurns) await planTurnEnded(app, turn, "Stopped before it started.");
   return stopped + dropped.count;

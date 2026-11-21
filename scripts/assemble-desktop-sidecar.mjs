@@ -1,19 +1,24 @@
 /**
  * Pack hub-api, its worker, and a Node binary into the Tauri resources folder.
  * Dev builds skip this and run `node --import tsx` from the workspace.
+ *
+ * On macOS the desktop app's sidecar also carries cua-driver, the desktop control driver, at its pinned
+ * version (scripts/fetch-cua-driver.mjs). `--no-cua-driver` leaves it out: the CLI's sidecar
+ * (scripts/package-cli.mjs), whose runtime never drives a Mac's desktop.
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLandrun } from "./build-landrun.mjs";
+import { fetchCuaDriver } from "./fetch-cua-driver.mjs";
 import { run } from "./desktop-spawn.mjs";
 
 import { checkReleaseVersion } from "./release-version.mjs";
 checkReleaseVersion();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const dest = parseArgs(process.argv.slice(2));
+const { dest, cuaDriver } = parseArgs(process.argv.slice(2));
 const appDir = join(dest, "app");
 
 rmSync(dest, { recursive: true, force: true });
@@ -89,6 +94,16 @@ cpSync(join(root, ".github", "skills", "block-diagrams", "SKILL.md"), join(appDi
 if (process.platform === "linux") {
   mkdirSync(join(dest, "bin"), { recursive: true });
   buildLandrun({ out: join(dest, "bin", "landrun"), arch: process.arch });
+}
+
+// macOS: the desktop control driver (apps/hub-api/src/desktop/control/index.ts looks for <sidecar>/bin/cua-driver).
+if (process.platform === "darwin" && cuaDriver) {
+  try {
+    await fetchCuaDriver({ out: join(dest, "bin", "cua-driver") });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
 }
 
 checkImports();
@@ -169,8 +184,13 @@ function generatePrismaClient({ engines, rustFree }) {
 function parseArgs(args) {
   const defaultDest = join(root, "apps/desktop/src-tauri/resources/sidecar");
   let output = defaultDest;
+  let cuaDriver = true;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (arg === "--no-cua-driver") {
+      cuaDriver = false;
+      continue;
+    }
     if (arg === "--dest") {
       const value = args[i + 1];
       if (!value) {
@@ -188,7 +208,7 @@ function parseArgs(args) {
     console.error(`Unknown option for assemble-desktop-sidecar.mjs: ${arg}`);
     process.exit(1);
   }
-  return output;
+  return { dest: output, cuaDriver };
 }
 
 function bundleNodeLibraries(nodeSrc, nodeDest) {

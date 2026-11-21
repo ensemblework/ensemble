@@ -66,7 +66,9 @@ def consent_fact(session_state: str, token_saved: bool, last_start: dict[str, An
     return fact("needed", "Nobody allowed remote interaction on this computer yet.", "The first use shows a dialog on the computer's screen; your owner allows it there once.")
 
 
-def a11y_fact(apps: int | None, failure: str | None) -> dict[str, Any]:
+def a11y_fact(apps: int | None, failure: str | None, kind: str | None = None) -> dict[str, Any]:
+    if kind == "a11y_unavailable":
+        return fact("unavailable", failure or "Accessibility is unavailable here.", "Run Ensemble inside your desktop session, where the accessibility bus runs (it is on by default in GNOME).")
     if failure:
         return fact("failed", failure, "Turn on the accessibility bus (it is on by default in GNOME); then sign out and in.")
     return fact("working", f"{apps} apps on the accessibility bus", apps=apps)

@@ -4,16 +4,22 @@ description: Use when the work happens in a desktop app rather than a web page: 
 license: FSL-1.1-MIT
 metadata:
   priority: p1
-  keywords: desktop app, app window, application, install, installer, open the app, settings app, file manager, window, windows, gui, native app, electron, tauri, mac app, windows app, linux app, on my screen
+  keywords: desktop app, app window, application, install, installer, open the app, settings app, file manager, window, windows, gui, native app, electron, tauri, mac app, macos, windows app, linux app, on my screen, apple reminders, reminders app, clock app, alarm on my mac
   tools: capture_app_start, desktop_observe, desktop_act
   source: Ensemble.
 ---
-Prefer your own screen, and look after every action.
+- Connected apps, files, commands and the browser first; a desktop app only when the work lives there.
+- Use your agent screen when you can (capture_app_start); your owner's only for their open apps or session, or when they ask to watch, and say which.
+- Look again after every action and aim only at the latest look: older positions are stale.
+- One app at a time; a window gone, list the apps again.
+- Passwords, system prompts and permission dialogs are your owner's: hand them control; never type a password.
+- A step is proven only when confirmed (its value or state changed); otherwise check on screen before you say it worked.
+- Your looks reach only you: to show the screen, use desktop_observe or desktop_zoom with share true (held for their preview), and never say a screenshot is attached otherwise.
+- Stop the apps you started (capture_app_stop).
 
-- Connected apps, files and commands first; the browser next; a desktop app only when the work lives there.
-- Run the app on your own agent screen when you can (capture_app_start starts it on a private display that never touches your owner's screen). Use your owner's own screen only when the task needs their open apps or their session, or they ask to watch, and say which screen you used.
-- After every action (a click, typing, a key, opening something), look again before the next one (capture_screenshot, or the next observation). Aim only at what the latest look shows: positions from an older screenshot are stale.
-- Work in one app at a time. When a window or a handle is gone, list the apps again rather than guessing another.
-- Passwords, system prompts and permission dialogs are your owner's: hand control to them, and never type a password.
-- Never assume an action worked: confirm it on screen (the installed app opens, the setting shows its new value), and capture it as evidence when your owner wants proof.
-- Stop the apps you started when you are done (capture_app_stop).
+On a Mac there is no agent screen: work on your owner's, through accessibility.
+
+- desktop_open puts an app behind their windows. Read it with desktop_observe (app name, screenshot false); press, set_text, select, toggle, type and key on element ids run in the background.
+- Coordinates, and type or key without an element, need foreground true (asked once); keys like cmd+n.
+- Accessibility or Screen Recording off: give your owner the tool's System Settings fix word for word, and stop.
+- Reminders: add (+), set_text the title, key Return. Clock alarms: Alarms tab, add (+), set the time, Save. Then read the list again.

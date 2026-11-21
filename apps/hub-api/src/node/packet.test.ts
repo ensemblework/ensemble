@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compilePacket, dispatchable, PACKET_LIMIT } from "./packet.js";
+import { compilePacket, conflictsOf, dispatchable, PACKET_FORMAT, PACKET_LIMIT, storedPacket } from "./packet.js";
 import type { PlanData, PlanStep } from "./plans.js";
 
 function step(over: Partial<PlanStep> & Pick<PlanStep, "id" | "kind">): PlanStep {
@@ -102,7 +102,7 @@ test("a build packet says each constraint exactly once, settings as facts, and h
   assert.match(packet.prompt, /\.ensemble\/result\.json/);
   assert.deepEqual(
     packet.sections.map((section) => section.name),
-    ["Goal", "Your part", "Constraints", "Inputs", "Settings", "Who you are", "Report"],
+    ["Goal", "Your part", "Constraints", "Inputs", "Settings", "Who you are", "Report", "Task"],
   );
   assert.equal(packet.title, "Build: Escape | in record titles when rendering Markdown tables in node messages");
 });
@@ -202,4 +202,127 @@ test("only building, checking what was built, and writing files where the missio
   assert.equal(dispatchable(onComputer, checkResearch, "first"), false);
   assert.equal(dispatchable(onComputer, own, "first"), false);
   assert.equal(dispatchable(plan([build], { contract: 1 }), build, "first"), false);
+});
+
+test("a packet's header is versioned and hashed, and the prompt carries it after the body", () => {
+  const build = step({ id: "builder", kind: "build", requirementIds: ["R1"] });
+  const verify = step({ id: "tester", kind: "verify", verifies: "builder", after: ["builder"], requirementIds: ["R1"], status: "waiting" });
+  const data = plan([build, verify], { leadTurnId: "turn-1" });
+  const artifacts = [{ ref: "docs/spec.md", label: "the spec", hash: "aaaa1111", at: "2026-01-01T00:00:00.000Z" }];
+  const packet = compilePacket(data, build, "first", { ...who, artifacts });
+  const header = packet.header;
+  assert.equal(header.format, PACKET_FORMAT);
+  assert.equal(header.packetVersion, 1);
+  assert.equal(header.taskId, "m1/builder");
+  assert.equal(header.parentTaskId, "m1");
+  assert.deepEqual(header.origin, { kind: "message", id: "turn-1" });
+  assert.deepEqual(header.acceptance.map((item) => item.id), ["A1", "A2"]);
+  assert.deepEqual(header.artifacts, [{ ref: "docs/spec.md", label: "the spec", hash: "aaaa1111", authoritative: true }]);
+  assert.deepEqual(header.returnChannel, { roomId: "room", private: false });
+  assert.equal(header.amendmentOf, null);
+  assert.match(header.hash, /^[0-9a-f]{64}$/);
+  assert.match(header.instructionVersion, /^[0-9a-f]{16}$/);
+  // The prompt ends with the header's identity, never repeating what the body says.
+  const block = /```json ensemble-task\n(.+)\n```$/.exec(packet.prompt);
+  assert.ok(block, "the header block closes the prompt");
+  const embedded = JSON.parse(block[1]!) as Record<string, unknown>;
+  assert.equal(embedded.hash, header.hash);
+  assert.equal(embedded.packetVersion, 1);
+  assert.equal("constraints" in embedded || "target" in embedded || "provider" in embedded, false);
+  assert.deepEqual(compilePacket(data, build, "first", { ...who, artifacts }).header.hash, header.hash, "the same packet hashes the same");
+  assert.deepEqual(storedPacket({ header, title: packet.title, prompt: packet.prompt })?.header.hash, header.hash);
+  assert.equal(storedPacket({ prompt: "old" }), null);
+});
+
+test("a later version names what changed and what stays, from the headers alone", () => {
+  const build = step({ id: "builder", kind: "build", requirementIds: ["R1"] });
+  const first = compilePacket(plan([build]), build, "first", { ...who, artifacts: [{ ref: "docs/spec.md", hash: "aaaa1111", at: "t" }] });
+  const amended = step({ ...build, attempt: 2, attempts: [...build.attempts, { n: 2, reason: "amend", outcome: "unknown", summary: null, startedAt: null, endedAt: null }] });
+  const data = plan([amended], {
+    constraints: { ...plan([]).constraints, branch: "release" },
+    requirements: [{ ...plan([]).requirements[0]!, acceptance: [{ id: "A1", text: "A title containing | stays in one cell", mandatory: true }, { id: "A3", text: "Tables scroll on phones", mandatory: true, proof: "browser" }] }],
+  });
+  const second = compilePacket(data, amended, "amend", { ...who, artifacts: [{ ref: "docs/spec.md", hash: "bbbb2222", at: "t" }], previous: first.header });
+  const { header } = second;
+  assert.equal(header.packetVersion, 2);
+  assert.equal(header.amendmentOf, "m1/builder@v1");
+  const changes = header.amendment!.changes.join("\n");
+  assert.match(changes, /Attempt 2: an update/);
+  assert.match(changes, /Constraint changed: Branch: release\. \(was: Branch: live-testing\.\)/);
+  assert.match(changes, /New acceptance criterion A3 \(must pass; proof: browser\): Tables scroll on phones/);
+  assert.match(changes, /Acceptance criterion A2 no longer applies/);
+  assert.match(changes, /docs\/spec\.md changed: aaaa1111 is now bbbb2222/);
+  const keeps = header.amendment!.keeps.join("; ");
+  assert.match(keeps, /your part/);
+  assert.match(keeps, /acceptance A1/);
+  assert.match(keeps, /constraints \(Where, Environment, Publish/);
+  assert.match(second.prompt, /^## Changes\nThis is version 2 of this task\. Since version 1:/);
+  assert.notEqual(header.hash, first.header.hash);
+});
+
+test("an artifact or a checked candidate that changed after the packet named it is a conflict", () => {
+  const build = step({ id: "builder", kind: "build", status: "done", outcome: "done", attempts: [{ n: 1, reason: "first", outcome: "done", summary: "Built.", candidate: { commit: "4ea13ef" }, startedAt: null, endedAt: null }] });
+  const review = step({ id: "reviewer", kind: "review", verifies: "builder", after: ["builder"], requirementIds: ["R1"] });
+  const registry = [{ ref: "docs/spec.md", hash: "aaaa1111", at: "t" }];
+  const { header } = compilePacket(plan([build, review]), review, "first", { ...who, artifacts: registry });
+  assert.deepEqual(conflictsOf(header, registry, plan([build, review]), "now"), [], "nothing changed");
+  const rebuilt = step({ ...build, attempts: [...build.attempts, { n: 2, reason: "retry", outcome: "done", summary: "Again.", candidate: { commit: "9b1c2d3" }, startedAt: null, endedAt: null }] });
+  const conflicts = conflictsOf(header, [{ ref: "docs/spec.md", hash: "cccc3333", at: "t" }], plan([rebuilt, review]), "now");
+  assert.deepEqual(
+    conflicts.map((row) => [row.ref, row.was, row.now]),
+    [
+      ["docs/spec.md", "aaaa1111", "cccc3333"],
+      ["candidate:builder", "4ea13ef", "9b1c2d3"],
+    ],
+  );
+  assert.deepEqual(conflictsOf(header, registry, plan([step({ ...build, attempts: [{ ...build.attempts[0]!, candidate: { commit: "4ea13ef0c0ffee" } }] }), review]), "now"), [], "a short commit is its long form");
+});
+
+test("a review packet lists the acceptance ids it judges with their proof, the candidate and the commands to run again", () => {
+  const build = step({
+    id: "builder",
+    kind: "build",
+    status: "done",
+    outcome: "done",
+    attempts: [
+      {
+        n: 1,
+        reason: "first",
+        outcome: "done",
+        summary: "Built.",
+        candidate: { commit: "4ea13ef", branch: "live-testing" },
+        checks: [{ name: "unit tests", verdict: "pass", rerun: { command: "pnpm test", expects: "exit_0" } }],
+        startedAt: null,
+        endedAt: null,
+      },
+    ],
+  });
+  const review = step({ id: "reviewer", kind: "review", verifies: "builder", after: ["builder"], requirementIds: ["R1"], acceptanceIds: ["A2"] });
+  const data = plan([build, review], { requirements: [{ ...plan([]).requirements[0]!, acceptance: [{ id: "A1", text: "A title containing | stays in one cell", mandatory: true }, { id: "A2", text: "Links in neighbouring cells still work", mandatory: true, proof: "browser" }] }] });
+  const packet = compilePacket(data, review, "first", who);
+  assert.equal(packet.title.startsWith("Review: "), true);
+  assert.match(packet.prompt, /You review @builder's build independently, at commit 4ea13ef on live-testing\. Its builder's report and green tests are input, not proof\./);
+  assert.match(packet.prompt, /- A2 \(must pass; proof: browser\): Links in neighbouring cells still work/);
+  assert.doesNotMatch(packet.prompt, /- A1 /, "only the criteria it judges");
+  assert.match(packet.prompt, /- `pnpm test`, expecting exit 0 \(unit tests, from @builder\)/);
+  assert.match(packet.prompt, /A pass rests on evidence of strength A or B/);
+  assert.deepEqual(packet.header.acceptance.map((item) => item.id), ["A2"]);
+  assert.deepEqual(packet.header.artifacts, [{ ref: "candidate:builder", label: "@builder's build", hash: "4ea13ef", authoritative: true }]);
+  assert.ok(packet.prompt.length <= PACKET_LIMIT);
+  assert.equal(dispatchable(data, review, "first"), true);
+});
+
+test("a packet for a computer that takes only the first report format leaves the newer fields out and says so in its header", () => {
+  const build = step({ id: "builder", kind: "build", status: "done", outcome: "done", attempts: [{ n: 1, reason: "first", outcome: "done", summary: "Built.", candidate: { commit: "4ea13ef" }, startedAt: null, endedAt: null }] });
+  const review = step({ id: "reviewer", kind: "review", verifies: "builder", after: ["builder"], requirementIds: ["R1"] });
+  const data = plan([build, review]);
+  const current = compilePacket(data, review, "first", who);
+  const older = compilePacket(data, review, "first", { ...who, reports: 1 });
+  assert.equal(current.header.reportVersion, 2);
+  assert.equal(older.header.reportVersion, 1);
+  assert.match(current.prompt, /strength/);
+  for (const word of [/strength/, /remaining/, /ownerDecision/, /provenance/, /\bpartial\b/, /\buncertain\b/]) assert.doesNotMatch(older.prompt, word);
+  assert.match(older.prompt, /outcome: done \(you built or wrote it\), pass or fail \(you checked something\), or blocked/);
+  assert.match(older.prompt, /Report one check for every acceptance criterion listed, named with its id/);
+  assert.notEqual(older.header.instructionVersion, current.header.instructionVersion);
 });

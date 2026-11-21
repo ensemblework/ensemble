@@ -274,11 +274,11 @@ class Helper:
             return self._agent_status()
         kind = session_type(self.env)
         versions = interface_versions(self.bus) if self.bus else {}
-        apps = failure = None
+        apps = failure = failure_kind = None
         try:
             apps = len(self.a11y.apps())
         except RpcError as problem:
-            failure = problem.message
+            failure, failure_kind = problem.message, problem.kind
         locked, idle_ms = self._locked_idle()
         session_state = self.portal.state if self.portal else ("on" if self.sources and self.test_source else "off")
         choice = encoder(log)
@@ -288,7 +288,7 @@ class Helper:
             "consent": readiness.consent_fact(session_state, self.tokens.load() is not None, self.last_start),
             "capture": self.proven.get("capture", "No screen frame has been captured yet (it needs screen control on)."),
             "input": self.proven.get("input", "No input has been sent yet (it needs screen control on)."),
-            "a11y": readiness.a11y_fact(apps, failure),
+            "a11y": readiness.a11y_fact(apps, failure, failure_kind),
             "recorder": readiness.recorder_fact(choice),
             "screen": readiness.screen_fact(locked, idle_ms),
         }
@@ -300,11 +300,11 @@ class Helper:
         }
 
     def _agent_status(self) -> dict[str, Any]:
-        apps = failure = None
+        apps = failure = failure_kind = None
         try:
             apps = len(self.a11y.apps())
         except RpcError as problem:
-            failure = problem.message
+            failure, failure_kind = problem.message, problem.kind
         session_state = self.portal.state if self.portal else "off"
         alive = self.agent.alive()
         facts = {
@@ -312,7 +312,7 @@ class Helper:
             "consent": readiness.fact("not_needed", "The agent screen is the agent's own: it needs no consent and nobody sees it unless they watch it."),
             "capture": self.proven.get("capture", "No frame of the agent screen has been captured yet."),
             "input": self.proven.get("input", "No input has been sent to the agent screen yet."),
-            "a11y": readiness.a11y_fact(apps, failure),
+            "a11y": readiness.a11y_fact(apps, failure, failure_kind),
             "recorder": readiness.recorder_fact(encoder(log)),
         }
         return {

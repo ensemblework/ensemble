@@ -8,7 +8,9 @@
  * On Wayland no app may learn where other windows are, so a click by position cannot be told apart by
  * the window it lands in: while an Ensemble window or page shows on the screen (not minimised), clicks
  * and drags by position are refused; element actions and the keyboard are judged by the window they act in.
- * A browser window whose page or address cannot be read may be showing Ensemble, so it counts as one.
+ * Where the desktop says where each window is and which is in front (macOS), a click is judged by the window
+ * at its point instead. A browser window whose page or address cannot be read may be showing Ensemble, so
+ * it counts as one.
  */
 import { ensembleAppOrigin } from "../../lib/ensemble-origins.js";
 import { redactKeys } from "../../lib/redact.js";
@@ -22,8 +24,8 @@ const ENSEMBLE_APPS = new Set(["ensemble", "ensemble-desktop", "ensemble desktop
 const ENSEMBLE_TITLES = /^(?:ensemble|ensemble capture|quick capture|ensemble updates)$/i;
 /** A terminal showing the Ensemble CLI (`ensemble needs` answers cards). */
 const CLI_TITLE = /^(?:\S*[/~]\S*\s*[:$#]?\s*)?ensemble(?:-test)?(?:\s|$)/i;
-const TERMINALS = /\b(?:ptyxis|terminal|console|kgx|konsole|xterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp)\b/i;
-const BROWSER_TOOLKITS = /^(?:gecko|chromium|webkitgtk)$/i;
+const TERMINALS = /\b(?:ptyxis|terminal|console|kgx|konsole|xterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|iterm2?|hyper|tabby)\b/i;
+const BROWSER_TOOLKITS = /^(?:gecko|chromium|webkitgtk|webkit)$/i;
 
 export const SECRET_REF = /^\$([A-Z][A-Z0-9_]{1,63})$/;
 
@@ -76,12 +78,52 @@ export function keyboardFloor(focus: FocusInfo, env: NodeJS.ProcessEnv = process
   return null;
 }
 
+export type Point = { x: number; y: number };
+type ShownWindow = { app: HelperApp; window: HelperApp["windows"][number] };
+
 /**
- * Clicks and drags by position: refused while an Ensemble window or page shows on the screen, since
- * the desktop does not say which window a point is in.
+ * The window at `point` (screen pixels): the one furthest in front that shows and holds it; null when none
+ * does (the menu bar, the desktop); undefined when the desktop does not say where its windows are.
  */
-export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: NodeJS.ProcessEnv = process.env): FloorHit | null {
+export function windowAt(apps: readonly HelperApp[], point: Point): ShownWindow | null | undefined {
+  const shown = apps.flatMap((app) => app.windows.filter((window) => window.showing && !window.iconified).map((window) => ({ app, window })));
+  if (!shown.length || shown.some(({ window }) => !window.box || typeof window.z !== "number")) return undefined;
+  const hits = shown.filter(({ window }) => {
+    const [x, y, width, height] = window.box!;
+    return point.x >= x && point.x < x + width && point.y >= y && point.y < y + height;
+  });
+  return hits.sort((a, b) => b.window.z! - a.window.z!)[0] ?? null;
+}
+
+/** A click on `window` of `app`: refused in Ensemble's own window and on a page that is or may be Ensemble. */
+function windowFloor(app: HelperApp, window: HelperApp["windows"][number], focus: FocusInfo, env: NodeJS.ProcessEnv): FloorHit | null {
+  const terminal = TERMINALS.test(`${norm(app.name)} ${norm(app.app_id)}`);
+  if (ensembleApp(app) || (!terminal && ensembleWindow(app, window.title))) {
+    return { rule: "ensemble_window", message: `That point is in Ensemble's own window (“${window.title || app.name}”): you never click there.` };
+  }
+  const inWindow = (doc: { app: string; window: string }) => norm(doc.app) === norm(app.name) && norm(doc.window) === norm(window.title);
+  const page = ensemblePages(focus.documents, env).find(inWindow);
+  if (page) return { rule: "ensemble_page", message: `That point is in a browser window showing Ensemble (${page.origin}): you never click there. You act in Ensemble through your Ensemble tools.` };
+  if (unknownPages(focus.documents).some(inWindow)) return { rule: "unknown_page", message: `That point is in a ${app.name} window (“${window.title}”) whose page cannot be read: ${UNKNOWN_PAGE}. Use your browser tools for web pages.` };
+  return null;
+}
+
+/**
+ * Clicks and drags by position at `points`: judged by the window at each point where the desktop says
+ * (macOS); elsewhere refused while an Ensemble window or page shows on the screen, since the desktop does not
+ * say which window a point is in.
+ */
+export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: NodeJS.ProcessEnv = process.env, points: readonly Point[] = []): FloorHit | null {
   const front = keyboardFloor(focus, env);
+  const hits = points.map((point) => windowAt(apps, point));
+  if (hits.length && hits.every((hit) => hit !== undefined)) {
+    for (const hit of hits) {
+      // Outside every window (the menu bar): what is there belongs to the app in front.
+      const found = hit ? windowFloor(hit.app, hit.window, focus, env) : front && front.rule !== "password_prompt" ? front : null;
+      if (found) return found;
+    }
+    return null;
+  }
   if (front && front.rule !== "password_prompt") return front;
   for (const app of apps) {
     // The command line in a terminal answers with the keyboard only: a click there presses nothing.

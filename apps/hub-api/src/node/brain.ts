@@ -11,7 +11,7 @@ import { fileQuoteContext } from "./file-workspace.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, PrismaClient } from "@prisma/client";
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, type AssistantToolCall } from "@ensemble/shared-types";
-import { runAssistantTurn, type AssistantTurnResult, type TurnSteering, type VerifyState } from "../assistant/agent.js";
+import { ownCallTrace, runAssistantTurn, type AssistantTurnResult, type ClaimState, type TurnSteering, type VerifyState } from "../assistant/agent.js";
 import { getTool } from "../assistant/registry.js";
 import { pauseQuestion } from "../assistant/runaway.js";
 import { env } from "../config.js";
@@ -32,14 +32,15 @@ import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers, type DispatchOutcome } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
-import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
+import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
-import { missionMedia, takeTurnMedia, type Media } from "./media.js";
+import { missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
 import { tieredTools } from "./skills.js";
-import { startDeliverables } from "./deliverables.js";
+import { checklistModelOn, startDeliverables } from "./deliverables.js";
+import { checkDelivery, deliveredWith, heldCaptures } from "./delivery-claims.js";
 import { taskReplyData } from "./task-assignment.js";
 import type { OwnToolEvent } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
@@ -81,6 +82,9 @@ async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnI
 
 /** The assistant tools a node turn does without: its session tools replace them, scoped to the node's own sessions. */
 export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessions"] as const;
+
+/** Pages are a node's everyday records, like tasks: their tools are shown whatever the guides, so a page needs no hub_how_to first. */
+export const NODE_CORE_TOOLS = ["hub_list_pages", "hub_read_page", "hub_create_page", "hub_update_page"] as const;
 
 
 /** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
@@ -183,7 +187,7 @@ function replyMark(row: NodeMessage, selfHandle?: string | null): string {
 }
 
 /**
- * What a turn in a group knows about itself (docs/35 §5.5, the packet's `84`), written by code: who called it and whether that
+ * What a turn in a group knows about itself (docs/35 §5.5, the packet's `86`), written by code: who called it and whether that
  * replies to it, the request it answers and the one that chain began with, its deadline, whether the chain
  * of node messages is winding down, and who may instruct it.
  */
@@ -358,6 +362,13 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     return { status: "skipped" };
   }
+  // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
+  // its update is written from the plan as it is now. Null: the plan no longer waits for its lead. A lead turn that
+  // carries on that work (an answer to its card) takes its place and keeps its own note.
+  const planTurn = turn.reason === "plan";
+  const leadPlan = turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id, { carry: planTurn }) : undefined;
+  if (leadPlan === null && planTurn) return { status: "skipped" };
+  const note = planTurn ? (leadPlan?.note ?? turn.note) : turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
     rootMessageId: trigger ? (trigger.rootMessageId ?? (trigger.authorKind === "human" ? trigger.id : null)) : null,
@@ -390,7 +401,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // it was called for, so it answers that one (a node once answered an old message instead of the new ask).
   const calledAt = trigger ? shown.findIndex((row) => row.id === trigger.id) : -1;
   const facts = work || room.kind === "dm" ? [] : await factsFor(app, { turn, room, members, self, trigger, lineage, ownerName, label: who.label });
-  const packet = packetSections({ work, note: turn.note, room: room.title, lines: shown.map(line), calledAt, board, facts });
+  const packet = packetSections({ work, note, room: room.title, lines: shown.map(line), calledAt, board, facts });
   const transcript = packetText(packet);
 
   const settings = await loadSettings(prisma, spaceId);
@@ -473,8 +484,19 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // A conversation turn offers the advanced browser and capture tools only for that work (node/skills.ts).
   // On the owner's own AI plan the agent is the loop: web_task's sub-agent would spend Ensemble's model, so it drives the browser itself.
   const ownLoop = isSubscriptionProvider(choice.provider);
-  const tiered = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  // What the owner asked this turn: it chooses the advanced tools, and the guides and their tools, not the packet around it.
+  const intent = step || carriesOn ? "" : `${ownerWords}\n${turn.note ?? ""}`.trim();
+  // A crew's lead, a node with helpers or other nodes beside it, a crew or task room or a plan's turn plans and delegates whatever the words.
+  const crewWork = () =>
+    Boolean(lead) ||
+    room.kind === "crew" ||
+    room.kind === "task" ||
+    Boolean(turn.planId) ||
+    prisma.nodeAgent.count({ where: { OR: [{ parentNodeId: node.id }, { userId: node.userId, status: "active", parentNodeId: null, id: { not: node.id } }] } }).then((count) => count > 0, () => true);
+  const tiered = step || carriesOn ? offered : tieredTools(offered, intent, await recentTools(prisma, conversationId), { crew: await crewWork() });
   const extraTools = ownLoop ? tiered.filter((tool) => tool.name !== "web_task") : tiered;
+  // The rest stay within reach on the owner's plan: hub_use_tool names them.
+  const hiddenTools = offered.filter((tool) => tool.name !== "web_task" && !tiered.includes(tool));
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
@@ -550,7 +572,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
             await settleSteers(app, ids, "rejected");
             return null;
           }
-          const text = packetText([{ name: "node/85-packet-steer", tier: "volatile", vars: { owner: ownerName, messages: said.map(line) } }]);
+          const text = packetText([{ name: "node/87-packet-steer", tier: "volatile", vars: { owner: ownerName, messages: said.map(line) } }]);
           const row = await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "user", content: text } });
           await steersHanded(app, ids);
           for (const id of ids) handed.set(id, { rowId: row.id, upTo });
@@ -573,25 +595,44 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       }
     : undefined;
   if (steerable) allowSteering(turn.id);
-  // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
+  // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts). On the owner's own AI
+  // plan, only with a checklist model to check with (the fast one; none, or ENSEMBLE_NODE_CHECKLIST_MODEL=off: not checked).
+  const checklistBy = checklistModel(node, settings);
   const deliverables =
-    !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
-      ? startDeliverables(app, { ownerId: owner, turnId: turn.id, text: ownerWords, model: checklistModel(node, settings), activityId: `assistant:${conversationId}`, signal: deps.signal })
+    !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && (!ownLoop || (checklistBy && checklistModelOn()))
+      ? startDeliverables(app, { ownerId: owner, turnId: turn.id, text: ownerWords, model: checklistBy, activityId: `assistant:${conversationId}`, signal: deps.signal })
       : null;
-  const verify = deliverables
-    ? async (state: VerifyState) => {
-        // The owner changed what they asked for while the turn worked: the checklist made from their first words no longer applies.
-        if (steered) return null;
-        const feedback = await deliverables.verify(state);
-        trace.checked(state.round, feedback, deliverables.checks);
-        // The answer goes back for more work: the reply being written starts again.
-        if (feedback) {
-          publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
-          publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking", ...where });
+  const verifyFor = (pick: ChatModel) =>
+    deliverables
+      ? async (state: VerifyState) => {
+          // The owner changed what they asked for while the turn worked: the checklist made from their first words no longer applies.
+          if (steered) return null;
+          const feedback = await deliverables.verify(state);
+          // On the owner's plan each round is another run of their agent: only a request that asks for something on the checklist is checked.
+          if (isSubscriptionProvider(pick.provider) && !deliverables.checks.length) return null;
+          trace.checked(state.round, feedback, deliverables.checks, state.final);
+          return feedback;
         }
-        return feedback;
-      }
-    : undefined;
+      : undefined;
+  /** Where the reply goes (in a helper's room: to its owner where it made the helper) and whether only the owner reads it there. */
+  let target: Promise<{ room: NodeRoom; privateTo: string[] | null; ownerReads: boolean }> | null = null;
+  const replyTarget = () =>
+    (target ??= (async () => {
+      const origin = await originOf(app, node, room);
+      const replyRoom = origin?.room ?? room;
+      const replyPrivateTo = origin ? origin.privateTo : privateTo;
+      const single = !(await roomPeople(prisma, replyRoom.id)).some((id) => id !== owner);
+      return { room: replyRoom, privateTo: replyPrivateTo, ownerReads: single || Boolean(replyPrivateTo) };
+    })());
+  // What the reply says it sent into the chat, against what reaches it with this turn: files show with a reply only where only the
+  // owner reads it, and a lead's report brings its plan's checked media (node/delivery-claims.ts).
+  const claims =
+    !step && !drafting
+      ? async (state: ClaimState) => {
+          const shown = (await replyTarget()).ownerReads ? [...peekTurnMedia(turn.id), ...(turn.planId ? await missionMedia(prisma, turn.planId, owner) : [])] : [];
+          return checkDelivery(state.text, deliveredWith([...shown, ...heldCaptures(state.calls.map((row) => row.result))], state.text));
+        }
+      : undefined;
   // Every call to Ensemble's tools is recorded before it runs and settled after (node/journal.ts), across this turn's model calls.
   const journal = turnJournal(app, turn);
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> => {
@@ -603,6 +644,9 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       userId: spaceId,
       conversationId: conversationId!,
       message: transcript,
+      // Only where the owner's own words started it: a draft for someone else or a room-bound turn keeps the packet's routing.
+      ...(intent && !drafting && !bound && !fromNonOwner ? { routeBy: intent } : {}),
+      coreTools: NODE_CORE_TOOLS,
       messageId: userRow.id,
       journal,
       ...(steer ? { steer } : {}),
@@ -620,7 +664,14 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
       extraTools: (isSubscriptionProvider(pick.provider) ? extraTools : tiered).map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
-      ...(verify ? { verify } : {}),
+      ...(isSubscriptionProvider(pick.provider) && hiddenTools.length ? { hiddenTools: hiddenTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)) } : {}),
+      ...(deliverables ? { verify: verifyFor(pick) } : {}),
+      ...(claims ? { claims } : {}),
+      onRewrite() {
+        // The reply goes back for more work (a check sent it back, or the owner's agent is asked again): it starts again on the website.
+        publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
+        publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking", ...where });
+      },
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
       ...(isSubscriptionProvider(pick.provider)
@@ -643,6 +694,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
                           return;
                         }
                         toolsRan += 1;
+                        trace.loop.calls.push(ownCallTrace(event));
                         const state = event.ok === false ? "failed" : "ok";
                         void addReceipt(app, turn.id, { name: event.name, state, summary: event.summary || null }).catch(() => undefined);
                         // The agent's own calls show to its owner only, like Ensemble's tool chips.
@@ -660,7 +712,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       signal: deps.signal,
       async onToolStart(call) {
         // From the first tool that changes something, the turn is not aborted to merge a newer message.
-        if (actsOnTheWorld(call.name, call.isWrite)) await markActed(app, turn.id);
+        if (actsOnTheWorld(call)) await markActed(app, turn.id);
       },
       emit(frame) {
         if (frame.type === "tool" || frame.type === "pending") {
@@ -738,8 +790,8 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
-    // A plan's report is never interrupted (node/queue.ts `interruptible`); should one end here, its plan still ends.
-    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+    // A lead's plan turn is never interrupted (node/queue.ts `interruptible`); should one end here, its bookkeeping still runs.
+    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     return { status: "cancelled", model: done?.model, credits: done?.credits ?? null };
   }
   if ((deps.signal?.aborted && deps.signal.reason === "park") || parkedFor(turn.id).length) {
@@ -807,7 +859,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     if (step) await finishStep(app, step.planId, step.stepId, { status: "stopped", result: "Stopped." });
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
-    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+    if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     // The stop already said so in a status line: a DM hears more only when the turn had done something.
     if (!step && room.kind === "dm" && result.toolCalls.length) {
       const said = cleanReply(result.content.replace(/\n*Stopped before finishing\.\s*$/i, ""), true);
@@ -817,25 +869,27 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   if (result.failed) {
     // A step that failed ends as blocked (or stopped) on its plan, which its lead reports; no notice in the room.
-    // A failed turn after it started a run (the model gave no final answer) leaves the step to that run.
+    // A failed turn after it started a run leaves the step to that run.
     if (step && result.interrupted) await finishStep(app, step.planId, step.stepId, { status: "stopped", result: "Stopped." });
     else if (step && (await stepPending(prisma, step.planId, step.stepId))) await stepProgress(prisma, step.planId, step.stepId, "Waiting for its agent run.");
     else if (step) await finishStep(app, step.planId, step.stepId, { status: "blocked", result: `@${node.slug} could not do its step: ${result.content}` });
     else {
-      // What the turn captured still reaches its owner (where only they read): a model that ended without words loses nothing.
+      // What the turn captured before it failed still reaches its owner (where only they read).
       const captured = !result.interrupted && room.kind !== "task" ? takeTurnMedia(turn.id) : [];
       const ownerReads = Boolean(privateTo) || !(await roomPeople(prisma, room.id)).some((id) => id !== owner);
-      if (captured.length && ownerReads) await postAsNode({ prisma, node, lineage, dispatch: deps.dispatch }, room, "", privateTo, { data: { media: captured.slice(0, 8) } });
-      // A stop or a pause already said so; only a real failure needs a notice (not a reply that only lacked words, when its captures came).
-      const wordless = /returned no answer/i.test(result.content) && captured.length > 0 && ownerReads;
-      if (!result.interrupted && !wordless) await ownerNotice(app, node, room.id, result.content);
+      if (captured.length && ownerReads) {
+        await postAsNode({ prisma, node, lineage, dispatch: deps.dispatch }, room, "", privateTo, { data: { media: captured.slice(0, 8) } });
+        trace.delivered(captured.slice(0, 8));
+      }
+      // A stop or a pause already said so; only a real failure needs a notice.
+      if (!result.interrupted) await ownerNotice(app, node, room.id, result.content);
       // Steps the lead added before its turn failed still run; a stopped turn's plan stops with it.
       const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
       if (made?.data.status === "draft") {
         if (result.interrupted) await stopPlans(app, { planId: made.message.id, userId: owner });
         else await startPlan(app, made.message.id, null);
       }
-      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+      if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
     }
     return { status: "failed", model: result.model, credits: result.credits, error: result.content };
   }
@@ -872,11 +926,8 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
 
   // In its helper's room a node's reply goes to its owner, where it made the helper.
-  const origin = await originOf(app, node, room);
-  const replyRoom = origin?.room ?? room;
-  const replyPrivateTo = origin ? origin.privateTo : privateTo;
-  const single = !(await roomPeople(prisma, replyRoom.id)).some((id) => id !== owner);
-  const text = cleanReply(result.content, single || Boolean(replyPrivateTo));
+  const { room: replyRoom, privateTo: replyPrivateTo, ownerReads } = await replyTarget();
+  const text = cleanReply(result.content, ownerReads);
   const scope = { prisma, node, lineage, dispatch: deps.dispatch };
   // A plan this turn made opens with this reply, as one card, when it is in the same conversation.
   const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
@@ -884,18 +935,18 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   if (made && made.data.status === "draft") await startPlan(app, made.message.id, opensPlan && text !== NO_REPLY ? text : null);
   // Files shown with the reply: what the node chose (node_show), and a plan's checked media in its report.
   // Only where only the owner reads, like tool chips: sharing them with others is the owner's own act.
-  const ownerReads = single || Boolean(replyPrivateTo);
   const media: Media[] = takeTurnMedia(turn.id);
-  if (ownerReads && turn.planId && !turn.planStep && text && text !== NO_REPLY) {
+  if (ownerReads && turn.planId && !turn.planStep && leadPlan?.kind !== "replan" && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
   const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
   // An answer the owner agreed to share reaches the room only as their draft (node/audience.ts).
   const drafted = text && text !== NO_REPLY && !opensPlan ? await draftDisclosure(app, { turn, node, room, text, lineage }) : false;
+  if (mediaData.media && !drafted) trace.delivered(mediaData.media);
   if (text && text !== NO_REPLY && !opensPlan && !drafted) {
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
     // the records the reply itself names by id, so their titles show in place of the ids.
-    const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
+    const toolData = ownerReads ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
     // A reply to a task given to the node names that task (node/task-assignment.ts).
     const given = await taskReplyData(prisma, turn);
     const refs = [...(result.refs ?? []), ...(given && !result.refs?.some((ref) => ref.kind === "task" && ref.id === given.task.id) ? [given.ref] : [])];
@@ -908,7 +959,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
   // The lead's report turn: the plan is done, unless it added steps (they start now).
-  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
+  if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);
   return { status: "done", model: result.model, credits: result.credits };
 }
 

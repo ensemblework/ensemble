@@ -13,3 +13,4 @@ metadata:
 - Stock charts: Google Finance, https://www.google.com/finance/quote/<TICKER>:<EXCHANGE>?window=5D (windows 1D, 5D, 1M, 6M, YTD, 1Y, 5Y, MAX), for example AAPL:NASDAQ, MSFT:NASDAQ, AMZN:NASDAQ, NVDA:NASDAQ, GOOGL:NASDAQ, TSLA:NASDAQ.
 - If the focus was not found (focusFound false), try fullPage or another site.
 - The whole page only when your owner asks for it (fullPage).
+- A screen of their computer (an app, your agent screen): desktop_observe with share true, one call per screenshot. A look without share reaches only you.

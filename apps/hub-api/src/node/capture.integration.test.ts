@@ -347,11 +347,22 @@ test("a computer too old to browse is asked to update; one without a browser is 
 
 test("looking at a page or a capture is not acting; clicking, typing and capturing are", async () => {
   const { actsOnTheWorld } = await import("./work-board.js");
-  for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check"]) {
-    assert.equal(actsOnTheWorld(name, false), false, name);
+  const { BROWSER_TOOLS } = await import("../browser/tool-specs.js");
+  const { CAPTURE_TOOLS } = await import("../capture/tool-specs.js");
+  const { DESKTOP_TOOLS } = await import("../desktop/control/tool-specs.js");
+  // By each tool's own flags, as a turn's calls are (assistant/agent.ts onToolStart).
+  const specs = new Map<string, { readOnly?: boolean }>([...BROWSER_TOOLS, ...CAPTURE_TOOLS, ...DESKTOP_TOOLS].map((spec) => [spec.name, spec as { readOnly?: boolean }]));
+  const acts = (name: string) => actsOnTheWorld({ name, isWrite: false, readOnly: specs.get(name)?.readOnly === true });
+  for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check", "desktop_status", "desktop_apps", "desktop_observe", "desktop_zoom"]) {
+    assert.equal(acts(name), false, name);
   }
-  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start"]) {
-    assert.equal(actsOnTheWorld(name, false), true, name);
+  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start", "browser_screenshot", "browser_view", "desktop_act", "desktop_open"]) {
+    assert.equal(acts(name), true, name);
+  }
+  // A desktop look that sends its screenshot to the owner (share) keeps what it saw.
+  for (const name of ["desktop_observe", "desktop_zoom"]) {
+    assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: true } }), true, `${name} with share`);
+    assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: false } }), false, `${name} without share`);
   }
 });
 

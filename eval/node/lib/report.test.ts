@@ -71,11 +71,11 @@ test("the report lists failed checks, false claims, unanswered cards and the cle
 });
 
 test("no-answer turns and error messages come from the metrics, or from the errors of an older file", () => {
-  const older = run("a", { errors: ["turn of @assistant failed: The model returned no answer. Recorded actions are available separately.", "error message in the chat: The model returned no answer.", "turn of @x failed: Rate limited."] });
-  assert.deepEqual([withMetrics(older).metrics.noAnswerTurns, withMetrics(older).metrics.errorMessages], [1, 1]);
+  const older = run("a", { errors: ["turn of @assistant failed: The model returned no answer. Recorded actions are available separately.", "error message in the chat: The model returned no answer.", "turn of @x failed: Rate limited.", "turn of @y failed: The model ended its turn without replying or doing anything. Try again, or choose another model."] });
+  assert.deepEqual([withMetrics(older).metrics.noAnswerTurns, withMetrics(older).metrics.errorMessages], [2, 1]);
   const newer = run("b", { metrics: { ...run("b").metrics, noAnswerTurns: 2, errorMessages: 0 } });
   assert.deepEqual([withMetrics(newer).metrics.noAnswerTurns, withMetrics(newer).metrics.errorMessages], [2, 0]);
-  assert.match(summaryTable([older, newer]).split("\n").at(-1)!, /\| 0 \| 3 \/ 1 \|/);
+  assert.match(summaryTable([older, newer]).split("\n").at(-1)!, /\| 0 \| 4 \/ 1 \|/);
 });
 
 test("the suite table has a row per suite, an overall row, and input tokens per task", () => {
@@ -95,4 +95,27 @@ test("a summary puts several runs' suites side by side and lists its sources", (
   assert.match(text, /- \[`one\.md`\]\(one\.md\): core, 1 task, 1 of 1 agent session deleted\./);
   assert.equal(text.match(/- same setup/g)?.length, 1);
   assert.ok(!text.includes("—") && !text.includes(" -- "));
+});
+
+test("a stuck plan step the harness finished without is counted and listed as a problem, with the step and why", () => {
+  const stuck = { id: "p", type: "plan_decision", answer: "finish without it", answered: true, at: "", note: "step s2-abc stuck: @builder's step in @manager's plan is stuck. No access to the repo." };
+  const saved: Saved = {
+    label: "baseline",
+    stamp: "s",
+    commit: "abc",
+    agent: "copilot-cli",
+    model: "gpt-6-luna",
+    judgeModel: "gpt-6-luna",
+    tasks: ["a"],
+    repeat: 1,
+    startedAt: "t0",
+    finishedAt: "t1",
+    results: [run("a", { cards: [stuck], metrics: { ...run("a").metrics, approvals: 1, stuckSteps: 1 } })],
+    cleanup: [],
+    notes: [],
+  };
+  const text = markdown(saved);
+  assert.match(text, /- \*\*a\*\*: all checks passed\.\n {2}- Stuck steps finished without them: step s2-abc stuck: @builder's step in @manager's plan is stuck\. No access to the repo\./);
+  assert.match(summaryTable(saved.results).split("\n")[2]!, /\| 1 \(1 stuck\) \|/);
+  assert.equal(totals(saved.results).stuckSteps, 1);
 });

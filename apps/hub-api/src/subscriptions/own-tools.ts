@@ -22,7 +22,7 @@ import { acpCalls, pickOption } from "../workspace/engines/acp.js";
 import { hookCall, judgeFloor, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
 import { logAi } from "../lib/ai-activity.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
-import type { OwnJudge, OwnToolEvent } from "./bridge.js";
+import type { OwnJudge, OwnToolEvent, OwnVerdict } from "./bridge.js";
 
 const words = (value: unknown): string => (typeof value === "string" ? value : Array.isArray(value) ? value.join(" ") : "");
 
@@ -153,22 +153,69 @@ export function ownToolShape(name: string, input: unknown, call?: EngineCall): {
   return { name: (chip ?? name).slice(0, 100) || "Tool", summary, acts: chip === "Shell" || chip === "Edit" };
 }
 
+/** A call's shape as a key: the same for the call the agent reports and the call Ensemble judged. */
+const shapeKey = (shape: { name: string; summary: string }): string => `${shape.name}\u0000${shape.summary}`;
+
+const charsOf = (value: unknown): number | undefined => {
+  if (typeof value === "string") return value.length;
+  try {
+    return JSON.stringify(value)?.length;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * How Ensemble answered the agent's own calls in a node's turn (node-own-tools.ts `onVerdict`), for the turn's
+ * OwnToolLog: an answer goes to the open call of the same shape, or waits for the agent to report it (some agents
+ * report a call before it is judged, others after).
+ */
+export class OwnVerdicts {
+  private readonly early: Array<{ key: string; verdict: OwnVerdict }> = [];
+  private sink: ((key: string, verdict: OwnVerdict) => boolean) | null = null;
+
+  readonly note = (call: EngineCall, verdict: OwnVerdict): void => {
+    const key = shapeKey(ownToolShape(call.tool, call.input, call));
+    if (this.sink?.(key, verdict)) return;
+    if (this.early.length < 200) this.early.push({ key, verdict });
+  };
+
+  attach(sink: (key: string, verdict: OwnVerdict) => boolean): void {
+    this.sink = sink;
+  }
+
+  take(key: string): OwnVerdict | undefined {
+    const at = this.early.findIndex((row) => row.key === key);
+    return at < 0 ? undefined : this.early.splice(at, 1)[0]!.verdict;
+  }
+}
+
 /**
  * The agent's own tool calls in a turn (its shell, files, web), kept in the person's AI activity with
  * their input and output (lib/ai-activity.ts), and told to `listen` as they start and end (a node's
- * chat shows them: remote/assistant.ts). Ensemble's own tools are logged where they run instead.
+ * chat shows them: remote/assistant.ts), at their end with how long they ran, their sizes and, given
+ * `verdicts`, how Ensemble answered them. Ensemble's own tools are logged where they run instead.
  */
 export class OwnToolLog {
-  private readonly open = new Map<string, { name: string; input: unknown; at: number; shape: ReturnType<typeof ownToolShape> }>();
+  private readonly open = new Map<string, { name: string; input: unknown; at: number; shape: ReturnType<typeof ownToolShape>; key: string; verdict?: OwnVerdict }>();
   constructor(
     private readonly app: string,
     private readonly listen?: (event: OwnToolEvent) => void,
-  ) {}
+    private readonly verdicts?: OwnVerdicts,
+  ) {
+    verdicts?.attach((key, verdict) => {
+      const call = [...this.open.values()].find((row) => row.key === key && !row.verdict);
+      if (call) call.verdict = verdict;
+      return Boolean(call);
+    });
+  }
 
   start(id: string, name: string, input: unknown, call?: EngineCall): void {
     if (!id || ensembleTool(name) || this.open.size >= 200) return;
     const shape = ownToolShape(name, input, call);
-    this.open.set(id, { name, input, at: Date.now(), shape });
+    const key = shapeKey(shape);
+    const verdict = this.verdicts?.take(key);
+    this.open.set(id, { name, input, at: Date.now(), shape, key, ...(verdict ? { verdict } : {}) });
     this.listen?.({ id: id.slice(0, 200), ...shape, phase: "start" });
   }
 
@@ -176,15 +223,22 @@ export class OwnToolLog {
     const call = this.open.get(id);
     if (!call) return;
     this.open.delete(id);
-    logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, output, ok, durationMs: Date.now() - call.at });
-    this.listen?.({ id: id.slice(0, 200), ...call.shape, phase: "end", ok });
+    const ms = Date.now() - call.at;
+    logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, output, ok, durationMs: ms });
+    // A call nobody refused that ran went ahead with no question; a failed one Ensemble did not answer is not known.
+    const verdict = call.verdict ?? (this.verdicts && ok ? "allowed" : undefined);
+    const inChars = charsOf(call.input);
+    const outChars = charsOf(output);
+    this.listen?.({ id: id.slice(0, 200), ...call.shape, phase: "end", ok, ms, ...(inChars === undefined ? {} : { inChars }), ...(outChars === undefined ? {} : { outChars }), ...(verdict ? { verdict } : {}) });
   }
 
   /** At the end of the turn: calls whose result never came back, as they stand. */
   close(): void {
     for (const [id, call] of this.open) {
-      logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, durationMs: Date.now() - call.at, meta: { unanswered: true } });
-      this.listen?.({ id: id.slice(0, 200), ...call.shape, phase: "end", ok: false });
+      const ms = Date.now() - call.at;
+      logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, durationMs: ms, meta: { unanswered: true } });
+      const inChars = charsOf(call.input);
+      this.listen?.({ id: id.slice(0, 200), ...call.shape, phase: "end", ok: false, ms, ...(inChars === undefined ? {} : { inChars }), ...(call.verdict ? { verdict: call.verdict } : {}) });
     }
     this.open.clear();
   }

@@ -3,9 +3,11 @@
  * a private headless desktop of the agent's own that nobody sees unless they watch it. Each has its own
  * service and helper. A call names its screen, or works where its capture id was taken (or where its
  * recording is), or where its controller last worked, else on the agent screen; it never moves to the
- * other screen by itself. Asking about the agent screen never starts it.
+ * other screen by itself. Asking about the agent screen never starts it, nor the owner's screen's helper
+ * where that screen cannot work (no desktop session, missing libraries). Where there is no agent screen
+ * (macOS), calls work on the owner's screen unless they name the agent screen, which then answers why not.
  */
-import type { AgentScreenReadiness } from "./readiness.js";
+import type { AgentScreenReadiness, DesktopReadiness } from "./readiness.js";
 import type { AppsResult, DesktopService, DesktopStatus, ScreenName } from "./service.js";
 
 export type BothStatus = { owner: DesktopStatus; agent: DesktopStatus | null; agentReadiness: AgentScreenReadiness };
@@ -17,6 +19,8 @@ export class Desktops {
   constructor(
     readonly owner: DesktopService,
     private readonly makeAgent: () => DesktopService,
+    /** Where a call works when nothing else says: the agent screen, or the owner's where there is none. */
+    private readonly fallback: ScreenName = "agent",
   ) {}
 
   /** The agent screen's service, made on first use (its helper starts the screen on its first call). */
@@ -34,7 +38,7 @@ export class Desktops {
     return screen === "owner" ? this.owner : this.agent();
   }
 
-  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen. */
+  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen (the owner's on macOS). */
   pick(key: string, hints: { screen?: ScreenName; captureId?: string; recording?: boolean } = {}): ScreenName {
     if (hints.screen) return hints.screen;
     if (hints.captureId) {
@@ -45,7 +49,7 @@ export class Desktops {
       if (this.owner.hasRecording(key)) return "owner";
       if (this.agentService?.hasRecording(key)) return "agent";
     }
-    return this.last.get(key) ?? "agent";
+    return this.last.get(key) ?? this.fallback;
   }
 
   remember(key: string, screen: ScreenName): void {
@@ -53,10 +57,15 @@ export class Desktops {
   }
 
   /** Both screens' state; the agent screen's facts only while it runs, else whether it can start. */
-  async status(budgetMs: number, agentReadiness: () => Promise<AgentScreenReadiness>): Promise<BothStatus> {
+  async status(budgetMs: number, readiness: () => Promise<DesktopReadiness>): Promise<BothStatus> {
+    const facts = await readiness();
     const running = this.runningAgent();
-    const [owner, agent, readiness] = await Promise.all([this.owner.status(budgetMs), running ? running.status(budgetMs) : Promise.resolve(null), agentReadiness()]);
-    return { owner, agent, agentReadiness: readiness };
+    const ownerWorks = facts.ready || this.owner.helperReady;
+    const [owner, agent] = await Promise.all([
+      ownerWorks ? this.owner.status(budgetMs) : Promise.resolve(this.owner.offline(facts.reason ?? "Desktop control cannot start here.")),
+      running ? running.status(budgetMs) : Promise.resolve(null),
+    ]);
+    return { owner, agent, agentReadiness: facts.agentScreen };
   }
 
   /** The apps: installed, and running on the named screen, or on the owner's and the agent screen's while it runs. */

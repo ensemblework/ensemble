@@ -1,7 +1,8 @@
 /**
  * Direct dispatch (ensemble-node docs/design B8, plan §8.4): a plan step that is work in files (a build,
- * its check, writing files where the mission names them) goes straight from its compiled packet to a
- * coding-agent session, with no turn of the step's node in between. The node takes a turn only when
+ * its check or review, writing files where the mission names them) goes straight from its compiled
+ * packet to a coding-agent session, with no turn of the step's node in between. The packet is stored on
+ * the step first (node/plans.ts storeStepPacket), once per attempt. The node takes a turn only when
  * judgement is needed: the run reported blocked, or still reported nothing after being asked once; the
  * step is not work in files; or the hand-over itself failed.
  *
@@ -19,10 +20,12 @@ import { folderLabels } from "../devices/labels.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
 import { truncateText } from "../lib/text.js";
 import type { AttemptReason } from "./missions-core.js";
-import { compilePacket, dispatchable } from "./packet.js";
+import { compilePacket, dispatchable, type PacketWho, type StoredPacket } from "./packet.js";
 import { parallelMode } from "./parallel.js";
 import { placeStep, type Located } from "./placement.js";
-import { stepProgress, type PlanData, type PlanStep } from "./plans.js";
+import { packetOrigin, stepProgress, storeStepPacket, type PlanData, type PlanStep } from "./plans.js";
+import { CHECKING_KINDS, reportFormatOf } from "./report.js";
+import { charterOf } from "./templates.js";
 import { computerWorkAsks, holdForOwner, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
 import { updateMessageData } from "./store.js";
 
@@ -59,6 +62,11 @@ async function sessionPlace(prisma: PrismaClient, sessionId: string): Promise<Lo
   return { deviceId: first.device.id, deviceName: first.device.name, label: first.folderLabel, capabilities: first.device.capabilities };
 }
 
+/** The capabilities of the computer a session runs on. */
+async function sessionCapabilities(prisma: PrismaClient, sessionId: string): Promise<unknown> {
+  return (await prisma.workspaceJob.findUnique({ where: { id: sessionId }, select: { device: { select: { capabilities: true } } } }))?.device?.capabilities ?? null;
+}
+
 /** A repository the agent can clone: a URL or owner/repo. A bare name is not enough to find it. */
 function cloneable(repo: string): boolean {
   return /^https?:\/\//.test(repo) || /^[\w.-]+\/[\w.-]+$/.test(repo);
@@ -77,17 +85,18 @@ async function placeFor(prisma: PrismaClient, ownerId: string, constraints: Plan
   return { place: { repoUrl: repos[0]!, ...(constraints.computer ? { computer: constraints.computer } : {}) }, located: null };
 }
 
-/** Runs of a session that have not ended: another step's work may be queued or running there. */
-async function liveInSession(prisma: PrismaClient, sessionId: string): Promise<number> {
-  return prisma.nodeRun.count({ where: { sessionId, reportedAt: null } });
+/** Runs of a session that have not ended: another step's work may be queued or running there. `except`: a run whose end is being taken now. */
+async function liveInSession(prisma: PrismaClient, sessionId: string, except?: string): Promise<number> {
+  return prisma.nodeRun.count({ where: { sessionId, reportedAt: null, ...(except ? { id: { not: except } } : {}) } });
 }
 
 /** The session this step's work continues, if any: its own (repair, retest), or its node's latest build or writing in this plan. */
 async function sessionFor(prisma: PrismaClient, data: PlanData, step: PlanStep, reason: AttemptReason): Promise<string | null> {
   const latest = (stepIds: string[]) =>
     prisma.nodeRun.findFirst({ where: { planId: data.missionId, planStep: { in: stepIds }, nodeId: step.nodeId, sessionId: { not: null } }, orderBy: { createdAt: "desc" }, select: { sessionId: true } });
-  if (reason === "repair" || reason === "retest") return (await latest([step.id]))?.sessionId ?? null;
-  if (step.kind === "verify") return null;
+  // A repair, retest, update or retry goes on in the step's own session: its agent knows the work.
+  if (reason === "repair" || reason === "retest" || reason === "amend" || reason === "retry") return (await latest([step.id]))?.sessionId ?? null;
+  if (CHECKING_KINDS.has(step.kind)) return null;
   // Builds that work apart (B13) each have their own worktree, so their own session; so does their integration.
   if (parallelMode(data.constraints) !== "serial") return null;
   const mine = data.steps.filter((row) => row.id !== step.id && row.nodeId === step.nodeId && (row.kind === "build" || row.kind === "write")).map((row) => row.id);
@@ -130,6 +139,27 @@ async function envFor(app: FastifyInstance, node: NodeAgent, roomId: string, pla
   };
 }
 
+/** Who a packet speaks for and to: the owner, the step's node (its role and charter give the header's role version), and where the plan is. */
+export async function packetWho(prisma: PrismaClient, data: PlanData, step: Pick<PlanStep, "nodeId">): Promise<PacketWho | null> {
+  const node = await prisma.nodeAgent.findUnique({ where: { id: step.nodeId } });
+  if (!node) return null;
+  const owner = await prisma.user.findUnique({ where: { id: node.userId }, select: { name: true } });
+  const origin = nodeWebOrigin();
+  return {
+    ownerName: owner?.name || "your owner",
+    node: { name: node.name, handle: node.slug, role: node.role, templateId: node.templateId, charter: charterOf(node) },
+    planUrl: origin ? `${origin}/r/${data.originRoomId}` : null,
+  };
+}
+
+/** Compiles and stores the attempt's packet (or finds it stored): null when the attempt is over. */
+export async function stepPacket(prisma: PrismaClient, data: PlanData, step: PlanStep, reason: AttemptReason, who: PacketWho): Promise<StoredPacket | null> {
+  return storeStepPacket(prisma, data.missionId, step.id, step.attempt, reason, (previous, registry, mission) => {
+    const packet = compilePacket(data, step, reason, { ...who, ...packetOrigin(mission), previous, artifacts: registry });
+    return { header: packet.header, title: packet.title, prompt: packet.prompt };
+  });
+}
+
 export async function noteTold(prisma: PrismaClient, jobId: unknown, told: string): Promise<void> {
   if (typeof jobId !== "string") return;
   const run = await prisma.nodeRun.findFirst({ where: { jobId }, select: { messageId: true } });
@@ -149,9 +179,8 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
   if (!node || node.status !== "active") return null;
   if (await alreadyDispatched(prisma, data, step)) return { done: true, summary: "Already handed over." };
   const env = await envFor(app, node, planRoomId, data.missionId, step.id);
-  if (!env) return null;
-  const owner = await prisma.user.findUnique({ where: { id: node.userId }, select: { name: true } });
-  const origin = nodeWebOrigin();
+  const who = env ? await packetWho(prisma, data, step) : null;
+  if (!env || !who) return null;
 
   const constraints = data.constraints;
   const continuing = await sessionFor(prisma, data, step, reason);
@@ -171,8 +200,11 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
     await stepProgress(prisma, data.missionId, step.id, placed.wait);
     return { done: true, summary: placed.wait };
   }
+  // What the worker's computer takes as a report: a computer not known yet (a fresh clone) gets the first format, which every runtime takes.
+  const reports = located ? reportFormatOf(located.capabilities) : continuing ? reportFormatOf(await sessionCapabilities(prisma, continuing)) : 1;
   // The session adds the applied run settings itself (node/settings.ts), so the packet does not repeat them.
-  const packet = compilePacket(data, step, reason, { ownerName: owner?.name || "your owner", node: { name: node.name, handle: node.slug, role: node.role }, planUrl: origin ? `${origin}/r/${data.originRoomId}` : null, place: placed.place });
+  const packet = await stepPacket(prisma, data, step, reason, { ...who, place: placed.place, sessionId: continuing, computerId: located?.deviceId ?? null, folder: located?.label ?? place.folder ?? null, reports });
+  if (!packet) return { done: true, summary: "The step moved on before it was handed over." };
   const startInput = () => StartInput.parse({ title: packet.title, prompt: packet.prompt, ...place });
   const call: SessionCall = continuing ? { action: "send", input: SendInput.parse({ session: continuing, prompt: packet.prompt, title: packet.title, delivery: "queue" }) } : { action: "start", input: startInput() };
   try {
@@ -206,11 +238,11 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
  * A dispatched run ended without its result: the same session is asked once to report (a new run,
  * queued in it). False when that is not possible or was already done; its node then judges.
  */
-export async function askForReport(app: FastifyInstance, run: Pick<NodeRun, "nodeId" | "roomId" | "sessionId" | "planId" | "planStep">, title: string | null = null): Promise<boolean> {
+export async function askForReport(app: FastifyInstance, run: Pick<NodeRun, "id" | "nodeId" | "roomId" | "sessionId" | "planId" | "planStep">, title: string | null = null): Promise<boolean> {
   if (!run.sessionId || !run.planId || !run.planStep) return false;
   const prisma = app.prisma;
   // Other work queued or running in the session would come first, and its result could answer this ask.
-  if (await liveInSession(prisma, run.sessionId)) return false;
+  if (await liveInSession(prisma, run.sessionId, run.id)) return false;
   const node = await prisma.nodeAgent.findUnique({ where: { id: run.nodeId } });
   if (!node || node.status !== "active") return false;
   const env = await envFor(app, node, run.roomId, run.planId, run.planStep);

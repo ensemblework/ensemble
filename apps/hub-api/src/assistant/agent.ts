@@ -58,14 +58,16 @@ import { activeLoopConfig, loopConfigHash, turnLimits } from "./loop-config.js";
 import { READ_TOOL_OUTPUT, readableText, readToolOutputTool, TurnOutputs } from "./tool-output.js";
 import { checkpointFinal, pausedReply, RunawayGuard, repeatNudge, resultDigest, runawayFinal, runawayReply } from "./runaway.js";
 import { CHARS_PER_TOKEN, compactMessages, messageChars } from "./compaction.js";
+import { NO_REPLY_FAILURE, REPLY_PROMPT, workReply, type OwnCall } from "./empty-reply.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { loadConnections } from "./connections.js";
 import { isGuestIn } from "../sharing/context.js";
 import { advertisedTools, playbookText, findPlaybook, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
+import { missingRefs, RefLookupError, refFields, resolveRefs } from "./tools/lookup.js";
 import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
-import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "../subscriptions/bridge.js";
+import type { OwnAnswer, OwnAsk, OwnToolEvent, OwnVerdict, ToolAnswer } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
-import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
+import { agentConversation, runSubscriptionTurn, USE_TOOL, type SubscriptionTurnInput } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
@@ -83,6 +85,7 @@ import {
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
 import { headAndTail, safePublicError, truncateText } from "../lib/text.js";
+import { redactValue } from "../lib/redact.js";
 import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
@@ -135,6 +138,15 @@ export interface AssistantTurnArgs {
   userId: string;
   conversationId: string;
   message: string;
+  /** The words that choose the turn's playbooks and their tools (skills/index.ts) when they are not `message`: a node's turn gives its owner's words and its note, not the packet around them. */
+  routeBy?: string;
+  /** Tools shown beside the core ones whatever the playbooks (a node's turn: its pages). */
+  coreTools?: readonly string[];
+  /**
+   * Tools not shown but there when the work needs them (a node's tools its turn's words did not call for, node/skills.ts):
+   * on the owner's AI plan hub_use_tool names and calls them, and one called is shown for the rest of the turn.
+   */
+  hiddenTools?: readonly AnyHubTool[];
   page?: AssistantPageContext;
   settings: Settings;
   /** Approved orchestrator model, already resolved from the engineer's choice. */
@@ -155,7 +167,7 @@ export interface AssistantTurnArgs {
   actAs?: ActAs;
   signal?: AbortSignal;
   /** Called just before a tool runs (not for held writes): Ensemble Node marks a turn that acts from this point. */
-  onToolStart?: (call: { name: string; isWrite: boolean }) => void | Promise<void>;
+  onToolStart?: (call: { name: string; isWrite: boolean; readOnly: boolean; input: unknown }) => void | Promise<void>;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
   /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
@@ -203,6 +215,14 @@ export interface AssistantTurnArgs {
    * `MAX_VERIFY_ROUNDS` per turn, within the step cap; null (or a failure) ends the turn as usual.
    */
   verify?: (state: VerifyState) => string | null | Promise<string | null>;
+  /**
+   * What the reply says it sent into the chat, against what reached it (Ensemble Node's conversation turns,
+   * node/delivery-claims.ts): null when every such claim holds. Otherwise the reply goes back once with
+   * `feedback`; a claim still there at the end is replaced by `corrected` in the reply, and counted.
+   */
+  claims?: (state: ClaimState) => DeliveryVerdict | null | Promise<DeliveryVerdict | null>;
+  /** The reply being written goes back for more work (a check sent it back, or the agent is asked again): what was streamed of it is not the reply. */
+  onRewrite?: () => void;
   /**
    * On the person's own AI plan (`isSubscriptionProvider`): an Ensemble Node's turn (`node`) has its
    * project (`group`, whose folder its chats share) and its sessions' keeping days; `ownWeb` (default on)
@@ -292,6 +312,31 @@ export interface ToolCallTrace {
   replayed?: boolean;
 }
 
+/** One of the agent's own calls on the person's plan (its shell, files, web: subscriptions/own-tools.ts), as a node turn's trace records it. */
+export interface OwnCallTrace {
+  kind: "own";
+  name: string;
+  /** Null where the computer did not say (an older Ensemble there). */
+  ms: number | null;
+  state: "ok" | "failed";
+  inChars: number | "unknown";
+  outChars: number | "unknown";
+  /** Allowed with no question, `asked` and allowed by the owner on a card, or refused (by Ensemble's rules or by the owner). */
+  verdict: OwnVerdict | "unknown";
+}
+
+export function ownCallTrace(event: OwnToolEvent): OwnCallTrace {
+  return {
+    kind: "own",
+    name: event.name,
+    ms: event.ms ?? null,
+    state: event.ok === false ? "failed" : "ok",
+    inChars: event.inChars ?? "unknown",
+    outChars: event.outChars ?? "unknown",
+    verdict: event.verdict ?? "unknown",
+  };
+}
+
 /**
  * What a turn offered the model and how it ran, in sizes, counts and settings only: the tools of its first
  * model call (a hash of their specs and how many), each tool call, tokens and cost across its model
@@ -299,7 +344,7 @@ export interface ToolCallTrace {
  */
 export interface LoopTrace {
   tools: { hash: string; count: number } | null;
-  calls: ToolCallTrace[];
+  calls: Array<ToolCallTrace | OwnCallTrace>;
   modelCalls: number;
   tokensIn: number | null;
   tokensOut: number | null;
@@ -361,7 +406,15 @@ export interface VerifyState {
   calls: ReadonlyArray<{ call: AssistantToolCall; result: unknown }>;
   /** Rounds of feedback already given in this turn (0 the first time). */
   round: number;
+  /** The check of the reply the turn ends with, after its rounds: what it finds is recorded, never sent back. */
+  final?: boolean;
 }
+
+/** What a `claims` hook sees: the reply, and every tool call of the turn with what it returned. */
+export type ClaimState = Pick<VerifyState, "text" | "calls">;
+
+/** Claims of something sent into the chat that never reached it: how many, the feedback for one more round, and the reply without them. */
+export type DeliveryVerdict = { count: number; feedback: string; corrected: string };
 
 /** Feedback rounds a `verify` hook may give in one turn. */
 export const MAX_VERIFY_ROUNDS = 2;
@@ -379,6 +432,10 @@ export interface AssistantTurnResult {
   refs?: AssistantRef[];
   /** Ensemble's own loop paused at its checkpoint after this many model requests (loop-config.ts); the reply asks whether to go on. */
   paused?: { steps: number };
+  /** The model ended without words after it acted, also when asked again: `content` says what its tools did (empty-reply.ts). */
+  emptyReply?: boolean;
+  /** Claims of something sent into the chat that never reached it, taken out of `content` (the `claims` hook). */
+  falseClaims?: number;
 }
 
 const liveTurns = new Map<string, AbortController>();
@@ -467,24 +524,26 @@ async function drive(
   const loop = activeLoopConfig(app.log);
   const limits = turnLimits(loop, args.provider, args.model, Boolean(args.code));
   const hubTools = (await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name));
-  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
+  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...(subscription ? (args.hiddenTools ?? []) : [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);
   // The model sees core tools and the playbooks in play; Code also keeps its local tools.
   // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
   const playbooks = playbooksFor(args.modules);
+  const routeWords = args.routeBy ?? args.message;
   const active = new Map<string, Playbook>(
     routePlaybooks(
-      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected, customBoard: args.page?.surface?.filters?.customBoard === true },
+      { message: routeWords, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected, customBoard: args.page?.surface?.filters?.customBoard === true },
       playbooks,
     ).map((playbook) => [playbook.name, playbook]),
   );
   // Tools the loop adds during the turn (read_tool_output once a long result is kept), always shown.
   const turnTools: AnyHubTool[] = [];
   const shown = () => {
-    const selected = advertisedTools(tools, active.values(), args.message);
-    const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...selected];
+    const selected = advertisedTools(tools, active.values(), routeWords);
+    const always = args.coreTools?.length && process.env.ENSEMBLE_ASSISTANT_TOOLSETS !== "off" ? tools.filter((tool) => args.coreTools!.includes(tool.name)) : [];
+    const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...always, ...selected];
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
   };
   const persona =
@@ -510,7 +569,7 @@ async function drive(
     timezone: settings.timezone,
     mentions: args.mentions?.length ? args.mentions.map((mention) => (mention.kind === "date" ? `${mention.label} (${mention.id})` : refLink(mention))).join("; ") : undefined,
     reference: args.referenceContext,
-    playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, args.message) })),
+    playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, routeWords) })),
   });
   const prior = await priorTurns(app, args.conversationId, args.messageId, args.spaces, { tokens: limits.historyTokens, rows: loop.historyRows });
   const history = prior.messages;
@@ -562,11 +621,26 @@ async function drive(
   let nudged = false;
   /** The model was asked once for its reply after it ran tools and said nothing. */
   let answerAsked = false;
-  /** What each call returned to the model, for the `verify` hook. */
+  /** What each call returned to the model, for the `verify` and `claims` hooks. */
   const results: Array<{ call: AssistantToolCall; result: unknown }> = [];
   let verifyRounds = 0;
-  /** The answer a `verify` round sent back: still the reply if the model gives no better one. */
+  /** The answer a `verify` or `claims` round sent back: still the reply if the model gives no better one. */
   let checkedText = "";
+  /** The text the `verify` hook last checked: the reply the turn ends with gets a last check when it is another. */
+  let lastChecked: string | null = null;
+  /** The reply went back once because it claimed something reached the chat that did not (`claims`). */
+  let claimsAsked = false;
+  /** The last step the budget allowed asked for more tools instead of answering. */
+  let outOfSteps = false;
+  /** The agent on the person's plan ended its turn to wait for its owner's answer on a card (a node's turn): it has no reply. */
+  let parked = false;
+  /** The agent's own calls on the person's plan (a node's turn), for the reply of a turn that ends without words. */
+  const own: OwnCall[] = [];
+  const verifyNow = async (candidate: string, final = false): Promise<string | null> => {
+    const feedback = await checkAnswer(args.verify!, { text: candidate, calls: results, round: verifyRounds, ...(final ? { final: true } : {}) }, app);
+    lastChecked = candidate;
+    return feedback;
+  };
 
   // The history rows sit just before the turn's own message; compaction may shorten them, never move them.
   const historyAt = { start: messages.length - 1 - history.length, end: messages.length - 1 };
@@ -629,13 +703,18 @@ async function drive(
   if (isSubscriptionProvider(args.provider)) {
     // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
     const agent = args.provider;
-    const toolSpecs = () => [
-      ...chatToolSpecs(shown()).map((spec) => {
-        const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
-        return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
-      }),
-      USE_TOOL,
-    ];
+    const hidden = new Map((args.hiddenTools ?? []).map((tool) => [tool.name, tool]));
+    const toolSpecs = () => {
+      const listed = shown();
+      const unlisted = [...hidden.keys()].filter((name) => !listed.some((tool) => tool.name === name));
+      return [
+        ...chatToolSpecs(listed).map((spec) => {
+          const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
+          return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
+        }),
+        unlisted.length ? { ...USE_TOOL, description: `${USE_TOOL.description} Also there when the work needs them: ${unlisted.join(", ")}.` } : USE_TOOL,
+      ];
+    };
     // A chat, Ask Ensemble or a routine keeps the agent's own tools; a node's turn keeps them with its node's policy (node/brain.ts).
     const node = args.subscription?.node === true;
     const nodeTools = node && args.subscription?.ownTools ? args.subscription.nodeTools : undefined;
@@ -661,18 +740,30 @@ async function drive(
       if (settled!.call.state === "awaiting_approval") args.emit({ type: "pending", call: settled!.call, preview: settled!.call.summary ?? "" });
       else args.emit({ type: "tool", call: settled!.call });
       calls.push(settled!.call);
+      results.push({ call: settled!.call, result: settled!.forModel });
       args.trace?.calls.push(callTrace(settled!, byName.get(settled!.call.name)));
       learn(settled!.call.refs);
       if (settled!.call.state === "ok" && settled!.call.isWrite) mutated = true;
       const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
       const loaded = Boolean(playbook && !active.has(playbook.name));
       if (playbook && loaded) active.set(playbook.name, playbook);
-      return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
+      // A tool the turn had not shown, once called, is shown for the rest of the turn.
+      const shownNow = hidden.has(requested.name) && !turnTools.some((tool) => tool.name === requested.name);
+      if (shownNow) turnTools.push(hidden.get(requested.name)!);
+      return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded || shownNow ? { tools: toolSpecs() } : {}) };
     });
+    // The agent's own calls end up in the turn's reply when the agent writes none (empty-reply.ts).
+    const onOwnTool = nodeTools
+      ? (event: OwnToolEvent) => {
+          if (event.phase === "end") own.push({ name: event.name, summary: event.summary, ok: event.ok, acts: event.acts });
+          nodeTools.onOwnTool(event);
+        }
+      : undefined;
     try {
       const offeredSpecs = toolSpecs();
       if (args.trace) args.trace.tools = toolsFingerprint(offeredSpecs);
-      const done = await runSubscriptionTurn({
+      const sessionKey = args.subscription?.sessionKey ?? args.conversationId;
+      const base: Omit<SubscriptionTurnInput, "prompt"> = {
         userId,
         settings,
         agent,
@@ -682,25 +773,14 @@ async function drive(
         // A computer whose Ensemble is too old for the agent's own tools (in a node's turn: for the node's policy) is told it has only
         // Ensemble's, by its run notes and by the node's instructions for such a computer.
         ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(swapSystem(messages, args.nodeInstructions?.stable, args.subscription?.stableWithoutOwnTools), agent, { ...how, ownTools: false }).system } : {}),
-        prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
         // One chat is one session of the person's agent: a new chat starts a new one. An inline ask runs in its page's session.
-        sessionKey: args.subscription?.sessionKey ?? args.conversationId,
-        ...(args.subscription?.sessionKey ? {} : { position: await sessionPosition(app.prisma, args.conversationId, args.messageId) }),
-        ...(attached?.files.length
-          ? {
-              files: {
-                list: await turnFilesFor(app.prisma, attached.files, userId),
-                read: async (id: string) => (await fileOriginal(app.prisma, userId, id))?.bytes ?? null,
-                fallback: EXTRACTED_TEXT_TO_MODELS ? attached.text : filesNotReceived(attached.files),
-              },
-            }
-          : {}),
+        sessionKey,
         tools: offeredSpecs,
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
-        ...(nodeTools ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool: nodeTools.onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
+        ...(nodeTools && onOwnTool ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         // What a new session is called in the agent's own app: the chat's title (an ask: its page's).
@@ -713,46 +793,116 @@ async function drive(
         onStatus(text) {
           args.emit({ type: "status", text });
         },
+      };
+      // How many messages of the chat its session took part in before this one; another message of this turn keeps it.
+      const position = args.subscription?.sessionKey ? undefined : await sessionPosition(app.prisma, args.conversationId, args.messageId);
+      const done = await runSubscriptionTurn({
+        ...base,
+        prompt: conversation.prompt,
+        ...(position === undefined ? {} : { position }),
+        ...(attached?.files.length
+          ? {
+              files: {
+                list: await turnFilesFor(app.prisma, attached.files, userId),
+                read: async (id: string) => (await fileOriginal(app.prisma, userId, id))?.bytes ?? null,
+                fallback: EXTRACTED_TEXT_TO_MODELS ? attached.text : filesNotReceived(attached.files),
+              },
+            }
+          : {}),
       });
       credentialSource = `${SUBSCRIPTION_INFO[agent].label} subscription · ${done.computer}`;
       // What the person said in the agent's own app since Ensemble's last turn comes into the chat before this message.
       if (done.outside?.turns.length) {
-        await saveOutside(app.prisma, { userId, conversationId: args.conversationId, ...(args.messageId ? { before: args.messageId } : {}), agent, session: args.subscription?.sessionKey ?? args.conversationId, outside: done.outside }).catch((error: unknown) =>
+        await saveOutside(app.prisma, { userId, conversationId: args.conversationId, ...(args.messageId ? { before: args.messageId } : {}), agent, session: sessionKey, outside: done.outside }).catch((error: unknown) =>
           app.log.warn({ err: error }, "could not save what was brought in from the agent's app"),
         );
       }
       text = done.text.trim();
       answered = done.model || args.model;
       credits = null;
+      /** Messages that went on in the same session after the turn's own (why each was sent), in order. */
+      const followUps: Array<"reply" | "check" | "claims"> = [];
+      const callMetric = (run: typeof done, followUp?: (typeof followUps)[number]) =>
+        recordMetric(app.prisma, {
+          userId,
+          kind: "model.call",
+          meta: {
+            provider: agent,
+            model: run.model || answered,
+            purpose: args.purpose ?? "Hub chat",
+            tokensIn: run.tokensIn,
+            tokensOut: run.tokensOut,
+            // The person's own plan pays; nothing is billed through Ensemble.
+            estimatedUsd: null,
+            computer: run.computer,
+            // Which agent session the turn ran in, and whether it went on in it (false: a new one with the chat so far).
+            session: { key: sessionKey, resumed: typeof run.resumed === "boolean" ? run.resumed : null },
+            // Why it started a new session in place of the chat's earlier one (workspace/engines/session-restart.ts).
+            ...(run.restart ? { restart: run.restart } : {}),
+            // Exchanges brought in from the agent's own app before this turn (assistant/outside.ts).
+            ...(run.outside?.turns.length ? { outside: { app: run.outside.app, turns: run.outside.turns.length, earlier: run.outside.earlier } } : {}),
+            // A message that went on in the turn's session: asking for the reply, the answer check's feedback, or a claim to correct.
+            ...(followUp ? { followUp } : {}),
+            title: truncateText(args.message, 80),
+            ...instructionsMeta,
+          },
+        }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
       // The person's own plan pays: no cost is counted, as in the metric below.
       traceUsage(args.trace, done.tokensIn, done.tokensOut, null);
       if (args.trace) {
         const session = { resumed: typeof done.resumed === "boolean" ? done.resumed : null, ...(done.restart ? { restart: done.restart.reason } : {}) };
         const outside = done.outside?.turns.length ?? 0;
-        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, ownTools: done.ownTools });
+        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, ownTools: done.ownTools, ...(followUps.length ? { followUps } : {}) });
       }
-      await recordMetric(app.prisma, {
-        userId,
-        kind: "model.call",
-        meta: {
-          provider: agent,
-          model: answered,
-          purpose: args.purpose ?? "Hub chat",
-          tokensIn: done.tokensIn,
-          tokensOut: done.tokensOut,
-          // The person's own plan pays; nothing is billed through Ensemble.
-          estimatedUsd: null,
-          computer: done.computer,
-          // Which agent session the turn ran in, and whether it went on in it (false: a new one with the chat so far).
-          session: { key: args.subscription?.sessionKey ?? args.conversationId, resumed: typeof done.resumed === "boolean" ? done.resumed : null },
-          // Why it started a new session in place of the chat's earlier one (workspace/engines/session-restart.ts).
-          ...(done.restart ? { restart: done.restart } : {}),
-          // Exchanges brought in from the agent's own app before this turn (assistant/outside.ts).
-          ...(done.outside?.turns.length ? { outside: { app: done.outside.app, turns: done.outside.turns.length, earlier: done.outside.earlier } } : {}),
-          title: truncateText(args.message, 80),
-          ...instructionsMeta,
-        },
-      }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
+      await callMetric(done);
+      /**
+       * One more message in the same session of the agent, after its turn (a reply asked for, the answer check's
+       * feedback, a claim to correct): only to the computer that ran the turn, into the session that took it (`followUp`,
+       * at the turn's own position), and only while the turn neither stopped nor waits for its owner. That computer gone,
+       * or the session no longer there, the message is not sent at all and the turn keeps what it had. Its words count
+       * only when the agent went on in that session.
+       */
+      const goesOn = () => done.resumable && !stop.signal.aborted && !nodeTools?.parking();
+      const again = async (prompt: string, why: (typeof followUps)[number]): Promise<string | null> => {
+        if (!goesOn()) return null;
+        args.onRewrite?.();
+        try {
+          // With the turn's tools as they are now: a hidden one it called, or a guide it loaded, is shown.
+          const run = await runSubscriptionTurn({ ...base, tools: toolSpecs(), prompt, ...(position === undefined ? {} : { position }), followUp: done.computerId ? { computerId: done.computerId } : {} });
+          followUps.push(why);
+          traceUsage(args.trace, run.tokensIn, run.tokensOut, null);
+          await callMetric(run, why);
+          answered = run.model || answered;
+          return run.resumed === true ? run.text.trim() || null : null;
+        } catch (error) {
+          if (!stop.signal.aborted) app.log.warn({ err: error, agent, why }, "Another message of the turn was not sent to the agent's session; the turn keeps what it had");
+          return null;
+        }
+      };
+      // The agent ended without words: its own session is asked once for the reply.
+      if (!text) text = (await again(REPLY_PROMPT, "reply")) ?? "";
+      // The answer check (a node's deliverables): what is missing goes back to the same session, at most twice.
+      while (args.verify && text && verifyRounds < MAX_VERIFY_ROUNDS && goesOn()) {
+        const feedback = await verifyNow(text);
+        if (!feedback) break;
+        verifyRounds += 1;
+        checkedText = text;
+        args.emit({ type: "status", text: "Checking the answer against what was asked." });
+        const better = await again(feedback, "check");
+        if (!better) break;
+        text = better;
+      }
+      // A claim that something reached the chat when nothing did: once, to attach it or correct the reply.
+      if (args.claims && text && goesOn()) {
+        const found = await checkClaims(args.claims, { text, calls: results }, app);
+        if (found) {
+          claimsAsked = true;
+          checkedText = text;
+          const better = await again(found.feedback, "claims");
+          if (better) text = better;
+        }
+      }
+      parked = Boolean(nodeTools?.parking());
     } catch (error) {
       const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");
       if (!cancelled) throw error;
@@ -987,13 +1137,29 @@ async function drive(
       // A surface that checks the answer against what was asked (Ensemble Node, node/deliverables.ts): what
       // is missing goes back as a user message, while a step with tools and one to answer remain.
       if (args.verify && text && !finalAnswer && verifyRounds < MAX_VERIFY_ROUNDS && step < maxSteps - 2) {
-        const feedback = await checkAnswer(args.verify, { text, calls: results, round: verifyRounds }, app);
+        const feedback = await verifyNow(text);
         if (feedback && !stop.signal.aborted) {
           verifyRounds += 1;
           checkedText = text;
           messages.push({ role: "assistant", content: turn.text });
           messages.push({ role: "user", content: feedback });
+          args.onRewrite?.();
           args.emit({ type: "status", text: "Checking the answer against what was asked." });
+          text = "";
+          continue;
+        }
+      }
+      // A reply that says something reached the chat when nothing did (Ensemble Node, node/delivery-claims.ts):
+      // once, to attach it with the right tool or correct the reply.
+      if (args.claims && text && !finalAnswer && !claimsAsked && step < maxSteps - 2) {
+        const found = await checkClaims(args.claims, { text, calls: results }, app);
+        if (found && !stop.signal.aborted) {
+          claimsAsked = true;
+          checkedText = text;
+          messages.push({ role: "assistant", content: turn.text });
+          messages.push({ role: "user", content: found.feedback });
+          args.onRewrite?.();
+          args.emit({ type: "status", text: "Checking what the reply says it sent." });
           text = "";
           continue;
         }
@@ -1010,10 +1176,9 @@ async function drive(
         text = runawayReply(runaway, doneSoFar());
         break;
       }
-      if (paused) break;
-      throw new ToolBlockedError(
-        "The model did not produce a final answer within the request budget. Its recorded actions are available separately.",
-      );
+      // Asked for more tools when the budget left none: the turn ends, and what its tools did is its reply (below).
+      outOfSteps = true;
+      break;
     }
 
     // Both APIs need the assistant's own request echoed back before its results.
@@ -1095,20 +1260,40 @@ async function drive(
   if (paused && !stopped) text = pausedReply(checkpoint ?? tally.steps, text, doneSoFar());
   if (!text && checkedText) text = checkedText;
   if (!text && runaway && !stopped) text = runawayReply(runaway, doneSoFar());
-  if (!text) {
-    text = stopped
-      ? calls.length
-        ? `Stopped. I had already done: ${calls.map((call) => call.summary || call.name).join("; ")}.`
-        : "Stopped before anything ran."
-      : "";
+  /** The model gave no words, also when asked again: the reply says what its tools did (empty-reply.ts). */
+  let emptyReply = false;
+  if (!text && !stopped && !parked) {
+    const work = workReply(
+      calls.map((call) => ({ name: call.name, state: call.state, summary: call.summary, error: call.error, isWrite: call.isWrite, looks: !call.isWrite && readsOnly(byName.get(call.name)) })),
+      own,
+    );
+    // A turn that did nothing and said nothing has not answered: that alone is a failure.
+    if (!work) throw new ToolBlockedError(NO_REPLY_FAILURE);
+    text = outOfSteps ? `I reached this turn's step limit before writing my answer.\n${work}` : work;
+    emptyReply = true;
   }
-  if (!stopped && !text) {
-    throw new ToolBlockedError("The model returned no answer. Recorded actions are available separately.");
+  if (!text && stopped) {
+    text = calls.length ? `Stopped. I had already done: ${calls.map((call) => call.summary || call.name).join("; ")}.` : "Stopped before anything ran.";
   }
   if (stopped && text && !/stopped before finishing/i.test(text)) {
     text = `${text}\n\nStopped before finishing.`.trim();
   }
-  text = reflectProposals(text, calls);
+  /** Claims of something sent into the chat that never reached it, taken out of the reply. */
+  let falseClaims = 0;
+  // The reply the turn ends with, as the model wrote it: the answer check's verdict on it (recorded, never sent back),
+  // then any claim that something reached the chat when nothing did is taken out.
+  if (!stopped && !parked && !emptyReply) {
+    if (args.verify && lastChecked !== text) await verifyNow(text, true);
+    if (args.claims) {
+      const found = await checkClaims(args.claims, { text, calls: results }, app);
+      if (found) {
+        text = found.corrected;
+        falseClaims = found.count;
+      }
+    }
+  }
+  // A reply built from the tool rows already says what they did.
+  if (!emptyReply) text = reflectProposals(text, calls);
   if (!stopped && calls.some((call) => call.state === "awaiting_approval") && !text.includes("Nothing has changed yet")) {
     text = `${text}\n\nNothing has changed yet. Press Apply.`.trim();
   }
@@ -1151,7 +1336,19 @@ async function drive(
 
   const refs = refsInText(text, [...known.values()]).slice(0, MAX_REPLY_REFS);
   const pause = paused && !stopped ? { paused: { steps: checkpoint ?? tally.steps } } : {};
-  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource, ...(refs.length ? { refs } : {}), ...pause };
+  return {
+    content: text,
+    toolCalls: calls,
+    model: answered,
+    credits,
+    mutated,
+    interrupted: stopped,
+    credentialSource,
+    ...(refs.length ? { refs } : {}),
+    ...pause,
+    ...(emptyReply ? { emptyReply: true } : {}),
+    ...(falseClaims ? { falseClaims } : {}),
+  };
 }
 
 interface CallOutcome {
@@ -1305,11 +1502,14 @@ async function runTool(
 
   let input: unknown;
   try {
-    input = tool.input.parse(JSON.parse(requested.arguments || "{}"));
+    // A page, task or project named by its link or exact title is the same as by its id (tools/lookup.ts).
+    const raw: unknown = JSON.parse(requested.arguments || "{}");
+    const fields = refFields(tool.input);
+    input = tool.input.parse(fields.length ? await inScope(base, tool, raw, (db, userId, given) => resolveRefs(db, userId, given, fields)) : raw);
   } catch (error) {
     // Handed back rather than thrown: a schema mistake is recoverable.
     const call = failed(requested, tool.area, describe(error));
-    return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
+    return { call, forModel: { error: call.error, hint: error instanceof RefLookupError ? "Call again with one of those ids." : "Fix the arguments and call again." } };
   }
   // A tool that takes a `space` (Ensemble Node, node/spaces.ts): where this call acts, checked now,
   // since access can change during a turn. The receipt and the result name it.
@@ -1341,7 +1541,7 @@ async function runTool(
     try {
       preview = await renderPreview(ctx, tool, input, known);
     } catch (error) {
-      const message = describe(error);
+      const message = await withClosest(ctx, tool, input, error);
       const call = failed(requested, tool.area, message, true);
       return {
         call,
@@ -1389,7 +1589,7 @@ async function runTool(
     }
   }
   try {
-    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite });
+    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite, readOnly: readsOnly(tool), input });
     const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
@@ -1427,9 +1627,26 @@ async function runTool(
     }
     return { call, forModel, resultChars: summary.length + trimmed.chars, offloaded: trimmed.offloaded, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
   } catch (error) {
-    const call = failed(requested, tool.area, describe(error), tool.isWrite);
+    const call = failed(requested, tool.area, await withClosest(base, tool, input, error), tool.isWrite);
     return { call, forModel: { error: call.error } };
   }
+}
+
+/** `look` run where the call acts: in its space for a tool that takes one (Ensemble Node), else the turn's own account. */
+async function inScope<T>(base: ToolContext, tool: AnyHubTool, raw: unknown, look: (db: ToolContext["prisma"], userId: string, raw: unknown) => Promise<T>): Promise<T> {
+  if (!tool.spaceFor) return look(base.prisma, base.userId, raw);
+  const space = await tool.spaceFor(base, raw);
+  const scoped = space.context(base);
+  return space.run(() => look(scoped.prisma, scoped.userId, raw));
+}
+
+/** A failure that says a record was not found, with what the call gave that names nothing and the closest records; else the error as it was. */
+async function withClosest(base: ToolContext, tool: AnyHubTool, input: unknown, error: unknown): Promise<string> {
+  const message = describe(error);
+  if ((error as { statusCode?: unknown } | null)?.statusCode !== 404 && !/\bno (?:page|task|project)\b|not on your board|not in this space/i.test(message)) return message;
+  const fields = refFields(tool.input);
+  const closest = fields.length ? await inScope(base, tool, input, (db, userId, given) => missingRefs(db, userId, given, fields)).catch(() => null) : null;
+  return closest ? `${message} ${closest}` : message;
 }
 
 async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown, known: ReadonlyMap<string, AssistantRef>): Promise<string> {
@@ -1439,8 +1656,25 @@ async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown,
   return withPastScheduleWarning(formatEntityText(raw, [...known.values()], { plain: true }), input, ctx.settings.timezone);
 }
 
+/** The most characters a failed call's record keeps of what it was sent. */
+const FAILED_INPUT_CHARS = 4_000;
+
+/** What a call that failed was sent, as its record keeps it: redacted, long values cut, at most `FAILED_INPUT_CHARS`. */
+export function sentInput(raw: string | undefined): Record<string, unknown> {
+  let value: unknown = {};
+  try {
+    value = JSON.parse(raw?.trim() || "{}");
+  } catch {
+    value = { text: raw ?? "" };
+  }
+  const kept = redactValue(value);
+  const record = kept && typeof kept === "object" && !Array.isArray(kept) ? (kept as Record<string, unknown>) : { value: kept };
+  const json = JSON.stringify(record);
+  return json.length <= FAILED_INPUT_CHARS ? record : { cut: true, text: `${json.slice(0, FAILED_INPUT_CHARS)}…` };
+}
+
 const failed = (
-  requested: { id: string; name: string },
+  requested: { id: string; name: string; arguments?: string },
   area: AssistantToolCall["area"],
   error: string,
   isWrite = false,
@@ -1448,7 +1682,7 @@ const failed = (
   id: requested.id,
   name: requested.name,
   area,
-  input: {},
+  input: sentInput(requested.arguments),
   state: "failed",
   isWrite,
   error,
@@ -1577,6 +1811,17 @@ async function checkAnswer(verify: NonNullable<AssistantTurnArgs["verify"]>, sta
     return typeof feedback === "string" && feedback.trim() ? feedback.trim() : null;
   } catch (error) {
     app.log.warn({ err: error }, "The answer check failed; the answer stands");
+    return null;
+  }
+}
+
+/** A `claims` hook's verdict, or null when every claim holds or the check fails (a check never breaks a turn). */
+async function checkClaims(claims: NonNullable<AssistantTurnArgs["claims"]>, state: ClaimState, app: FastifyInstance): Promise<DeliveryVerdict | null> {
+  try {
+    const found = await claims(state);
+    return found && found.count > 0 && found.feedback.trim() ? found : null;
+  } catch (error) {
+    app.log.warn({ err: error }, "The delivery check failed; the reply stands");
     return null;
   }
 }

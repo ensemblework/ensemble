@@ -9,7 +9,6 @@
  * the turn and the files attached to the message, call its tools, ask a node's owner about one of
  * the agent's own calls, stream the reply text (and the agent's own calls), say it is done.
  */
-import { hostname } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AGENT_APP_INFO, ASSISTANT_TURNS_MIN, parseAgentApps, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type AgentApp, type SubscriptionAgent } from "@ensemble/shared-types";
@@ -24,7 +23,7 @@ import { appPresence, detectAgents } from "./detect.js";
 import { finishTurn, heard, inRelayedRequest, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
 import { OwnAskShape, OwnToolEventShape } from "./bridge.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
-import { computerAgents, deviceOwners } from "./turn.js";
+import { computerAgents, deviceOwners, thisComputer } from "./turn.js";
 import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
 import { MAX_OUTSIDE_TURNS } from "./outside.js";
 
@@ -112,7 +111,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(prisma, request.userId);
     if (isDesktopRuntime()) {
       const agents = await detectAgents();
-      const computer: SubscriptionComputer = { id: "local", name: hostname().replace(/\.local$/, "") || "This computer", platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents, apps: appPresence() };
+      const computer: SubscriptionComputer = { id: "local", name: thisComputer().name, platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents, apps: appPresence() };
       return { computers: [computer], preferred: settings.models.computer };
     }
     const devices = await prisma.device.findMany({ where: { userId: { in: deviceOwners(request.userId) }, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });

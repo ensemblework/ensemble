@@ -230,7 +230,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
           </span>
         </Fact>
       ) : null}
-      <Fact label="Work done" hint={job ? `Limits: ${job.limits.turns} turns · ${job.limits.toolCalls} tool calls · ${job.limits.minutes} min` : undefined}>
+      <Fact label="Work done" hint={job ? `Limits: ${job.limits.turns ? `${job.limits.turns} turns` : "turns not limited"} · ${job.limits.toolCalls} tool calls · ${job.limits.minutes ? `${job.limits.minutes} min` : "time not limited"}` : undefined}>
         {job ? `${plural(job.turns, "turn")} · ` : ""}
         {plural(calls, "tool call")}
       </Fact>

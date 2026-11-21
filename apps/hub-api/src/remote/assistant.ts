@@ -47,6 +47,8 @@ const Spec = z.object({
       keepDays: z.number().int().min(1).max(90).optional(),
       /** A new session's name in the agent's own app (0.7.17). Older servers omit it. */
       title: z.string().max(200).optional(),
+      /** Another message of the turn that took this session (`assistantTurns` 6): it goes on there or not at all. Older servers omit it. */
+      resume: z.literal("only").optional(),
     })
     .nullish(),
   /** The agent's own web search and page reading (0.7.6). Older servers omit it. */

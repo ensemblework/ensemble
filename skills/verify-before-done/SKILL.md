@@ -12,7 +12,7 @@ A claim needs fresh evidence from this turn. Before you say a thing is done, fin
 What proves each claim:
 - Fixed: the original failure, run again, now passes. Changed code or a changed setting alone is not a fix.
 - Tests or a build pass: the command's own output in this turn, with no failures. An earlier run, or "it should pass", is not evidence.
-- Saved or created: the record read back (the link the tool returned), with the content you meant.
+- Saved or created: the write's own result showing the record with the content you meant (and its link). Read it back only when that result does not show what was saved.
 - Sent: the sent copy or the app's receipt. A draft is drafted, not sent.
 - Delivered to your owner: the file or link is in your reply, from the tool that made it.
 - Recorded: the video plays, shows the task, and has the length you expect.

@@ -13,7 +13,7 @@
  */
 import { truncateText } from "../lib/text.js";
 import { integrateHow, type Constraints } from "./plan-contract.js";
-import { candidateKey, type Candidate, type Check } from "./report.js";
+import { candidateKey, CHECKING_KINDS, type Candidate, type Check } from "./report.js";
 
 export type ParallelMode = "serial" | "worktrees" | "snapshots";
 
@@ -90,7 +90,7 @@ export function workplaceOf(mission: MissionShape, stepId: string): Workplace {
   if (!step || parallelMode(mission.constraints) === "serial") return CHECKOUT;
   const own = worktreeOf(mission, step);
   if (own) return { kind: "worktree", reuse: false, ...own };
-  if (step.kind === "verify") {
+  if (CHECKING_KINDS.has(step.kind)) {
     const target = mission.steps.find((row) => row.id === step.verifies);
     const theirs = target ? worktreeOf(mission, target) : null;
     if (theirs) return { kind: "worktree", reuse: true, ...theirs };
@@ -151,7 +151,7 @@ export function placeLines(mission: MissionShape, step: Pick<StepShape, "id" | "
 
 function rerunLines(mission: MissionShape, buildIds: readonly string[]): string[] {
   const lines: string[] = [];
-  for (const check of mission.steps.filter((row) => row.kind === "verify" && row.verifies && buildIds.includes(row.verifies))) {
+  for (const check of mission.steps.filter((row) => CHECKING_KINDS.has(row.kind) && row.verifies && buildIds.includes(row.verifies))) {
     const passed = [...(check.attempts ?? [])].reverse().find((row) => row.outcome === "pass" || row.outcome === "fail");
     for (const item of passed?.checks ?? []) {
       if (item.rerun) lines.push(`  - ${item.id ? `${item.id} ` : ""}${truncateText(item.name, 120)}: \`${truncateText(item.rerun.command, 200)}\``);
@@ -177,7 +177,7 @@ export function integrationPart(mission: MissionShape, step: Pick<StepShape, "id
     if (!build) continue;
     const tree = worktreeOf(mission, build);
     const done = latestCandidate(build, ["done"]);
-    const check = mission.steps.find((row) => row.kind === "verify" && row.verifies === id);
+    const check = mission.steps.find((row) => CHECKING_KINDS.has(row.kind) && row.verifies === id);
     const where = tree ? (tree.detached ? `the detached worktree “${tree.name}”` : `branch ${tree.branch} (worktree “${tree.name}”)`) : "its folder";
     const what = candidateWords(done?.candidate) || "no candidate reported";
     lines.push(`- @${build.handle}: ${where}, ${what}${check ? `; its check (@${check.handle}): ${check.outcome ?? "not run"}` : ""}.`);
@@ -217,7 +217,7 @@ export function staleChecks(mission: MissionShape): Map<string, Stale> {
     return where.kind === "checkout" ? "checkout" : `worktree:${where.name}`;
   };
   for (const check of mission.steps) {
-    if (check.kind !== "verify" || check.outcome !== "pass") continue;
+    if (!CHECKING_KINDS.has(check.kind) || check.outcome !== "pass") continue;
     const passed = [...(check.attempts ?? [])].reverse().find((row) => row.outcome === "pass");
     if (!passed?.endedAt) continue;
     const target = mission.steps.find((row) => row.id === check.verifies);

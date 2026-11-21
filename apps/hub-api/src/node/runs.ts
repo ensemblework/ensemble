@@ -4,24 +4,30 @@
  * the node to report the result, unless a newer call of the node took the run over (`quiet`).
  *
  * A worker that reported a structured result (the run's report_result tool, or .ensemble/result.json:
- * WorkspaceJob.report) ends its plan step directly with it: no node turn paraphrases it (B7, B8).
- * A run from an earlier attempt of its step changes nothing (B1 fencing).
+ * WorkspaceJob.report) ends its plan step directly with it: no node turn paraphrases it (B7, B8). What
+ * the harness observed (agent, model asked, sent and reported, computer, session) goes into the report's
+ * provenance over the worker's own claims. A run from an earlier attempt of its step changes nothing (B1
+ * fencing).
+ *
+ * A run's end is taken once: its `reportedAt` is set in the same transaction as what the end causes (the
+ * step's result, or the outbox row that wakes its node), so a crash or a second watcher never loses or
+ * repeats it.
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeRun, Prisma } from "@prisma/client";
 import { truncateText } from "../lib/text.js";
 import { closeEndedWork, decisionBus } from "../lib/decisions.js";
 import { sseHub } from "../lib/sse.js";
-import { abortAllTurns, enqueueTurn, recoverTurns } from "./queue.js";
+import { abortAllTurns, recoverTurns, type TurnRequest } from "./queue.js";
 import { updateMessageData, updateMessageDataIf } from "./store.js";
 import { LOGIN_CARD, loginCardClosed } from "./logins.js";
 import { sweepHelpers } from "./helpers.js";
-import { finishStep, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
+import { finishStep, kickMissions, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
 import { askForReport } from "./dispatch.js";
 import { sessionRestartOf } from "../workspace/session-continuity.js";
 import { evidenceOf } from "../evidence/store.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
-import { parseReport } from "./report.js";
+import { parseReport, type Provenance, type StepReport } from "./report.js";
 import { startRoutines } from "./routines.js";
 import { refreshRunCard, settingsLine, storedSettings } from "./settings.js";
 import { startWatchdog, stopWatchdog } from "./watchdog.js";
@@ -91,33 +97,38 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     });
   }
   const ended = RUN_ENDED.has(status);
-  if (status !== run.status || ended) {
-    await prisma.nodeRun.update({ where: { id: run.id }, data: { status, ...(ended ? { reportedAt: new Date() } : {}) } });
-  }
+  if (status !== run.status) await prisma.nodeRun.update({ where: { id: run.id }, data: { status } });
   // Its questions in the chat close with it (node/run-decisions.ts), and so do its sign-ins; Needs me hears it.
   if (ended) await closeRunDecisions(app, run.jobId).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not close a run's questions in the chat"));
   if (ended) await closeRunRequests(app, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not close a run's requests"));
   // The card's settings (as asked, sent and reported by the agent) and its session's queue follow the job.
   if (status !== run.status || ended || shown.progress !== progress) await refreshRunCard(prisma, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not refresh a run card"));
   if (!ended) return;
+  const taken = () => prisma.nodeRun.updateMany({ where: { id: run.id, reportedAt: null }, data: { reportedAt: new Date() } });
   if (sessionDeletionOf(job?.context)) {
     if (run.planId && run.planStep) {
       const step = await stepRow(prisma, run.planId, run.planStep);
-      if (step?.status === "working") await finishStep(app, run.planId, run.planStep, { status: "blocked", outcome: "blocked", result: "Your owner requested deletion of this agent session. Its work was stopped; project files were kept.", attempt: step.attempt });
+      if (step?.status === "working") await finishStep(app, run.planId, run.planStep, { status: "blocked", outcome: "blocked", result: "Your owner requested deletion of this agent session. Its work was stopped; project files were kept.", attempt: step.attempt }, { claimRun: run.id });
     }
+    await taken();
     return;
   }
   // A newer call took this run over (steer, replace, stop, pause): the node already knows.
-  if (typeof shown.quiet === "string") return;
-  // A run from an earlier attempt of its step: the step has moved on.
-  if (await runIsStale(prisma, run)) return;
+  if (typeof shown.quiet === "string" || (await runIsStale(prisma, run))) {
+    // A run from an earlier attempt of its step: the step has moved on.
+    await taken();
+    return;
+  }
   const step = run.planId && run.planStep ? { planId: run.planId, planStep: run.planStep } : null;
+  const observed = report ? await provenanceOf(prisma, run, job) : null;
+  const reported: StepReport | null = report && observed ? { ...report, provenance: { ...report.provenance, ...observed } } : report;
 
   // The worker reported its result: the step ends with it, unless the run's session still has queued work.
-  if (step && report && report.outcome !== "blocked" && status === "succeeded") {
+  if (step && reported && reported.outcome !== "blocked" && status === "succeeded") {
     const row = await stepRow(prisma, step.planId, step.planStep);
-    if (row && row.status === "working" && !(await stepPending(prisma, step.planId, step.planStep))) {
-      await finishStep(app, step.planId, step.planStep, { status: "done", result: report.summary, report, attempt: row.attempt });
+    if (row && row.status === "working" && !(await stepPending(prisma, step.planId, step.planStep, { except: run.id }))) {
+      await finishStep(app, step.planId, step.planStep, { status: "done", result: reported.summary, report: reported, attempt: row.attempt }, { claimRun: run.id });
+      await taken();
       return;
     }
   }
@@ -125,7 +136,10 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   // Handed straight from its packet and ended without its result: the same session is asked once before its node judges (B8).
   if (step && !report && status === "succeeded" && typeof shown.told === "string" && !shown.reportAsked) {
     const row = await stepRow(prisma, step.planId, step.planStep);
-    if (row?.status === "working" && !(await stepPending(prisma, step.planId, step.planStep)) && (await askForReport(app, run, card?.body ?? null))) return;
+    if (row?.status === "working" && !(await stepPending(prisma, step.planId, step.planStep, { except: run.id })) && (await askForReport(app, run, card?.body ?? null))) {
+      await taken();
+      return;
+    }
   }
   // A step its node has not seen yet (it went straight to the agent): the node is told what the step is.
   const plan = step && typeof shown.told === "string" ? await loadPlan(prisma, step.planId) : null;
@@ -143,7 +157,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   // The session it was sent to no longer existed (deleted in the agent's app, or in Ensemble): the agent did not remember it.
   const ranJob = await prisma.workspaceJob.findUnique({ where: { id: run.jobId }, select: { id: true, kind: true, provider: true, continueFromJobId: true, context: true } });
   const restart = ranJob ? await sessionRestartOf(prisma, ranJob).catch(() => null) : null;
-  const queuedTurn = await enqueueTurn(app, {
+  const request: TurnRequest = {
     nodeId: run.nodeId,
     roomId: run.roomId,
     reason: "run",
@@ -166,11 +180,34 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     ].filter(Boolean).join("\n"),
     private: (shown as Prisma.JsonObject).private === true,
     ...(step ?? {}),
+  };
+  // Its node's turn goes through the outbox, written with the run's reportedAt: the end wakes it once.
+  // A node paused or removed meanwhile cannot take it: its step then ends with what the run reported (node/outbox.ts).
+  const operationId = `run:${run.id}:end`;
+  const woke = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.nodeRun.updateMany({ where: { id: run.id, reportedAt: null }, data: { reportedAt: new Date() } });
+    if (claimed.count !== 1) return false;
+    const payload = { request, status, summary: job?.summary ?? job?.error ?? null, ...(reported ? { report: reported } : {}) };
+    await tx.nodeOutbox.upsert({ where: { operationId }, create: { operationId, missionId: step?.planId ?? null, kind: "wake", payload: payload as unknown as Prisma.InputJsonValue }, update: {} });
+    return true;
   });
-  // Its node was paused or removed meanwhile: the step ends with what the run reported, or unverified.
-  if (step && !queuedTurn) {
-    await finishStep(app, step.planId, step.planStep, report ? { status: "done", result: report.summary, report } : { status: status === "succeeded" ? "done" : "stopped", result: job?.summary ?? job?.error ?? `The run ${words}.` });
-  }
+  if (woke) kickMissions(app);
+}
+
+/** What the harness saw of a run: its agent, the model asked for, sent and reported by the engine, its computer and session. */
+async function provenanceOf(prisma: FastifyInstance["prisma"], run: Pick<NodeRun, "id" | "sessionId" | "settings">, job: JobView | null): Promise<Provenance> {
+  const fresh = await prisma.nodeRun.findUnique({ where: { id: run.id }, select: { settings: true } });
+  const settings = storedSettings(fresh?.settings ?? run.settings);
+  const cut = (value: unknown, max: number) => (typeof value === "string" && value.trim() && value !== "not_reported" && value !== "default" ? value.trim().slice(0, max) : undefined);
+  const provenance: Provenance = {
+    agent: cut(settings.resolved?.agent ?? settings.requested?.agent ?? settings.observed?.agent, 80),
+    modelRequested: cut(settings.requested?.model, 120),
+    modelSent: cut(settings.resolved?.model, 120),
+    modelReported: cut(settings.observed?.model, 120),
+    computer: cut(job?.device?.name, 120),
+    session: cut(run.sessionId, 120),
+  };
+  return Object.fromEntries(Object.entries(provenance).filter(([, value]) => value !== undefined)) as Provenance;
 }
 
 /**
