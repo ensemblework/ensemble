@@ -3,7 +3,7 @@
  * the web all come through here, so trust, folder, unattended and platform
  * checks are the same for every front door.
  */
-import { withMentionedContent } from "./mentioned.js";
+import { hasAttached, withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
@@ -594,8 +594,11 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
   if (body.surface === "code" && !body.chat) throw new GuardError("The Code tab's agent works one message at a time: send it as a chat turn.");
-  // A Code tab message carries what it @mentions, read in full, wherever the agent runs (workspace/mentioned.ts).
-  if (body.surface === "code") body.instructions = await withMentionedContent(prisma, userId, body.instructions);
+  // A Code tab message carries what it @mentions, read in full where the records are (workspace/mentioned.ts). One
+  // from the web comes with what the web read, which this computer has no copy of, and goes to the agent as it came.
+  if (body.surface === "code" && !(jobOrigin(options.context) === "web" && hasAttached(body.instructions))) {
+    body.instructions = await withMentionedContent(prisma, userId, body.instructions);
+  }
   if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
