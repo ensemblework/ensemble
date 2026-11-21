@@ -50,6 +50,7 @@ export function desktopTools(scope: NodeScope): AnyHubTool[] {
       description: `On your owner's computer: ${spec.description}`,
       input: (spec.input as unknown as z.AnyZodObject).extend({ computer }),
       isWrite: false,
+      ...("readOnly" in spec && spec.readOnly ? { readOnly: true } : {}),
       risk: spec.name === "desktop_act" || spec.name === "desktop_open" || spec.name === "desktop_record" ? "medium" : "low",
       async run(ctx, raw): Promise<ToolResult> {
         const { computer: name, ...input } = raw as Record<string, unknown> & { computer?: string };

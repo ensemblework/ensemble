@@ -88,12 +88,14 @@ export type DesktopStep = z.infer<typeof DesktopStep>;
 export const DESKTOP_TOOLS = [
   {
     name: "desktop_status",
+    readOnly: true,
     description:
       "What desktop control can do on your owner's computer now, for both screens: your private agent screen (a desktop of your own that nobody sees unless they watch it) and your owner's real screen (consent, the lock, who has control). Also accessibility and recording. Call it before first use and whenever a desktop tool fails. Answers in a few seconds.",
     input: z.object({}).strict(),
   },
   {
     name: "desktop_apps",
+    readOnly: true,
     description: "The apps installed on your owner's computer (name and id) and the ones running, with their windows, on each screen. Use it to find an app's id for desktop_open. Answers in a few seconds.",
     input: z
       .object({
@@ -117,6 +119,7 @@ export const DESKTOP_TOOLS = [
   },
   {
     name: "desktop_observe",
+    readOnly: true,
     description:
       "Look at a screen: a screenshot with its captureId, the app in front and its accessibility elements (ids e1, e2…). Aim desktop_act at those ids (exact, and the only way to act in the background on your owner's screen), or at x,y in this screenshot with its captureId. Look again after the screen changes: coordinates on an older screenshot are refused. Takes up to about 10 seconds; the first screenshot of your owner's screen may wait for them to allow screen control, and the first look at the agent screen starts it (about 5 seconds).",
     input: z
@@ -146,6 +149,7 @@ export const DESKTOP_TOOLS = [
   },
   {
     name: "desktop_zoom",
+    readOnly: true,
     description: "A closer, sharper look at part of a screenshot: its captureId and a box [x0, y0, x1, y1] in its pixels. Returns a new image with its own captureId, which clicks can aim at too. Answers in a few seconds.",
     input: z
       .object({
