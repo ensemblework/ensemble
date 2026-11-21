@@ -16,6 +16,11 @@ test("names the home and scratch folders by placeholders, the longest first", ()
   assert.equal(text("runs commands in ~/work/run-1/tasks/a"), "runs commands in <work>/tasks/a");
 });
 
+test("names a scratch folder written in lower case too", () => {
+  const { text } = redactor({ "/home/mira/work/nv-AbC123": "<work>" }, "/home/mira");
+  assert.equal(text("wants to run commands in ~/work/nv-abc123/tasks/a"), "wants to run commands in <work>/tasks/a");
+});
+
 test("deep redaction walks objects and arrays and cuts long strings", () => {
   const { deep } = redactor({}, "/home/mira");
   const out = deep({ list: ["x".repeat(100), { token: "token=abcdefghij" }], n: 3 }, 60);

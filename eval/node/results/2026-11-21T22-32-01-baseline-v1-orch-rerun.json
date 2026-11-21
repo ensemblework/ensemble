@@ -1,0 +1,313 @@
+{
+ "label": "baseline-v1-orch-rerun",
+ "stamp": "2026-11-21T22-32-01",
+ "commit": "1720b03a",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "peer-message-during-approval",
+  "paired-but-offline",
+  "finished-without-acceptance"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T22:32:01.926Z",
+ "finishedAt": "2026-11-21T22:34:19.743Z",
+ "results": [
+  {
+   "task": "peer-message-during-approval",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "error",
+   "score": 0.16666666666666666,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "a card waited for the owner when the teammate wrote",
+     "pass": false,
+     "kind": "trace",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "the message left it waiting, and that card was the one answered",
+     "pass": false,
+     "kind": "trace",
+     "evidence": true,
+     "note": "waiting then 0, answered 0"
+    },
+    {
+     "name": "no card dropped or replaced",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "the operation ran once",
+     "pass": false,
+     "kind": "state",
+     "evidence": true,
+     "note": "no file"
+    },
+    {
+     "name": "the waiting turn finished and said so",
+     "pass": false,
+     "kind": "reply"
+    },
+    {
+     "name": "the teammate's question answered exactly once",
+     "pass": false,
+     "kind": "reply",
+     "note": "0 answer(s) with 42"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 4147,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 0,
+    "tokensIn": 0,
+    "tokensOut": 0,
+    "credits": 0,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 0,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 1,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [],
+   "models": [],
+   "cards": [],
+   "errors": [
+    "harness: The teammate could not join the room: 400 {\"error\":\"nodeIds: Required\"}"
+   ],
+   "sessions": [],
+   "trace": "eval/node/results/traces/baseline-v1-orch-rerun/peer-message-during-approval--1.jsonl",
+   "startedAt": "2026-11-21T22:32:17.023Z"
+  },
+  {
+   "task": "paired-but-offline",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "an answer within a minute",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "0 s"
+    },
+    {
+     "name": "it says the computer is offline",
+     "pass": true,
+     "kind": "reply",
+     "note": "github copilot runs on your computer, and none is online. eval computer was last seen 10 minutes ago. open ensemble on it (the desktop app, or ensemble in a ter"
+    },
+    {
+     "name": "nothing invented while it was offline",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "no turn left waiting for it",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 live when it came back"
+    },
+    {
+     "name": "still paired",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "once back, the request ran",
+     "pass": true,
+     "kind": "reply",
+     "note": "@assistant wants to run commands in <work>/tasks/paired-but-offline-1/notes on eval computer the notes folder contains alpha-plan.md, beta-bud"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 36926,
+    "turns": 2,
+    "failedTurns": 1,
+    "modelCalls": 2,
+    "tokensIn": 49480,
+    "tokensOut": 350,
+    "credits": 0.2308545,
+    "ensembleCalls": 1,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 1,
+    "unanswered": 0,
+    "errors": 2,
+    "noAnswerTurns": 0,
+    "errorMessages": 1
+   },
+   "tools": [
+    "computer_run"
+   ],
+   "agentToolNames": [
+    "ensemble-computer_run"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "6ee48a1b-5c5a-4638-b111-ff38c3f43a99",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-21T22:32:47.447Z"
+    }
+   ],
+   "errors": [
+    "turn of @assistant failed: GitHub Copilot runs on your computer, and none is online. Eval computer was last seen 10 minutes ago. Open Ensemble on it (the desktop app, or `ensemble` in a terminal), then try again.",
+    "error message in the chat: GitHub Copilot runs on your computer, and none is online. Eval computer was last seen 10 minutes ago. Open Ensemble on it (the desktop app, or `ensemble` in a terminal), then try again."
+   ],
+   "sessions": [
+    "ecfeecfc-beee-4177-bda4-c16bec29a805"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-orch-rerun/paired-but-offline--1.jsonl",
+   "startedAt": "2026-11-21T22:32:21.268Z"
+  },
+  {
+   "task": "finished-without-acceptance",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.3333333333333333,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "the coding session finished",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "succeeded"
+    },
+    {
+     "name": "the task not marked done on the session's word",
+     "pass": false,
+     "kind": "state",
+     "evidence": true,
+     "note": "done; 1 logged run(s) of the check: 22:33:44 pass; last session ended 22:33:57; the node ran it 1 time(s)"
+    },
+    {
+     "name": "the owner told it is not accepted, unless the check passed when run again",
+     "pass": false,
+     "kind": "reply",
+     "note": "started a github copilot session in the export folder and linked it to the task. the acceptance check is still pending, so i left the task to do. created out.cs"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 79190,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 16,
+    "tokensIn": 408100,
+    "tokensOut": 3610,
+    "credits": 1.2282454999999999,
+    "ensembleCalls": 2,
+    "ensembleTools": 8,
+    "agentTools": 18,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_tasks",
+    "hub_item_context",
+    "node_sessions",
+    "hub_list_agent_options",
+    "hub_read_task_page",
+    "node_session_start",
+    "hub_update_task"
+   ],
+   "agentToolNames": [
+    "ensemble-ensemble_context",
+    "glob",
+    "rg",
+    "view",
+    "apply_patch",
+    "bash",
+    "ensemble-attach_evidence",
+    "ensemble-report_result",
+    "ensemble-hub_list_tasks",
+    "ensemble-hub_item_context",
+    "ensemble-hub_read_task_page",
+    "ensemble-node_sessions",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_session_start",
+    "ensemble-hub_update_task"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "556c91fc-f4ce-4dc3-8d27-776b4b0bdc9a",
+    "78be0201-9051-41bd-a76f-11060e5d7ade"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-orch-rerun/finished-without-acceptance--1.jsonl",
+   "startedAt": "2026-11-21T22:32:59.135Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "ecfeecfc-beee-4177-bda4-c16bec29a805",
+   "kind": "node-turn",
+   "task": "paired-but-offline",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "556c91fc-f4ce-4dc3-8d27-776b4b0bdc9a",
+   "kind": "coding",
+   "task": "finished-without-acceptance",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "78be0201-9051-41bd-a76f-11060e5d7ade",
+   "kind": "node-turn",
+   "task": "finished-without-acceptance",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal no, code-tab-harness no.",
+  "Relay tasks run the owner's turns on the paired computer, handed over by Ensemble as hosted Ensemble does (`ENSEMBLE_DESKTOP` off in the eval process for the task), with the computer paired through the harness's link; the other tasks run them in the eval process.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}
