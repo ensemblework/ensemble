@@ -140,7 +140,8 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
     rules: input.rules,
     source,
     profile: profileInstructionsOf(job.context),
-    skills: skills ? { folder: skills.rel, list: skills.skills.map((skill) => ({ name: skill.name, description: skill.description })) } : null,
+    // No folder written to (a read-only turn, nothing to do there, or it failed): the skills are as the session last had them.
+    skills: !written ? "unchanged" : skills ? { folder: skills.rel, list: skills.skills.map((skill) => ({ name: skill.name, description: skill.description })) } : null,
     acceptance: turnCriteria(job.instructions, source.acceptance),
     timezone: source.timezone ?? input.timezone,
     now: input.now,

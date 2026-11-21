@@ -995,7 +995,7 @@ The Hub assistant, which has no browser, has the research and files ones as play
 | `advanced` | `ADVANCED_TOOLS`: `browser_console`, `browser_network_errors`, `browser_record`, `browser_upload`, `capture_app_start`, `capture_app_stop`, `capture_apps`, `capture_check`, `capture_status`, `capture_video`, `capture_screenshot` | testing or building an app, site or page, a video or a recording, the console, localhost, an upload |
 | `desktop` | `desktop_*` | an app (not a web app), a program or window, the screen, a recording or video, installing, the desktop |
 | `crew` | `node_plan`, `node_plan_revise`, `node_delegate`, `node_crew_add` | a crew, helpers, delegating, other nodes or an @handle; always for a crew's lead, a node with helpers or with other nodes of its owner beside it, a crew or task room and a plan's turn |
-| `sessions` | `node_session_delete`, `node_session_queue`, `node_session_adopt`, `node_session_hand_over`, `node_answer_question` | sessions, a coding agent by name, adopting, handing over, the queue |
+| `sessions` | `node_session_delete`, `node_session_queue`, `node_session_adopt`, `node_session_hand_over`, `node_answer_question` | sessions, a coding agent by name, adopting, handing over, the queue; also after any `node_session_*` call in those three replies |
 | `terminal` | `terminal_*`, `live_view` | a terminal or shell, ssh, a REPL, something live to watch |
 | `maker` | `node_create`, `node_create_group`, `node_routines` | routines and recurring work (every morning, weekly), a new node, group or crew |
 

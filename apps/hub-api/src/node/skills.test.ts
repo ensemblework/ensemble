@@ -201,4 +201,6 @@ test("the desktop, crew, session, terminal and maker tools come with their kind 
   assert.ok(names("open a terminal and run htop").includes("terminal_open"));
   assert.ok(names("every morning send me the news").includes("node_routines"));
   assert.ok(names("adopt the Claude session I started").includes("node_session_adopt"));
+  assert.ok(names("docs first after all", ["node_session_send"]).includes("node_session_adopt"), "a session the conversation just messaged keeps its other tools");
+  assert.ok(!names("docs first after all", ["browser_open"]).includes("node_session_adopt"));
 });

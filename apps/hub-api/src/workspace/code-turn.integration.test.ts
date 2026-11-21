@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,8 @@ const { withMentionedContent } = await import("./mentioned.js");
 const { packetRecordOf } = await import("./turn-packet.js");
 const { loadSettings, saveSettings } = await import("../lib/settings.js");
 const { runLimits } = await import("@ensemble/shared-types");
+const { Assign, createJob } = await import("./assign.js");
+const { webContext } = await import("../remote/origin.js");
 type Ctx = Parameters<typeof prepareCodeTurn>[0];
 type JobContext = Parameters<typeof verifyCodeTurn>[0];
 
@@ -126,6 +129,14 @@ test("the owner's linked skills go into the agent's own skill folder, out of git
   const names = (run.skillSignatures as Array<{ name: string; source: string }>).map((row) => `${row.source}:${row.name}`);
   assert.equal(names.at(-1), "owner:owner-release-notes");
   assert.ok(names.slice(0, -1).length > 0 && names.slice(0, -1).every((name) => /^ensemble:ensemble-[a-z0-9-]+$/.test(name)), "Ensemble's bundled skills come first");
+
+  // A read-only turn in the same session leaves the folder as it is, and says nothing new about the skills.
+  const reading = await turn({ continueFrom: job.id, instructions: "Only read the release notes now." });
+  const read = await prepareCodeTurn({ ...ctx(reading), accessMode: "review" } as Ctx, { ...base, resume: "session-s" });
+  assert.equal(read.operation, "resume");
+  assert.doesNotMatch(read.prompt, /no longer in your skill folder|Skills for this run/);
+  assert.deepEqual(read.record.skills, built.record.skills);
+  assert.ok(existsSync(join(root, ".claude", "skills", "owner-release-notes", "SKILL.md")));
 
   // A read-only turn writes nothing into the folder.
   const other = await setup("skills-read-only");
@@ -272,6 +283,56 @@ test("an accept or discard while Ensemble runs the checks again stays on the run
   await keepCodeTurnResult(db, accepted, accepted.runId!, { completion: completionOf({ outcome: "success", files: [{ added: 1, removed: 0 }], report: null, runs: [], pr: { state: "none", url: null, source: null } }) });
   const web = parseCompletion((await db.run.findUniqueOrThrow({ where: { id: accepted.runId! } })).completion);
   assert.deepEqual([web?.accepted.state, web?.files.count], ["accepted", 1]);
+});
+
+test("a turn from the web keeps what the web read for its @mentions on the computer, and its steer carries the same", async () => {
+  // The web: its account's task, mentioned and read there.
+  const web = await setup("from-web-records");
+  const words = `Use semicolons, as the task says.${mention(web.board.title, web.board.id)}`;
+  const fromWeb = await withMentionedContent(db, web.user.id, words);
+  assert.match(fromWeb, /\(Attached from Ensemble:[\s\S]*The header row stays first/);
+  // The computer: its own account and records, with none of the web's.
+  const here = await setup("from-web-computer");
+  const first = await here.turn({ model: "default", instructions: "Start the export." });
+  await here.ran(first, await prepareCodeTurn(here.ctx(first), { ...here.base, resume: null }), "session-c");
+  const turnHere = (instructions: string, context: Record<string, string | Record<string, string>>) => {
+    const desktop = process.env.ENSEMBLE_DESKTOP;
+    process.env.ENSEMBLE_DESKTOP = "1";
+    return createJob(db, here.user.id, Assign.parse({ taskId: here.thread.id, kind: "code", engine: "claude-code", chat: true, surface: "code", continueFromJobId: first.id, instructions, markDone: false }), { context, actor: "system" }).finally(() => {
+      if (desktop === undefined) delete process.env.ENSEMBLE_DESKTOP;
+      else process.env.ENSEMBLE_DESKTOP = desktop;
+    });
+  };
+  const claimed = await turnHere(fromWeb, { ...webContext(randomUUID()), steer: { update: words } });
+  const job = await db.workspaceJob.findUniqueOrThrow({ where: { id: claimed!.jobId }, include: { task: true } });
+  assert.equal(job.instructions, fromWeb, "kept as the web read it: this computer has no copy of those records");
+  const steered = await prepareCodeTurn(here.ctx(job), { ...here.base, resume: "session-c" });
+  assert.equal(steered.operation, "resume");
+  assert.ok(steered.prompt.endsWith(steerPrompt(fromWeb)), "the steer carries the mentioned content, as on the web");
+  // Run again here, without the web's mark: what was read there still goes, as nothing of it can be read here.
+  assert.equal(await withMentionedContent(db, here.user.id, fromWeb), fromWeb);
+
+  // A message made on this computer gets what it mentions read here.
+  const local = await turnHere(`Check the task again.${mention(here.board.title, here.board.id)}`, {});
+  const localJob = await db.workspaceJob.findUniqueOrThrow({ where: { id: local!.jobId } });
+  assert.match(localJob.instructions, /\(Attached from Ensemble:[\s\S]*The header row stays first/);
+});
+
+test("the harness's migration applies again where it ran before, as on a database that ran its earlier name", async () => {
+  const { applyMigration, appliedMigrationNames, listMigrationFiles, migrationsDir, openPglite } = await import("../lib/pglite-engine.js");
+  const files = listMigrationFiles(migrationsDir());
+  const harness = files.find((file) => file.name === "20261203130000_code_turn_harness");
+  assert.ok(harness);
+  const fresh = await openPglite();
+  try {
+    await appliedMigrationNames(fresh);
+    for (const file of files) await applyMigration(fresh, file);
+    await fresh.exec(harness.sql);
+    const columns = await fresh.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'runs' AND column_name IN ('packet', 'completion') ORDER BY column_name`);
+    assert.deepEqual(columns.rows.map((row) => row.column_name), ["completion", "packet"]);
+  } finally {
+    await fresh.close();
+  }
 });
 
 test("a run's minutes and turns have no limit of Ensemble's own: the old saved defaults count as none, a limit the owner sets stays", async () => {

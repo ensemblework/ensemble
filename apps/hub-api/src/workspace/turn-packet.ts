@@ -144,16 +144,26 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex").s
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 const HANDLE = /ensemble:\/\/[a-z_]+\/[0-9a-f-]{36}/i;
 
+/** The hash a fact's key gets when another fact has the same key: of its own text, so it does not depend on where it stands. */
+const KEY_HASH = /#[0-9a-f]{8}(?:\.\d+)?$/;
+const keyBase = (key: string) => key.replace(KEY_HASH, "");
+
 /**
- * Each fact under a key of its own: a fact whose key an earlier one has (two lines with the same label,
- * two records' own lines) gets its occurrence after it (`…#2`), so it is not taken for the other.
+ * Each fact under a key of its own: facts that share one (two lines with the same label, two records'
+ * own lines) each get a short hash of their text after it (`…#1a2b3c4d`), so which is which does not
+ * depend on their order. Lines with the same text as well are told apart by their occurrence.
  */
 export function uniqueKeys(items: readonly ContextItem[]): ContextItem[] {
-  const seen = new Map<string, number>();
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.key, (counts.get(item.key) ?? 0) + 1);
+  const taken = new Set<string>();
   return items.map((item) => {
-    const count = (seen.get(item.key) ?? 0) + 1;
-    seen.set(item.key, count);
-    return count === 1 ? item : { ...item, key: `${item.key.slice(0, 590)}#${count}` };
+    if (counts.get(item.key) === 1) return item;
+    const base = `${item.key.slice(0, 580)}#${hash(item.text).slice(0, 8)}`;
+    let key = base;
+    for (let occurrence = 2; taken.has(key); occurrence += 1) key = `${base}.${occurrence}`;
+    taken.add(key);
+    return { ...item, key };
   });
 }
 
@@ -354,7 +364,8 @@ export type PacketInput = {
   source: PacketSource;
   /** The owner's run profile instructions for these runs, if any. */
   profile: string | null;
-  skills: PacketSkills | null;
+  /** The skills in the agent's skill folder for this turn; "unchanged" when Ensemble left the folder as it was (a read-only turn): as the session last had them. */
+  skills: PacketSkills | null | "unchanged";
   acceptance: Criterion[];
   timezone: string;
   now?: Date;
@@ -399,7 +410,8 @@ export function buildPacket(input: PacketInput): BuiltPacket {
   const projectText = project ? clip(`${project.name}\n${project.brief}`, PROJECT_CHARS) : null;
   const facts = uniqueKeys(input.source.items);
   const rulesHash = hash(input.rules.join("\n"));
-  const skills = skillLines(input.skills);
+  const listed = input.skills === "unchanged" ? null : input.skills;
+  const skills = skillLines(listed);
   const criteria = input.acceptance.map((row) => `- ${row.id}: ${row.text}`);
   const vars = { owner: input.owner, root: input.root };
   const previous = input.previous;
@@ -418,7 +430,7 @@ export function buildPacket(input: PacketInput): BuiltPacket {
     sections = [
       ...STABLE.map((name) => ({ name, tier: "stable" as const, ...(name === "code/02-rules" ? { vars: { rules: input.rules } } : {}) })),
       ...(profile ? [{ name: "code/10-profile" as const, tier: "context" as const, priority: 0, vars: { profile } }] : []),
-      { name: "code/11-skills", tier: "context", priority: 1, vars: { folder: input.skills?.folder ?? "", skills } },
+      { name: "code/11-skills", tier: "context", priority: 1, vars: { folder: listed?.folder ?? "", skills } },
       ...(projectText ? [{ name: "code/12-project" as const, tier: "context" as const, priority: 2, vars: { project: projectText } }] : []),
       { name: "code/13-context", tier: "context", priority: 3, vars: { items: slice.lines }, trim: "items" },
       { name: "code/20-acceptance", tier: "volatile", vars: { criteria } },
@@ -428,15 +440,25 @@ export function buildPacket(input: PacketInput): BuiltPacket {
     ];
   } else {
     const changes: Array<{ line: string; key: string | null }> = [];
-    const current = new Map(facts.map((item) => [item.key, item]));
+    const current = new Set(facts.map((item) => item.key));
+    // A fact keyed apart from a namesake now, or alone now after one: the same text under the other form of its key is the same fact.
+    const others = new Map<string, string[]>();
+    for (const key of Object.keys(previous.items)) if (!current.has(key)) others.set(keyBase(key), [...(others.get(keyBase(key)) ?? []), key]);
+    const matched = new Set<string>();
     for (const item of facts) {
       const before = previous.items[item.key];
-      if (!before) changes.push({ line: `- New: ${factLine(item)}`, key: item.key });
-      else if (before.h !== hash(item.text)) changes.push({ line: `- Changed: ${factLine(item)}`, key: item.key });
+      if (before) {
+        matched.add(item.key);
+        if (before.h !== hash(item.text)) changes.push({ line: `- Changed: ${factLine(item)}`, key: item.key });
+        continue;
+      }
+      const same = others.get(keyBase(item.key))?.find((key) => !matched.has(key) && previous.items[key]!.h === hash(item.text));
+      if (same) matched.add(same);
+      else changes.push({ line: `- New: ${factLine(item)}`, key: item.key });
     }
     for (const [key, before] of Object.entries(previous.items)) {
       if (key.startsWith("project:")) continue;
-      if (!current.has(key)) changes.push({ line: `- No longer listed: ${before.label}`, key: null });
+      if (!matched.has(key)) changes.push({ line: `- No longer listed: ${before.label}`, key: null });
     }
     const known = project ? previous.items[`project:${project.id}`] : undefined;
     const projectChanged = Boolean(project && known?.h !== project.hash);
@@ -453,7 +475,8 @@ export function buildPacket(input: PacketInput): BuiltPacket {
     counts.sent = counts.changed + counts.added;
     const rulesChanged = previous.rules !== rulesHash;
     const profileChanged = (profile ? hash(profile) : null) !== previous.profile && Boolean(profile);
-    const names = input.skills?.list.map((skill) => skill.name) ?? [];
+    const kept = input.skills === "unchanged";
+    const names = kept ? previous.skills : (listed?.list.map((skill) => skill.name) ?? []);
     const skillsChanged = names.join("\n") !== previous.skills.join("\n") && names.length > 0;
     if (previous.profile && !profile) shown.push("- The run profile's instructions given earlier no longer apply.");
     if (previous.skills.length && !names.length) shown.push("- The skills listed earlier are no longer in your skill folder.");
@@ -463,7 +486,7 @@ export function buildPacket(input: PacketInput): BuiltPacket {
       ...(projectChanged && projectText ? [{ name: "code/12-project" as const, tier: "volatile" as const, vars: { project: projectText } }] : []),
       ...(rulesChanged ? [{ name: "code/31-rules-now" as const, tier: "volatile" as const, vars: { rules: input.rules } }] : []),
       ...(profileChanged ? [{ name: "code/32-profile-now" as const, tier: "volatile" as const, vars: { profile: profile! } }] : []),
-      ...(skillsChanged ? [{ name: "code/33-skills-now" as const, tier: "volatile" as const, vars: { folder: input.skills!.folder, skills } }] : []),
+      ...(skillsChanged ? [{ name: "code/33-skills-now" as const, tier: "volatile" as const, vars: { folder: listed!.folder, skills } }] : []),
       ...(acceptanceChanged ? [{ name: "code/20-acceptance" as const, tier: "volatile" as const, vars: { criteria } }] : []),
       ...(date !== previous.date ? [{ name: "code/21-date" as const, tier: "volatile" as const, vars: { date, timezone: input.timezone } }] : []),
     ];
@@ -492,7 +515,7 @@ export function buildPacket(input: PacketInput): BuiltPacket {
       }),
       ...(project && !projectDropped ? [[`project:${project.id}`, { h: project.hash, label: `Project ${project.name}` }] as const] : []),
     ]),
-    skills: input.skills?.list.map((skill) => skill.name) ?? [],
+    skills: input.skills === "unchanged" ? (previous?.skills ?? []) : (listed?.list.map((skill) => skill.name) ?? []),
     acceptance: criteria.length ? hash(criteria.join("\n")) : (previous?.acceptance ?? null),
     date,
     base: previous?.base ?? assembled.version,
