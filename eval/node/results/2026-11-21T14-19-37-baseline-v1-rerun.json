@@ -78,7 +78,9 @@
     "agentTools": 3,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_how_to",
@@ -161,7 +163,9 @@
     "agentTools": 10,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_meeting_notes",
@@ -247,7 +251,9 @@
     "agentTools": 3,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_reminders",

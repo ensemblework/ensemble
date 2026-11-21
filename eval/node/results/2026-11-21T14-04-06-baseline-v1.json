@@ -76,7 +76,9 @@
     "agentTools": 6,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_web_search",
@@ -144,7 +146,9 @@
     "agentTools": 2,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_create_tasks",
@@ -213,7 +217,9 @@
     "agentTools": 8,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_tasks",
@@ -304,7 +310,9 @@
     "agentTools": 7,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_create_tasks",
@@ -391,7 +399,9 @@
     "agentTools": 0,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 1
+    "errors": 1,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [],
    "agentToolNames": [],
@@ -457,7 +467,9 @@
     "agentTools": 3,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_reminders",
@@ -539,7 +551,9 @@
     "agentTools": 4,
     "approvals": 1,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "computer_run",
@@ -620,7 +634,9 @@
     "agentTools": 15,
     "approvals": 1,
     "unanswered": 0,
-    "errors": 2
+    "errors": 2,
+    "noAnswerTurns": 1,
+    "errorMessages": 1
    },
    "tools": [
     "node_session_start"
@@ -706,7 +722,9 @@
     "agentTools": 1,
     "approvals": 1,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "browser_view"
@@ -788,7 +806,9 @@
     "agentTools": 7,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_web_search",
@@ -852,7 +872,9 @@
     "agentTools": 1,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 2
+    "errors": 2,
+    "noAnswerTurns": 1,
+    "errorMessages": 1
    },
    "tools": [
     "hub_create_reminder"

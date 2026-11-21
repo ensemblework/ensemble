@@ -70,7 +70,9 @@
     "agentTools": 18,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_agent_options",
@@ -165,7 +167,9 @@
     "agentTools": 4,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "node_plan",

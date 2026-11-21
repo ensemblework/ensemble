@@ -80,7 +80,9 @@
     "agentTools": 32,
     "approvals": 1,
     "unanswered": 0,
-    "errors": 1
+    "errors": 1,
+    "noAnswerTurns": 1,
+    "errorMessages": 0
    },
    "tools": [
     "node_plan",
@@ -178,7 +180,9 @@
     "agentTools": 46,
     "approvals": 2,
     "unanswered": 0,
-    "errors": 2
+    "errors": 2,
+    "noAnswerTurns": 1,
+    "errorMessages": 1
    },
    "tools": [
     "computer_run",
@@ -289,7 +293,9 @@
     "agentTools": 51,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 1
+    "errors": 1,
+    "noAnswerTurns": 1,
+    "errorMessages": 0
    },
    "tools": [
     "hub_list_agent_options",
@@ -390,7 +396,9 @@
     "agentTools": 2,
     "approvals": 0,
     "unanswered": 0,
-    "errors": 0
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
    },
    "tools": [
     "node_plan"

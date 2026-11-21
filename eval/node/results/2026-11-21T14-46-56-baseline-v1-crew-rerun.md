@@ -2,13 +2,19 @@
 
 Commit `e8232134` · agent copilot-cli · model gpt-6-luna · judge gpt-6-luna · repeat 1 · started 2026-11-21T14:46:56.434Z · finished 2026-11-21T14:52:15.593Z.
 
-Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).
+Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).
 
-| task | suite | result | verified | score | false claims | turns | model calls | Ensemble tools | agent tools | tokens in / out | credits | time | approvals | errors |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| mid-run-amendment | crew | pass | yes | 100% | 0 | 3 | 17 | 4 | 18 | 510k / 4000 | 1.91 | 146 s | 0 | 0 |
-| stop-with-children | crew | pass | yes | 100% | 0 | 2 | 6 | 3 | 4 | 198k / 2351 | 1.04 | 155 s | 0 | 0 |
-| **total** | | **2/2** | 2/2 | 100% | 0 | 5 | 23 | 7 | 22 | 708k / 6351 | 2.96 | 301 s | 0 | 0 |
+| task | suite | result | verified | score | false claims | no answer / error msgs | turns | model calls | Ensemble tools | agent tools | tokens in / out | credits | time | approvals | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mid-run-amendment | crew | pass | yes | 100% | 0 | 0 / 0 | 3 | 17 | 4 | 18 | 510k / 4000 | 1.91 | 146 s | 0 | 0 |
+| stop-with-children | crew | pass | yes | 100% | 0 | 0 / 0 | 2 | 6 | 3 | 4 | 198k / 2351 | 1.04 | 155 s | 0 | 0 |
+| **total** | | **2/2** | 2/2 | 100% | 0 | 0 / 0 | 5 | 23 | 7 | 22 | 708k / 6351 | 2.96 | 301 s | 0 | 0 |
+
+## Suite metrics
+
+| suite | tasks | passed | mean score | turns ended with no answer | error messages | false claims | input tokens per task | credits per task |
+|---|---|---|---|---|---|---|---|---|
+| crew | 2 | 2 | 100% | 0 | 0 | 0 | 354k | 1.48 |
 
 ## Failed checks, false claims and errors
 
