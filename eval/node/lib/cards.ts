@@ -1,7 +1,8 @@
 /**
  * The harness answers its nodes' owner cards as an owner in a hurry would, allowing work for this
- * run or mission and never "always": computer questions get "This mission", a coding run's
- * permission "for this run", held writes, sessions, drafts and proposals are approved. Cards only a
+ * run or mission and never "always": computer questions get "This mission", questions about the
+ * agent's own calls their answer for this run (else Allow once), a coding run's permission "for
+ * this run", held writes, sessions, drafts and proposals are approved. Cards only a
  * person can answer (a password, a secret, a sign-in) are declined, as by an owner who is away, and
  * so is any request to see or use the owner's own screen: an agent's private screen is fine, the
  * owner's never is. Both are reported. A stuck plan step's card is answered "finish without it", so a
@@ -19,8 +20,14 @@ export type Plan = { url: string; body: Record<string, unknown>; answer: string;
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
 
-/** A capability that would show or drive the owner's real screen rather than an agent's private one. */
-export function ownersScreen(capability: string): boolean {
+/**
+ * A capability that would show or drive the owner's real screen rather than an agent's private one. A
+ * `desktop` question names a sensitive app, or `screen:owner` for the owner's own pointer and keyboard:
+ * the eval's computer has no desktop session, so any app it asks about is on the agent screen.
+ */
+export function ownersScreen(capability: string, target = ""): boolean {
+  if (target === "screen:owner") return true;
+  if (capability === "desktop") return false;
   return /screen|desktop|display|portal|takeover/i.test(capability) && !/private|agent|virtual|sandbox/i.test(capability);
 }
 
@@ -29,12 +36,16 @@ export function planDecision(row: DecisionRow, scope: "session" | "once" = "sess
   const detail = record(row.detail);
   const url = `/api/decisions/${row.id}/decide`;
   const options = strings(detail.options);
-  if (record(detail.nodeTool).nodeId) {
-    const capability = String(record(detail.nodeTool).capability ?? "");
-    if (ownersScreen(capability)) return { url, body: { decision: "deny", scope: "once" }, answer: "declined", note: `a request for the owner's own screen (${capability}), which the eval never allows` };
-    const mission = options.find((option) => /this mission/i.test(option)) ?? options.find((option) => /^once$/i.test(option));
-    if (!mission) return { skip: "a computer question without a mission or once answer" };
-    return { url, body: { decision: "allow", scope: "once", reason: mission }, answer: mission };
+  const tool = record(detail.nodeTool);
+  if (tool.nodeId) {
+    const capability = String(tool.capability ?? "");
+    if (ownersScreen(capability, String(tool.target ?? ""))) return { url, body: { decision: "deny", scope: "once" }, answer: "declined", note: `a request for the owner's own screen (${capability}), which the eval never allows` };
+    // A question about the agent's own call offers its answer from then on beside the one for this run.
+    const pick = tool.own
+      ? (options.find((option) => /for this run$/i.test(option)) ?? options.find((option) => /^(allow )?once$/i.test(option)))
+      : (options.find((option) => /this mission/i.test(option)) ?? options.find((option) => /^once$/i.test(option)));
+    if (!pick) return { skip: tool.own ? "a question about the agent's own call without a run or once answer" : "a computer question without a mission or once answer" };
+    return { url, body: { decision: "allow", scope: "once", reason: pick }, answer: pick };
   }
   if (detail.tier === "run_branch_push" || detail.tier === "high_risk") return { skip: `a ${String(detail.tier).replace(/_/g, " ")} request that is answered on the computer only` };
   const confirmed = detail.confirm === true ? { confirmed: true } : {};
@@ -73,6 +84,13 @@ export function planCard(card: CardRow): Plan | null {
   if (APPROVED.has(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "approve" }, answer: type === "media_preview" ? "send" : "approve" };
   if (type === "plan_decision") return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "finish without it", note: "a stuck plan step: the plan finishes without it and its lead reports" };
   return { skip: `a ${type} card the harness does not know how to answer` };
+}
+
+/** How a waiting decision is logged: a computer question, one about the agent's own call (by what it covers), or a run's question or permission. */
+export function decisionType(row: Pick<DecisionRow, "event" | "detail">): string {
+  const tool = record(record(row.detail).nodeTool);
+  if (Object.keys(tool).length) return tool.own ? `own:${String(record(tool.own).kind ?? "write")}` : "computer";
+  return row.event === "question" ? "run_question" : "run_permission";
 }
 
 /** The `data.type` of a card, for the log. */

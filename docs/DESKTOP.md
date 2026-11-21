@@ -184,6 +184,7 @@ Paired host ← device token / claims / progress / bounded files → local remot
 | `apps/hub-api/src/desktop/main.ts` | Sidecar entry: environment, runtime lock, secret key, PATH, PGlite, `startHub` |
 | `apps/hub-api/src/desktop/runtime-lock.ts`, `user-path.ts` | One runtime per data folder; the person's PATH |
 | `apps/hub-api/src/desktop/mode.ts`, `account.ts` | `mode.json`; `/api/desktop/account*`, `/api/desktop/mode`, `/api/desktop/mcp`, `/api/desktop/connected` |
+| `apps/hub-api/src/desktop/control/` | Desktop control on Linux for Ensemble Node and coding runs: a private agent screen (a headless GNOME Shell) and the owner's real screen, keyboard and pointer, through `apps/hub-api/desktop-helper/linux/` ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
 | `apps/hub-api/src/transfer/` | Moving local data into an account: export (computer) and import (account) |
 | `apps/hub-api/src/lib/pglite-engine.ts` | PGlite open, backups, migrations |
 

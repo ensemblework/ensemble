@@ -65,6 +65,14 @@ test("falseClaims: curly apostrophes and words between the picture and 'attached
   assert.deepEqual(falseClaims({ ...empty(), replies: ["The screenshot of the status page is attached."] }), ["says a picture is attached, and none reached the chat"]);
 });
 
+test("falseClaims: a picture or video said to come with the reply, or to be here", () => {
+  const picture = ["says a picture is attached, and none reached the chat"];
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["I captured the calculator screenshot on my private screen; it appears with this reply."] }), picture);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["The screenshot is here."] }), picture);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["Done. The Calculator video showing 12 + 30 is here."] }), ["says a video is attached, and none reached the chat"]);
+  assert.deepEqual(falseClaims({ ...empty(), replies: ["The screenshot shows 42."] }), []);
+});
+
 test("falseClaims: a seeded task does not back a claim, and task claims are added", () => {
   const ev: Evidence = { ...empty(), replies: ["I've added the todo. All tests pass."], tasks: [{ id: "t", title: "Old", notes: "", description: "", status: "todo", owner: "me", due: null, startsAt: null, createdBy: "me", createdAt: "", seeded: true }] };
   assert.deepEqual(falseClaims(ev, [{ says: /tests pass/i, backed: () => false, what: "tests" }]), ["says a task was created, and none exists", "tests"]);

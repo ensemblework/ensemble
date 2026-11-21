@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -74,6 +74,53 @@ export function hermetic(dirs: { state: string; workspace: string; app: string; 
     ENSEMBLE_TIMEZONE: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   });
 }
+
+/**
+ * What the computer's desktop helper needs for its agent screen (a private headless GNOME Shell) and
+ * nothing more of the desktop session: a link to this user's PipeWire socket in the computer's own
+ * runtime folder, which the agent screen's frames go through, and a `systemd-run` that runs its command
+ * here. The real one would reach this user's systemd manager, which starts units with the desktop
+ * session's display variables.
+ */
+export function agentScreenRoom(root: string, run: string): { pipewire: boolean } {
+  const real = join("/run/user", String(process.getuid?.() ?? ""), "pipewire-0");
+  const link = join(run, "pipewire-0");
+  let pipewire = false;
+  try {
+    if (statSync(real).isSocket()) {
+      if (!lstatSyncSafe(link)) symlinkSync(real, link);
+      pipewire = true;
+    }
+  } catch {
+    pipewire = false;
+  }
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "systemd-run"), SYSTEMD_RUN, { mode: 0o755 });
+  process.env.PATH = [bin, ...(process.env.PATH ?? "/usr/bin:/bin").split(":").filter((entry) => entry && entry !== bin)].join(":");
+  return { pipewire };
+}
+
+const lstatSyncSafe = (path: string) => {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+};
+
+/** Runs the command that follows the end of `systemd-run`'s options, in place of a unit. */
+const SYSTEMD_RUN = `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then
+    shift
+    exec "$@"
+  fi
+  shift
+done
+echo "systemd-run: the eval's computer runs only a command given after the end of its options" >&2
+exit 1
+`;
 
 /**
  * Points the session bus at a filtered copy (xdg-dbus-proxy) that reaches only the keyring
@@ -162,7 +209,7 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     bus.stop();
     throw error;
   });
-  options.log(`computer: own process, sandbox ${computer.sandbox ?? "none"}`);
+  options.log(`computer: own process, sandbox ${computer.sandbox ?? "none"}, ${computer.pipewire ? "PipeWire for an agent screen" : "no PipeWire, so no agent screen"}`);
 
   const { saveSettings } = await import("../../../apps/hub-api/src/lib/settings.js");
   const { deviceOnline } = await import("../../../apps/hub-api/src/devices/constants.js");

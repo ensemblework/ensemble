@@ -410,6 +410,14 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
   "DELETE /api/page-templates/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
+/** A node's memories, its owner's routes (node/memory.integration.test.ts). */
+export const nodeMemoryRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/node/nodes/:id/memory": ["happy-path", "isolation"],
+  "POST /api/node/nodes/:id/memory": ["happy-path", "isolation", "invalid-input"],
+  "PATCH /api/node/nodes/:id/memory/:memoryId": ["happy-path", "isolation", "unknown-id", "invalid-input", "relation-isolation"],
+  "DELETE /api/node/nodes/:id/memory/:memoryId": ["happy-path", "isolation"],
+};
+
 export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/email/inbound": ["happy-path", "invalid-input"],
   "GET /api/docs/session": ["happy-path", "isolation"],
@@ -428,6 +436,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/boards/:id/pages": ["happy-path", "isolation", "invalid-input", "relation-isolation"],
   "PUT /api/pages/:kind/:id/board": ["happy-path", "isolation", "relation-isolation"],
   ...pageVersionRouteCoverage,
+  ...nodeMemoryRouteCoverage,
   ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,
   ...resourceRouteCoverage,

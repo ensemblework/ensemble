@@ -685,6 +685,9 @@ test("the computer tools are the owner's alone: not in a turn someone else start
   const scopeRoom = await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } });
   const scope = { prisma: h.prisma, node: row, room: scopeRoom, lineage: { rootMessageId: null, botDepth: 0, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis as never, dispatch: async () => undefined, turnId: "t", plan: null };
   assert.ok(deviceTools(scope).some((tool) => tool.name === "computer_run"));
+  // Desktop control comes with them; its looks never count as progress for runaway detection (assistant/runaway.ts).
+  const desktop = Object.fromEntries(deviceTools(scope).filter((tool) => tool.name.startsWith("desktop_")).map((tool) => [tool.name, tool.readOnly === true]));
+  assert.deepEqual(desktop, { desktop_status: true, desktop_apps: true, desktop_open: false, desktop_observe: true, desktop_act: false, desktop_zoom: true, desktop_record: false, desktop_handoff: false });
   assert.deepEqual(deviceTools({ ...scope, lineage: { ...scope.lineage, fromNonOwner: true } }), []);
   assert.deepEqual(deviceTools({ ...scope, ownerOnly: false }), []);
 });

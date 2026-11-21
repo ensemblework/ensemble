@@ -22,9 +22,12 @@
  * attach_evidence (a file the owner should see), answered by the same route
  * (hub-api src/evidence/run-tools.ts, docs/30 §9), ensemble_context and ensemble_search (the
  * person's records around the task, hub-api src/workspace/context-tools.ts), and the browser and
- * capture tools this computer has (browser_*, capture_*), listed by
- * /api/engine/tools and answered by /api/engine/tool too: what they capture
- * is the run's evidence (hub-api src/evidence/capture-tools.ts, docs/25 §10).
+ * capture tools this computer has (browser_*, capture_*, and on Linux desktop_*, the person's real
+ * screen), listed by /api/engine/tools and answered by /api/engine/tool too: what they capture
+ * is the run's evidence (hub-api src/evidence/capture-tools.ts, docs/25 §10 and §11).
+ *
+ * A desktop tool's screenshot comes back as an `ensemble-image:` line of its answer (hub-api
+ * src/desktop/control/images.ts), which `contentOf` turns into an image for the agent.
  *
  * Its `initialize` answer carries `instructions` (`instructionsFor`): Ensemble is reached through
  * these tools and the brief, never by signing in to Ensemble's web app in a browser.
@@ -346,6 +349,20 @@ function send(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
 
+const IMAGE_LINE = /^ensemble-image:data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/;
+
+/** A tool answer as MCP content: its text, and each `ensemble-image:` line (a desktop screenshot) as a picture, at most three. */
+export function contentOf(text) {
+  const images = [];
+  const kept = [];
+  for (const line of String(text).split("\n")) {
+    const match = IMAGE_LINE.exec(line);
+    if (match && images.length < 3) images.push({ type: "image", data: match[2], mimeType: match[1] });
+    else if (!match) kept.push(line);
+  }
+  return [{ type: "text", text: kept.join("\n") }, ...images];
+}
+
 export function questionInput(args) {
   const options = (Array.isArray(args?.options) ? args.options : []).filter((value) => typeof value === "string" && value.trim()).slice(0, 5);
   const recommended = typeof args?.recommended === "string" && options.includes(args.recommended) ? args.recommended : null;
@@ -424,7 +441,7 @@ async function handleAssistant(message) {
   } else if (message.method === "tools/call") {
     const answer = await post("/api/engine/assistant/tool", { name: message.params?.name, input: message.params?.arguments ?? {} }, (error) => ({ text: error, isError: true }));
     const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
-    send({ id: message.id, result: { content: [{ type: "text", text }], ...(answer?.isError || typeof answer?.text !== "string" ? { isError: true } : {}) } });
+    send({ id: message.id, result: { content: contentOf(text), ...(answer?.isError || typeof answer?.text !== "string" ? { isError: true } : {}) } });
     if (Array.isArray(answer?.tools)) {
       turnTools = answer.tools;
       send({ method: "notifications/tools/list_changed" });
@@ -474,11 +491,11 @@ async function handle(message) {
   } else if (message.method === "tools/call") {
     const name = message.params?.name;
     if (name !== TOOL.name && (toolsFor().some((tool) => tool.name === name) || (await runCaptureTools()).some((tool) => tool.name === name))) {
-      // A browser call can wait for the person to sign in (B11): progress keeps the agent's client waiting too.
-      const stop = String(name).startsWith("browser_") ? heartbeat(message) : () => undefined;
+      // A browser call can wait for the person to sign in (B11), a desktop call for them at the computer: progress keeps the agent's client waiting too.
+      const stop = String(name).startsWith("browser_") || String(name).startsWith("desktop_") ? heartbeat(message) : () => undefined;
       const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error })).finally(stop);
       const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
-      send({ id: message.id, result: { content: [{ type: "text", text }], ...(typeof answer?.text === "string" ? {} : { isError: true }) } });
+      send({ id: message.id, result: { content: contentOf(text), ...(typeof answer?.text === "string" ? {} : { isError: true }) } });
       return;
     }
     if (name !== TOOL.name) {

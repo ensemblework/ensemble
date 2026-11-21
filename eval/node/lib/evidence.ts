@@ -130,7 +130,8 @@ export async function collectEvidence(world: World, scope: Scope, ledger: Sessio
     seeded: scope.seededPages.includes(row.id),
   }));
 
-  const memories = (await prisma.nodeMemory.findMany({ where: { userId: owner }, orderBy: { createdAt: "asc" } })).map((row) => ({ node: slug.get(row.nodeId) ?? row.nodeId, content: cut(row.content, 1000) }));
+  // An owner-wide memory belongs to no node (node/memory.ts).
+  const memories = (await prisma.nodeMemory.findMany({ where: { userId: owner }, orderBy: { createdAt: "asc" } })).map((row) => ({ node: row.nodeId ? (slug.get(row.nodeId) ?? row.nodeId) : "owner-wide", content: cut(row.content, 1000) }));
 
   const reminders = await prisma.reminder.findMany({ where: { userId: owner, deletedAt: null } });
   const nodeRoutines = await prisma.nodeRoutine.findMany({ where: { userId: owner } });

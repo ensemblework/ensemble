@@ -1,0 +1,725 @@
+"""The accessibility tree (AT-SPI): apps and their windows, one app's elements with ids, and actions on
+them. On Wayland every extent is relative to its window (GNOME does not tell a client where windows
+are), so element boxes are window-relative and never screen positions."""
+from __future__ import annotations
+
+import os
+import time
+import warnings
+from collections import OrderedDict
+from typing import Any, Mapping
+from urllib.parse import urlsplit
+
+import gi
+
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi, Gio, GLib  # noqa: E402
+
+from .apps import app_id_for_pid, normalize  # noqa: E402
+from .rpc import error  # noqa: E402
+
+WINDOW_ROLES = {"frame", "window", "dialog", "alert", "file chooser", "color chooser", "font chooser"}
+INTERACTIVE_ROLES = {
+    "push button", "toggle button", "check box", "radio button", "menu item", "check menu item", "radio menu item",
+    "link", "entry", "password text", "text", "combo box", "list item", "tree item", "page tab", "slider",
+    "spin button", "switch", "menu", "table cell", "icon", "button", "search box", "editbar",
+}
+CONTEXT_ROLES = {"label", "heading", "static", "paragraph", "status bar", "notification", "alert", "caption", "title bar"}
+STATES = {
+    Atspi.StateType.FOCUSED: "focused",
+    Atspi.StateType.CHECKED: "checked",
+    Atspi.StateType.SELECTED: "selected",
+    Atspi.StateType.EXPANDED: "expanded",
+    Atspi.StateType.EDITABLE: "editable",
+    Atspi.StateType.PRESSED: "pressed",
+    Atspi.StateType.ACTIVE: "active",
+    Atspi.StateType.INDETERMINATE: "mixed",
+    Atspi.StateType.READ_ONLY: "read only",
+    Atspi.StateType.MULTI_LINE: "multi line",
+}
+BROWSERS = {"firefox", "chromium", "chromium browser", "google chrome", "chrome", "brave", "brave browser", "microsoft edge", "epiphany", "web", "gnome web", "vivaldi", "opera", "librewolf", "zen", "floorp"}
+BROWSER_TOOLKITS = {"gecko", "chromium"}
+BROWSER_IDS = {
+    "firefox", "firefox_firefox", "org.mozilla.firefox", "chromium", "chromium_chromium", "chromium-browser", "org.chromium.chromium",
+    "google-chrome", "com.google.chrome", "brave-browser", "com.brave.browser", "microsoft-edge", "com.microsoft.edge", "org.gnome.epiphany",
+    "vivaldi-stable", "com.vivaldi.vivaldi", "opera", "com.opera.opera", "io.gitlab.librewolf-community", "app.zen_browser.zen", "one.ablaze.floorp",
+}
+# Gecko names a page's address `DocURL`; Chromium and WebKitGTK name it `URI`.
+URL_ATTRIBUTES = ("DocURL", "URI", "URL")
+PAGE_WINDOW_ROLES = {"frame", "window"}
+PRESS_ACTIONS = ("press", "click", "activate", "jump", "toggle", "open", "select")
+SELECT_ACTIONS = ("select", "activate", "click", "press")
+TOGGLE_ACTIONS = ("toggle", "click", "press", "activate")
+# A bus that could not be reached is looked for again after this long.
+BUS_RECHECK_S = 10.0
+MAX_NAME = 120
+MAX_VALUE = 200
+TREES_KEPT = 4
+
+
+def clean(text: Any, limit: int = MAX_NAME) -> str:
+    """One line of at most `limit` characters: names can hold whole messages and newlines."""
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.split())[:limit]
+
+
+def _states(node) -> tuple[Any, list[str]]:
+    try:
+        state_set = node.get_state_set()
+    except GLib.Error:
+        return None, []
+    return state_set, [label for state, label in STATES.items() if state_set.contains(state)]
+
+
+def _alive(node) -> bool:
+    try:
+        state_set = node.get_state_set()
+        return not state_set.contains(Atspi.StateType.DEFUNCT)
+    except GLib.Error:
+        return False
+
+
+IFACES = {"action": "Action", "text": "Text", "editable_text": "EditableText", "component": "Component", "value": "Value", "document": "Document", "selection": "Selection"}
+
+
+def _iface(node, name: str):
+    """The node itself when it implements the interface (methods are then called through the interface
+    class: `Atspi.Text.get_text(node, ...)`, because `node.get_text` is Accessible's own getter)."""
+    try:
+        return node if IFACES[name] in (node.get_interfaces() or []) else None
+    except GLib.Error:
+        return None
+
+
+def _text(node, limit: int) -> str:
+    count = Atspi.Text.get_character_count(node)
+    return Atspi.Text.get_text(node, 0, min(count, limit)) if count > 0 else ""
+
+
+def _caret(node) -> int:
+    try:
+        return Atspi.Text.get_caret_offset(node)
+    except GLib.Error:
+        return -1
+
+
+def _actions(node) -> list[str]:
+    names = []
+    for index in range(min(Atspi.Action.get_n_actions(node), 8)):
+        names.append(Atspi.Action.get_action_name(node, index) or "")
+    return names
+
+
+def _extents(node) -> list[int]:
+    rect = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
+    return [rect.x, rect.y, rect.width, rect.height]
+
+
+def _doc_url(node) -> str | None:
+    if _iface(node, "document") is None:
+        return None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for name in URL_ATTRIBUTES:
+            for getter in ("get_document_attribute_value", "get_attribute_value"):
+                fn = getattr(Atspi.Document, getter, None)
+                if fn is None:
+                    continue
+                try:
+                    value = fn(node, name)
+                except (GLib.Error, TypeError):
+                    continue
+                if value:
+                    return value
+        fn = getattr(Atspi.Document, "get_document_attributes", None)
+        if fn is not None:
+            try:
+                attributes = fn(node) or {}
+            except (GLib.Error, TypeError):
+                attributes = {}
+            by_name = {str(key).lower(): value for key, value in dict(attributes).items()}
+            for name in URL_ATTRIBUTES:
+                if by_name.get(name.lower()):
+                    return by_name[name.lower()]
+    return None
+
+
+def bus_problem(env: Mapping[str, str] = os.environ) -> str | None:
+    """Why no accessibility bus can be reached, or None when one can. libatspi aborts the whole process
+    when it finds none, so this asks D-Bus the way libatspi would before libatspi is ever called."""
+    flags = Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION
+    address = env.get("AT_SPI_BUS_ADDRESS")
+    if not address:
+        try:
+            session = Gio.DBusConnection.new_for_address_sync(Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION, None), flags, None, None)
+        except GLib.Error as failure:
+            return f"there is no session bus ({clean(failure.message, 160)})"
+        try:
+            reply = session.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None, GLib.VariantType("(s)"), Gio.DBusCallFlags.NONE, 3000, None)
+            address = reply.unpack()[0]
+        except GLib.Error as failure:
+            return f"the session bus offers no accessibility bus ({clean(failure.message, 160)})"
+        finally:
+            try:
+                session.close_sync(None)
+            except GLib.Error:
+                pass
+    try:
+        Gio.DBusConnection.new_for_address_sync(address, flags, None, None).close_sync(None)
+    except GLib.Error as failure:
+        return f"the accessibility bus does not answer ({clean(failure.message, 160)})"
+    return None
+
+
+class A11y:
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._trees: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._next = 0
+        self._bus_ready = False
+        self._bus_problem: str | None = None
+        self._bus_checked: float | None = None
+
+    def _ensure_bus(self) -> None:
+        """Raises `a11y_unavailable` unless an accessibility bus can be reached (checked before libatspi is)."""
+        if self._bus_ready:
+            return
+        now = self._clock()
+        if self._bus_checked is None or now - self._bus_checked >= BUS_RECHECK_S:
+            self._bus_problem = bus_problem()
+            self._bus_checked = now
+            if self._bus_problem is None:
+                self._bus_ready = True
+                return
+        raise error("a11y_unavailable", f"Accessibility is unavailable here: {self._bus_problem}. Desktop control needs a desktop session with its accessibility bus.")
+
+    def desktop(self):
+        self._ensure_bus()
+        try:
+            desk = Atspi.get_desktop(0)
+        except GLib.Error as failure:
+            raise error("a11y_unavailable", f"The accessibility bus did not answer ({failure.message}).")
+        if desk is None:
+            raise error("a11y_unavailable", "The accessibility bus did not answer.")
+        return desk
+
+    def _apps(self):
+        desk = self.desktop()
+        count = desk.get_child_count()
+        for index in range(min(count, 200)):
+            app = desk.get_child_at_index(index)
+            if app is not None:
+                yield app
+
+    def _windows(self, app) -> list[tuple[int, Any]]:
+        out = []
+        try:
+            count = app.get_child_count()
+        except GLib.Error:
+            return out
+        for index in range(min(count, 50)):
+            try:
+                child = app.get_child_at_index(index)
+                if child is not None and child.get_role_name() in WINDOW_ROLES:
+                    out.append((index, child))
+            except GLib.Error:
+                continue
+        return out
+
+    def describe_app(self, app) -> dict[str, Any]:
+        pid = None
+        try:
+            pid = app.get_process_id()
+        except GLib.Error:
+            pass
+        windows = []
+        for index, window in self._windows(app):
+            state_set, labels = _states(window)
+            windows.append({
+                "index": index,
+                "title": clean(window.get_name()),
+                "role": window.get_role_name(),
+                "active": "active" in labels,
+                "showing": bool(state_set and state_set.contains(Atspi.StateType.SHOWING)),
+                "iconified": bool(state_set and state_set.contains(Atspi.StateType.ICONIFIED)),
+            })
+        return {
+            "name": clean(app.get_name()),
+            "toolkit": clean(app.get_toolkit_name() if hasattr(app, "get_toolkit_name") else "", 40),
+            "pid": pid,
+            "app_id": app_id_for_pid(pid) if pid else None,
+            "windows": windows,
+        }
+
+    def apps(self) -> list[dict[str, Any]]:
+        out = []
+        for app in self._apps():
+            try:
+                out.append(self.describe_app(app))
+            except GLib.Error:
+                continue
+        return out
+
+    def find_app(self, ref: str | int):
+        """An accessible app by pid, application id or name (case and punctuation ignored)."""
+        wanted = normalize(str(ref))
+        candidates = []
+        for app in self._apps():
+            try:
+                info = self.describe_app(app)
+            except GLib.Error:
+                continue
+            if isinstance(ref, int) or str(ref).isdigit():
+                if info["pid"] == int(ref):
+                    return app, info
+                continue
+            names = {normalize(info["name"]), normalize(info["app_id"] or ""), normalize((info["app_id"] or "").split(".")[-1])}
+            if wanted in names:
+                candidates.append((0 if info["windows"] else 1, app, info))
+        if candidates:
+            candidates.sort(key=lambda row: row[0])
+            return candidates[0][1], candidates[0][2]
+        return None, None
+
+    def active_key(self) -> tuple[Any, ...] | None:
+        """Which window has the keyboard now, comparable over time: its app's process and the window's place."""
+        current = self.active()
+        if current["app"] is None:
+            return None
+        try:
+            pid = current["app"].get_process_id()
+        except GLib.Error:
+            pid = None
+        return (pid, current["index"], current["shell"])
+
+    def active(self) -> dict[str, Any]:
+        """The window with the keyboard (an app's ACTIVE window); the shell when only it is active."""
+        shell = None
+        for app in self._apps():
+            try:
+                name = app.get_name()
+                for index, window in self._windows(app):
+                    state_set, _ = _states(window)
+                    if not state_set or not state_set.contains(Atspi.StateType.ACTIVE):
+                        continue
+                    if name == "gnome-shell":
+                        shell = (app, index, window)
+                        continue
+                    return {"app": app, "index": index, "window": window, "shell": False}
+            except GLib.Error:
+                continue
+        if shell:
+            return {"app": shell[0], "index": shell[1], "window": shell[2], "shell": True}
+        return {"app": None, "index": None, "window": None, "shell": False}
+
+    def _find_focused(self, window, budget: int = 3000):
+        stack = [window]
+        seen = 0
+        while stack and seen < budget:
+            node = stack.pop()
+            seen += 1
+            try:
+                state_set = node.get_state_set()
+                if node is not window and state_set.contains(Atspi.StateType.FOCUSED):
+                    return node
+                if node is not window and not state_set.contains(Atspi.StateType.SHOWING):
+                    continue
+                count = node.get_child_count()
+            except GLib.Error:
+                continue
+            for index in range(min(count, 300) - 1, -1, -1):
+                try:
+                    child = node.get_child_at_index(index)
+                except GLib.Error:
+                    continue
+                if child is not None:
+                    stack.append(child)
+        return None
+
+    def _shell_prompt(self, window, budget: int = 600) -> dict[str, Any] | None:
+        """A dialog of the shell asking for a password (polkit, a keyring): only the owner types there."""
+        stack = [(window, None)]
+        seen = 0
+        while stack and seen < budget:
+            node, dialog = stack.pop()
+            seen += 1
+            try:
+                role = node.get_role_name()
+                state_set = node.get_state_set()
+                if node is not window and not state_set.contains(Atspi.StateType.SHOWING):
+                    continue
+                if role in ("dialog", "alert"):
+                    dialog = node
+                if role == "password text" and dialog is not None:
+                    return {"title": clean(dialog.get_name())}
+                count = node.get_child_count()
+            except GLib.Error:
+                continue
+            for index in range(min(count, 100)):
+                try:
+                    child = node.get_child_at_index(index)
+                except GLib.Error:
+                    continue
+                if child is not None:
+                    stack.append((child, dialog))
+        return None
+
+    def _is_browser(self, app) -> bool:
+        name = normalize(app.get_name() or "")
+        toolkit = (app.get_toolkit_name() or "").lower()
+        if name in BROWSERS or toolkit in BROWSER_TOOLKITS:
+            return True
+        try:
+            pid = app.get_process_id()
+        except GLib.Error:
+            pid = None
+        app_id = app_id_for_pid(pid) if pid else None
+        return bool(app_id) and app_id.lower() in BROWSER_IDS
+
+    def documents(self, budget: int = 400) -> list[dict[str, Any]]:
+        """The pages browsers show now (a tab in front in each window), with their addresses. A browser
+        window whose page or address cannot be read is listed with no address: it may show anything."""
+        found = []
+        for app in self._apps():
+            try:
+                if not self._is_browser(app):
+                    continue
+                app_name = clean(app.get_name())
+            except GLib.Error:
+                continue
+            for _, window in self._windows(app):
+                state_set, labels = _states(window)
+                if state_set is not None and state_set.contains(Atspi.StateType.ICONIFIED):
+                    continue
+                try:
+                    window_role = window.get_role_name()
+                    title = clean(window.get_name())
+                except GLib.Error:
+                    continue
+                pages = 0
+                stack = [(window, 0)]
+                seen = 0
+                while stack and seen < budget:
+                    node, depth = stack.pop()
+                    seen += 1
+                    try:
+                        role = node.get_role()
+                        if role == Atspi.Role.DOCUMENT_WEB:
+                            if node.get_state_set().contains(Atspi.StateType.SHOWING):
+                                url = _doc_url(node)
+                                found.append({"app": app_name, "url": url or None, "window": title, "active": "active" in labels})
+                                pages += 1
+                            continue
+                        if depth > 20:
+                            continue
+                        count = node.get_child_count()
+                    except GLib.Error:
+                        continue
+                    for index in range(min(count, 80)):
+                        try:
+                            child = node.get_child_at_index(index)
+                        except GLib.Error:
+                            continue
+                        if child is not None:
+                            stack.append((child, depth + 1))
+                # A browser's main window always shows a page; one that could not be found is not known to be safe.
+                if pages == 0 and window_role in PAGE_WINDOW_ROLES:
+                    found.append({"app": app_name, "url": None, "window": title, "active": "active" in labels})
+        return found
+
+    def focus(self, with_text: bool = True) -> dict[str, Any]:
+        current = self.active()
+        app = current["app"]
+        if app is None:
+            return {"app": None, "window": None, "focused": None, "shell": False, "prompt": None}
+        info = self.describe_app(app)
+        window = current["window"]
+        out: dict[str, Any] = {
+            "app": {key: info[key] for key in ("name", "toolkit", "pid", "app_id")},
+            "window": {"index": current["index"], "title": clean(window.get_name()), "role": window.get_role_name()},
+            "shell": current["shell"],
+            "prompt": self._shell_prompt(window) if current["shell"] else None,
+            "focused": None,
+        }
+        node = self._find_focused(window)
+        if node is not None:
+            role = node.get_role_name()
+            _, labels = _states(node)
+            focused: dict[str, Any] = {"role": role, "name": clean(node.get_name()), "editable": "editable" in labels or role in ("entry", "password text")}
+            if with_text and _iface(node, "text") is not None and role != "password text":
+                try:
+                    focused["text"] = _text(node, 4000)
+                    focused["caret"] = _caret(node)
+                except GLib.Error:
+                    pass
+            out["focused"] = focused
+        return out
+
+    def _node_of(self, tree_id: str, element: str):
+        tree = self._trees.get(tree_id)
+        if tree is None:
+            raise error("element_gone", "That observation's elements are no longer known: look again.")
+        node = tree["nodes"].get(element)
+        if node is None:
+            raise error("element_gone", f"There is no element {element} in that observation.")
+        if not _alive(node):
+            raise error("element_gone", f"Element {element} is gone from the app: look again.")
+        return node
+
+    def tree(self, ref: str | int, window_index: int | None = None, max_elements: int = 300, time_budget_s: float = 2.5) -> dict[str, Any]:
+        app, info = self.find_app(ref)
+        if app is None:
+            raise error("target_not_found", f"No running app with an accessibility tree is called {clean(str(ref), 60)}.")
+        windows = self._windows(app)
+        if not windows:
+            raise error("not_inspectable", f"{info['name']} has no window with an accessibility tree.", extra={"app": info})
+        chosen = None
+        if window_index is not None:
+            chosen = next(((index, win) for index, win in windows if index == window_index), None)
+        if chosen is None:
+            chosen = next(((index, win) for index, win in windows if _states(win)[1].count("active")), windows[0])
+        index, window = chosen
+        started = self._clock()
+        max_elements = max(10, min(int(max_elements), 800))
+        candidates: list[tuple[bool, Any, dict[str, Any]]] = []
+        stack = [(window, 0)]
+        visited = 0
+        truncated = False
+        while stack:
+            if visited >= 6000 or self._clock() - started > time_budget_s or len(candidates) >= max_elements * 3:
+                truncated = True
+                break
+            node, depth = stack.pop()
+            visited += 1
+            try:
+                state_set = node.get_state_set()
+                if node is not window and not state_set.contains(Atspi.StateType.SHOWING):
+                    continue
+                role = node.get_role_name()
+                entry = self._element(node, role, state_set)
+                if entry is not None:
+                    candidates.append((entry.pop("_interactive"), node, entry))
+                count = node.get_child_count() if depth < 60 else 0
+            except GLib.Error:
+                continue
+            if count > 400:
+                truncated = True
+            for child_index in range(min(count, 400) - 1, -1, -1):
+                try:
+                    child = node.get_child_at_index(child_index)
+                except GLib.Error:
+                    continue
+                if child is not None:
+                    stack.append((child, depth + 1))
+        interactive = [row for row in candidates if row[0]]
+        context = [row for row in candidates if not row[0]]
+        keep = set(id(row[1]) for row in interactive[:max_elements])
+        room = max_elements - len(keep)
+        keep.update(id(row[1]) for row in context[:max(0, room)])
+        if len(candidates) > len(keep):
+            truncated = True
+        self._next += 1
+        tree_id = f"t{self._next}"
+        nodes: dict[str, Any] = {}
+        elements = []
+        for _, node, entry in candidates:
+            if id(node) not in keep:
+                continue
+            element_id = f"e{len(elements) + 1}"
+            nodes[element_id] = node
+            elements.append({"id": element_id, **entry})
+        self._trees[tree_id] = {"nodes": nodes, "app": info}
+        while len(self._trees) > TREES_KEPT:
+            self._trees.popitem(last=False)
+        extents = None
+        if _iface(window, "component") is not None:
+            try:
+                extents = _extents(window)
+            except GLib.Error:
+                pass
+        _, window_states = _states(window)
+        return {
+            "tree_id": tree_id,
+            "app": info,
+            "window": {"index": index, "title": clean(window.get_name()), "role": window.get_role_name(), "active": "active" in window_states, "extents": extents},
+            "elements": elements,
+            "truncated": truncated,
+            "visited": visited,
+        }
+
+    def _element(self, node, role: str, state_set) -> dict[str, Any] | None:
+        name = clean(node.get_name())
+        actions: list[str] = []
+        if _iface(node, "action") is not None:
+            try:
+                actions = [label for label in _actions(node) if label][:6]
+            except GLib.Error:
+                pass
+        editable = state_set.contains(Atspi.StateType.EDITABLE)
+        interactive = bool(actions) or editable or role in INTERACTIVE_ROLES
+        if not interactive and not (name and role in CONTEXT_ROLES):
+            return None
+        labels = [label for state, label in STATES.items() if state_set.contains(state)]
+        if not state_set.contains(Atspi.StateType.ENABLED) and not state_set.contains(Atspi.StateType.SENSITIVE) and interactive:
+            labels.append("disabled")
+        entry: dict[str, Any] = {"role": role, "name": name, "states": labels, "actions": actions, "_interactive": interactive}
+        if role != "password text":
+            if (editable or role in ("entry", "text", "search box", "editbar", "label", "static")) and _iface(node, "text") is not None:
+                try:
+                    value = clean(_text(node, MAX_VALUE * 2), MAX_VALUE)
+                    if value and value != name:
+                        entry["value"] = value
+                except GLib.Error:
+                    pass
+            if role in ("slider", "spin button", "progress bar", "scroll bar") and _iface(node, "value") is not None:
+                try:
+                    entry["value"] = Atspi.Value.get_current_value(node)
+                except GLib.Error:
+                    pass
+        if _iface(node, "component") is not None:
+            try:
+                entry["box"] = _extents(node)
+            except GLib.Error:
+                pass
+        return entry
+
+    def act(self, tree_id: str, element: str, action: str, *, name: str | None = None, text: str | None = None, allow_focus: bool = True) -> dict[str, Any]:
+        """One action on an element. `allow_focus` false (the background on the owner's screen): nothing that
+        moves the focus, so a press on an element without an action is refused rather than focusing it."""
+        node = self._node_of(tree_id, element)
+        role = node.get_role_name()
+        _, before = _states(node)
+        if action in ("press", "action"):
+            names = _actions(node) if _iface(node, "action") is not None else []
+            if not names:
+                if not allow_focus:
+                    raise error("needs_screen", f"Element {element} ({role}) has no action to press: only moving the focus to it would do something, and the background never moves the owner's focus. Use the agent screen, or foreground true.")
+                if _iface(node, "component") is not None and Atspi.Component.grab_focus(node):
+                    return {"done": True, "via": "atspi:focus", "detail": "It has no action; it was focused instead.", "states_before": before, "states_after": _states(node)[1]}
+                raise error("input_failed", f"Element {element} ({role}) has no action to press.")
+            order = [name] if name else list(PRESS_ACTIONS)
+            index = next((names.index(label) for label in order if label in names), 0 if not name else None)
+            if index is None:
+                raise error("input_failed", f"Element {element} has no action {clean(name, 40)}; it has {', '.join(names[:6])}.")
+            try:
+                done = Atspi.Action.do_action(node, index)
+            except GLib.Error as failure:
+                raise error("input_failed", f"The app refused the action ({clean(failure.message, 200)}).", ran="maybe")
+            return {"done": bool(done), "via": f"atspi:{names[index]}", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+        if action == "focus":
+            if _iface(node, "component") is None:
+                raise error("input_failed", f"Element {element} cannot take the focus.")
+            return {"done": bool(Atspi.Component.grab_focus(node)), "via": "atspi:focus", "states_before": before, "states_after": _states(node)[1]}
+        if action in ("set_text", "insert_text"):
+            if _iface(node, "editable_text") is None:
+                raise error("input_failed", f"Element {element} ({role}) is not editable text.")
+            value = text or ""
+            has_text = _iface(node, "text") is not None
+            try:
+                if action == "set_text":
+                    done = Atspi.EditableText.set_text_contents(node, value)
+                else:
+                    caret = _caret(node) if has_text else -1
+                    position = caret if caret >= 0 else (Atspi.Text.get_character_count(node) if has_text else 0)
+                    done = Atspi.EditableText.insert_text(node, position, value, len(value.encode("utf-8")))
+            except GLib.Error as failure:
+                raise error("input_failed", f"The app refused the text ({clean(failure.message, 200)}).", ran="maybe")
+            verified = None
+            if role != "password text" and has_text:
+                try:
+                    now = _text(node, max(4000, len(value) * 2))
+                    verified = (now == value) if action == "set_text" else (value in now)
+                except GLib.Error:
+                    verified = None
+            return {"done": bool(done), "via": f"atspi:{action}", "verified": verified}
+        if action == "select":
+            # In its container's selection when it has one (a list, tabs, a combo box), else its own action.
+            parent = node.get_parent()
+            if parent is not None and _iface(parent, "selection") is not None:
+                try:
+                    done = Atspi.Selection.select_child(parent, node.get_index_in_parent())
+                except GLib.Error as failure:
+                    raise error("input_failed", f"The app refused the selection ({clean(failure.message, 200)}).", ran="maybe")
+                return {"done": bool(done), "via": "atspi:selection", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+            return self._named_action(node, element, role, before, SELECT_ACTIONS, "select")
+        if action == "toggle":
+            return self._named_action(node, element, role, before, TOGGLE_ACTIONS, "toggle")
+        if action == "scroll_to":
+            if _iface(node, "component") is None:
+                raise error("input_failed", f"Element {element} ({role}) cannot be scrolled into view.")
+            try:
+                done = Atspi.Component.scroll_to(node, Atspi.ScrollType.ANYWHERE)
+            except GLib.Error as failure:
+                raise error("input_failed", f"The app refused to scroll ({clean(failure.message, 200)}).", ran="maybe")
+            return {"done": bool(done), "via": "atspi:scroll_to", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+        raise error("invalid_params", f"Unknown element action {clean(action, 40)}.")
+
+    def _named_action(self, node, element: str, role: str, before: list[str], order: tuple[str, ...], what: str) -> dict[str, Any]:
+        names = _actions(node) if _iface(node, "action") is not None else []
+        index = next((names.index(label) for label in order if label in names), None)
+        if index is None:
+            can = ", ".join(names[:6])
+            raise error("input_failed", f"Element {element} ({role}) cannot {what} through accessibility{f'; it can {can}' if names else ''}.")
+        try:
+            done = Atspi.Action.do_action(node, index)
+        except GLib.Error as failure:
+            raise error("input_failed", f"The app refused the action ({clean(failure.message, 200)}).", ran="maybe")
+        return {"done": bool(done), "via": f"atspi:{names[index]}", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
+
+    def set_focused_secret(self, text: str) -> bool:
+        """A saved secret into the password field that has the focus, whole, through accessibility; False
+        when the focus is not in a password field that takes text that way."""
+        current = self.active()
+        if current["window"] is None or current["shell"]:
+            return False
+        node = self._find_focused(current["window"])
+        if node is None or node.get_role_name() != "password text" or _iface(node, "editable_text") is None:
+            return False
+        try:
+            return bool(Atspi.EditableText.set_text_contents(node, text))
+        except (GLib.Error, TypeError):
+            return False
+
+    def insert_at_focus(self, text: str) -> bool:
+        """Text into the focused editable element at its caret; False when nothing editable has the focus."""
+        current = self.active()
+        if current["window"] is None:
+            return False
+        node = self._find_focused(current["window"])
+        if node is None or node.get_role_name() == "password text" or _iface(node, "editable_text") is None:
+            return False
+        try:
+            has_text = _iface(node, "text") is not None
+            caret = _caret(node) if has_text else -1
+            position = caret if caret >= 0 else (Atspi.Text.get_character_count(node) if has_text else 0)
+            return bool(Atspi.EditableText.insert_text(node, position, text, len(text.encode("utf-8"))))
+        except GLib.Error:
+            return False
+
+    def window_active(self, app) -> bool:
+        for _, window in self._windows(app):
+            state_set, _ = _states(window)
+            if state_set is not None and state_set.contains(Atspi.StateType.ACTIVE):
+                return True
+        return False
+
+    def grab_window(self, app) -> bool:
+        for _, window in self._windows(app):
+            if _iface(window, "component") is None:
+                continue
+            try:
+                if Atspi.Component.grab_focus(window):
+                    return True
+            except GLib.Error:
+                continue
+        return False
+
+
+def host(url: str | None) -> str | None:
+    if not url or "://" not in url:
+        return None
+    try:
+        return urlsplit(url).hostname
+    except ValueError:
+        return None

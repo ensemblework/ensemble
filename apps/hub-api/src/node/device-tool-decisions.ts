@@ -137,10 +137,11 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
   return "once";
 }
 
-const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
+const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files", desktop: "use" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target" | "own">): string {
+  if (card.scope === "app") return `@${card.nodeSlug} wants to use ${card.label} on your screen on ${card.deviceName}`;
   if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
   if (card.target.startsWith("tool:")) return `@${card.nodeSlug} wants to use ${card.label} on ${card.deviceName}`;
   if (card.target.startsWith("unnamed:")) return `@${card.nodeSlug} wants to ${card.capability === "read" ? "read" : "change"} files it does not name on ${card.deviceName}`;
@@ -152,7 +153,7 @@ function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "s
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */
 export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName" | "target">): string {
   if (placeless(card.target)) return `on ${card.deviceName}`;
-  return card.scope === "origin" ? `${card.label} on ${card.deviceName}` : `in ${card.label} on ${card.deviceName}`;
+  return card.scope === "folder" ? `in ${card.label} on ${card.deviceName}` : `${card.label} on ${card.deviceName}`;
 }
 
 /**
@@ -178,8 +179,13 @@ async function openQuestion(prisma: Pick<PrismaClient, "agentDecision">, owner: 
   });
   if (same) return { row: same, created: false };
   // Where the computer's sandbox is weak, "always" would not cover commands there: it is not offered. The agent's own call: one press.
+  // A sensitive app on the owner's screen is answered once per mission, never for good.
   const own = card.own ? OWN_CHOICES[card.own.kind ?? "write"] : null;
-  const options = own ? [own.always, own.once, own.run].filter((option): option is string => Boolean(option)) : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
+  const options = own
+    ? [own.always, own.once, own.run].filter((option): option is string => Boolean(option))
+    : card.scope === "app"
+      ? [CHOICES.mission]
+      : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
   const row = await prisma.agentDecision.create({
     data: {
       userId: owner,

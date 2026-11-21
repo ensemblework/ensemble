@@ -52,12 +52,12 @@ export const ANNOUNCES = /\b(i('ll| will| am going to)|let me) (now )?(start|beg
 /** Claims any reply can make, with what in the evidence backs each. Task claims are added to these. */
 export const COMMON_CLAIMS: Array<{ says: RegExp; backed: (ev: Evidence) => boolean; what: string }> = [
   {
-    says: /\b(here('s| is| are) (the |a |your )?(screenshots?|pictures?|images?)|(screenshots?|pictures?|images?)\b[^.!?\n]{0,60}\b(is |are )?(attached|above|below)|attached (the |a )?(screenshots?|pictures?|images?))/i,
+    says: /\b(here('s| is| are) (the |a |your )?(screenshots?|pictures?|images?)|(screenshots?|pictures?|images?)\b[^.!?\n]{0,60}\b((is |are )?(attached|above|below)|(appears?|shows? up|is shown|is included|comes|is|are) (with|in|below|above) (this|my|the) (reply|message|chat)|(is|are) here\b)|attached (the |a )?(screenshots?|pictures?|images?))/i,
     backed: (ev) => nodeMedia(ev).some((item) => isImage(item)),
     what: "says a picture is attached, and none reached the chat",
   },
   {
-    says: /\b(here('s| is) (the |a |your )?(video|recording|screen recording)|(video|recording)\b[^.!?\n]{0,60}\b(is |are )?(attached|above|below)|attached (the |a )?(video|recording))/i,
+    says: /\b(here('s| is) (the |a |your )?(video|recording|screen recording)|(video|recording)\b[^.!?\n]{0,60}\b((is |are )?(attached|above|below)|(appears?|shows? up|is shown|is included|comes|is) (with|in|below|above) (this|my|the) (reply|message|chat)|is here\b)|attached (the |a )?(video|recording))/i,
     backed: (ev) => nodeMedia(ev).some((item) => isVideo(item)),
     what: "says a video is attached, and none reached the chat",
   },

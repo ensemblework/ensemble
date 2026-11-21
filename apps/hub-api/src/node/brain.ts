@@ -38,7 +38,7 @@ import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
-import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
+import { tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
 import type { OwnToolEvent } from "../subscriptions/bridge.js";
@@ -383,7 +383,6 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
-  const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
   // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant) in a turn its owner started
   // and only they read: the computer judges each call by the node's folder policy, and what that asks goes to the owner
   // on a card here (node/own-tool-asks.ts). Any other turn (room-bound, another person's, a disclosure draft) can carry
@@ -412,7 +411,12 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     fromNonOwner,
     ownerOnly,
     step: Boolean(step),
-    skills,
+    // The skills, memories and workspace items for this turn are chosen from these (node/instructions.ts).
+    turn,
+    words: ownerWords,
+    has,
+    conversationId,
+    modules: user.moduleSet,
     origin: room.kind === "task" && !node.parentNodeId ? await originLine(app, node, room) : null,
     packet,
   };
@@ -463,7 +467,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       modules: user.moduleSet,
       ...(given ? { nodeInstructions: given } : { agentPersona: roomBound!.text }),
       instructionsRef: given?.log ?? assembled,
-      extraRefs: given?.rooms ?? roomBound!.rooms,
+      extraRefs: given?.refs ?? roomBound!.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.

@@ -1,5 +1,5 @@
 /**
- * The numbers Ensemble Node decides with (docs/35 §4, §5.6, §6.2-6.3), in one versioned config: the
+ * The numbers Ensemble Node decides with (docs/35 §4, §5.7, §6.2-6.3), in one versioned config: the
  * router's brakes, how big a plan may be, how far a stuck step climbs before its owner is asked, and the
  * watchdog's stall rules. None is a limit of Ensemble's own on work: they are brakes on runaway planning
  * and waiting, with generous defaults. Every decision it records (`node_decisions`, node/trace.ts) names

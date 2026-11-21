@@ -58,6 +58,8 @@ export type CapabilityProbe = {
   screenRecording: () => Promise<"granted" | "denied" | "unknown">;
   /** A pseudo-terminal program (`script`) for a node's terminal screens. */
   pty: () => boolean;
+  /** The owner's real screen through the desktop helper (desktop/control/readiness.ts); absent: not here. */
+  desktop?: () => Promise<Availability>;
   now: () => Date;
 };
 
@@ -80,6 +82,7 @@ export function realProbe(dataHome: string = ensembleDataHome()): CapabilityProb
     distro: () => linuxDistro(),
     screenRecording: macScreenRecording,
     pty: () => process.platform !== "win32" && Boolean(findOnPath("script")),
+    desktop: async () => (await import("../desktop/control/readiness.js")).desktopAvailability(),
     now: () => new Date(),
   };
 }
@@ -172,7 +175,8 @@ export async function computeCapabilities(probe: CapabilityProbe): Promise<Captu
     : tui
       ? { screenshot: true, video: false, tui: true, reason: "A terminal is captured as its screen (full-screen programs such as htop too) or its transcript, not as video." }
       : { screenshot: true, video: false, tui: false, reason: probe.platform === "win32" ? "A terminal is captured as its transcript (HTML or an image): full-screen programs need a pseudo-terminal, which Windows does not give Ensemble yet." : "A terminal is captured as its transcript (HTML or an image): full-screen programs need `script` (util-linux), which is not installed." };
-  const desktop: Availability = { screenshot: false, video: false, reason: "Capturing your real screen is not supported yet. It will ask for your consent each time." };
+  const notHere: Availability = { screenshot: false, video: false, reason: "Capturing your real screen works on Linux, through the desktop portal." };
+  const desktop: Availability = probe.platform === "linux" && probe.desktop ? await probe.desktop().catch(() => ({ ...notHere, reason: "The desktop helper could not be checked." })) : notHere;
 
   return {
     platform: platformName(probe.platform),
