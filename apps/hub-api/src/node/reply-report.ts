@@ -1,5 +1,5 @@
 /**
- * The report fields of a node's reply (DESIGN §6.2, docs/35 §5.6), for its turn's trace: how the turn ended,
+ * The report fields of a node's reply (DESIGN §6.2, docs/35 §5.7), for its turn's trace: how the turn ended,
  * what the reply itself says about that, and what it says remains. The constitution asks a reply about work
  * to say how it ended (done, partial, blocked, failed, stopped or uncertain) and what remains
  * (`constitution/14-completion`); these read that, in English, without a model. What Ensemble observed
