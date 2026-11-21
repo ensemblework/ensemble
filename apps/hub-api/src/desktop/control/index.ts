@@ -5,10 +5,12 @@
  * - Linux: the Python helper (desktop-helper/linux). It gets the desktop session's variables (its bus, its
  *   display) and nothing else of this runtime's environment; the agent screen's helper starts a private
  *   headless GNOME Shell and ends it after `ENSEMBLE_AGENT_SCREEN_IDLE_MINUTES` (default 10) without a call.
- * - macOS: cua-driver (drivers/macos-cua.ts), bundled at `<sidecar>/bin/cua-driver` at the version pinned in
- *   desktop-helper/macos/cua-driver.json, only in the Ensemble app's own runtime (macOS then asks about its
- *   permissions for Ensemble). It gets a minimal environment with telemetry and update checks off. There is
- *   no agent screen on macOS.
+ * - macOS: Cua Driver (drivers/macos-cua.ts), the signed CuaDriver.app the Ensemble app carries at
+ *   `<sidecar>/bin/CuaDriver.app` at the version pinned in desktop-helper/macos/cua-driver.json. It starts
+ *   through `ensemble-disclaim` (desktop-helper/macos/disclaim.c), which makes it its own responsible process:
+ *   macOS asks about Accessibility and Screen Recording for Cua Driver, so Ensemble itself never needs them
+ *   and nothing else it starts (agent commands, coding agents, MCP servers) can inherit them. It gets a
+ *   minimal environment with telemetry and update checks off. There is no agent screen on macOS.
  * - Windows and other systems answer that desktop control is not there.
  */
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -36,12 +38,12 @@ export function desktopDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(ensembleDataHome(env), "desktop");
 }
 
-export const UNSUPPORTED_HERE = "Desktop control works on Linux (desktops with the desktop portal: GNOME, KDE and others) and on macOS 13 or later in the Ensemble app.";
+export const UNSUPPORTED_HERE = "Desktop control works on Linux (desktops with the desktop portal: GNOME, KDE and others) and on macOS 13 or later with the Ensemble app installed.";
 export const WINDOWS_UNSUPPORTED = "Desktop control is not available on Windows in this version: it works on Linux and on macOS.";
 export const NO_AGENT_SCREEN_MAC = "macOS has no private agent screen in this version: desktop work happens on your owner's screen, in the background where it can (apps open behind their windows, and elements are read and pressed through accessibility).";
-export const MAC_APP_ONLY = "On macOS, desktop control runs inside the Ensemble app, so macOS asks about Accessibility and Screen Recording for Ensemble and not for a terminal. This runtime was started by the `ensemble` command line: stop it with `ensemble runner stop`, then quit and reopen the Ensemble app so it starts its own.";
-/** The Ensemble app's bundle id (apps/desktop/src-tauri/tauri.conf.json), as cua-driver's advisory host label. */
-const ENSEMBLE_BUNDLE_ID = "com.ensemblework.desktop";
+export const NO_CUA_DRIVER = "Desktop control on a Mac needs the Ensemble app, which carries Cua Driver, the desktop driver it starts: install or update the Ensemble app.";
+/** Where the Ensemble app keeps Cua Driver, for a runtime the `ensemble` command line started. */
+const APP_DRIVER_DIR = "Ensemble.app/Contents/Resources/sidecar/bin";
 
 /** Whether desktop control works on this system at all (Linux and macOS). */
 export function desktopSystem(platform: string = process.platform): boolean {
@@ -63,13 +65,22 @@ export function macosMajor(kernel: string = release()): number | null {
   return darwin >= 25 ? darwin + 1 : darwin - 9;
 }
 
-/** The bundled cua-driver beside the sidecar's Node (`<sidecar>/bin/cua-driver`), or one named by ENSEMBLE_CUA_DRIVER. */
-export function findCuaDriver(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath): string | null {
-  const candidates = [env.ENSEMBLE_CUA_DRIVER, join(dirname(execPath), "bin", "cua-driver"), join(dirname(execPath), "..", "bin", "cua-driver")].filter((value): value is string => Boolean(value?.trim()));
-  for (const candidate of candidates) {
+export type CuaDriverFiles = { dir: string; app: string; executable: string; launcher: string };
+
+/**
+ * Cua Driver and its launcher: `ENSEMBLE_CUA_DRIVER_DIR`, else beside the sidecar's Node (`<sidecar>/bin`), else
+ * in the Ensemble app installed in /Applications or ~/Applications (for a runtime the command line started).
+ */
+export function findCuaDriver(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath): CuaDriverFiles | null {
+  const home = env.HOME?.trim();
+  const dirs = [env.ENSEMBLE_CUA_DRIVER_DIR, join(dirname(execPath), "bin"), join(dirname(execPath), "..", "bin"), join("/Applications", APP_DRIVER_DIR), home ? join(home, "Applications", APP_DRIVER_DIR) : undefined].filter((value): value is string => Boolean(value?.trim()));
+  for (const dir of dirs.map((value) => resolve(value))) {
+    const app = join(dir, "CuaDriver.app");
+    const files = { dir, app, executable: join(app, "Contents", "MacOS", "cua-driver"), launcher: join(dir, "ensemble-disclaim") };
     try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
+      accessSync(files.executable, constants.X_OK);
+      accessSync(files.launcher, constants.X_OK);
+      return files;
     } catch {
       // try the next
     }
@@ -77,12 +88,12 @@ export function findCuaDriver(env: NodeJS.ProcessEnv = process.env, execPath: st
   return null;
 }
 
-/** Why this runtime cannot hold macOS's grants for Ensemble (it was not started by the Ensemble app), or null. */
-export function macHostProblem(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.ENSEMBLE_RUNTIME_OWNER === "desktop" && /\.app\/Contents\/MacOS\//.test(env.ENSEMBLE_INSTALL_PATH ?? "") ? null : MAC_APP_ONLY;
+/** Whether this runtime is the Ensemble app's own: then what it starts inherits the app's macOS grants. */
+export function inEnsembleApp(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ENSEMBLE_RUNTIME_OWNER === "desktop" && /\.app\/Contents\/MacOS\//.test(env.ENSEMBLE_INSTALL_PATH ?? "");
 }
 
-/** cua-driver's environment: what it needs to run, its own folder, telemetry and update checks off. Never this runtime's secrets. */
+/** Cua Driver's environment: what it needs to run, its own folder, telemetry and update checks off. Never this runtime's secrets. */
 export function cuaDriverEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of ["HOME", "USER", "LOGNAME", "LANG", "TMPDIR"]) if (env[key]) out[key] = env[key];
@@ -91,8 +102,6 @@ export function cuaDriverEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.Proce
     ...out,
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     CUA_DRIVER_RS_HOME: home,
-    CUA_DRIVER_EMBEDDED: "1",
-    CUA_DRIVER_HOST_BUNDLE_ID: ENSEMBLE_BUNDLE_ID,
     CUA_DRIVER_PERMISSION_MODE: "standard",
     CUA_DRIVER_DISABLE_RUN_SCRIPT: "1",
     DO_NOT_TRACK: "1",
@@ -102,20 +111,35 @@ export function cuaDriverEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.Proce
   };
 }
 
+function cuaDriverHome(env: NodeJS.ProcessEnv): string {
+  const home = join(desktopDataDir(env), "cua-driver");
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  return home;
+}
+
 /**
- * `cua-driver mcp --direct --embedded`: the driver's runtime in its own process, kept in this runtime's chain
- * of responsibility (the Ensemble app's), never prompting and never handing itself to LaunchServices.
+ * `ensemble-disclaim <CuaDriver.app>/Contents/MacOS/cua-driver mcp --direct`: the driver's runtime in its own
+ * process, which the launcher makes its own responsible process, speaking MCP over this runtime's pipes only (no
+ * socket). macOS answers its Accessibility and Screen Recording checks with Cua Driver's grants.
  */
 export function cuaDriverCommand(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath, kernel: string = release()): HelperCommand | { unavailable: string } {
   const major = macosMajor(kernel);
   if (major !== null && major < 13) return { unavailable: `Desktop control needs macOS 13 or later; this Mac runs macOS ${major}.` };
-  const host = macHostProblem(env);
-  if (host) return { unavailable: host };
-  const binary = findCuaDriver(env, execPath);
-  if (!binary) return { unavailable: "This Ensemble app has no macOS desktop driver (cua-driver) beside its runtime: update the Ensemble app." };
-  const home = join(desktopDataDir(env), "cua-driver");
-  mkdirSync(home, { recursive: true, mode: 0o700 });
-  return { command: binary, args: ["mcp", "--direct", "--embedded", "--host-bundle-id", ENSEMBLE_BUNDLE_ID], env: cuaDriverEnv(env, home), cwd: home };
+  const files = findCuaDriver(env, execPath);
+  if (!files) return { unavailable: NO_CUA_DRIVER };
+  const home = cuaDriverHome(env);
+  return { command: files.launcher, args: [files.executable, "mcp", "--direct"], env: cuaDriverEnv(env, home), cwd: home };
+}
+
+/**
+ * The same driver without the launcher, in embedded mode, so its permission check answers for the Ensemble app
+ * itself; only in the app's own runtime. Null elsewhere: a command-line runtime's grants are its terminal's.
+ */
+export function cuaDriverHostProbeCommand(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath): HelperCommand | null {
+  const files = inEnsembleApp(env) ? findCuaDriver(env, execPath) : null;
+  if (!files) return null;
+  const home = cuaDriverHome(env);
+  return { command: files.executable, args: ["mcp", "--direct", "--embedded"], env: { ...cuaDriverEnv(env, home), CUA_DRIVER_EMBEDDED: "1" }, cwd: home };
 }
 
 /** The session's own variables: its bus, display and language. Never this runtime's secrets. */
@@ -175,7 +199,7 @@ export function desktops(): Desktops {
     .catch(() => undefined);
   const mac = process.platform === "darwin";
   const helper: HelperLike = mac
-    ? new MacosCuaDriver({ spawn: () => helperCommand(), version: cuaDriverPin().version, workDir: join(desktopDataDir(), "cua"), macosMajor: macosMajor(), log: settings.log })
+    ? new MacosCuaDriver({ spawn: () => helperCommand(), version: cuaDriverPin().version, workDir: join(desktopDataDir(), "cua"), appPath: findCuaDriver()?.app ?? null, macosMajor: macosMajor(), log: settings.log })
     : new HelperProcess({ spawn: () => helperCommand(), log: settings.log });
   const owner = new DesktopService({ helper, captureDir: join(desktopDataDir(), "captures"), log: settings.log, secretValues: settings.secretValues, platform: mac ? "darwin" : "linux" });
   const idle = agentScreenIdleMs();

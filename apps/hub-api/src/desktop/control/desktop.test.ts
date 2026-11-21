@@ -72,6 +72,13 @@ after(async () => {
 
 // ── pure parts ──────────────────────────────────────────────────────────────
 
+test("helper output that is not a JSON-RPC message is ignored: null, arrays, numbers, bytes that are not UTF-8", async () => {
+  const h = harness();
+  await h.helper.call("test.noise", {}, { timeoutMs: 5_000 });
+  assert.equal((await h.helper.call<{ ok: boolean }>("test.set", {}, { timeoutMs: 5_000 })).ok, true);
+  assert.equal(h.helper.health().state, "ready");
+});
+
 test("mapping: an image point goes to the centre of its pixel on the screen, clamped inside it", () => {
   const image = fit({ width: 2560, height: 1440 });
   assert.deepEqual(image, { width: 1568, height: 882 });

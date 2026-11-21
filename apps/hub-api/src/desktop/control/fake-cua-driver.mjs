@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// A stand-in for cua-driver 0.56.6 (`cua-driver mcp --direct --embedded`) in tests: MCP over stdin and stdout
+// A stand-in for cua-driver 0.56.6 (`cua-driver mcp --direct`) in tests: MCP over stdin and stdout
 // (initialize, tools/list, tools/call) with the tool shapes of the macOS backend, and a Mac held in memory.
 // FAKE_CUA_STATE names a JSON file with the Mac (apps, windows, elements, screen, permissions); it is read at
 // start, and again on every call for what tests change on the fly (effects, refusals, slow tools, failures).
-// Like macOS, the permissions are read once per process. FAKE_CUA_LOG gets one JSON line per tool call.
+// Like macOS, the permissions are read once per process: Cua Driver's own (`accessibility`, `screen_recording`),
+// or with `--embedded` the launching app's (`host_accessibility`, `host_screen_recording`). `noise` writes lines
+// that are not MCP messages before each answer. FAKE_CUA_LOG gets one JSON line per tool call.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -23,7 +25,11 @@ const world = {
   elements: {},
   ...read(),
 };
-const granted = { accessibility: world.accessibility === true, screen_recording: world.screen_recording === true };
+const EMBEDDED = process.argv.includes("--embedded") || process.env.CUA_DRIVER_EMBEDDED === "1";
+const granted = EMBEDDED
+  ? { accessibility: world.host_accessibility === true, screen_recording: world.host_screen_recording === true }
+  : { accessibility: world.accessibility === true, screen_recording: world.screen_recording === true };
+let typed = 0;
 let snapshot = 0;
 const tokens = new Map();
 let recorder = null;
@@ -140,7 +146,7 @@ function refusal(tool, live) {
 const screenPoints = () => ({ width: world.screen.width / world.screen.scale, height: world.screen.height / world.screen.scale });
 
 const tools = {
-  check_permissions: () => ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: true } }),
+  check_permissions: () => ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: EMBEDDED, direct_runtime: !EMBEDDED } }),
   get_desktop_state: (args, live) => {
     if (!granted.screen_recording) return failed("Screen Recording permission is not granted for this process.");
     if (live.screenshotFails) return failed("capture failed: the display stream returned no frame");
@@ -195,6 +201,9 @@ const tools = {
   type_text: (args, live) => {
     if (args.element_token && !element(args.element_token)) return failed("Refused: the element token is stale.", { status: "refused", refusal: { code: "stale_element_token", message: "stale" } });
     if (!args.element_token && args.scope !== "desktop") return failed("type_text needs a pid, an element_token or scope desktop.", { code: "invalid_arguments" });
+    // `frontAfterTypes`: after that many typed chunks another app comes to the front.
+    typed += 1;
+    if (live.frontAfterTypes && typed === live.frontAfterTypes.count) for (const app of world.apps) app.active = app.pid === live.frontAfterTypes.pid;
     return ok(action(live.effects?.type_text ?? "confirmed", { route: args.element_token ? "accessibility" : "synthetic_events" }));
   },
   press_key: (args, live) => ok(action(live.effects?.press_key ?? "unverifiable", { route: "synthetic_events" })),
@@ -244,6 +253,13 @@ async function callTool(name, args) {
   return refusal(name, live) ?? tools[name](args, live);
 }
 
+/** Output that is not an MCP message: JSON that is no object, a 10 MB line and bytes that are not UTF-8. */
+function noise() {
+  for (const line of ["null", "[1,2,3]", "42", '"text"', "true", "{}", "{\"id\":\"x\",\"result\":{}}"]) process.stdout.write(`${line}\n`);
+  process.stdout.write(`{"padding":"${"x".repeat(10 * 1024 * 1024)}"}\n`);
+  process.stdout.write(Buffer.concat([Buffer.from([0xff, 0xfe, 0xc3, 0x28, 0x7b]), Buffer.from("\n")]));
+}
+
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.on("line", async (line) => {
   let message;
@@ -253,6 +269,7 @@ lines.on("line", async (line) => {
     return;
   }
   if (message.id === undefined) return;
+  if (read().noise) noise();
   if (message.method === "initialize") {
     send({ id: message.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "cua-driver", version: world.version }, instructions: "Act by element_token." } });
   } else if (message.method === "tools/list") {

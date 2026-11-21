@@ -51,17 +51,22 @@ These steps pair an app kept local only from an earlier version; an app with an 
 
 ## Desktop control
 
-Run these with the app's own runtime: when `ensemble runner status` says a runner is running, stop it (`ensemble runner stop`) and reopen the app ([25 §11.9](../25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#119-macos)).
+Desktop control works from the app's own runtime and from a runner the `ensemble` command line started, both through the installed app's Cua Driver ([25 §11.9](../25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#119-macos)). Start with Ensemble, Cua Driver and your terminal off under both lists below.
 
-- [ ] **Driver.** `Ensemble.app/Contents/Resources/sidecar/bin/cua-driver` exists, with `cua-driver.LICENSE` beside it.
-- [ ] **Permissions off.** With Accessibility and Screen & System Audio Recording off for Ensemble, a node's `desktop_status` names each, with its System Settings › Privacy & Security fix, and no macOS dialog appears.
-- [ ] **Accessibility.** Turn on Ensemble under Accessibility (add it with + if it is not listed). Without quitting the app, `desktop_status` shows it on. `desktop_open` Reminders opens it behind the front window, and `desktop_observe` with app Reminders and screenshot false lists its elements.
-- [ ] **Screen Recording.** Turn on Ensemble under Screen & System Audio Recording, then quit and reopen the app if macOS asks. `desktop_observe` returns a screenshot of the main display, and a zoom of it is sharp.
+- [ ] **Driver.** `Ensemble.app/Contents/Resources/sidecar/bin/` holds `CuaDriver.app`, `ensemble-disclaim`, `CuaDriver.LICENSE` and `CuaDriver.THIRD_PARTY_NOTICES.md`. `codesign -dv` on `CuaDriver.app` shows `TeamIdentifier=YCK386LBJ7`, and `codesign --verify --deep --strict` on it passes.
+- [ ] **Permissions off.** A node's `desktop_status` names Accessibility and Screen Recording as off for Cua Driver, each with its System Settings › Privacy & Security fix and the path of `CuaDriver.app`. macOS asks once, naming Cua Driver (never Ensemble), and asks again no sooner than ten minutes later. If macOS first asks whether to open an app from the internet, confirm it and note it here.
+- [ ] **Accessibility.** Turn on Cua Driver under Accessibility. Without quitting the app, `desktop_status` shows it on. `desktop_open` Reminders opens it behind the front window, and `desktop_observe` with app Reminders and screenshot false lists its elements.
+- [ ] **Screen Recording.** Turn on Cua Driver under Screen & System Audio Recording. `desktop_observe` returns a screenshot of the main display, and a zoom of it is sharp.
+- [ ] **Nothing else inherits.** Ensemble is still off under Accessibility and Screen & System Audio Recording. A node's `computer_run` of `screencapture -x probe.png` in its folder does not capture other apps' windows: macOS asks about Ensemble instead (deny it), or the picture shows only the desktop.
+- [ ] **Ensemble holding a grant.** Turn Ensemble on under Screen & System Audio Recording: within ten minutes (the next readiness check) a node's desktop calls other than `desktop_status` are refused, saying Ensemble itself is allowed it, with the fix. Turn it off again and, within a minute, desktop control comes back.
 - [ ] **A reminder.** Ask a node to create a reminder in Apple Reminders. It works through elements in the background, and the reminder is in the list.
 - [ ] **An alarm.** Ask a node to set an alarm in Clock (macOS Ventura and later), under its Alarms tab. The alarm shows in Clock and is on.
 - [ ] **Your pointer.** A step with `foreground` asks once on a card; after allowing it, a click lands where the screenshot shows, and a click on Ensemble's own window is refused.
+- [ ] **Typing.** Ask for a `type` of a few hundred characters in TextEdit with `foreground` and touch nothing: all of it arrives and the step is not `partial`. Again, and switch to another app while it types: the step ends `partial` saying the window in front changed. Again, and press a key yourself: it ends saying you used the keyboard or mouse.
+- [ ] **Browsers.** With a Hub tab open in Safari in a window you minimise, an element action in that window is refused (`unknown_page`). The same in a browser Ensemble does not know by name.
 - [ ] **Recording.** On macOS 15 and later `desktop_record` start and save gives an MP4 held for preview; on macOS 14 it says video needs macOS 15.
-- [ ] **After an update.** Install a newer build. If the permissions stop working, remove Ensemble from both lists with − and add it again.
+- [ ] **Command-line runner.** With the app installed, `ensemble runner start` from a terminal: `desktop_status` works and the grants are still Cua Driver's.
+- [ ] **After an update.** Install a newer build: Cua Driver keeps its grants, and nothing asks again.
 
 ## Settings
 

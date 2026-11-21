@@ -21,11 +21,13 @@ export type FloorHit = { rule: FloorRule; message: string };
 
 /** Ensemble's own apps as the accessibility bus and systemd name them. */
 const ENSEMBLE_APPS = new Set(["ensemble", "ensemble-desktop", "ensemble desktop", "ensemble capture", "ensemble-capture", "quick-capture", "quick capture"]);
-const ENSEMBLE_TITLES = /^(?:ensemble|ensemble capture|quick capture|ensemble updates)$/i;
+/** Ensemble's own window titles: its apps' windows, and Hub pages ("Today · Ensemble") in an app that is not a browser. */
+const ENSEMBLE_TITLES = /^(?:ensemble|ensemble node|ensemble capture|quick capture|ensemble updates|.+ · ensemble(?: node)?)$/i;
 /** A terminal showing the Ensemble CLI (`ensemble needs` answers cards). */
 const CLI_TITLE = /^(?:\S*[/~]\S*\s*[:$#]?\s*)?ensemble(?:-test)?(?:\s|$)/i;
 const TERMINALS = /\b(?:ptyxis|terminal|console|kgx|konsole|xterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|iterm2?|hyper|tabby)\b/i;
-const BROWSER_TOOLKITS = /^(?:gecko|chromium|webkitgtk|webkit)$/i;
+/** `web`: an app that opens https links (LaunchServices) and is not a browser Ensemble knows by name. */
+const BROWSER_TOOLKITS = /^(?:gecko|chromium|webkitgtk|webkit|web)$/i;
 
 export const SECRET_REF = /^\$([A-Z][A-Z0-9_]{1,63})$/;
 

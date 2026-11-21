@@ -16,10 +16,11 @@
  * a process's answer, so the driver is started again after a check fails.
  */
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { keyboardFloor } from "../floor.js";
 import type { HelperCommand, HelperHealth } from "../helper-process.js";
 import { fit } from "../mapping.js";
 import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperErrorKind, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "../protocol.js";
@@ -36,9 +37,11 @@ export type MacosCuaOptions = {
   version: string;
   /** A private folder for screenshots in flight and recordings before they are saved. */
   workDir: string;
+  /** Where CuaDriver.app is: the fixes name it, and macOS is asked for its grants through it. */
+  appPath?: string | null;
   /** macOS's major version (video needs 15 or later). */
   macosMajor: number | null;
-  /** Runs ioreg and osascript (the idle time, the lock, notices); tests replace it. */
+  /** Runs ioreg, osascript, getconf and open (idle time, the lock, notices, browsers, permission prompts); tests replace it. */
   exec?: ExecFn;
   log?: (message: string) => void;
   now?: () => number;
@@ -49,23 +52,44 @@ export type MacosCuaOptions = {
   stopGraceMs?: number;
 };
 
-const APP = "Ensemble";
+/** The name macOS shows for the driver (CuaDriver.app, bundle com.trycua.driver) in its privacy lists. */
+const DRIVER = "Cua Driver";
 /** The one display cua-driver captures and aims at: the main one. */
 const MAIN = 1;
 /** The long side of the small captures that tell whether the screen changed. */
 const PROBE_EDGE = 400;
+/** Characters typed at a time; between chunks, the window in front and the owner's input are checked. */
+const TYPING_CHUNK = 8;
+/** The pause after each typed chunk before the owner's input is read. */
+const TYPING_PAUSE_MS = 120;
+/** Idle time this much shorter than the time since the last key means someone else's input. */
+const OWNER_INPUT_MARGIN_MS = 40;
+/** How long macOS is not asked again for the same missing grants. */
+const ASK_AGAIN_MS = 10 * 60_000;
+/** Cua Driver 0.56.6's private LaunchServices permission host (cli.rs `permissions grant`). */
+const PERMISSIONS_HOST_REQUEST_ARG = "__permissions-host-request";
+/** How long the list of apps that open https links is kept; a failed read is tried again after a minute. */
+const HANDLERS_TTL_MS = 10 * 60_000;
+const HANDLERS_RETRY_MS = 60_000;
 
-export function accessibilityFix(): string {
-  return `System Settings › Privacy & Security › Accessibility: turn on ${APP} (add it with + from Applications if it is not listed; after an update, remove it with − and add it again), then quit and reopen ${APP}.`;
+const screenPane = (macosMajor: number | null) => (macosMajor !== null && macosMajor < 15 ? "Screen Recording" : "Screen & System Audio Recording");
+const whereListed = (appPath: string | null) => (appPath ? ` (macOS lists it once it has asked; otherwise click +, press ⌘⇧G and paste ${appPath})` : " (macOS lists it once it has asked)");
+
+export function accessibilityFix(appPath: string | null = null): string {
+  return `System Settings › Privacy & Security › Accessibility: turn on ${DRIVER}, the desktop driver Ensemble starts${whereListed(appPath)}.`;
 }
 
-export function screenRecordingFix(macosMajor: number | null): string {
-  const pane = macosMajor !== null && macosMajor < 15 ? "Screen Recording" : "Screen & System Audio Recording";
-  return `System Settings › Privacy & Security › ${pane}: turn on ${APP} (add it with + from Applications if it is not listed; after an update, remove it with − and add it again), then quit and reopen ${APP}.`;
+export function screenRecordingFix(macosMajor: number | null, appPath: string | null = null): string {
+  return `System Settings › Privacy & Security › ${screenPane(macosMajor)}: turn on ${DRIVER}, the desktop driver Ensemble starts${whereListed(appPath)}.`;
 }
 
-const ACCESSIBILITY_OFF = `Accessibility is off for ${APP} on this Mac, so it can read and press nothing in other apps.`;
-const RECORDING_OFF = `Screen Recording is off for ${APP} on this Mac, so it cannot take screenshots or record the screen (reading and pressing elements works without it).`;
+/** The fix when Ensemble itself holds a grant, which everything it starts would inherit. */
+export function hostGrantsFix(macosMajor: number | null): string {
+  return `System Settings › Privacy & Security: turn Ensemble off under Accessibility and under ${screenPane(macosMajor)} (desktop control uses ${DRIVER}, which has grants of its own).`;
+}
+
+const ACCESSIBILITY_OFF = `Accessibility is off for ${DRIVER} on this Mac, so desktop control can read and press nothing in other apps.`;
+const RECORDING_OFF = `Screen Recording is off for ${DRIVER} on this Mac, so desktop control cannot take screenshots or record the screen (reading and pressing elements works without it).`;
 
 const ROLE_WORDS: Record<string, string> = {
   AXButton: "push button",
@@ -113,14 +137,27 @@ const CHECKABLE = /check box|switch|radio button|toggle button|page tab/;
 /** The processes that show the system's password and permission prompts. */
 const PROMPT_APPS = /^(?:SecurityAgent|coreautha|UserNotificationCenter|AuthenticationServicesAgent)$/i;
 
+/** Browsers known by bundle id, with their web-app bundles (Safari's `com.apple.Safari.WebApp.*`, Chromium's `<browser>.app.*`). */
 const BROWSERS: Array<{ toolkit: string; pattern: RegExp }> = [
-  { toolkit: "WebKit", pattern: /^com\.apple\.(?:safari|safaritechnologypreview)$/i },
-  { toolkit: "Chromium", pattern: /^(?:com\.google\.chrome|com\.microsoft\.edgemac|com\.brave\.browser|company\.thebrowser\.|com\.operasoftware\.|com\.vivaldi\.|org\.chromium\.)/i },
-  { toolkit: "Gecko", pattern: /^(?:org\.mozilla\.|org\.torproject\.|app\.zen-browser\.)/i },
+  { toolkit: "WebKit", pattern: /^(?:com\.apple\.safari(?:$|\.webapp\.)|com\.apple\.safaritechnologypreview$|com\.kagi\.kagimacos|com\.duckduckgo\.macos\.browser)/i },
+  { toolkit: "Chromium", pattern: /^(?:com\.google\.chrome|com\.microsoft\.edgemac|com\.brave\.browser|company\.thebrowser\.|com\.operasoftware\.|com\.vivaldi\.|org\.chromium\.|ai\.perplexity\.comet|ru\.yandex\.desktop\.yandex-browser|com\.sigmaos\.)/i },
+  { toolkit: "Gecko", pattern: /^(?:org\.mozilla\.|org\.torproject\.|app\.zen-browser\.|net\.waterfox\.|io\.gitlab\.librewolf|one\.ablaze\.floorp|net\.mullvad\.mullvadbrowser)/i },
 ];
 
-function toolkitOf(bundle: string | null): string {
-  return BROWSERS.find((browser) => bundle && browser.pattern.test(bundle))?.toolkit ?? "macOS";
+/** Every app LaunchServices would open an https link with: the browsers the list above does not know. */
+const HTTPS_HANDLERS_JXA = `ObjC.import("AppKit");
+const urls = $.NSWorkspace.sharedWorkspace.URLsForApplicationsToOpenURL($.NSURL.URLWithString("https://example.com"));
+const ids = [];
+for (let i = 0; i < urls.count; i++) {
+  const bundle = $.NSBundle.bundleWithURL(urls.objectAtIndex(i));
+  if (!bundle.isNil() && !bundle.bundleIdentifier.isNil()) ids.push(bundle.bundleIdentifier.js);
+}
+JSON.stringify(ids);`;
+
+/** A browser's engine, `Web` for another app that opens https links, `macOS` for any other app. */
+function toolkitOf(bundle: string | null, handlers: ReadonlySet<string> = new Set()): string {
+  if (!bundle) return "macOS";
+  return BROWSERS.find((browser) => browser.pattern.test(bundle))?.toolkit ?? (handlers.has(bundle.toLowerCase()) ? "Web" : "macOS");
 }
 
 const words = (name: string) =>
@@ -142,6 +179,7 @@ type Win = { id: number; pid: number; app: string; title: string; bounds: { x: n
 type Tree = { pid: number; windowId: number; app: string; tokens: Map<string, string>; actions: Map<string, string[]> };
 type Recording = { id: string; dir: string; path: string; active: boolean; reason: string | null; video: string | null; timer: NodeJS.Timeout | null; startedAt: number };
 type Ctx = { until: number };
+type Front = { apps: RunningApp[]; wins: Win[]; app: RunningApp | null; top: Win | null; prompt: Win | null };
 
 /** An app from `list_apps`: an installed app that is not running has pid 0. */
 function appOf(item: Record<string, unknown>): RunningApp | null {
@@ -168,6 +206,15 @@ function winOf(item: Record<string, unknown>): Win | null {
     z: num(item.z_index),
     layer: num(item.layer) ?? 0,
   };
+}
+
+/** One account for text typed in chunks: confirmed when every chunk was, a mix of taken and not taken is partial. */
+function overall(effects: readonly string[]): string {
+  if (!effects.length) return "unverifiable";
+  if (effects.every((effect) => effect === effects[0])) return effects[0]!;
+  const missed = effects.some((effect) => effect === "partial" || effect === "suspected_noop");
+  const took = effects.some((effect) => effect === "confirmed" || effect === "partial");
+  return missed && took ? "partial" : "unverifiable";
 }
 
 /** Front first; a window whose order is unknown goes last. */
@@ -214,6 +261,10 @@ export class MacosCuaDriver extends EventEmitter {
   private readonly trees = new Map<string, Tree>();
   private treeCount = 0;
   private accessibilityOn = false;
+  /** The missing grants macOS was last asked about, and when. */
+  private asked: { missing: string; at: number } | null = null;
+  /** Bundle ids (lower case) of the apps LaunchServices opens https links with, and until when they hold. */
+  private handlers: { ids: ReadonlySet<string>; at: number } | null = null;
   /** Screenshots come back in the answer rather than through a file (after the driver refused the file once). */
   private inlineShots = false;
   private recording: Recording | null = null;
@@ -363,8 +414,10 @@ export class MacosCuaDriver extends EventEmitter {
     // A refusal is decided before anything is sent; a bare failure of an action may have gone part way.
     const ran: Ran = code !== null || data.effect === "refused" || data.status === "refused" || !effects ? "no" : "maybe";
     if (kind === "consent_needed") {
+      this.accessibilityOn = false;
       const screen = /screen/i.test(code ?? "") || /screen recording|screen capture/i.test(text);
-      return new HelperError(kind, `${screen ? RECORDING_OFF : ACCESSIBILITY_OFF} Fix: ${screen ? screenRecordingFix(this.options.macosMajor) : accessibilityFix()}`, ran, false, { ...(code ? { code } : {}), fix: screen ? screenRecordingFix(this.options.macosMajor) : accessibilityFix() });
+      const fix = screen ? this.screenFix() : this.accessFix();
+      return new HelperError(kind, `${screen ? RECORDING_OFF : ACCESSIBILITY_OFF} Fix: ${fix}`, ran, false, { ...(code ? { code } : {}), fix });
     }
     const hint = kind === "needs_screen" ? " It needs the owner's screen: run it in the foreground (foreground: true asks them once)." : kind === "element_gone" ? " Look again: the element changed or is gone." : "";
     return new HelperError(kind, `${text.slice(0, 300)}${hint}`, ran, false, code ? { code } : {});
@@ -381,9 +434,51 @@ export class MacosCuaDriver extends EventEmitter {
     return this.mcp.takes(tool, "delivery_mode") ? { delivery_mode: "foreground" } : {};
   }
 
+  private accessFix(): string {
+    return accessibilityFix(this.options.appPath ?? null);
+  }
+
+  private screenFix(): string {
+    return screenRecordingFix(this.options.macosMajor, this.options.appPath ?? null);
+  }
+
+  /** Cua Driver's grants (the launcher makes it its own responsible process, so they are its own and never Ensemble's). */
   private async permissions(ctx: Ctx): Promise<{ accessibility: boolean; screenRecording: boolean; capturable: boolean | null }> {
     const { data } = await this.tool("check_permissions", {}, ctx);
-    return { accessibility: data.accessibility === true, screenRecording: data.screen_recording === true, capturable: typeof data.screen_recording_capturable === "boolean" ? data.screen_recording_capturable : null };
+    const granted = { accessibility: data.accessibility === true, screenRecording: data.screen_recording === true, capturable: typeof data.screen_recording_capturable === "boolean" ? data.screen_recording_capturable : null };
+    if (!granted.accessibility || !granted.screenRecording) await this.askMacOS(granted);
+    return granted;
+  }
+
+  /**
+   * Has macOS ask the owner for Cua Driver's next missing grant (Accessibility first), through Cua Driver's own
+   * permission host started by LaunchServices, so the prompt and the System Settings entry say "Cua Driver" and
+   * never Ensemble. Once for a set of missing grants every ten minutes; it waits a few seconds at most, never
+   * for the owner's answer.
+   */
+  private async askMacOS(granted: { accessibility: boolean; screenRecording: boolean }): Promise<void> {
+    const appPath = this.options.appPath;
+    const missing = `${granted.accessibility ? "" : "accessibility "}${granted.screenRecording ? "" : "screen_recording"}`.trim();
+    if (!appPath || !missing) return;
+    if (this.asked && this.asked.missing === missing && this.now() - this.asked.at < ASK_AGAIN_MS) return;
+    this.asked = { missing, at: this.now() };
+    const exec = this.options.exec ?? runCommand;
+    const work = (async () => {
+      let file: string | null = null;
+      try {
+        // The host only writes into a file that already exists in its own temporary folder, named like this.
+        const temp = (await exec("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], 3_000)).trim();
+        if (!temp.startsWith("/")) throw new Error("macOS did not say where the user's temporary folder is");
+        file = join(temp, `cua-driver-permissions-${process.pid}-${Date.now()}${randomInt(100_000, 1_000_000)}.json`);
+        await writeFile(file, "", { flag: "wx", mode: 0o600 });
+        await exec("/usr/bin/open", ["-n", "-W", "-g", appPath, "--args", PERMISSIONS_HOST_REQUEST_ARG, "--result-file", file], 20_000);
+      } catch (error) {
+        this.options.log?.(`asking macOS for Cua Driver's grants failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown error"}`);
+      } finally {
+        if (file) await rm(file, { force: true }).catch(() => undefined);
+      }
+    })();
+    await Promise.race([work, new Promise((resolve) => setTimeout(resolve, 3_000).unref?.())]);
   }
 
   /** macOS keeps a process's answer about its grants: a fresh driver reads them again on the next request. */
@@ -399,7 +494,7 @@ export class MacosCuaDriver extends EventEmitter {
       return;
     }
     await this.refresh();
-    throw new HelperError("consent_needed", `${ACCESSIBILITY_OFF} Fix: ${accessibilityFix()}`, "no", false, { fix: accessibilityFix(), permission: "accessibility" });
+    throw new HelperError("consent_needed", `${ACCESSIBILITY_OFF} Fix: ${this.accessFix()}`, "no", false, { fix: this.accessFix(), permission: "accessibility" });
   }
 
   private needSession(): { epoch: number; stream: Stream } {
@@ -414,9 +509,9 @@ export class MacosCuaDriver extends EventEmitter {
     const idle = await this.idle();
     const major = this.options.macosMajor;
     const facts: Record<string, Fact> = {
-      driver: { state: "working", detail: `cua-driver ${this.mcp.health().version ?? this.options.version}, inside ${APP}` },
-      accessibility: granted.accessibility ? { state: "working", detail: `On for ${APP}.` } : { state: "needed", detail: ACCESSIBILITY_OFF, fix: accessibilityFix() },
-      screen_recording: granted.screenRecording ? { state: "working", detail: `On for ${APP}.` } : { state: "needed", detail: RECORDING_OFF, fix: screenRecordingFix(major) },
+      driver: { state: "working", detail: `${DRIVER} ${this.mcp.health().version ?? this.options.version}, started by Ensemble as its own app${this.options.appPath ? ` (${this.options.appPath})` : ""}` },
+      accessibility: granted.accessibility ? { state: "working", detail: `On for ${DRIVER}.` } : { state: "needed", detail: ACCESSIBILITY_OFF, fix: this.accessFix() },
+      screen_recording: granted.screenRecording ? { state: "working", detail: `On for ${DRIVER}.` } : { state: "needed", detail: RECORDING_OFF, fix: this.screenFix() },
       capture: this.proven.capture,
       input: this.proven.input,
       recorder: major !== null && major >= 15 ? { state: "working", detail: "MP4 (H.264) through ScreenCaptureKit." } : { state: "failed", detail: `Recording the screen needs macOS 15 or later${major !== null ? `; this Mac runs macOS ${major}` : ""}. Screenshots work.` },
@@ -437,7 +532,7 @@ export class MacosCuaDriver extends EventEmitter {
   private async sessionStart(ctx: Ctx): Promise<SessionInfo> {
     if (this.session) return { state: "on", epoch: this.session.epoch, streams: [this.session.stream] };
     const granted = await this.permissions(ctx);
-    const fix = screenRecordingFix(this.options.macosMajor);
+    const fix = this.screenFix();
     if (!granted.screenRecording || granted.capturable === false) {
       await this.refresh();
       throw new HelperError("consent_needed", `${RECORDING_OFF} Fix: ${fix}`, "no", false, { fix, permission: "screen_recording" });
@@ -449,7 +544,7 @@ export class MacosCuaDriver extends EventEmitter {
       this.proven.capture = { state: "failed", detail: error instanceof Error ? error.message.slice(0, 200) : "The test screenshot failed.", fix };
       await this.refresh();
       const why = error instanceof Error ? ` (${error.message.slice(0, 160)})` : "";
-      throw new HelperError("consent_needed", `A test screenshot failed${why}: macOS may be asking on the screen to allow ${APP} to record it, or Screen Recording is off. Fix: allow it in the dialog if one shows; otherwise ${fix}`, "no", false, { fix, permission: "screen_recording" });
+      throw new HelperError("consent_needed", `A test screenshot failed${why}: macOS may be asking on the screen to allow ${DRIVER} to record it, or Screen Recording is off. Fix: allow it in the dialog if one shows; otherwise ${fix}`, "no", false, { fix, permission: "screen_recording" });
     }
     this.proven.capture = { state: "working", detail: `${shot.native.width}×${shot.native.height} pixels` };
     this.epoch += 1;
@@ -480,7 +575,7 @@ export class MacosCuaDriver extends EventEmitter {
 
   private async notice(params: Record<string, unknown>): Promise<{ shown: boolean }> {
     const exec = this.options.exec ?? runCommand;
-    const title = (str(params.title) ?? APP).slice(0, 120);
+    const title = (str(params.title) ?? "Ensemble").slice(0, 120);
     const body = (str(params.body) ?? "").slice(0, 300);
     await exec("/usr/bin/osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, body], 5_000);
     return { shown: true };
@@ -613,6 +708,27 @@ export class MacosCuaDriver extends EventEmitter {
       .filter((win): win is Win => win !== null);
   }
 
+  /** The apps that open https links: browsers the bundle list does not know. Read once every ten minutes. */
+  private async browsers(): Promise<ReadonlySet<string>> {
+    const cached = this.handlers;
+    if (cached && this.now() < cached.at) return cached.ids;
+    const exec = this.options.exec ?? runCommand;
+    try {
+      const listed: unknown = JSON.parse((await exec("/usr/bin/osascript", ["-l", "JavaScript", "-e", HTTPS_HANDLERS_JXA], 5_000)).trim());
+      if (!Array.isArray(listed)) throw new Error("not a list");
+      const ids = new Set(listed.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length < 256).map((id) => id.toLowerCase()));
+      this.handlers = { ids, at: this.now() + HANDLERS_TTL_MS };
+    } catch (error) {
+      this.options.log?.(`reading the apps that open https links failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown error"}`);
+      this.handlers = { ids: cached?.ids ?? new Set(), at: this.now() + HANDLERS_RETRY_MS };
+    }
+    return this.handlers.ids;
+  }
+
+  private toolkit(bundle: string | null): string {
+    return toolkitOf(bundle, this.handlers?.ids);
+  }
+
   /** An app with its own windows, front first; window boxes in screen pixels, for the floor's "which window is at this point". */
   private helperApp(app: RunningApp, wins: readonly Win[]): HelperApp {
     const own = wins.filter((win) => win.pid === app.pid && win.layer === 0).sort(byFront);
@@ -620,7 +736,7 @@ export class MacosCuaDriver extends EventEmitter {
     const s = this.scale;
     return {
       name: app.name,
-      toolkit: toolkitOf(app.bundle),
+      toolkit: this.toolkit(app.bundle),
       pid: app.pid,
       app_id: app.bundle,
       windows: own.map((win, index) => ({
@@ -637,33 +753,48 @@ export class MacosCuaDriver extends EventEmitter {
   }
 
   private async appList(ctx: Ctx): Promise<{ apps: HelperApp[]; units: number }> {
+    await this.browsers();
     const [apps, wins] = [await this.apps(ctx), await this.windows(ctx)];
     return { apps: apps.map((app) => this.helperApp(app, wins)), units: apps.length };
   }
 
-  private async focus(params: Record<string, unknown>, ctx: Ctx): Promise<FocusInfo> {
+  /** The app in front, its window in front (the top one that shows), and a password prompt of the system if one shows. */
+  private async front(ctx: Ctx): Promise<Front> {
+    await this.browsers();
     const [apps, wins] = [await this.apps(ctx), await this.windows(ctx)];
-    const front = apps.find((app) => app.active) ?? null;
-    const top = front ? wins.filter((win) => win.pid === front.pid && win.layer === 0 && win.onScreen && !win.minimized).sort(byFront)[0] ?? null : null;
-    const names = new Map(apps.map((app) => [app.pid, app.name]));
-    const prompt = wins.find((win) => win.onScreen && PROMPT_APPS.test(win.app || names.get(win.pid) || ""));
-    const documents: NonNullable<FocusInfo["documents"]> = [];
-    if (params.documents) {
-      // cua-driver does not read a browser's address: every browser window that shows is a page that cannot be read.
-      for (const app of apps.filter((item) => toolkitOf(item.bundle) !== "macOS")) {
-        const own = wins.filter((win) => win.pid === app.pid && win.layer === 0 && win.onScreen && !win.minimized).sort(byFront);
-        for (const win of own) documents.push({ app: app.name, url: null, window: win.title, active: app === front && win === own[0] });
+    const app = apps.find((item) => item.active) ?? null;
+    const top = app ? (wins.filter((win) => win.pid === app.pid && win.layer === 0 && win.onScreen && !win.minimized).sort(byFront)[0] ?? null) : null;
+    const names = new Map(apps.map((item) => [item.pid, item.name]));
+    const prompt = wins.find((win) => win.onScreen && PROMPT_APPS.test(win.app || names.get(win.pid) || "")) ?? null;
+    return { apps, wins, app, top, prompt };
+  }
+
+  private focusOf(front: Front, documents: boolean): FocusInfo {
+    const { apps, wins, app, top, prompt } = front;
+    const pages: NonNullable<FocusInfo["documents"]> = [];
+    if (documents) {
+      // cua-driver does not read a browser's address, so every window of a browser is a page that cannot be read:
+      // also one that is minimised, hidden or on another Space, where an element can still be pressed. Which one
+      // the keyboard reaches comes from what shows in front.
+      for (const browser of apps.filter((item) => this.toolkit(item.bundle) !== "macOS")) {
+        const own = wins.filter((win) => win.pid === browser.pid && win.layer === 0).sort(byFront);
+        const shown = own.find((win) => win.onScreen && !win.minimized) ?? null;
+        for (const win of own) pages.push({ app: browser.name, url: null, window: win.title, active: browser === app && win === shown });
       }
     }
     return {
-      app: front ? { name: front.name, toolkit: toolkitOf(front.bundle), pid: front.pid, app_id: front.bundle } : null,
+      app: app ? { name: app.name, toolkit: this.toolkit(app.bundle), pid: app.pid, app_id: app.bundle } : null,
       window: top ? { index: 0, title: top.title, role: "window" } : null,
       shell: false,
       prompt: prompt ? { title: prompt.title || "Authentication" } : null,
       // macOS does not say here which element has the keyboard.
       focused: null,
-      documents,
+      documents: pages,
     };
+  }
+
+  private async focus(params: Record<string, unknown>, ctx: Ctx): Promise<FocusInfo> {
+    return this.focusOf(await this.front(ctx), params.documents === true);
   }
 
   private resolve(apps: readonly RunningApp[], ref: unknown): RunningApp | null {
@@ -675,6 +806,7 @@ export class MacosCuaDriver extends EventEmitter {
 
   private async tree(params: Record<string, unknown>, ctx: Ctx): Promise<TreeResult> {
     await this.needAccessibility(ctx);
+    await this.browsers();
     const apps = await this.apps(ctx);
     const app = this.resolve(apps, params.app);
     if (!app) throw new HelperError("target_not_found", `No running app is called ${String(params.app)}: desktop_apps lists them, desktop_open opens one.`, "no");
@@ -825,6 +957,7 @@ export class MacosCuaDriver extends EventEmitter {
 
   /** Opens an app without bringing it forward (cua-driver's launch never takes the front), and waits for a window. */
   private async launch(params: Record<string, unknown>, ctx: Ctx): Promise<Record<string, unknown>> {
+    await this.browsers();
     const ref = String(params.id ?? "").trim();
     const apps = await this.apps(ctx, false);
     const lower = ref.toLowerCase();
@@ -918,12 +1051,46 @@ export class MacosCuaDriver extends EventEmitter {
     return { sent: repeat, ...this.sent(data) };
   }
 
+  /**
+   * Typing into the app in front, a few characters at a time. Between chunks it stops when the window in front
+   * changed (or now falls under the floor, or a password prompt opened), and when the owner used the keyboard or
+   * mouse since the last key (macOS's idle time is shorter than the time since it), like the Linux helper.
+   */
   private async text(params: Record<string, unknown>, ctx: Ctx): Promise<Record<string, unknown>> {
     await this.inputReady(ctx);
     if (params.secret === true && this.recording) throw this.noSecretWhileRecording();
-    const text = typeof params.text === "string" ? params.text : "";
-    const { data } = await this.tool("type_text", { text, ...this.desktop("type_text") }, ctx, true);
-    return { typed: { keysym: [...text].length, atspi: 0, clipboard: 0, untyped: 0 }, stopped: null, ...this.sent(data) };
+    const chars = [...(typeof params.text === "string" ? params.text : "")];
+    const start = await this.front(ctx);
+    const where = (front: Front) => `${front.app?.pid ?? "-"}:${front.top?.id ?? "-"}`;
+    const effects: string[] = [];
+    let typed = 0;
+    let stopped: "focus_moved" | "owner_input" | null = null;
+    for (let at = 0; at < chars.length; at += TYPING_CHUNK) {
+      if (at > 0) {
+        const now = await this.front(ctx);
+        if (where(now) !== where(start) || now.prompt || keyboardFloor(this.focusOf(now, true))) {
+          stopped = "focus_moved";
+          break;
+        }
+      }
+      const chunk = chars.slice(at, at + TYPING_CHUNK).join("");
+      const { data } = await this.tool("type_text", { text: chunk, ...this.desktop("type_text") }, ctx, true).catch((error: unknown) => {
+        if (typed > 0 && error instanceof HelperError && error.ran === "no") throw new HelperError(error.kind, `${error.message} (after ${typed} of ${chars.length} characters were typed)`, "yes", error.retryable, error.data);
+        throw error;
+      });
+      const lastKeyAt = this.now();
+      typed += Math.min(TYPING_CHUNK, chars.length - at);
+      effects.push(str(data.effect) ?? "unverifiable");
+      if (at + TYPING_CHUNK >= chars.length) break;
+      // A pause after the last key: input during it is not the driver's.
+      await this.sleep(TYPING_PAUSE_MS);
+      const idle = (await this.idle()).idle_ms;
+      if (idle !== null && idle + OWNER_INPUT_MARGIN_MS < this.now() - lastKeyAt) {
+        stopped = "owner_input";
+        break;
+      }
+    }
+    return { typed: { keysym: typed, atspi: 0, clipboard: 0, untyped: 0 }, stopped, ...this.sent({ effect: overall(effects) }) };
   }
 
   // ── recording ────────────────────────────────────────────────────────────

@@ -54,7 +54,7 @@ mkdirSync(sidecarDir, { recursive: true });
 if (options.skipSidecar) {
   copyNodeOnly(sidecarDir);
 } else {
-  // Desktop control on a Mac runs only in the Ensemble app, which carries cua-driver itself.
+  // Desktop control on a Mac uses the Cua Driver the installed Ensemble app carries.
   run(process.execPath, ["scripts/assemble-desktop-sidecar.mjs", "--dest", sidecarDir, "--no-cua-driver"], { cwd: root });
 }
 
