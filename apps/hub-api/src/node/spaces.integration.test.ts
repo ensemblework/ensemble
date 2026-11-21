@@ -162,7 +162,8 @@ test("parity: a node can call every assistant tool but the two its session tools
     assert.equal(spec.function.parameters.properties?.space?.type, "string", `${spec.function.name} takes a space`);
   }
   const shown = seen[0]!.specs;
-  const hub = shown.filter((spec) => spec.name.startsWith("hub_"));
+  // hub_use_tool only names another tool: the tool it names takes the space.
+  const hub = shown.filter((spec) => spec.name.startsWith("hub_") && spec.name !== "hub_use_tool");
   assert.ok(hub.length > 50, "with toolsets off the model sees them");
   for (const spec of hub) assert.equal(spec.parameters.properties?.space?.type, "string", `${spec.name} takes a space`);
   for (const spec of shown.filter((row) => row.name.startsWith("node_"))) assert.equal(spec.parameters.properties?.space, undefined, `${spec.name} is the node's own`);

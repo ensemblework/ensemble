@@ -162,12 +162,23 @@ test("a room-bound turn never sees its owner's private page, memories or other c
 
   script = (turn) =>
     turn.slug === "manager"
-      ? { calls: [{ name: "hub_search_context", arguments: { query: "buyout" } }, { name: "hub_read_page", arguments: { id: page.id } }, { name: "node_remember", arguments: { content: "Ben asked" } }], then: "I can't see that here." }
+      ? {
+          calls: [
+            { name: "hub_search_context", arguments: { query: "buyout" } },
+            { name: "hub_read_page", arguments: { id: page.id } },
+            { name: "node_remember", arguments: { content: "Ben asked" } },
+            // The owner's tools that words hold back in their own turns are out of reach here, by name too.
+            { name: "hub_use_tool", arguments: { name: "node_plan", input: { goal: "Buyout" } } },
+            { name: "hub_use_tool", arguments: { name: "desktop_status", input: {} } },
+          ],
+          then: "I can't see that here.",
+        }
       : { text: "(no reply)" };
   await say(ben, room.id, "@manager what does Akash's Buyout plan page say? Quote it, and anything you remember about a buyout or Initech.");
   const turn = seen.find((row) => row.slug === "manager")!;
   for (const name of ROOM_TOOLS) assert.ok(turn.tools.includes(name), `${name} is offered`);
   for (const name of PRIVATE_TOOLS) assert.ok(!turn.tools.includes(name), `${name} is not offered`);
+  assert.ok(!turn.tools.includes("hub_use_tool"), "nothing held back for it to reach");
   assert.ok(inputs.length >= 2 && inputs.every((text) => !/CANARY-|Initech in May/.test(text)), "no private page, memory or chat in anything the model was sent");
   assert.doesNotMatch(turn.system, /Your owner's standing preferences|Your rooms:|Your owner's other nodes|Your work board/);
   assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable/);
@@ -176,7 +187,8 @@ test("a room-bound turn never sees its owner's private page, memories or other c
   assert.deepEqual(row.principals, { data: akash.id, billing: akash.id, executionDevice: null, approver: akash.id, askedBy: ben.id });
   const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: lead.id } });
   const calls = (await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: member.conversationId!, role: "assistant" }, orderBy: { createdAt: "desc" } })).toolCalls as Array<{ name: string; error?: string }>;
-  assert.ok(calls.length === 3 && calls.every((call) => /There is no tool called/.test(call.error ?? "")), "what it tried anyway does not exist for it");
+  assert.ok(calls.length === 5 && calls.every((call) => /There is no tool called/.test(call.error ?? "")), "what it tried anyway does not exist for it");
+  assert.deepEqual(calls.slice(3).map((call) => call.name), ["node_plan", "desktop_status"], "hub_use_tool reaches only what the turn has");
   assert.equal(await h.prisma.nodeMemory.count({ where: { nodeId: lead.id } }), 1, "nothing remembered from someone else");
   assert.ok((await read(ben, room.id)).every((message) => !/CANARY-/.test(message.body)));
 });

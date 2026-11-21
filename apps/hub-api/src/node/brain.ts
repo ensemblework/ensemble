@@ -38,7 +38,8 @@ import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
-import { tieredTools } from "./skills.js";
+import { chooseTiers } from "./skills.js";
+import { activeContextConfig } from "../context/config.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
 import type { OwnToolEvent } from "../subscriptions/bridge.js";
@@ -56,8 +57,8 @@ async function ownerLastWords(prisma: PrismaClient, roomId: string, owner: strin
 }
 
 /** The tools this conversation's last replies used: a turn that goes on with app testing keeps those tools. */
-async function recentTools(prisma: PrismaClient, conversationId: string): Promise<string[]> {
-  const rows = await prisma.assistantMessage.findMany({ where: { conversationId, role: "assistant" }, orderBy: { createdAt: "desc" }, take: 3, select: { toolCalls: true } });
+async function recentTools(prisma: PrismaClient, conversationId: string, replies = activeContextConfig().tools.recentReplies): Promise<string[]> {
+  const rows = await prisma.assistantMessage.findMany({ where: { conversationId, role: "assistant" }, orderBy: { createdAt: "desc" }, take: replies, select: { toolCalls: true } });
   return rows.flatMap((row) => (Array.isArray(row.toolCalls) ? row.toolCalls : []).map((call) => String((call as { name?: unknown } | null)?.name ?? "")));
 }
 
@@ -377,7 +378,9 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // On the owner's own AI plan the agent is the loop: web_task's sub-agent would spend Ensemble's model, so it drives the browser itself.
   const ownLoop = isSubscriptionProvider(choice.provider);
   // What the owner asked this turn: it chooses the advanced tools, and the guides and their tools, not the packet around it.
-  const intent = step || carriesOn ? "" : `${ownerWords}\n${turn.note ?? ""}`.trim();
+  // The owner's own other nodes ask on their behalf; other people's words never choose tools.
+  const nodeWords = transcriptRows.slice(calledFrom).filter((row) => row.authorKind === "node" && row.userId === owner).map((row) => row.body).join("\n");
+  const intent = step || carriesOn ? "" : `${ownerWords}\n${nodeWords}\n${turn.note ?? ""}`.trim();
   // A crew's lead, a node with helpers or other nodes beside it, a crew or task room or a plan's turn plans and delegates whatever the words.
   const crewWork = () =>
     Boolean(lead) ||
@@ -385,12 +388,17 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     room.kind === "task" ||
     Boolean(turn.planId) ||
     prisma.nodeAgent.count({ where: { OR: [{ parentNodeId: node.id }, { userId: node.userId, status: "active", parentNodeId: null, id: { not: node.id } }] } }).then((count) => count > 0, () => true);
-  const tiered = step || carriesOn ? offered : tieredTools(offered, intent, await recentTools(prisma, conversationId), { crew: await crewWork() });
+  const tiers = step || carriesOn ? null : chooseTiers(offered, intent, await recentTools(prisma, conversationId), { crew: await crewWork() });
+  const tiered = tiers ? tiers.kept : offered;
+  trace.tiers = tiers?.tiers ?? null;
   const extraTools = ownLoop ? tiered.filter((tool) => tool.name !== "web_task") : tiered;
-  // The rest stay within reach on the owner's plan: hub_use_tool names them.
-  const hiddenTools = offered.filter((tool) => tool.name !== "web_task" && !tiered.includes(tool));
+  // What the words held back stays within reach on both loops (hub_use_tool names it), only in a turn the owner started and
+  // reads alone: a room-bound turn, a draft for someone else or another person's turn gets no more than it is shown.
+  const ownersTurn = ownerOnly && !fromNonOwner && !drafting && !bound;
+  const hiddenTools = ownersTurn ? offered.filter((tool) => tool.name !== "web_task" && !tiered.includes(tool)) : [];
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
-  const offeredNames = new Set(extraTools.map((tool) => tool.name));
+  // A skill whose tools are held back is still listed: they are within reach.
+  const offeredNames = new Set([...extraTools, ...hiddenTools].map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   // On the owner's AI plan the agent keeps its own tools (a helper only with a computer grant) in a turn its owner started
   // and only they read: the computer judges each call by the node's folder policy, and what that asks goes to the owner
@@ -484,7 +492,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       spaces: gateway,
       // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
       extraTools: (isSubscriptionProvider(pick.provider) ? extraTools : tiered).map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
-      ...(isSubscriptionProvider(pick.provider) && hiddenTools.length ? { hiddenTools: hiddenTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)) } : {}),
+      ...(hiddenTools.length ? { hiddenTools: hiddenTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)) } : {}),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.

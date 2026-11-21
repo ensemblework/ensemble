@@ -16,6 +16,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LINK = /^ensemble:\/\/(page|task|project)s?\/([0-9a-f-]{36})$/i;
 const CANDIDATES = 2_000;
 const CLOSEST = 3;
+/** Longer than any title: such a value is matched to nothing, and no closest records are looked for. */
+const MAX_GIVEN = 200;
+/** Cells of edit distance one lookup may fill across all its candidates, so a long value or many records never stall the server. */
+const WORK = 2_000_000;
 
 type Row = { id: string; title: string };
 type Db = Pick<PrismaClient, "taskPage" | "task" | "project">;
@@ -37,30 +41,51 @@ async function rows(db: Db, userId: string, kind: RefKind): Promise<Row[]> {
   return (await db.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, orderBy: order, take: CANDIDATES })).map((row) => ({ id: row.id, title: row.name }));
 }
 
-/** Edit distance, for ids a character or two apart and titles nearly the same. */
-function distance(a: string, b: string): number {
-  if (a === b) return 0;
+/**
+ * The edit distance of `a` and `b` when it is at most `max`, else `max + 1`: only the cells within `max` of the
+ * diagonal are filled (`a.length × (2·max + 1)` at most), and it stops once a whole row is past `max`.
+ */
+function within(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
   let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
   for (let i = 1; i <= a.length; i += 1) {
-    const current = [i];
-    for (let j = 1; j <= b.length; j += 1) current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    const current = new Array<number>(b.length + 1).fill(max + 1);
+    current[0] = i;
+    let best = i;
+    for (let j = Math.max(1, i - max); j <= Math.min(b.length, i + max); j += 1) {
+      current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      best = Math.min(best, current[j]!);
+    }
+    if (best > max) return max + 1;
     previous = current;
   }
-  return previous[b.length]!;
+  return Math.min(previous[b.length]!, max + 1);
 }
 
-/** The records closest to what was given: by id when it was an id (only near ones), else by title (one holding the other first). */
+/**
+ * The records closest to what was given: by id when it was an id (only a few characters apart), else by title (one
+ * holding the other first, then titles a few edits away). A value longer than any title gets none; the work is bounded.
+ */
 function closest(candidates: readonly Row[], given: string): Row[] {
+  if (given.length > MAX_GIVEN) return [];
   const byId = UUID.test(given);
-  const key = titleKey(given);
-  return candidates
-    .map((row, order) => {
-      if (byId) return { row, order, rank: distance(row.id.toLowerCase(), given.toLowerCase()) };
-      const title = titleKey(row.title);
-      const holds = title.includes(key) || key.includes(title) ? 0 : 1;
-      return { row, order, rank: holds * 1_000 + distance(title, key) };
-    })
-    .filter((item) => (byId ? item.rank <= 12 : item.rank < 1_000 || item.rank - 1_000 <= Math.max(3, Math.floor(key.length / 2))))
+  const key = byId ? given.toLowerCase() : titleKey(given);
+  const cutoff = byId ? 12 : Math.max(3, Math.floor(key.length / 2));
+  let budget = WORK;
+  const ranked: Array<{ row: Row; order: number; rank: number }> = [];
+  for (const [order, row] of candidates.entries()) {
+    if (budget <= 0) break;
+    const other = byId ? row.id.toLowerCase() : titleKey(row.title).slice(0, MAX_GIVEN);
+    if (!byId && (other.includes(key) || (other.length >= 3 && key.includes(other)))) {
+      ranked.push({ row, order, rank: Math.abs(other.length - key.length) });
+      continue;
+    }
+    if (Math.abs(other.length - key.length) > cutoff) continue;
+    budget -= other.length * (2 * cutoff + 1);
+    const apart = within(other, key, cutoff);
+    if (apart <= cutoff) ranked.push({ row, order, rank: (byId ? 0 : 1_000) + apart });
+  }
+  return ranked
     .sort((a, b) => a.rank - b.rank || a.order - b.order)
     .slice(0, CLOSEST)
     .map((item) => item.row);
@@ -71,7 +96,7 @@ const named = (rows: readonly Row[]) => rows.map((row) => `“${row.title.slice(
 /** What to say when nothing has that id or title: the closest records by title with their ids, or how to find one. */
 async function notFound(db: Db, userId: string, kind: RefKind, given: string, candidates?: readonly Row[]): Promise<string> {
   const near = closest(candidates ?? (await rows(db, userId, kind)), given);
-  const what = UUID.test(given) ? `No ${WORD[kind]} has the id ${given}.` : `No ${WORD[kind]} is called “${given.slice(0, 120)}”.`;
+  const what = UUID.test(given) ? `No ${WORD[kind]} has the id ${given}.` : `No ${WORD[kind]} is called “${given.length > 120 ? `${given.slice(0, 120)}…` : given}”.`;
   return near.length ? `${what} Closest: ${named(near)}. Pass one of these ids, or a ${WORD[kind]}'s exact title.` : `${what} List them to find its id, or pass its exact title.`;
 }
 
@@ -116,6 +141,7 @@ export async function resolveRefs(db: Db, userId: string, input: unknown, fields
     const link = LINK.exec(value.trim());
     let id: string;
     if (link && link[1]!.toLowerCase() === kind) id = link[2]!.toLowerCase();
+    else if (value.trim().length > MAX_GIVEN) throw new RefLookupError(await notFound(db, userId, kind, value.trim(), []));
     else {
       const candidates = await rows(db, userId, kind);
       const key = titleKey(value);

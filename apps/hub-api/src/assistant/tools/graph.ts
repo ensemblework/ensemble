@@ -257,7 +257,7 @@ export const graphTools = [
   defineTool({
     name: "hub_list_due",
     area: "tasks",
-    description: "What is due between two dates (YYYY-MM-DD, inclusive), across open tasks, upcoming deliverables, and active reminders. When the dates include today, the result also counts and names the open tasks already overdue (due before from), which belong in today's plan.",
+    description: "What is due between two dates (YYYY-MM-DD, inclusive), across open tasks, upcoming deliverables, and active reminders. When the dates include today, the result also counts the open tasks already overdue (due before from) and names the most recent ones, which belong in today's plan.",
     input: z.object({
       from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -290,16 +290,27 @@ export const graphTools = [
               take: 40,
             }),
       ]);
-      // A day plan asked for today alone would miss what is late: the overdue tasks come with it.
+      // A day plan asked for today alone would miss what is late: the overdue tasks come with it, counted in full and
+      // the most recently overdue first. A due within a day of `from` falls on either side of it by the owner's zone.
       const today = zonedParts(zone).date;
-      const late =
-        input.from <= today && today <= input.to
-          ? (await ctx.prisma.task.findMany({ where: { ...open, due: { lt: day(input.from, 1) } }, select, orderBy: { due: "asc" }, take: 120 })).filter((row) => row.due && dueDay(row.due, zone) < input.from).slice(0, 40)
-          : [];
-      const overdue = late.length ? ` ${late.length} more task(s) overdue: ${late.slice(0, 5).map((task) => `“${task.title.slice(0, 80)}” (due ${dueDay(task.due!, zone)})`).join(", ")}${late.length > 5 ? ", …" : ""}.` : "";
+      let late: Array<{ id: string; title: string; status: string; due: Date | null; priority: string }> = [];
+      let lateCount = 0;
+      if (input.from <= today && today <= input.to) {
+        const [edge, older, olderCount] = await Promise.all([
+          ctx.prisma.task.findMany({ where: { ...open, due: { gte: day(input.from, -1), lt: day(input.from, 1) } }, select, orderBy: { due: "desc" }, take: 200 }),
+          ctx.prisma.task.findMany({ where: { ...open, due: { lt: day(input.from, -1) } }, select, orderBy: [{ due: "desc" }, { id: "asc" }], take: 40 }),
+          ctx.prisma.task.count({ where: { ...open, due: { lt: day(input.from, -1) } } }),
+        ]);
+        const edgeLate = edge.filter((row) => row.due && dueDay(row.due, zone) < input.from);
+        late = [...edgeLate, ...older].slice(0, 40);
+        lateCount = edgeLate.length + olderCount;
+      }
+      const overdue = lateCount
+        ? ` ${lateCount} more task(s) overdue, the most recent first: ${late.slice(0, 5).map((task) => `“${task.title.slice(0, 80)}” (due ${dueDay(task.due!, zone)})`).join(", ")}${lateCount > 5 ? ", …" : ""}.`
+        : "";
       return toolOk(
         `${tasks.length} task(s), ${deliverables.length} deliverable(s), ${reminders.length} reminder(s) due ${input.from} to ${input.to}.${overdue}`,
-        { tasks, deliverables, reminders, ...(late.length ? { overdue: late } : {}) },
+        { tasks, deliverables, reminders, ...(lateCount ? { overdue: { count: lateCount, mostRecent: late } } : {}) },
       );
     },
   }),

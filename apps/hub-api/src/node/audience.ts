@@ -289,6 +289,10 @@ export async function roomBoundTurn(
           withoutTools,
           spaces,
           extraTools: tools,
+          // Only the room's tools: none of the owner's held back for words (node/skills.ts tiers) is within reach here.
+          hiddenTools: undefined,
+          coreTools: undefined,
+          routeBy: undefined,
           extraRefs: [],
           // Files on the owner's messages stay in the owner's Files: a room-bound turn does not open them.
           mentions: undefined,

@@ -44,10 +44,11 @@ import { NODE_TOOL_RULE_SOURCE } from "../device-tools/policy.js";
 import { isEnsembleWorkFolder, ownFolderName, resolveToolFolder } from "../device-tools/folders.js";
 import { publicWebAddress } from "../device-tools/http.js";
 import { loadSettings } from "../remote/store.js";
-import { expandHome, harmlessPath, inTemp, isNeverProgram, within, workspaceRoot } from "../workspace/guard.js";
+import { expandHome, harmlessPath, inTemp, isNeverProgram, outsideRefusal, within, workspaceRoot } from "../workspace/guard.js";
+import { gitWrites } from "../workspace/git-read.js";
 import { globRoot, HARMLESS, judgeFloor, pathsOf, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
 import { parseShell } from "../workspace/shell-parse.js";
-import { outsideArgs, readsOnly, realOutside } from "../workspace/tools.js";
+import { gitReadSafeAt, outsideArgs, realOutside, segmentReadsOnly } from "../workspace/tools.js";
 import type { AgentMcpServer } from "./agent-mcp.js";
 import type { OwnAnswer, OwnAsk, OwnAskKind, OwnJudge, OwnVerdict } from "./bridge.js";
 import { logRefused } from "./own-tools.js";
@@ -416,8 +417,18 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
         const outside = await beyond(path);
         if (outside) return outside;
       }
-      const writes = !readsOnly(segment.argv);
+      // The same test as a coding run's (workspace/tools.ts `segmentReadsOnly`, git-read.ts): nothing set in front, an allowlisted
+      // git read, and a repository whose own config starts no program.
+      const git = programOf(segment.argv[0]!) === "git";
+      const writes = !segmentReadsOnly(segment) || (git && !(await gitReadSafeAt(segment.argv, segment.cwd)));
       if (writes) add(await folderNeed(segment.cwd, "run", operation, () => what, `command:${command.trim().slice(0, 1000)}`));
+      // A git config write to --global, --system or --file writes that file wherever the command runs.
+      for (const path of git ? gitWrites(segment.argv, segment.cwd) : []) {
+        const real = await realOutside(path);
+        const floor = outsideRefusal(real, true);
+        if (floor) return deny(`${shown(real)}: ${floor}`);
+        add(await folderNeed(real, "files", operation, () => what));
+      }
       for (const redirect of redirects) if (redirect.write && !harmlessPath(redirect.full)) add(await folderNeed(redirect.full, "files", operation, () => what));
       if (writes) for (const path of named) add(await folderNeed(path, "run", operation, () => what));
     }

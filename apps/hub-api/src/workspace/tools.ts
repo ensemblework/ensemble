@@ -20,7 +20,8 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, gitReadsOnly, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { gitParts, gitReadsOnly } from "./git-read.js";
 import { expandWord, programArgv } from "./shell-parse.js";
 import { commandKind, urlKind } from "./command-kind.js";
 import type { RunChanges } from "./outside-changes.js";
@@ -592,7 +593,7 @@ const READ_ONLY_PROGRAMS = new Set([
   "jq", "yq", "xxd", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum", "cksum",
   "cd", "pushd", "popd", "pwd", "echo", "printf", "true", "false", "sleep", "test", "[", "which", "type", "whereis", "date", "uname", "whoami", "id", "hostname", "ps", "lsof",
 ]);
-/** True when a command only reads: a read-only tool, or a git command that only reads (guard.ts `gitReadsOnly`). */
+/** True when a command only reads: a read-only tool, or a git command that only reads (git-read.ts `gitReadsOnly`). */
 export function readsOnly(argv: string[]): boolean {
   const program = baseName(argv[0] ?? "");
   if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
@@ -602,6 +603,15 @@ export function readsOnly(argv: string[]): boolean {
   if (READ_ONLY_PROGRAMS.has(program)) return true;
   if (program === "git") return gitReadsOnly(argv);
   return false;
+}
+
+/**
+ * A shell segment that only reads, for both judges (engines/judge.ts, subscriptions/node-own-tools.ts): its program
+ * only reads and nothing is set in front of it (`VAR=value` or `env` can make a reader run anything: `LD_PRELOAD`,
+ * `GIT_EXTERNAL_DIFF`, `GIT_CONFIG_COUNT`).
+ */
+export function segmentReadsOnly(segment: { argv: string[]; assigned?: boolean }): boolean {
+  return !segment.assigned && segment.argv.length > 0 && readsOnly(segment.argv);
 }
 
 /** Read-only programs that still reach the network, run commands of their own (`sed`'s `e`), wait for a keyboard, or read a project config that can set a pager (`bat`, `ack`). */
@@ -687,6 +697,29 @@ async function gitConfigSafe(root: string, cwd: string): Promise<boolean> {
     if (dir === dirname(dir)) break;
   }
   return false;
+}
+
+/** A repository's own config starts no program (a pager, a diff or filter driver, fsmonitor, hooks) and pulls in no other file; none at all is safe. */
+async function repoConfigSafe(gitDir: string): Promise<boolean> {
+  const text = await readFile(join(gitDir, "config"), "utf8").catch((error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? "" : null));
+  return text !== null && !DANGEROUS_GIT_CONFIG.test(text) && !/^\s*\[include/im.test(text);
+}
+
+/**
+ * For a git read outside a coding run's folder (the node's own-tools judge): the repository it reads, where `-C` and
+ * `--git-dir` point, has no config that starts a program. Outside any repository nothing of one is read; a `.git`
+ * file (a linked worktree or a submodule) is not followed, so its read is not taken as safe.
+ */
+export async function gitReadSafeAt(argv: string[], cwd: string): Promise<boolean> {
+  const parts = gitParts(argv);
+  if (!parts) return false;
+  const dir = parts.dirs.reduce((at, next) => resolve(at, expandHome(next)), cwd);
+  if (parts.gitDir) return repoConfigSafe(resolve(dir, expandHome(parts.gitDir)));
+  for (let at = dir; ; at = dirname(at)) {
+    const info = await stat(join(at, ".git")).catch(() => null);
+    if (info) return info.isDirectory() ? repoConfigSafe(join(at, ".git")) : false;
+    if (at === dirname(at)) return true;
+  }
 }
 
 /**

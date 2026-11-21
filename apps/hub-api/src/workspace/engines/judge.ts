@@ -17,7 +17,8 @@ import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, harmlessPath, holdsProtected, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
-import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, realOutside, segmentReadsOnly, WRITE_TOOL, type JobContext } from "../tools.js";
+import { gitWrites } from "../git-read.js";
 import type { ShellSegment } from "../shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
 import { inSkillFolder, skillRootsHere, skillScript } from "./skills.js";
@@ -181,7 +182,12 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   const writesIn: string[] = [];
   const roots = skillRootsHere();
   for (const segment of parsed) {
-    const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+    const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
+    // A git config write to --global, --system or --file writes that file, wherever the command runs (git-read.ts).
+    for (const path of gitWrites(segment.argv, segment.cwd)) {
+      mark(path, true);
+      writesIn.push(path);
+    }
     // Running a skill's script (`python3 ~/.agents/skills/x/scripts/search.py …`, or from that folder) reads the
     // skill's folder, never changes it; anything else the command names or redirects to is judged as usual.
     const script = writes ? skillScript(segment, roots) : null;
@@ -206,7 +212,7 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   // each is held to the hard floor. The mode was already asked about that folder itself.
   for (const segment of parsed) {
     if (!segment.argv.length || within(ctx.root, segment.cwd)) continue;
-    const writes = !readsOnly(segment.argv);
+    const writes = !segmentReadsOnly(segment);
     for (const arg of plainArgs(segment.argv)) {
       const real = await realOutside(resolve(segment.cwd, arg));
       const floor = within(ctx.root, real) || harmlessPath(real) ? null : outsideRefusal(real, writes);
@@ -292,7 +298,7 @@ export async function judgeFloor(root: string, call: EngineCall, options: { neve
       if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
     }
     for (const segment of parsed) {
-      const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+      const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
       // Every path a program names (its plain arguments too, in whatever folder it runs) and every redirect.
       const named = segment.argv.length ? [...outsideArgs(root, segment.argv, segment.cwd), ...plainArgs(segment.argv).map((arg) => resolve(segment.cwd, expandHome(arg)))] : [];
       for (const path of named) {
