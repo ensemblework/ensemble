@@ -170,7 +170,12 @@ export function agentHome(dir: string): boolean {
   return Object.keys(accounts).length > 0;
 }
 
-export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log }) {
+/**
+ * `listen`: where the API answers (default a free port on 127.0.0.1). Serve mode (serve.ts) listens on
+ * `localhost` so a browser on another localhost port shares its host-only session cookie; links the API
+ * makes then name `localhost` too. The owner's computer always pairs over 127.0.0.1.
+ */
+export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log; listen?: { port: number; host: "127.0.0.1" | "localhost" } }) {
   // Chromium's singleton socket lives in the computer's TMPDIR, and a Unix socket path holds at most 107 bytes.
   if (Buffer.byteLength(join(options.workDir, "nv-XXXXXX", "pc", "tmp")) > 60) throw new Error(`The work folder ${options.workDir} is too deep for the computer's browser: pick one with a shorter path.`);
   mkdirSync(options.workDir, { recursive: true });
@@ -190,10 +195,12 @@ export async function bootWorld(options: { workDir: string; agent: string; model
   if (process.env.ENSEMBLE_TEST_DATABASE_URL || (await prisma.user.count()) > 0) throw new Error("The eval runs only on a fresh in-memory database.");
 
   process.env.ENSEMBLE_DESKTOP = "1";
-  await harness.app.listen({ port: 0, host: "127.0.0.1" });
+  const listen = options.listen ?? { port: 0, host: "127.0.0.1" };
+  await harness.app.listen(listen);
   const port = (harness.app.server.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${port}`;
-  process.env.HUB_API_PUBLIC_URL = base;
+  const origin = `http://${listen.host}:${port}`;
+  process.env.HUB_API_PUBLIC_URL = origin;
   const { setLocalPort } = await import("../../../apps/hub-api/src/workspace/engines/registry.js");
   setLocalPort(port);
 
@@ -268,6 +275,8 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     app: harness.app,
     prisma,
     base,
+    /** The API's address for browsers (`localhost` in serve mode). */
+    origin,
     dirs,
     agent: options.agent,
     model: options.model,

@@ -9,6 +9,7 @@
 | `eval/node/run.ts` | The command: runs tasks, answers the owner's cards, grades, writes results, deletes the agent sessions it started |
 | `eval/node/lib/world.ts` | The API in the eval process on an in-memory PGlite database, turns on the owner's subscription on this computer (`ENSEMBLE_DESKTOP=1`) |
 | `eval/node/lib/computer-main.ts` | The owner's computer: a second process with its own in-memory database, paired through the real remote loop, running device tools, coding sessions and the browser on this machine |
+| `eval/node/serve.ts` | Serve mode: the same world left running with one owner and one DM node, for a person or a browser test on the real Ensemble Node website; it answers no card |
 | `eval/node/tasks/` | The `core` suite (11 tasks, a DM with one node), the `crew` suite (4 tasks, a lead, a developer and a tester) and the `hard` suite (10 tasks on what Node v2 changes: many reads, old memories and meetings, overdue work, the desktop, honest delivery, interruptions) |
 | `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; `baseline-v1-summary.md` is the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna, all three suites side by side |
 
@@ -21,6 +22,16 @@ pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/run.ts --tasks suite:co
 ```
 
 `--tasks` takes task ids, `suite:core`, `suite:crew`, `suite:hard` or `all`. `--judge-model` picks the rubric judge's model, `--regrade <results.json>` grades a saved run again from its traces, `--report <results.json>` writes a saved run's summary again, `--summary <results.json>,…` puts several runs' suites side by side in one file, and `--work-dir` moves the scratch folder (outside the repository, with a short path).
+
+## Serve mode
+
+`eval/node/serve.ts` boots the same isolated world and keeps it running until SIGTERM, for driving a node through the Ensemble Node website by hand or from a browser test:
+
+```
+pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/serve.ts --port 4100 --web http://localhost:3300 --work-dir <dir>
+```
+
+It makes one owner, pairs the computer process with them and makes one DM node, listens on `localhost`, and allows only the website at `--web` (`http://localhost:<port>`, set as the API's `ENSEMBLE_NODE_WEB_ORIGIN`). The API's address, the node's chat on the website and the owner's session cookie go in `serve.json` (mode 0600) in the scratch folder. Owner cards are left to the person; the cost fence and session recording run as in a suite run. On SIGTERM it stops the node's work, deletes the node and every agent session it made, and removes the scratch folder. Options and details: [eval/node/README.md](../eval/node/README.md#serve-mode).
 
 ## What a run does
 

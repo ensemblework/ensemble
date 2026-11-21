@@ -39,6 +39,26 @@ cd apps/hub-api && DATABASE_URL=postgresql://localhost/ensemble_unused npx tsx -
 
 Type check: `cd apps/hub-api && npx tsc -p ../../eval/node/tsconfig.json`.
 
+## Serve mode
+
+`serve.ts` boots the same isolated world a run boots and leaves it running, so a person or a browser test can drive one node through the real Ensemble Node website (on a phone-sized window, say) instead of the harness sending messages and answering cards:
+
+```
+pnpm --filter @ensemble/hub-api exec tsx ../../eval/node/serve.ts --port 4100 --web http://localhost:3300 --work-dir <dir>
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--port` | `4100` | The API's port on `localhost` |
+| `--web` | `http://localhost:3300` | The website's origin: only `http://localhost:<port>`, never a hosted site. It is the API's `ENSEMBLE_NODE_WEB_ORIGIN` (CORS with credentials, links in cards and notifications), as `node.ensemblework.com` is for production |
+| `--agent`, `--model` | `copilot-cli`, `gpt-6-luna` | The node's provider and model, and the run profile's coding agent and model |
+| `--template` | `assistant` | The node's template |
+| `--work-dir`, `--keep`, `--protect` | as for a run | |
+
+It makes one owner (verified, named, in this computer's time zone), pairs the computer process with them, and makes one DM node on the run's agent and model. Then it writes `serve.json` (mode 0600) in the scratch folder: the API's address, the website's address of the node's chat, the owner's session cookie (name, value and the attributes `/api/auth/login` sets: `HttpOnly`, `Path=/`, `SameSite=Lax`, host-only), the owner, node and computer ids, and `elsewhere`, a folder outside the node's own. The API listens on `localhost`, so a browser on the website's port sends that cookie to it. Start the website with `NEXT_PUBLIC_ENSEMBLE_API=http://localhost:<port>` on the `--web` port (its `pnpm dev` is port 3300; `next dev --hostname localhost --port <port>` in `apps/node-web` for another). Its `lib/environment.ts` accepts a local API for either environment.
+
+Every owner card waits for a person: serve mode answers none. Each look (every 1.5 s) still applies the cost fence, records the agent sessions that appear and writes what changes (messages, card states, turns, runs, plans) to `trace.jsonl` in the scratch folder. SIGTERM or Ctrl+C stops the node's work, deletes the node, unpairs, deletes every agent session it made (as a run does, never one that existed before it started) and removes the scratch folder unless `--keep`. A serve process that died leaves its scratch folder: `run.ts --cleanup <scratch>/ledger.jsonl` deletes its sessions.
+
 ## How a run works
 
 One run is one process with one API (`src/test/http.ts`, created once per process) and a second process for the owner's computer:
