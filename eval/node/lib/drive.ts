@@ -324,6 +324,7 @@ export async function traceNodeRecords(drive: Drive): Promise<void> {
       tokens: { in: row.tokensIn ?? null, out: row.tokensOut ?? null },
       calls: calls.slice(0, 60).map((call) => `${String(call.name)}:${String(call.state)}`),
       loop: row.loop ?? null,
+      ...(row.report ? { report: row.report } : {}),
       ...(row.error ? { error: row.error } : {}),
     });
   }

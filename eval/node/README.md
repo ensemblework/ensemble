@@ -120,7 +120,7 @@ Under the table, **suite metrics** give per suite and overall: tasks passed and 
 
 The `baseline-v1-all` files (`core` and `crew`) come from runs in which the agent used this machine's Copilot home: node turns could see its MCP servers, and every prompt carried their tool lists, so input tokens per task there run higher. Compare against the summary, not against them.
 
-Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: messages, turns (with how each ended, where the checkout records it), runs, plans, cards and sessions as they happen; Ensemble Node's own turn traces and decisions (`node_turn_traces`, `node_decisions`: hashes, sizes, models, placement and the loop, never text) where the checkout keeps them; then the checks, the metrics, and the evidence the grader read (kept small and with home folders, keys and tokens redacted). `--regrade` reads that last line.
+Traces are JSON lines in `eval/node/results/traces/<label>/<task>--<n>.jsonl`: messages, turns (with how each ended, where the checkout records it), runs, plans, cards and sessions as they happen; Ensemble Node's own turn traces and decisions (`node_turn_traces`, `node_decisions`: hashes, sizes, models, placement and the loop, never text) where the checkout keeps them; then the checks, the metrics, and the evidence the grader read (kept small, with home folders, this machine's name, keys and tokens redacted, as in the result files). `--regrade` reads that last line.
 
 ## Cost and safety
 

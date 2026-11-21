@@ -16,7 +16,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, falseClaims, scoreOf } from "./lib/grade.js";
@@ -171,7 +171,8 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const tracePath = join(RESULTS, "traces", context.label, `${task.id}--${repeat + 1}.jsonl`);
-  const redact = redactor({ [world.dirs.root]: "<work>", [REPO]: "<repo>" });
+  // The computer Ensemble runs on is named after this machine.
+  const redact = redactor({ [world.dirs.root]: "<work>", [REPO]: "<repo>", [hostname()]: "<computer>" });
   const trace = traceFile(tracePath, redact);
   const owner = await world.newOwner("Mira Chen");
   const device = await world.pair(owner);
@@ -251,7 +252,7 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   // The evidence a regrade reads: the last line of the trace.
   appendFileSync(tracePath, `${JSON.stringify({ kind: "evidence", data: redact.deep(ctx.data, 6000), ev: redact.deep(ev, 6000) })}\n`);
   if (drive.notes.length) outcome.errors.push(...drive.notes.map((note) => `note: ${note}`));
-  return outcome;
+  return redact.deep(outcome, 4000);
 }
 
 async function main(): Promise<void> {
@@ -271,6 +272,7 @@ async function main(): Promise<void> {
   log(`${tasks.length} tasks × ${args.repeat} on ${args.agent} ${args.model}, judge ${args.judgeModel}. Results: ${relative(REPO, join(RESULTS, file))}.{json,md}`);
   const world = await bootWorld({ workDir: args.workDir, agent: args.agent, model: args.model, log });
   saved.notes.push(world.keyringOnly ? "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through." : "The session bus is off (no xdg-dbus-proxy here).");
+  saved.notes.push(`The owner's time zone is ${world.timeZone}, the eval process's (TZ).`);
   const ledger = new SessionLedger(join(world.dirs.root, "ledger.jsonl"), before, new Set(args.protect));
   const judge = makeJudge({ model: args.judgeModel, ledger, root: world.dirs.root, log, cleanup: saved.cleanup });
   let stopping = false;
