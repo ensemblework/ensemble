@@ -3,8 +3,9 @@
  * (docs/11, Turn limits). The request is estimated at four characters a token. Past the limit, older
  * replies in the history give way to a placeholder, then older tool results of this turn shrink to their
  * one-line summaries (the whole result stays readable with read_tool_output), oldest first, until it
- * fits. Every user message, and everything from the last `keepExchanges` replies of the model on, stays
- * word for word.
+ * fits. The last `keepExchanges` replies of the model and what came after them go last: only when the
+ * rest is not enough do their results shrink too, then their history replies, oldest first. Every user
+ * message, and the newest exchange (the model's last reply with its results), stays word for word.
  */
 import type { ModelMessage } from "../lib/model-turn.js";
 
@@ -57,25 +58,36 @@ export function compactMessages(messages: ModelMessage[], options: CompactOption
   const limitChars = options.limitTokens * CHARS_PER_TOKEN;
   let chars = before * CHARS_PER_TOKEN;
   const tail = tailStart(messages, options.keepExchanges);
+  const newest = tailStart(messages, 1);
   let rows = 0;
   let results = 0;
-  for (let index = options.history.start; index < Math.min(options.history.end, tail) && chars > limitChars; index += 1) {
-    const message = messages[index]!;
-    if (message.role !== "assistant" || message.content === HISTORY_LEFT_OUT) continue;
-    const placeholder: ModelMessage = { role: "assistant", content: HISTORY_LEFT_OUT };
-    chars -= messageChars(message) - messageChars(placeholder);
-    messages[index] = placeholder;
-    rows += 1;
-  }
-  for (let index = options.history.end + 1; index < tail && chars > limitChars; index += 1) {
-    const message = messages[index]!;
-    if (message.role !== "tool") continue;
-    const shorter = options.shorten(String(message.tool_call_id ?? ""), message);
-    if (!shorter) continue;
-    chars -= messageChars(message) - messageChars(shorter);
-    messages[index] = shorter;
-    results += 1;
-  }
+  const leaveOut = (from: number, to: number) => {
+    for (let index = from; index < to && chars > limitChars; index += 1) {
+      const message = messages[index]!;
+      if (message.role !== "assistant" || message.content === HISTORY_LEFT_OUT) continue;
+      const placeholder: ModelMessage = { role: "assistant", content: HISTORY_LEFT_OUT };
+      chars -= messageChars(message) - messageChars(placeholder);
+      messages[index] = placeholder;
+      rows += 1;
+    }
+  };
+  // A shorter result keeps its tool_call_id, so it still answers its request.
+  const shorten = (from: number, to: number) => {
+    for (let index = from; index < to && chars > limitChars; index += 1) {
+      const message = messages[index]!;
+      if (message.role !== "tool") continue;
+      const shorter = options.shorten(String(message.tool_call_id ?? ""), message);
+      if (!shorter) continue;
+      chars -= messageChars(message) - messageChars(shorter);
+      messages[index] = shorter;
+      results += 1;
+    }
+  };
+  const turnStart = options.history.end + 1;
+  leaveOut(options.history.start, Math.min(options.history.end, tail));
+  shorten(turnStart, tail);
+  shorten(Math.max(tail, turnStart), newest);
+  leaveOut(Math.max(tail, options.history.start), Math.min(options.history.end, newest));
   if (!rows && !results) return null;
   return { rows, results, before, after: Math.ceil(chars / CHARS_PER_TOKEN) };
 }

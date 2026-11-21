@@ -1,7 +1,8 @@
 /**
  * The numbers Ensemble's own model loop runs with (docs/11, Turn limits), in one versioned config: step
- * budgets by model class, how much of a tool result the model sees in place, history and context
- * sizes, runaway detection and the waits before a failed model call is asked again.
+ * budgets by model class and the checkpoint of an uncapped turn, how much of a tool result the model
+ * sees in place, history and context sizes, runaway detection and the waits before a failed model call
+ * is asked again.
  *
  * Tuning without a release: `ENSEMBLE_LOOP_CONFIG` holds a JSON object with only the fields to change,
  * or the path of a file with one (read again at most once a minute). An invalid override is ignored
@@ -22,7 +23,7 @@ const count = (value: number) => z.number().int().min(2).max(1_000).default(valu
 
 export const LoopConfig = z.object({
   /** Change it with every change of the defaults; recorded on each turn. */
-  version: z.string().max(40).default("2026-11-21.1"),
+  version: z.string().max(40).default("2026-11-21.2"),
   /**
    * Model requests in one turn, the last a tools-off answer. Null: no cap; runaway detection ends a
    * stuck turn instead. Included models are Ensemble's cost; an owner caps their own with a number.
@@ -36,6 +37,11 @@ export const LoopConfig = z.object({
       local: stepCap(null),
     })
     .default({}),
+  /**
+   * A class with no step cap pauses after this many model requests: the turn ends with what it did and
+   * the person says whether it goes on. A confirmation, not a limit. Null: it never pauses.
+   */
+  checkpointSteps: z.number().int().min(10).max(100_000).nullable().default(120),
   /** Characters of one tool result the model sees in place; the whole of a longer one waits for read_tool_output. */
   inlineChars: z.object({ included: chars(8_000), key: chars(16_000), local: chars(8_000) }).default({}),
   /** Long output a turn keeps for read_tool_output, in characters; past it the oldest goes. */
@@ -59,7 +65,7 @@ export const LoopConfig = z.object({
   keepExchanges: count(8),
   runaway: z
     .object({
-      /** The same call with the same input, nothing changed in between: a nudge at `nudge`, the turn ends at `stop`. */
+      /** The same call with the same input and the same result (or the same round of calls): a nudge at `nudge`, the turn ends at `stop`. */
       nudge: count(3),
       stop: count(5),
       /** Steps in a row in which every call failed. */
@@ -67,7 +73,10 @@ export const LoopConfig = z.object({
     })
     .default({})
     .refine((value) => value.stop > value.nudge, "runaway.stop must be more than runaway.nudge."),
-  /** Waits before a model call that failed for a passing reason (a rate limit, a server error, a dropped stream) is asked again. */
+  /**
+   * Waits before a model call is asked again after what the runtime does not retry itself: a dropped
+   * connection or stream, a server error (500, 502, 504) or a timeout on the way (lib/model-turn.ts `loopRetries`).
+   */
   retryDelaysMs: z.array(z.number().int().min(0).max(300_000)).max(5).default([5_000, 20_000]),
   /** Read-only calls of one step that run at the same time. */
   parallelReads: z.number().int().min(1).max(32).default(6),
@@ -115,6 +124,8 @@ export interface TurnLimits {
   modelClass: ModelClass;
   /** Model requests; Infinity when the class has no cap. */
   steps: number;
+  /** Model requests after which an uncapped turn pauses to ask whether to go on; null with a cap, or when the config has none. */
+  checkpoint: number | null;
   inlineChars: number;
   historyTokens: number;
   contextTokens: number;
@@ -126,6 +137,7 @@ export function turnLimits(config: LoopConfig, provider: string | null | undefin
   return {
     modelClass,
     steps: cap ?? Number.POSITIVE_INFINITY,
+    checkpoint: cap === null ? config.checkpointSteps : null,
     inlineChars: config.inlineChars[modelClass],
     historyTokens: config.historyTokens[modelClass],
     contextTokens: config.contextTokens.models[model] ?? config.contextTokens[modelClass],

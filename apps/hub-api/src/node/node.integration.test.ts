@@ -1225,9 +1225,6 @@ test("steps that finish together start the next one once; a declined step card l
 });
 
 test("a step whose turn fails after it started a run waits for that run instead of ending blocked", async () => {
-  // The loop asks a rate-limited model again after a tool ran; here without waiting.
-  const { setModelRetryWaitForTests } = await import("../lib/model-turn.js");
-  setModelRetryWaitForTests(async () => undefined);
   const kofi = await person("Kofi");
   await laptopFor(kofi, "Kofi's laptop");
   const ids: string[] = [];
@@ -1251,7 +1248,6 @@ test("a step whose turn fails after it started a run waits for that run instead 
   await settleTurns();
   plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
   assert.deepEqual([plan.data.status, plan.data.steps[0].status, plan.data.steps[0].result], ["succeeded", "done", "README updated."]);
-  setModelRetryWaitForTests(null);
 });
 
 test("a step may keep its session going as long as its runs work", async () => {

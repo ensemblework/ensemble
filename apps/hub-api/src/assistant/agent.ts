@@ -13,8 +13,9 @@ import { SUBSCRIPTION_INFO } from "@ensemble/shared-types";
  *
  * The loop: build state → ask the model → tool calls? → run them → feed results
  * back. It stops on a text-only answer. Included models (Ensemble pays) have a
- * step budget; owner keys and local models have none, and runaway detection
- * ends a stuck turn instead (loop-config.ts, runaway.ts).
+ * step budget; owner keys and local models have none: runaway detection ends a
+ * stuck turn, and a long one pauses at a checkpoint to ask whether to go on
+ * (loop-config.ts, runaway.ts).
  */
 import { attachedListing, attachedNote, filesNotReceived, messageAttachments, turnFilesFor } from "./attachments.js";
 import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
@@ -52,10 +53,10 @@ import {
 import { settleWriteBatch } from "./batch.js";
 import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
-import { toolAllowedFor, chatToolSpecs, responsesToolSpecs, runsInParallel } from "./registry.js";
+import { toolAllowedFor, chatToolSpecs, responsesToolSpecs, readsOnly, runsInParallel } from "./registry.js";
 import { activeLoopConfig, loopConfigHash, turnLimits } from "./loop-config.js";
 import { READ_TOOL_OUTPUT, readableText, readToolOutputTool, TurnOutputs } from "./tool-output.js";
-import { RunawayGuard, repeatNudge, runawayFinal, runawayReply } from "./runaway.js";
+import { checkpointFinal, pausedReply, RunawayGuard, repeatNudge, resultDigest, runawayFinal, runawayReply } from "./runaway.js";
 import { CHARS_PER_TOKEN, compactMessages, messageChars } from "./compaction.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { loadConnections } from "./connections.js";
@@ -72,8 +73,7 @@ import { codePreamble, codeTools } from "./tools/code.js";
 import {
   assistantEcho,
   askRuntimeStream,
-  isRateLimit,
-  isTransientModelError,
+  loopRetries,
   retryNotice,
   toolResult,
   waitBeforeRetry,
@@ -225,6 +225,8 @@ export interface AssistantTurnResult {
   credentialSource?: string;
   /** Records the reply's text names by id, so it can show their titles (saved on the reply). */
   refs?: AssistantRef[];
+  /** Ensemble's own loop paused at its checkpoint after this many model requests (loop-config.ts); the reply asks whether to go on. */
+  paused?: { steps: number };
 }
 
 const liveTurns = new Map<string, AbortController>();
@@ -441,9 +443,9 @@ async function drive(
     responsesTools = responsesToolSpecs(shown());
   };
   const doneSoFar = () => calls.filter((call) => call.state === "ok" || call.state === "awaiting_approval").map((call) => call.summary || call.name);
-  // A rate limit before any tool ran is left to an Ensemble Node turn's caller: node/brain.ts answers with its
-  // fast model, and node/queue.ts runs the turn again later.
-  const retriable = (error: unknown) => isTransientModelError(error) && !(isRateLimit(error) && calls.length === 0 && args.agentPersona !== undefined);
+  /** The model request at which a turn with no step cap pauses to ask whether to go on (its tools-off answer). */
+  const checkpoint = limits.checkpoint;
+  let paused = false;
 
   const maxSteps = isSubscriptionProvider(args.provider) ? 0 : limits.steps;
   if (isSubscriptionProvider(args.provider)) {
@@ -576,15 +578,22 @@ async function drive(
     }
     await heartbeat(app.redis, userId, activityId);
     tally.steps = step + 1;
-    // The last step a budget allows, or the answer that ends a stuck turn: no tools.
-    const finalAnswer = step === maxSteps - 1 || runaway !== null;
+    // The last step a budget allows, the answer that ends a stuck turn, or the checkpoint of a turn with no cap: no tools.
+    const pausing = checkpoint !== null && step === checkpoint - 1 && runaway === null;
+    const finalAnswer = step === maxSteps - 1 || runaway !== null || pausing;
     if (finalAnswer) {
       messages.push({
         role: "system",
         content: runaway
           ? runawayFinal(runaway, loop.runaway.failedSteps)
-          : "The retrieval budget is exhausted. Answer the user now using the page/reference material and tool results already supplied.",
+          : pausing
+            ? checkpointFinal(checkpoint)
+            : "The retrieval budget is exhausted. Answer the user now using the page/reference material and tool results already supplied.",
       });
+    }
+    if (pausing && !paused) {
+      paused = true;
+      args.emit({ type: "status", text: `Pausing after ${checkpoint} steps to ask whether to go on.` });
     }
 
     let streamed = "";
@@ -604,8 +613,9 @@ async function drive(
       args.emit({ type: "status", text: "Shortened earlier parts of this turn to fit the model's context." });
     }
     offerReader();
-    // A call that fails for a passing reason (a rate limit, a server error, a dropped stream) is asked
-    // again after each wait in `retryDelaysMs`, unless it had started answering.
+    // A call that failed in a way the runtime does not retry itself (a dropped connection or stream, a server
+    // error or timeout on the way: `loopRetries`) is asked again after each wait in `retryDelaysMs`, unless it had
+    // started answering.
     const ask = async (): Promise<RuntimeTurn> => {
       for (let attempt = 0; ; attempt += 1) {
         streamed = "";
@@ -632,7 +642,7 @@ async function drive(
           });
         } catch (error) {
           const wait = loop.retryDelaysMs[attempt];
-          if (wait === undefined || streamed || stop.signal.aborted || !retriable(error)) throw error;
+          if (wait === undefined || streamed || stop.signal.aborted || !loopRetries(error)) throw error;
           tally.retries += 1;
           app.log.warn({ err: error, provider: args.provider, model: args.model, attempt: attempt + 1, afterTools: calls.length }, "The model call failed; asking again");
           args.emit({ type: "status", text: retryNotice(error, wait) });
@@ -689,9 +699,9 @@ async function drive(
         app.log.warn({ err: error, provider: args.provider, model: args.model, afterTools: calls.length }, "The model call failed");
         // The answer a check sent back still stands when the model fails after it.
         if (checkedText) text = checkedText;
-        // A stuck turn still ends with what it did, never an error.
+        // A stuck or paused turn still ends with what it did, never an error.
         else if (runaway) text = runawayReply(runaway, doneSoFar());
-        else throw error;
+        else if (!paused) throw error;
         break;
       }
       text = settled.text;
@@ -789,6 +799,7 @@ async function drive(
         text = runawayReply(runaway, doneSoFar());
         break;
       }
+      if (paused) break;
       throw new ToolBlockedError(
         "The model did not produce a final answer within the request budget. Its recorded actions are available separately.",
       );
@@ -848,17 +859,20 @@ async function drive(
     }
     offerReader();
     if (stop.signal.aborted) break;
+    // Progress is judged by what each call returned (runaway.ts): the same call with the same result changed nothing.
+    const argumentsOf = new Map(turn.toolCalls.map((requested) => [requested.id, requested.arguments]));
     const verdict = guard.step(
-      settledBatch.map((outcome, index) => ({
+      settledBatch.map((outcome) => ({
         name: outcome.call.name,
-        input: turn.toolCalls[index]?.arguments ?? "",
+        input: argumentsOf.get(outcome.call.id) ?? "",
         state: outcome.call.state,
-        acts: !runsInParallel(byName.get(outcome.call.name)),
+        digest: resultDigest(outcome.forModel),
+        readOnly: readsOnly(byName.get(outcome.call.name)),
       })),
     );
     if (verdict?.kind === "nudge") {
       tally.nudges += 1;
-      messages.push({ role: "user", content: repeatNudge(verdict.tool, verdict.times) });
+      messages.push({ role: "user", content: repeatNudge(verdict) });
     } else if (verdict?.kind === "stop") {
       runaway = verdict.why;
       args.emit({ type: "status", text: verdict.why === "repeat" ? "The same step kept repeating. Answering with what there is." : "Every call kept failing. Answering with what there is." });
@@ -866,6 +880,7 @@ async function drive(
   }
 
   const stopped = stop.signal.aborted;
+  if (paused && !stopped) text = pausedReply(checkpoint ?? tally.steps, text, doneSoFar());
   if (!text && checkedText) text = checkedText;
   if (!text && runaway && !stopped) text = runawayReply(runaway, doneSoFar());
   if (!text) {
@@ -931,6 +946,7 @@ async function drive(
                 rowsLeftOut: tally.rowsLeftOut,
                 resultsShortened: tally.resultsShortened,
                 runaway,
+                paused: paused && !stopped,
               },
             }),
       },
@@ -940,7 +956,8 @@ async function drive(
   }
 
   const refs = refsInText(text, [...known.values()]).slice(0, MAX_REPLY_REFS);
-  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource, ...(refs.length ? { refs } : {}) };
+  const pause = paused && !stopped ? { paused: { steps: checkpoint ?? tally.steps } } : {};
+  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource, ...(refs.length ? { refs } : {}), ...pause };
 }
 
 interface CallOutcome {

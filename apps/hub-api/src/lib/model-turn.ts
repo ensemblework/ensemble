@@ -256,9 +256,10 @@ export function runtimeFailureFromBody(status: number, raw: string, model = "tha
   return withDetail(failureToError(failure, model, provider), failure);
 }
 
-/** What the provider said, for the logs only: people read the error's own sentence. */
+/** What the provider said, for the logs and for `loopRetries`: people read the error's own sentence. */
 function withDetail<T extends Error>(error: T, failure: ModelFailure): T {
-  return Object.assign(error, { cause: { status: failure.status, kind: failure.kind, message: truncateText(failure.message, 500) } });
+  const retryAfterSeconds = failure.retryAfterSeconds != null ? { retryAfterSeconds: failure.retryAfterSeconds } : {};
+  return Object.assign(error, { cause: { status: failure.status, kind: failure.kind, message: truncateText(failure.message, 500), ...retryAfterSeconds } });
 }
 
 function failureToError(failure: ModelFailure, model: string, provider?: string | null): RuntimeError {
@@ -486,33 +487,48 @@ async function streamOnce(args: Parameters<typeof askRuntime>[0] & StreamTurnHan
   return turn;
 }
 
-const PASSING_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-const LASTING_KINDS = new Set(["quota", "credits", "auth", "not_found", "invalid", "timeout"]);
+// The runtime that called the provider already retried 429 and 503 (waiting out Retry-After, up to a
+// minute, three times) and 500, 502 and 504 twice, before any output (runtime/payload.ts `retryPlan`).
+const LOOP_STATUSES = new Set([408, 500, 502, 504]);
+const LASTING_KINDS = new Set(["rate_limit", "quota", "credits", "auth", "not_found", "invalid", "timeout"]);
 const NETWORK_TIMEOUTS = new Set(["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
+const OUT_OF_QUOTA = /insufficient_quota|exceeded your current quota/i;
 
-/**
- * A model call that may work when asked again a little later: a rate limit, a server error (500, 502,
- * 503, 504), a network timeout or a stream that dropped. Never a Stop, quota or credits, a key or a
- * request the model refused, a host that was never reached, or the call's own time limit (asking again
- * would only wait that long once more).
- */
-export function isTransientModelError(error: unknown): boolean {
-  if (!(error instanceof Error) || isAbortError(error)) return false;
-  if (error instanceof IncludedLimitError || error instanceof ModelQuotaError || error instanceof ModelUnreachableError || error instanceof ModelTimeoutError) return false;
-  if (isTransportDrop(error)) return true;
-  if (error instanceof RuntimeError) {
-    if (error.unreachable || (error.kind && LASTING_KINDS.has(error.kind))) return false;
-    return error.kind === "rate_limit" || PASSING_STATUSES.has(error.statusCode);
-  }
-  if (error instanceof ProviderError) return error.kind !== "quota" && PASSING_STATUSES.has(error.status);
-  const code = (error as { code?: unknown; cause?: { code?: unknown } }).code ?? (error as { cause?: { code?: unknown } }).cause?.code;
-  return typeof code === "string" && NETWORK_TIMEOUTS.has(code);
+/** The provider's own status, kind and words behind a model error, where it has them. */
+function failureOf(error: unknown): { status: number; kind?: string; message: string; retryAfterSeconds?: number } | null {
+  if (error instanceof ProviderError) return { status: error.status, kind: error.kind, message: error.message, ...(error.retryAfterSeconds != null ? { retryAfterSeconds: error.retryAfterSeconds } : {}) };
+  if (!(error instanceof RuntimeError)) return null;
+  const cause = (error.cause && typeof error.cause === "object" ? error.cause : {}) as { status?: unknown; kind?: unknown; message?: unknown; retryAfterSeconds?: unknown };
+  const kind = error.kind ?? (typeof cause.kind === "string" ? cause.kind : undefined);
+  return {
+    status: typeof cause.status === "number" ? cause.status : error.statusCode,
+    ...(kind ? { kind } : {}),
+    message: `${error.message} ${typeof cause.message === "string" ? cause.message : ""}`,
+    ...(typeof cause.retryAfterSeconds === "number" ? { retryAfterSeconds: cause.retryAfterSeconds } : {}),
+  };
 }
 
-/** A rate limit, which some callers handle on their own (an Ensemble Node turn falls back to its fast model). */
-export function isRateLimit(error: unknown): boolean {
-  if (error instanceof ModelQuotaError || error instanceof IncludedLimitError) return false;
-  return (error instanceof RuntimeError && (error.kind === "rate_limit" || error.statusCode === 429)) || (error instanceof ProviderError && error.kind === "rate_limit");
+/**
+ * Whether Ensemble's own loop asks a failed model call again (docs/11, Turn limits): only what the
+ * runtime does not retry itself. A dropped connection or a cut stream, a server error or gateway
+ * timeout (500, 502, 504, 408) that still reached hub-api, and a network timeout. Never a 429 or
+ * anything that came with Retry-After (the runtime waited those out, and a bare 429 such as
+ * insufficient_quota is not passing), a 503, quota or credits, a key or a request the model refused, a
+ * host never reached, a Stop, or the call's own time limit (asking again would wait that long once more).
+ */
+export function loopRetries(error: unknown): boolean {
+  if (!(error instanceof Error) || isAbortError(error)) return false;
+  if (error instanceof IncludedLimitError || error instanceof ModelQuotaError || error instanceof ModelUnreachableError || error instanceof ModelTimeoutError) return false;
+  if (error instanceof RuntimeError && error.unreachable) return false;
+  if (isTransportDrop(error)) return true;
+  const failure = failureOf(error);
+  if (failure) {
+    if (failure.retryAfterSeconds != null || failure.status === 429 || OUT_OF_QUOTA.test(failure.message)) return false;
+    if (failure.kind && LASTING_KINDS.has(failure.kind)) return false;
+    return LOOP_STATUSES.has(failure.status);
+  }
+  const code = (error as { code?: unknown; cause?: { code?: unknown } }).code ?? (error as { cause?: { code?: unknown } }).cause?.code;
+  return typeof code === "string" && NETWORK_TIMEOUTS.has(code);
 }
 
 /** One line for the status while the loop waits to ask again. */
@@ -520,8 +536,7 @@ export function retryNotice(error: unknown, waitMs: number): string {
   const seconds = Math.max(1, Math.round(waitMs / 1000));
   const again = `Trying again in ${seconds} second${seconds === 1 ? "" : "s"}.`;
   if (isTransportDrop(error)) return `The connection to the model dropped. ${again}`;
-  if (isRateLimit(error)) return `The model's service is rate-limiting this key. ${again}`;
-  const status = error instanceof RuntimeError ? error.statusCode : error instanceof ProviderError ? error.status : null;
+  const status = failureOf(error)?.status;
   return status ? `The model's service failed (${status}). ${again}` : `The model's service did not answer. ${again}`;
 }
 

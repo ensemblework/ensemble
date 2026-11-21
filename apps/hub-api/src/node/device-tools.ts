@@ -429,6 +429,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       description: "Read the output of a command you ran with computer_run or computer_sudo that ran in the background or printed too much to show (its run id). from: where the last read stopped (its next).",
       input: z.object({ run: z.string().uuid(), from: z.number().int().min(0).max(100_000).optional() }).strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(ctx, input) {
         if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
@@ -479,6 +480,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(ctx, input) {
         const done = await callComputer(ctx, scope, input.computer, { tool: "git", folder: input.folder, op: input.op, args: input.args }, { timeoutMs: ASK_MS + 30_000, describe: `git ${input.op} ${input.args.join(" ")}`.trim(), again: callText("computer_git", input), need: ownFolder(input.folder) });
@@ -568,6 +570,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
+      readOnly: true,
       risk: "medium",
       async run(ctx, input) {
         if (/^\s*sudo\s/.test(input.command)) throw new ToolBlockedError("A terminal screenshot does not run a command as the administrator.", "Run that part with computer_sudo first.");
@@ -842,7 +845,7 @@ export function refuseEnsembleApp(name: string, input: Record<string, unknown>):
  */
 export function captureTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
-  const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny }>;
+  const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny; readOnly?: boolean }>;
   return specs.map((spec) =>
     defineTool({
       name: spec.name,
@@ -850,6 +853,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
       description: `On your owner's computer: ${spec.description} Screenshots and videos you capture appear with your reply by themselves; a capture the computer holds waits for your owner's preview.`,
       input: (spec.input as z.AnyZodObject).extend({ computer: Computer }),
       isWrite: false,
+      ...(spec.readOnly ? { readOnly: true } : {}),
       risk: spec.name === "capture_app_start" || spec.name === "browser_type" || spec.name === "browser_upload" ? "medium" : "low",
       async run(ctx, raw) {
         const { computer, ...input } = raw as Record<string, unknown> & { computer?: string };

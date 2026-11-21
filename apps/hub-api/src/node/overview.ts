@@ -41,6 +41,7 @@ export function overviewTool(scope: Pick<NodeScope, "prisma" | "node" | "ownerOn
       "What your owner is working on across every space they can open: open tasks that are theirs, what is due (overdue and the next days), and agent runs they have going, each with its space. Read-only. Use it for “what am I working on?”, “what's due?” and before planning their day; change a task with the Ensemble tools and its space.",
     input: z.object({ days: z.number().int().min(1).max(60).optional().describe("How many days ahead count as due. Default 7.") }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(ctx, input) {
       if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's work across their spaces is listed only in a chat with just your owner.");

@@ -1,7 +1,8 @@
 /**
  * Ensemble's own loop with a scripted model (docs/11, Turn limits): reads that run together, writes in
- * order, long results kept for read_tool_output, runaway detection, step budgets by model class,
- * compaction, the history budget, and model calls asked again after a passing failure.
+ * order, long results kept for read_tool_output, runaway detection, step budgets by model class and the
+ * checkpoint of an uncapped turn, compaction, the history budget, and model calls asked again after a
+ * failure the runtime does not retry itself.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -17,12 +18,12 @@ import { saveAiActivityForTests } from "../lib/ai-activity.js";
 import { defineTool, toolOk, type AnyHubTool, type ToolResult } from "./types.js";
 import { resetLoopConfigCache } from "./loop-config.js";
 import { readableText } from "./tool-output.js";
-import { HISTORY_LEFT_OUT } from "./compaction.js";
-import { RunawayGuard } from "./runaway.js";
+import { CHARS_PER_TOKEN, compactMessages, estimateTokens, HISTORY_LEFT_OUT } from "./compaction.js";
+import { resultDigest, RunawayGuard } from "./runaway.js";
 
 type Call = { name: string; input?: Record<string, unknown> };
 type Reply = { calls?: Call[]; text?: string } | Error;
-type Seen = { messages: ModelMessage[]; tools: string[] };
+type Seen = { messages: ModelMessage[]; tools: string[]; toolChars: number };
 type Row = { role: string; content: string };
 type Metric = { kind?: string; payload?: Record<string, unknown> };
 
@@ -42,7 +43,11 @@ afterEach(() => {
 function script(reply: (seen: Seen, index: number) => Reply): Seen[] {
   const seen: Seen[] = [];
   setAskRuntimeStreamForTests(async (args) => {
-    const current: Seen = { messages: args.messages.map((message) => ({ ...message })), tools: (args.chatTools as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
+    const current: Seen = {
+      messages: args.messages.map((message) => ({ ...message })),
+      tools: (args.chatTools as Array<{ function: { name: string } }>).map((spec) => spec.function.name),
+      toolChars: args.chatTools?.length ? JSON.stringify(args.chatTools).length : 0,
+    };
     seen.push(current);
     const next = reply(current, seen.length - 1);
     if (next instanceof Error) throw next;
@@ -245,7 +250,8 @@ test("an included model has 24 steps, the last a forced answer; an owner's key h
   assert.equal(budgeted.content, "Stopped at the budget.");
 });
 
-test("compaction shortens older results and history, never a person's words or the last eight exchanges", async () => {
+test("compaction shortens history and older results first and never a person's words or the newest exchange", async () => {
+  // A window too small for even the last eight exchanges: everything but the newest gives way.
   process.env.ENSEMBLE_LOOP_CONFIG = JSON.stringify({ contextTokens: { models: { "test-model": 2_000 } } });
   resetLoopConfigCache();
   const history: Row[] = Array.from({ length: 6 }, (_, index) => [
@@ -268,17 +274,66 @@ test("compaction shortens older results and history, never a person's words or t
   for (const row of history.filter((row) => row.role === "user")) assert.ok(users.includes(row.content), "earlier questions stay word for word");
   assert.ok(users.some((content) => content.endsWith("Read every chunk and sum them up, please.")));
   const replies = last.filter((message) => message.role === "assistant");
-  assert.deepEqual(replies.slice(0, 6).map((message) => message.content), Array(6).fill(HISTORY_LEFT_OUT), "older history replies give way first");
+  assert.deepEqual(replies.slice(0, 6).map((message) => message.content), Array(6).fill(HISTORY_LEFT_OUT), "history replies give way first");
   const results = toolMessages(seen.at(-1)!).map(resultOf);
   assert.equal(results.length, 14);
-  assert.ok(results.slice(0, 6).every((payload) => payload.shortened === true && typeof payload.output === "string"), "older results become their summaries");
-  assert.deepEqual(results.slice(0, 6).map((payload) => payload.summary), ["Chunk 0.", "Chunk 1.", "Chunk 2.", "Chunk 3.", "Chunk 4.", "Chunk 5."]);
-  assert.ok(results.slice(6).every((payload) => payload.shortened === undefined && String((payload.data as { body?: string }).body).startsWith("chunk")), "the last eight exchanges stay whole");
+  assert.deepEqual(results.slice(0, 13).map((payload) => [payload.summary, payload.shortened, typeof payload.output]), Array.from({ length: 13 }, (_, n) => [`Chunk ${n}.`, true, "string"]), "older results become their summaries, oldest first");
+  assert.ok(String((results[13]!.data as { body?: string }).body).startsWith("chunk 13"), "the newest exchange stays whole");
   assert.ok(seen.at(-1)!.tools.includes("read_tool_output"), "a shortened result can be read again");
   assert.ok(frames.some((frame) => frame.type === "status" && frame.text === "Shortened earlier parts of this turn to fit the model's context."));
   const loop = metrics.find((row) => row.kind === "assistant.turn")?.payload?.loop as Record<string, number>;
   assert.ok(loop.compactions >= 1);
-  assert.deepEqual([loop.rowsLeftOut, loop.resultsShortened], [6, 6]);
+  assert.deepEqual([loop.rowsLeftOut, loop.resultsShortened], [6, 13]);
+});
+
+test("compaction leaves the last eight exchanges whole when shortening what came before them is enough", () => {
+  const call = (id: string): ModelMessage => ({ role: "assistant", content: "", tool_calls: [{ id, type: "function", function: { name: "read_chunk", arguments: "{}" } }] });
+  const result = (id: string, n: number): ModelMessage => ({ role: "tool", tool_call_id: id, name: "read_chunk", content: JSON.stringify({ ok: true, summary: `Chunk ${n}.`, data: { body: "x".repeat(2_000) } }) });
+  const messages: ModelMessage[] = [
+    { role: "system", content: "Instructions." },
+    { role: "user", content: "Earlier question" },
+    { role: "assistant", content: "Earlier answer ".repeat(100) },
+    { role: "user", content: "Read every chunk." },
+  ];
+  for (let n = 0; n < 12; n += 1) messages.push(call(`c${n}`), result(`c${n}`, n));
+  const limit = estimateTokens(messages) - 1_500;
+  const done = compactMessages(messages, {
+    tools: [],
+    limitTokens: limit,
+    keepExchanges: 8,
+    history: { start: 1, end: 3 },
+    shorten: (id) => ({ role: "tool", tool_call_id: id, name: "read_chunk", content: JSON.stringify({ ok: true, summary: "Short.", shortened: true }) }),
+  });
+  assert.ok(done && done.after <= limit && estimateTokens(messages) <= limit);
+  assert.equal(messages[2]!.content, HISTORY_LEFT_OUT);
+  const shortened = messages.filter((message) => message.role === "tool").map((message) => JSON.parse(String(message.content)).shortened === true);
+  assert.ok(shortened.slice(0, 4).some(Boolean), "results before the last eight exchanges give way");
+  assert.deepEqual(shortened.slice(4), Array(8).fill(false), "the last eight exchanges stay whole");
+  assert.deepEqual([messages[1]!.content, messages[3]!.content], ["Earlier question", "Read every chunk."]);
+});
+
+test("a turn whose last eight exchanges alone pass the limit still fits: their older results shrink, the newest stays whole", async () => {
+  const page = Array.from({ length: 1_080 }, (_, index) => `Row ${index}: ${"cell ".repeat(8)}`).join("\n");
+  assert.ok(page.length > 50_000 && page.length < 60_000, String(page.length));
+  const seen = script((_current, index) => (index < 8 ? { calls: [0, 1, 2, 3].map((part) => ({ name: "read_page", input: { step: index, part } })) } : { text: "Read all 32 parts." }));
+  const result = await turn({ provider: "openai", tools: [read("read_page", async (input) => toolOk(`Part ${String(input.step)}.${String(input.part)}.`, { page }))] });
+  assert.equal(result.content, "Read all 32 parts.");
+  const limit = Math.floor(128_000 * 0.6);
+  for (const [index, current] of seen.entries()) {
+    const tokens = estimateTokens(current.messages) + Math.ceil(current.toolChars / CHARS_PER_TOKEN);
+    assert.ok(tokens <= limit, `request ${index}: ${tokens} tokens`);
+  }
+  const last = seen.at(-1)!;
+  const results = toolMessages(last).map(resultOf);
+  assert.equal(results.length, 32);
+  const shortened = results.map((payload) => payload.shortened === true);
+  const count = shortened.filter(Boolean).length;
+  assert.ok(count >= 8, String(count));
+  assert.deepEqual(shortened, [...Array(count).fill(true), ...Array(32 - count).fill(false)], "oldest first");
+  assert.ok(results.slice(28).every((payload) => typeof payload.preview === "string" && payload.output), "the newest exchange stays as it came");
+  const asked = new Set(last.messages.flatMap((message) => ((message.tool_calls ?? []) as Array<{ id: string }>).map((call) => call.id)));
+  assert.ok(toolMessages(last).every((message) => asked.has(String(message.tool_call_id))), "every result still answers its request");
+  assert.ok(last.messages.some((message) => message.role === "user" && String(message.content).endsWith("Do the work.")));
 });
 
 test("history is a token budget: an owner's key gets more of the conversation than an included model", async () => {
@@ -327,30 +382,117 @@ test("a model call that fails with a 502 after a tool ran is asked again; the to
   assert.deepEqual(waits, [5_000, 20_000]);
 });
 
-test("a rate limit before any tool is asked again in a chat, and left to an Ensemble Node turn's own fallback", async () => {
+test("the loop leaves to the runtime what it retries itself: a rate limit, a 503 and anything with Retry-After fail at once", async () => {
   const waits: number[] = [];
   setModelRetryWaitForTests(async (ms) => {
     waits.push(ms);
   });
-  const limited = () => new RuntimeError("Ensemble is rate-limiting this key. Wait about 1s and try again.", 429, false, "rate_limit");
-  script((_current, index) => (index === 0 ? limited() : { text: "Here you go." }));
-  assert.equal((await turn({ tools: [] })).content, "Here you go.");
-  assert.deepEqual(waits, [5_000]);
-
-  waits.length = 0;
-  script(() => limited());
-  await assert.rejects(() => turn({ tools: [], agentPersona: "You are Scout (@scout), an Ensemble Node." }), /rate-limiting/);
-  assert.deepEqual(waits, [], "node/brain.ts falls back to its fast model, or runs the turn again later");
+  const failures = [
+    errorFromStreamFrame({ message: "slow down", kind: "rate_limit", status: 429, retryAfterSeconds: 2 }, "test-model"),
+    errorFromStreamFrame({ message: "You exceeded your current quota, please check your plan and billing details.", kind: "rate_limit", status: 429 }, "test-model"),
+    errorFromStreamFrame({ message: "", kind: "unavailable", status: 503 }, "test-model"),
+    errorFromStreamFrame({ message: "", kind: "other", status: 502, retryAfterSeconds: 30 }, "test-model"),
+  ];
+  for (const failure of failures) {
+    let shops = 0;
+    script((_current, index) => (index === 0 ? { calls: [{ name: "browser_shop" }] } : failure));
+    await assert.rejects(() => turn({ tools: [read("browser_shop", async () => (shops += 1, toolOk("Compared prices at 3 stores.")))] }), (error: unknown) => error === failure);
+    assert.equal(shops, 1);
+  }
+  assert.deepEqual(waits, [], "never asked again on top of the runtime's own retries");
 });
 
-test("looking again after something changed is not a repeat; looking again with nothing in between is", () => {
-  const guard = new RunawayGuard({ nudge: 3, stop: 5, failedSteps: 8 });
-  const look = { name: "browser_snapshot", input: "{}", state: "ok", acts: true };
-  const click = (ref: string) => ({ name: "browser_click", input: JSON.stringify({ ref }), state: "ok", acts: true });
-  for (let index = 0; index < 6; index += 1) assert.equal(guard.step([look, click(`e${index}`)]), null);
-  const reads = new RunawayGuard({ nudge: 3, stop: 5, failedSteps: 8 });
-  const list = (order: string) => ({ name: "hub_list_tasks", input: order, state: "ok", acts: false });
+/** A browser on a computer, as an Ensemble Node has it: a click acts, a snapshot or a terminal read only looks. */
+function browser(run: { click?: (ref: string) => ToolResult; snapshot?: () => ToolResult; terminal?: () => ToolResult }): AnyHubTool[] {
+  const tool = (name: string, readOnly: boolean, answer: (input: Record<string, unknown>) => ToolResult) =>
+    defineTool({ name, area: "tasks", description: `${name}.`, input: z.object({}).passthrough(), isWrite: false, ...(readOnly ? { readOnly: true } : {}), risk: "low", run: async (_ctx, input) => answer(input) });
+  return [
+    tool("browser_click", false, (input) => run.click?.(String(input.ref)) ?? toolOk(`Clicked ${String(input.ref)}.`)),
+    tool("browser_snapshot", true, () => run.snapshot?.() ?? toolOk("The page.", { tree: "button Add to cart [ref=e5]" })),
+    tool("terminal_read", true, () => run.terminal?.() ?? toolOk("Something is running.", { screen: "Downloading 40%" })),
+  ];
+}
+
+const nudgesIn = (seen: Seen[], pattern: RegExp) => seen.map((current) => current.messages.filter((message) => message.role === "user" && pattern.test(String(message.content))).length);
+
+test("clicking and looking again while nothing changes is going round in a loop: one nudge, then the turn ends", async () => {
+  const seen = script((current, index) =>
+    !current.tools.length ? { text: "The button does nothing: the cart stays empty." } : index >= 30 ? { text: "Gave up." } : { calls: [index % 2 === 0 ? { name: "browser_click", input: { ref: "e5" } } : { name: "browser_snapshot", input: { tab: "t1" } }] },
+  );
+  const result = await turn({ provider: "openai", tools: browser({}) });
+  assert.equal(seen.length, 10, "the fifth click with the same result ends it");
+  assert.deepEqual(nudgesIn(seen, /called browser_click with the same input 3 times and it returned the same result/), [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]);
+  assert.deepEqual(seen[9]!.tools, []);
+  assert.equal(result.content, "The button does nothing: the cart stays empty.");
+
+  // A click that changes the page each time is progress: looking again after it is not a repeat.
+  let page = 0;
+  const moving = script((current, index) => (index >= 12 ? { text: "Went through 6 pages." } : { calls: [index % 2 === 0 ? { name: "browser_click", input: { ref: "next" } } : { name: "browser_snapshot", input: { tab: "t1" } }] }));
+  const paged = await turn({ provider: "openai", tools: browser({ click: () => toolOk(`Opened page ${(page += 1)}.`), snapshot: () => toolOk("The page.", { tree: `Page ${page}` }) }) });
+  assert.equal(paged.content, "Went through 6 pages.");
+  assert.deepEqual(nudgesIn(moving, /same input/), Array(13).fill(0));
+});
+
+test("polling a terminal whose screen changes is never a repeat; the same screen again and again is", async () => {
+  let percent = 0;
+  const polls = (current: Seen, index: number): Reply => (current.tools.length && index < 6 ? { calls: [{ name: "terminal_read", input: { session: "s1" } }] } : { text: "The download is still going." });
+  let seen = script(polls);
+  await turn({ provider: "openai", tools: browser({ terminal: () => toolOk("Something is running.", { screen: `Downloading ${(percent += 10)}%` }) }) });
+  assert.equal(seen.length, 7, "six reads, then the answer");
+  assert.deepEqual(nudgesIn(seen, /same input/), Array(7).fill(0));
+
+  seen = script(polls);
+  const result = await turn({ provider: "openai", tools: browser({}) });
+  assert.deepEqual(nudgesIn(seen, /called terminal_read with the same input 3 times/), [0, 0, 0, 1, 1, 1]);
+  assert.equal(seen.length, 6, "the fifth read of the same screen ends it");
+  assert.deepEqual(seen[5]!.tools, []);
+  assert.equal(result.content, "The download is still going.");
+});
+
+test("a turn with no step cap pauses at its checkpoint: it says what it did and asks whether to go on", async () => {
+  process.env.ENSEMBLE_LOOP_CONFIG = JSON.stringify({ checkpointSteps: 10 });
+  resetLoopConfigCache();
+  const pages = read("read_page", async (input) => toolOk(`Page ${String(input.page)}.`, { page: input.page }));
+  const metrics: Metric[] = [];
+  const work = (current: Seen, index: number): Reply => (current.tools.length && index < 40 ? { calls: [{ name: "read_page", input: { page: index } }] } : { text: "I read pages 0 to 8. The rest are left." });
+  let seen = script(work);
+  const result = await turn({ app: fakeApp([], metrics), provider: "openai", tools: [pages] });
+  assert.equal(seen.length, 10);
+  assert.deepEqual(seen[9]!.tools, []);
+  assert.ok(seen[9]!.messages.some((message) => message.role === "system" && /worked for 10 steps/.test(String(message.content))));
+  assert.equal(result.content, "I read pages 0 to 8. The rest are left.\n\nI paused after 10 steps. Say continue to go on.");
+  assert.deepEqual(result.paused, { steps: 10 });
+  const loop = metrics.find((row) => row.kind === "assistant.turn")?.payload?.loop as Record<string, unknown>;
+  assert.equal(loop.paused, true);
+
+  // An included model's cap ends its turn instead.
+  seen = script(work);
+  const included = await turn({ provider: INCLUDED_PROVIDER, tools: [pages] });
+  assert.equal(seen.length, 24);
+  assert.equal(included.paused, undefined);
+});
+
+test("progress is what calls return: the same call with the same result repeats, so does a round of calls, and a change starts the counts again", () => {
+  const limits = { nudge: 3, stop: 5, failedSteps: 8 };
+  const call = (name: string, input: string, digest: string, readOnly = false) => ({ name, input, state: "ok", digest, readOnly });
+  const looking = new RunawayGuard(limits);
+  for (let index = 0; index < 6; index += 1) assert.equal(looking.step([call("browser_snapshot", "{}", "page", true), call("browser_click", JSON.stringify({ ref: `e${index}` }), `opened ${index}`)]), null);
+
+  const reads = new RunawayGuard(limits);
+  const list = (order: string) => call("hub_list_tasks", order, "same", true);
   assert.equal(reads.step([list('{"a":1,"b":2}')]), null);
   assert.equal(reads.step([list('{"b":2,"a":1}')]), null);
-  assert.deepEqual(reads.step([list('{"a":1, "b":2}')]), { kind: "nudge", tool: "hub_list_tasks", times: 3 }, "the same input written another way is the same call");
+  assert.deepEqual(reads.step([list('{"a":1, "b":2}')]), { kind: "nudge", tool: "hub_list_tasks", times: 3, round: 1 }, "the same input written another way is the same call");
+
+  const ran = (ms: number, run: string, output: string) => resultDigest({ ok: true, summary: `Exit code 1 in ${ms / 1000}s.`, data: { output, ms, run, at: new Date(ms).toISOString() } });
+  assert.equal(ran(1_200, "0b9a1f3e-5d2c-4c1a-9a7e-2f3b4c5d6e7f", "build failed\n12s elapsed"), ran(3_400, "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", "build failed\n31s elapsed"), "ids, times and durations each run makes anew are not a change");
+  assert.notEqual(ran(1_200, "0b9a1f3e-5d2c-4c1a-9a7e-2f3b4c5d6e7f", "build failed"), ran(1_200, "0b9a1f3e-5d2c-4c1a-9a7e-2f3b4c5d6e7f", "build passed"));
+
+  const rounds = new RunawayGuard(limits);
+  const round = () => rounds.step([call("browser_click", '{"ref":"e5"}', "clicked"), call("browser_snapshot", "{}", "page", true)]);
+  assert.equal(round(), null);
+  assert.equal(round(), null);
+  assert.deepEqual(round(), { kind: "nudge", tool: "browser_click, browser_snapshot", times: 3, round: 2 });
+  assert.equal(round(), null);
+  assert.deepEqual(round(), { kind: "stop", why: "repeat", tool: "browser_click, browser_snapshot", times: 5, round: 2 });
 });

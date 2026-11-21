@@ -109,6 +109,16 @@ export function runsInParallel(tool: AnyHubTool | undefined): boolean {
   return Boolean(tool && !tool.isWrite && tool.parallelSafe === true);
 }
 
+/**
+ * Whether a call only looks and changes nothing, for runaway detection (runaway.ts): Hub reads, a tool
+ * marked `readOnly` (an Ensemble Node's snapshot, screenshot or terminal read), and connected-app and
+ * MCP tools that are not writes (an MCP tool is a write unless its server marks it read-only).
+ */
+export function readsOnly(tool: AnyHubTool | undefined): boolean {
+  if (!tool) return false;
+  return tool.readOnly ?? (runsInParallel(tool) || (tool.area === "apps" && !tool.isWrite));
+}
+
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
 
 /**

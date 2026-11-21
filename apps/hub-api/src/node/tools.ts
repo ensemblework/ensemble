@@ -162,6 +162,7 @@ function computerFilesTool(scope: NodeScope): AnyHubTool {
       query: z.string().min(1).max(200).optional().describe("Text to find, for search."),
     }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Files on your owner's computer are read only in a chat with just your owner.");
