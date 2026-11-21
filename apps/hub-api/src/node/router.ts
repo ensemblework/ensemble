@@ -14,13 +14,17 @@
  *     node messages in the room, and the depth of the bot chain under one person's message.
  *   - A person's message wakes the nodes it mentions; mentioning only people wakes nobody;
  *     otherwise the DM's node.
+ *
+ * The brakes and fan-outs are the heuristics config's (node/heuristics.ts); the caller passes the active
+ * one and records each decision with `routeRecord` (node_decisions, kind `route`).
  */
+import { DEFAULT_NODE_HEURISTICS, type RouterBrakes } from "./heuristics.js";
 import type { Mention } from "./mentions.js";
 
-export const MAX_BOT_STREAK = 8;
-export const MAX_BOT_DEPTH = 12;
-export const MAX_HUMAN_FANOUT = 6;
-export const MAX_NODE_FANOUT = 3;
+export const MAX_BOT_STREAK = DEFAULT_NODE_HEURISTICS.router.botStreak;
+export const MAX_BOT_DEPTH = DEFAULT_NODE_HEURISTICS.router.botDepth;
+export const MAX_HUMAN_FANOUT = DEFAULT_NODE_HEURISTICS.router.humanFanout;
+export const MAX_NODE_FANOUT = DEFAULT_NODE_HEURISTICS.router.nodeFanout;
 
 export type RouteMessage = {
   kind: string;
@@ -49,12 +53,22 @@ export type RouteTarget = {
   note?: string;
 };
 
+/**
+ * `capped`: nodes the message named that the fan-out left out (the heuristics' `humanFanout` or
+ * `nodeFanout`), only when there were some.
+ */
 export type RouteDecision =
-  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[]; targets?: RouteTarget[] }
+  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[]; targets?: RouteTarget[]; capped?: number }
   | { reason: "status"; nodeIds: [] }
   | { reason: "none"; nodeIds: []; brake?: "streak" | "depth" };
 
 const none = (brake?: "streak" | "depth"): RouteDecision => ({ reason: "none", nodeIds: [], ...(brake ? { brake } : {}) });
+
+/** At most `limit` of the named nodes, with how many were left out when any were. */
+function upTo<T>(items: readonly T[], limit: number): { kept: T[]; capped?: number } {
+  const kept = items.slice(0, limit);
+  return items.length > kept.length ? { kept, capped: items.length - kept.length } : { kept };
+}
 
 /**
  * `@leads status`, and the same with punctuation ("@leads, status?", "@Leads: status!"): nothing else.
@@ -79,7 +93,7 @@ export function botStreak(recentNewestFirst: ReadonlyArray<{ authorKind: string;
  * Rooms v2 (docs/35 §12): a room with other people. Unaddressed messages wake nobody; a lead answers
  * in public only when it is mentioned; a person's own other nodes answer them in private.
  */
-function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards: readonly string[] = []): RouteDecision {
+function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards: readonly string[], brakes: RouterBrakes): RouteDecision {
   if (message.authorKind !== "human") return none();
   if (leadsStatus(message.text ?? "")) return { reason: "status", nodeIds: [] };
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -97,8 +111,9 @@ function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards:
     const own = (node: RouteNode) => message.visibleTo.includes(node.ownerId) && node.active;
     const picked = named.filter(own);
     if (picked.length) {
-      const ids = picked.slice(0, MAX_HUMAN_FANOUT).map((node) => node.id);
-      return { reason: "mentioned", nodeIds: ids, targets: ids.map((nodeId) => ({ nodeId, private: true, audience: "owner" })) };
+      const { kept, capped } = upTo(picked, brakes.humanFanout);
+      const ids = kept.map((node) => node.id);
+      return { reason: "mentioned", nodeIds: ids, targets: ids.map((nodeId) => ({ nodeId, private: true, audience: "owner" })), ...(capped ? { capped } : {}) };
     }
     const lead = message.authorId ? leadOf(message.authorId) : undefined;
     return lead && own(lead) ? { reason: "lead", nodeIds: [lead.id], targets: [{ nodeId: lead.id, private: true, audience: "owner" }] } : none();
@@ -125,26 +140,28 @@ function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards:
       }
     }
   }
-  const picked = targets.slice(0, MAX_HUMAN_FANOUT);
-  return picked.length ? { reason: "mentioned", nodeIds: picked.map((row) => row.nodeId), targets: picked } : none();
+  const { kept, capped } = upTo(targets, brakes.humanFanout);
+  return kept.length ? { reason: "mentioned", nodeIds: kept.map((row) => row.nodeId), targets: kept, ...(capped ? { capped } : {}) } : none();
 }
 
-export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonly RouteNode[], streak: number): RouteDecision {
+export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonly RouteNode[], streak: number, brakes: RouterBrakes = DEFAULT_NODE_HEURISTICS.router): RouteDecision {
   if (message.kind !== "text" || message.authorKind === "system") return none();
   const eligible = nodes.filter(
     (node) => node.active && node.id !== message.authorNodeId && (message.visibleTo.length === 0 || message.visibleTo.includes(node.ownerId)),
   );
   // In a room with other people `leadNodeIds` holds only its steward, if it has one.
-  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId), room.leadNodeIds);
+  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId), room.leadNodeIds, brakes);
   const eligibleIds = new Set(eligible.map((node) => node.id));
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 
   if (message.authorKind === "node") {
     if (room.kind === "crew") return none();
     // A helper's room is nodes only: the depth limit (reset by each owner message) is its brake.
-    if (room.kind !== "task" && streak >= MAX_BOT_STREAK) return none("streak");
-    if (message.botDepth >= MAX_BOT_DEPTH) return none("depth");
-    return mentioned.length ? { reason: "mentioned", nodeIds: mentioned.slice(0, MAX_NODE_FANOUT) } : none();
+    if (room.kind !== "task" && streak >= brakes.botStreak) return none("streak");
+    if (message.botDepth >= brakes.botDepth) return none("depth");
+    if (!mentioned.length) return none();
+    const { kept, capped } = upTo(mentioned, brakes.nodeFanout);
+    return { reason: "mentioned", nodeIds: kept, ...(capped ? { capped } : {}) };
   }
 
   const lead = room.leadNodeIds.find((id) => eligibleIds.has(id));
@@ -156,9 +173,45 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
     const pick = lead ?? eligible.find((node) => node.role === "manager")?.id ?? eligible[0]!.id;
     return { reason: "lead", nodeIds: [pick] };
   }
-  if (mentioned.length) return { reason: "mentioned", nodeIds: mentioned.slice(0, MAX_HUMAN_FANOUT) };
+  if (mentioned.length) {
+    const { kept, capped } = upTo(mentioned, brakes.humanFanout);
+    return { reason: "mentioned", nodeIds: kept, ...(capped ? { capped } : {}) };
+  }
   if (message.mentions.length) return none();
   if (!eligible.length) return none();
   if (room.kind === "dm") return { reason: "dm", nodeIds: [eligible[0]!.id] };
   return lead ? { reason: "lead", nodeIds: [lead] } : none();
+}
+
+/** The message as a routing decision records it: who wrote it, where, whom it names and what it answers; never its words. */
+export type RouteInput = RouteMessage & { id: string; roomId: string; replyTo?: { id?: unknown; seq?: unknown; authorKind?: unknown } | null };
+
+/**
+ * A routing decision as `node_decisions` keeps it (kind `route`): the inputs the rules read (the message's
+ * author, mentions and reply, the room's kind and leads, the nodes that could answer and the brakes'
+ * state) and the choice (the reason, the nodes woken in which thread, a brake or a cap). No model decides
+ * routing, so it is never ambiguous and has no scores. The caller adds each woken node's turn.
+ */
+export function routeRecord(message: RouteInput, room: RouteRoom, nodes: readonly RouteNode[], streak: number, brakes: RouterBrakes, decision: RouteDecision) {
+  const replyTo = message.replyTo && typeof message.replyTo === "object" ? message.replyTo : null;
+  const inputs = {
+    messageId: message.id,
+    roomId: message.roomId,
+    roomKind: room.kind,
+    author: { kind: message.authorKind, ...(message.authorNodeId ? { nodeId: message.authorNodeId } : {}) },
+    private: message.visibleTo.length > 0,
+    mentions: message.mentions.map((row) => ({ kind: row.kind, id: row.id })),
+    replyTo: replyTo ? { ...(typeof replyTo.id === "string" ? { id: replyTo.id } : {}), ...(typeof replyTo.seq === "number" ? { seq: replyTo.seq } : {}), ...(typeof replyTo.authorKind === "string" ? { authorKind: replyTo.authorKind } : {}) } : null,
+    leadNodeIds: [...room.leadNodeIds],
+    nodes: nodes.map((node) => ({ id: node.id, active: node.active, ...(node.representative ? { lead: true } : {}), ...(message.authorId && node.ownerId === message.authorId ? { authorsOwn: true } : {}) })),
+    brakes: { streak, depth: message.botDepth, ...brakes },
+  };
+  const targets: RouteTarget[] = decision.reason === "mentioned" || decision.reason === "dm" || decision.reason === "lead" ? (decision.targets ?? decision.nodeIds.map((nodeId) => ({ nodeId, private: message.visibleTo.length > 0, audience: "owner" }))) : [];
+  const choice = {
+    reason: decision.reason,
+    ...(decision.reason === "none" && decision.brake ? { brake: decision.brake } : {}),
+    ...("capped" in decision && decision.capped ? { capped: decision.capped } : {}),
+    woken: targets.map((target) => ({ nodeId: target.nodeId, private: target.private, audience: target.audience, ...(target.note ? { forNamedNode: true } : {}) })),
+  };
+  return { inputs, choice };
 }

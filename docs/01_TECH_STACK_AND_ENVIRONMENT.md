@@ -26,7 +26,7 @@ pnpm dev
 | Group | Examples |
 | --- | --- |
 | Database and origins | `DATABASE_URL`, `REDIS_URL`, `HUB_API_HOST`, `HUB_API_PORT`, `HUB_WEB_ORIGIN`, `HUB_API_PUBLIC_URL`, `NEXT_PUBLIC_HUB_API`, `ENSEMBLE_COOKIE_DOMAIN`, `ENSEMBLE_COOKIE_NAMESPACE` (identical on API/web; unset for default cookies), `ENSEMBLE_NODE_WEB_ORIGIN` (the Ensemble Node website, [35](35_ENSEMBLE_NODE.md)) |
-| Ensemble Node | `ENSEMBLE_NODE` (`off` stops node turns and run reports), `ENSEMBLE_NODE_PARALLEL` (node turns at once per API process, default 4) ([35](35_ENSEMBLE_NODE.md)) |
+| Ensemble Node | `ENSEMBLE_NODE` (`off` stops node turns and run reports), `ENSEMBLE_NODE_PARALLEL` (node turns at once per API process, default 4), `ENSEMBLE_NODE_HEURISTICS_CONFIG` (a JSON object, or the path of a file with one, changing the numbers Node decides with: the router's brakes and fan-outs; [35 §5.6](35_ENSEMBLE_NODE.md#56-traces-outcomes-and-decisions)) ([35](35_ENSEMBLE_NODE.md)) |
 | Signup and identity | `ENSEMBLE_SIGNUP_MODE`, `ENSEMBLE_SIGNUP_ALLOWLIST`, `AUTH_GOOGLE_*`, `AUTH_GITHUB_*`, `AUTH_MICROSOFT_*`, `EMAIL_PROVIDER` (Resend), Turnstile keys |
 | Inbound support email | Optional server-only `EMAIL_FROM_SUPPORT`, `EMAIL_FORWARD_TO`, `EMAIL_INBOUND_WEBHOOK_SECRET`, `EMAIL_INBOUND_API_KEY`; see [inbound email](02_MODULE_INTERACTION_HUB_UI.md#inbound-support-email) |
 | MCP publishing | `OPENAI_APPS_CHALLENGE` (optional one-line plaintext proof at `/.well-known/openai-apps-challenge`; unset returns 404). Hosted OAuth uses the API origin and existing auth infrastructure ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)) |
@@ -35,7 +35,7 @@ pnpm dev
 | Model providers | Provider keys, endpoints and role/model settings; hosted ordinary users never use operator keys |
 | Connector apps | Provider client variables, Google Picker settings, vendor MCP clients ([03](03_MODULE_CONTEXT_ENGINE.md)) |
 | Included AI | `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_MODELS`, `ENSEMBLE_INCLUDED_WEB_SEARCH`, `ENSEMBLE_INCLUDED_MONTHLY_CREDITS`, `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD`, `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` ([33](33_INCLUDED_AI.md)) |
-| Model calls | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS`: how long one model call may take, 900000 (15 minutes) by default, 30 s to 30 min; hub-api and agent-runtime read it ([11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)) |
+| Model calls | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS`: how long one model call may take, 900000 (15 minutes) by default, 30 s to 30 min; hub-api and agent-runtime read it ([11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)). `ENSEMBLE_LOOP_CONFIG`: a JSON object, or the path of a file with one, changing the numbers of Ensemble's own model loop: steps by model class, the checkpoint of an uncapped turn, result size, history, compaction, runaway detection, retries ([11, Turn limits](11_HOW_THE_ASSISTANT_WORKS.md#turn-limits-and-final-answer)) |
 | Workspace and local runtime | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_DATA_DIR`, state directories, queue/remote-loop/scheduler switches |
 | Agent sessions | `ENSEMBLE_SESSION_CHOICE_CONFIG`: a JSON file overriding the weights, bands and limits a computer chooses a run's agent session with; the server sends it with every claim ([41 §4](41_AGENT_SESSIONS.md#4-choosing-a-session)) |
 | Hosted quotas | `ENSEMBLE_MAX_CONNECTORS`, `ENSEMBLE_MAX_JOBS_PER_DAY`, `ENSEMBLE_MAX_DATASET_BYTES`, `ENSEMBLE_MAX_DOCUMENTS`, `ENSEMBLE_MAX_DOCUMENT_BYTES`, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` |
@@ -109,7 +109,7 @@ Only verified accounts listed exactly in `ENSEMBLE_OPERATOR_EMAILS` may use host
 
 Manifests and lockfiles hold exact versions. Beyond §1: the MCP SDK, SimpleWebAuthn, `fflate`, Office/CSV readers and writers, `pdfjs-dist`, `@azure/storage-blob`, `prom-client`, PGlite; `jspdf` serves both the browser and the assistant's server PDF export. Python holds FastAPI, httpx, provider adapters and the plotting stack. Either runtime can resolve encrypted provider keys.
 
-`packages/prompts` and `apps/skill-forge` are stubs.
+`apps/skill-forge` is a stub. `packages/prompts` holds the instructions the assistant and nodes get, as Markdown sections compiled into a TypeScript module ([its README](../packages/prompts/README.md)).
 
 ### 5. Data storage (Postgres)
 

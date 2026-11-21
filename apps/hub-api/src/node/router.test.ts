@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleFrom, parseMentions, resolveMentions, uniqueHandle } from "./mentions.js";
-import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
+import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, routeRecord, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
+import { activeHeuristics, DEFAULT_NODE_HEURISTICS, heuristicsVersion, resetHeuristicsCache } from "./heuristics.js";
 import { cleanReply } from "./reply.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES, charterOf, nodeTemplate, paletteAvatar } from "./templates.js";
 import { mirrorNeedsMe, nodeChannel } from "./events.js";
@@ -122,6 +123,62 @@ test("node messages wake only mentioned nodes, under the streak and depth brakes
   assert.equal(whoSpeaks(message({ kind: "approval" }), { kind: "dm", leadNodeIds: [] }, nodes, 0).reason, "none", "cards never wake anyone");
   assert.equal(whoSpeaks(message({ kind: "request", authorId: "mira", text: "@leads status" }), { kind: "room", leadNodeIds: [] }, nodes, 0).reason, "none", "nor do request cards");
   assert.equal(botStreak([{ authorKind: "node", kind: "text" }, { authorKind: "node", kind: "run" }, { authorKind: "node", kind: "text" }, { authorKind: "human", kind: "text" }, { authorKind: "node", kind: "text" }]), 2);
+});
+
+test("the brakes and fan-outs come from the heuristics config, and a decision records what it read and chose", () => {
+  const nodes = [node("a", "mira"), node("b", "mira"), node("c", "mira"), node("d", "ben", { active: false })];
+  const tight = { ...DEFAULT_NODE_HEURISTICS.router, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1 };
+  const dm = { kind: "dm" as const, leadNodeIds: [] };
+  const fromNode = message({ authorKind: "node", authorNodeId: "a", mentions: [{ kind: "node", id: "b" }, { kind: "node", id: "c" }] });
+  assert.deepEqual(whoSpeaks(fromNode, dm, nodes, 2, tight), { reason: "none", nodeIds: [], brake: "streak" });
+  assert.deepEqual(whoSpeaks({ ...fromNode, botDepth: 3 }, dm, nodes, 0, tight), { reason: "none", nodeIds: [], brake: "depth" });
+  assert.deepEqual(whoSpeaks(fromNode, dm, nodes, 1, tight), { reason: "mentioned", nodeIds: ["b"], capped: 1 }, "a node's message wakes one, and says how many it left out");
+  const three = message({ authorId: "mira", mentions: ["a", "b", "c"].map((id) => ({ kind: "node" as const, id })) });
+  assert.deepEqual(whoSpeaks(three, dm, nodes, 0, tight), { reason: "mentioned", nodeIds: ["a", "b"], capped: 1 });
+  assert.deepEqual(whoSpeaks(three, dm, nodes, 0), { reason: "mentioned", nodeIds: ["a", "b", "c"] }, "the defaults let all three answer");
+
+  const routed = { ...three, id: "m1", roomId: "r1", text: "secret plans for the launch", replyTo: { id: "m0", seq: 4, authorKind: "node", excerpt: "earlier words" } };
+  const record = routeRecord(routed, dm, nodes, 0, tight, whoSpeaks(routed, dm, nodes, 0, tight));
+  assert.deepEqual(record.inputs, {
+    messageId: "m1",
+    roomId: "r1",
+    roomKind: "dm",
+    author: { kind: "human" },
+    private: false,
+    mentions: [{ kind: "node", id: "a" }, { kind: "node", id: "b" }, { kind: "node", id: "c" }],
+    replyTo: { id: "m0", seq: 4, authorKind: "node" },
+    leadNodeIds: [],
+    nodes: [{ id: "a", active: true, authorsOwn: true }, { id: "b", active: true, authorsOwn: true }, { id: "c", active: true, authorsOwn: true }, { id: "d", active: false }],
+    brakes: { streak: 0, depth: 0, botStreak: 2, botDepth: 3, humanFanout: 2, nodeFanout: 1 },
+  });
+  assert.deepEqual(record.choice, { reason: "mentioned", capped: 1, woken: [{ nodeId: "a", private: false, audience: "owner" }, { nodeId: "b", private: false, audience: "owner" }] });
+  assert.ok(!JSON.stringify(record).includes("secret plans") && !JSON.stringify(record).includes("earlier words"), "never the message's words");
+  const braked = routeRecord({ ...fromNode, id: "m2", roomId: "r1" }, dm, nodes, 2, tight, whoSpeaks(fromNode, dm, nodes, 2, tight));
+  assert.deepEqual(braked.choice, { reason: "none", brake: "streak", woken: [] });
+});
+
+test("an override of the heuristics config changes only what it names; an invalid one is ignored and logged", () => {
+  const warned: string[] = [];
+  const log = { warn: (_data: unknown, text: string) => warned.push(text) };
+  try {
+    process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = JSON.stringify({ version: "tuned-1", router: { botStreak: 4 } });
+    resetHeuristicsCache();
+    const tuned = activeHeuristics(log);
+    assert.deepEqual(tuned.router, { ...DEFAULT_NODE_HEURISTICS.router, botStreak: 4 });
+    assert.match(heuristicsVersion(tuned), /^tuned-1:[0-9a-f]{12}$/);
+    assert.notEqual(heuristicsVersion(tuned).split(":")[1], heuristicsVersion(DEFAULT_NODE_HEURISTICS).split(":")[1], "the hash tells the numbers apart");
+    process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = JSON.stringify({ router: { humanFanout: 0 } });
+    resetHeuristicsCache();
+    assert.deepEqual(activeHeuristics(log), DEFAULT_NODE_HEURISTICS, "out of range: the defaults apply");
+    process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = "/nonexistent/ensemble-node-heuristics.json";
+    resetHeuristicsCache();
+    assert.deepEqual(activeHeuristics(log), DEFAULT_NODE_HEURISTICS, "a file that cannot be read: the defaults apply");
+    assert.equal(warned.length, 2);
+  } finally {
+    delete process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG;
+    resetHeuristicsCache();
+  }
+  assert.deepEqual(activeHeuristics(), DEFAULT_NODE_HEURISTICS);
 });
 
 test("templates name real nodes, and every crew has its lead", () => {

@@ -169,7 +169,7 @@ test("a room-bound turn never sees its owner's private page, memories or other c
   for (const name of ROOM_TOOLS) assert.ok(turn.tools.includes(name), `${name} is offered`);
   for (const name of PRIVATE_TOOLS) assert.ok(!turn.tools.includes(name), `${name} is not offered`);
   assert.ok(inputs.length >= 2 && inputs.every((text) => !/CANARY-|Initech in May/.test(text)), "no private page, memory or chat in anything the model was sent");
-  assert.doesNotMatch(turn.system, /What you remember|Your rooms:|Your owner's other nodes|Your work board/);
+  assert.doesNotMatch(turn.system, /Your owner's standing preferences|Your rooms:|Your owner's other nodes|Your work board/);
   assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable/);
   const row = (await turnsOf([lead.id], room.id)).at(-1)!;
   assert.equal(row.audience, "room");
@@ -331,6 +331,29 @@ test("rooms v2: an unaddressed message wakes nobody; only leads answer in public
   const all = await read(akash, room.id);
   assert.ok(all.filter((row) => row.authorKind === "node" && !row.private).every((row) => row.authorNodeId === lead.id || row.authorNodeId === bensLead.id), "a non-lead node never posts in public");
   assert.equal((await turnsOf([tester!.id], room.id)).length, 0);
+
+  // Each routed message is one decision; one that wakes both leads names both turns, and each owner reads it with their own.
+  seen.length = 0;
+  const both = await say(ben, room.id, `@${handle(lead.id)} @${handle(bensLead.id)} are we ready to ship?`);
+  assert.deepEqual(seen.map((row) => row.slug).sort(), ["assistant", "manager"]);
+  const routed = (await h.prisma.nodeDecision.findMany({ where: { kind: "route", inputs: { path: ["roomId"], equals: room.id } }, orderBy: { createdAt: "asc" } })).filter(
+    (row) => (row.inputs as { author: { kind: string } }).author.kind === "human",
+  );
+  assert.deepEqual(routed.map((row) => (row.choice as { reason: string }).reason), ["none", "none", "mentioned", "mentioned", "mentioned", "mentioned"], "every person's message, the ones that woke nobody too");
+  const forBuilder = routed[2]!.choice as { woken: Array<{ nodeId: string; audience: string; forNamedNode?: boolean }> };
+  assert.deepEqual(forBuilder.woken.map((row) => [row.nodeId, row.audience, row.forNamedNode]), [[lead.id, "room", true]], "Akash's lead was woken for the builder Ben named");
+  const last = routed.at(-1)!;
+  assert.equal((last.inputs as { messageId: string }).messageId, both.id);
+  assert.deepEqual([last.userId, last.nodeId, last.turnId], [ben.id, null, null], "the decision is Ben's: his message woke two nodes");
+  const woken = (last.choice as { woken: Array<{ nodeId: string; turnId: string }> }).woken;
+  assert.deepEqual(woken.map((row) => row.nodeId).sort(), [lead.id, bensLead.id].sort());
+  for (const [user, nodeId] of [[akash, lead.id], [ben, bensLead.id]] as const) {
+    const turnId = woken.find((row) => row.nodeId === nodeId)!.turnId;
+    const opened = await user.inject({ method: "GET", url: `/api/node/turns/${turnId}/trace` });
+    assert.equal(opened.statusCode, 200, opened.body);
+    assert.deepEqual(json(opened).decisions.map((row: { id: string }) => row.id), [last.id], "the routing that woke it");
+    assert.equal((await (user === akash ? ben : akash).inject({ method: "GET", url: `/api/node/turns/${turnId}/trace` })).statusCode, 404, "the other person's node's turn");
+  }
 });
 
 test("Ask my nodes: a private reply to a Room message is answered privately, with the quote", async () => {

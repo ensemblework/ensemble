@@ -419,6 +419,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/docs/logout": ["happy-path", "isolation"],
   "POST /api/docs/ask": ["happy-path", "isolation", "invalid-input"],
   "DELETE /api/node/sessions/:id": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/node/turns/:turnId/trace": ["happy-path", "isolation", "unknown-id"],
   "GET /api/boards": ["happy-path", "isolation"],
   "POST /api/boards": ["happy-path", "invalid-input"],
   "GET /api/boards/:id": ["happy-path", "isolation"],

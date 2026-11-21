@@ -823,7 +823,7 @@ export async function revokeOnLeave(tx: Prisma.TransactionClient, roomId: string
   const open = await tx.nodePeerRequest.findMany({ where: { roomId, status: { in: UNDECIDED }, OR: [{ fromAccountId: accountId }, { toAccountId: accountId }] }, select: { id: true } });
   const ids = open.map((row) => row.id);
   if (ids.length) await tx.nodePeerRequest.updateMany({ where: { id: { in: ids } }, data: { status: "cancelled", answer: "Cancelled: they left the room.", decidedAt: new Date() } });
-  await tx.nodeTurn.updateMany({ where: { roomId, userId: accountId, status: "queued", planId: null }, data: { status: "failed", error: "Its owner left the room.", finishedAt: new Date() } });
+  await tx.nodeTurn.updateMany({ where: { roomId, userId: accountId, status: "queued", planId: null }, data: { status: "failed", outcome: "cancelled", error: "Its owner left the room.", finishedAt: new Date() } });
   const cards = await tx.$queryRaw<Array<{ id: string }>>`
     UPDATE node_messages SET data = data || jsonb_build_object('status', 'expired', 'why', 'They left the room.')
     WHERE room_id = ${roomId} AND kind = 'approval' AND data->>'status' = 'pending'

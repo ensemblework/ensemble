@@ -1,8 +1,8 @@
 /**
  * Skills for a node's turn (docs/35 §6.1): short, curated guidance for the web work small models get
- * wrong, injected into the persona when the owner's new messages point at it. No extra model call:
- * each skill has words that match it, the tools it needs (a skill whose tools this turn does not have
- * stays out) and 6 to 12 lines. At most `MAX_SKILLS` per turn, the strongest match first.
+ * wrong, put in the turn's context (node/instructions.ts) when the owner's new messages point at it. No
+ * extra model call: each skill has words that match it, the tools it needs (a skill whose tools this turn
+ * does not have stays out) and 6 to 12 lines. At most `MAX_SKILLS` per turn, the strongest match first.
  */
 export type NodeSkill = {
   name: string;
@@ -114,10 +114,9 @@ export function skillsFor(text: string, has: (tool: string) => boolean): NodeSki
     .map((row) => row.skill);
 }
 
-/** The persona block for these skills. */
+/** These skills, each with its title, for the turn's context (its label is `node/56-skills` in packages/prompts). */
 export function skillsBlock(skills: readonly NodeSkill[], has: (tool: string) => boolean): string {
-  if (!skills.length) return "";
-  return ["Skills for this request:", ...skills.flatMap((skill) => [`${skill.title}:`, ...skill.lines(has)])].join("\n");
+  return skills.flatMap((skill) => [`${skill.title}:`, ...skill.lines(has)]).join("\n");
 }
 
 /**

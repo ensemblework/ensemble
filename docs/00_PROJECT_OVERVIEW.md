@@ -56,6 +56,8 @@ Secrets and sign-ins are typed into a secure box, sealed in the browser for the 
 
 In a room each person's lead answers within that person's sharing rules and asks before sharing anything else; a room can link a shared space whose board, events, contracts and decisions log the leads follow. Needs me is in the Node chat, in the CLI and in the Hub, which shows of Node only what a node's sessions ask for; a reply in the chat answers a session's request everywhere
 
+Each node turn keeps a trace only its owner reads (its instructions' and tools' sizes and hashes, each tool call's time and size, the models, tokens and credits, where it ran and how it ended), and each routed message a record of which nodes it woke and why, with the version of the numbers used (`GET /api/node/turns/:turnId/trace`; messages name the turn that posted them).
+
 **Guide.** [35](35_ENSEMBLE_NODE.md)
 
 ### Context Bridge

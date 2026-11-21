@@ -275,6 +275,7 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
       description: "The screen of your open terminal now. lines: the last lines instead, scrollback included (up to 500).",
       input: z.object({ session: Session, lines: z.number().int().min(1).max(500).optional() }).strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(ctx, input) {
         const record = await ownRecord(ctx, scope, input.session);

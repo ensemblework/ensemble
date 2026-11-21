@@ -12,9 +12,10 @@ import { SUBSCRIPTION_INFO } from "@ensemble/shared-types";
  * credentials, not on convenience.
  *
  * The loop: build state → ask the model → tool calls? → run them → feed results
- * back. It stops on a text-only answer, or at MAX_STEPS. The cap is a cost
- * guard. A model that has decided to call hub_list_tasks forever will do so
- * until something stops it, and the engineer pays for every turn.
+ * back. It stops on a text-only answer. Included models (Ensemble pays) have a
+ * step budget; owner keys and local models have none: runaway detection ends a
+ * stuck turn, and a long one pauses at a checkpoint to ask whether to go on
+ * (loop-config.ts, runaway.ts).
  */
 import { attachedListing, attachedNote, filesNotReceived, messageAttachments, turnFilesFor } from "./attachments.js";
 import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
@@ -22,7 +23,7 @@ import { fileOriginal } from "../files/attached.js";
 import { keepRecentAttachments, withPictures, type ContentPart } from "../files/model-input.js";
 import { attachmentsRefused, documentsFor, hasAttachments, modelReadsImages, narrowAttachments, partsAtStage, type AttachStage } from "../lib/vision.js";
 import type { FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   personaBlock,
   personaFor,
@@ -52,7 +53,11 @@ import {
 import { settleWriteBatch } from "./batch.js";
 import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
-import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
+import { toolAllowedFor, chatToolSpecs, responsesToolSpecs, readsOnly, runsInParallel } from "./registry.js";
+import { activeLoopConfig, loopConfigHash, turnLimits } from "./loop-config.js";
+import { READ_TOOL_OUTPUT, readableText, readToolOutputTool, TurnOutputs } from "./tool-output.js";
+import { checkpointFinal, pausedReply, RunawayGuard, repeatNudge, resultDigest, runawayFinal, runawayReply } from "./runaway.js";
+import { CHARS_PER_TOKEN, compactMessages, messageChars } from "./compaction.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { loadConnections } from "./connections.js";
 import { isGuestIn } from "../sharing/context.js";
@@ -69,8 +74,12 @@ import { codePreamble, codeTools } from "./tools/code.js";
 import {
   assistantEcho,
   askRuntimeStream,
+  loopRetries,
+  retryNotice,
   toolResult,
+  waitBeforeRetry,
   type ModelMessage,
+  type RuntimeTurn,
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
 import { headAndTail, safePublicError, truncateText } from "../lib/text.js";
@@ -79,11 +88,9 @@ import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
 import { formatEntityText, linkedRefs, refLink, refsInText, type AssistantRef } from "@ensemble/shared-types";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import type { Assembled } from "@ensemble/prompts";
 import type { Redis } from "ioredis";
 
-export const MAX_STEPS = 8;
-/** Ensemble Code reads files and follows runs: more steps per turn than the web assistant. */
-export const MAX_CODE_STEPS = 16;
 /** Bodies handed back to the model, so one long note cannot eat the window. */
 export const MAX_TOOL_RESULT_CHARS = 6000;
 
@@ -162,6 +169,19 @@ export interface AssistantTurnArgs {
    * person's persona for this turn. Not a permission change.
    */
   agentPersona?: string;
+  /**
+   * An Ensemble Node turn's own instructions (node/instructions.ts): `stable` (the constitution, its role and
+   * what it can do) and `context` (its room, crew, skills and memories, as information). They replace the
+   * assistant's rules and persona. On Ensemble's loop both follow the assistant's instructions as one system
+   * message; on the person's own AI plan only `stable` joins the system prompt, so the agent's session keeps
+   * it unchanged, and `context` leads the turn's prompt. Not a permission change.
+   */
+  nodeInstructions?: { stable: string; context: string };
+  /**
+   * Which instructions the turn runs with (their version and hashes), on each `model.call` metric. Every
+   * section is in the node turn's one `node.instructions` metric (node/brain.ts).
+   */
+  instructionsRef?: Pick<Assembled, "version" | "hash" | "hashes">;
   /** Tools added to this turn and always shown (Ensemble Node's room tools). Same checks as every tool. */
   extraTools?: AnyHubTool[];
   /** Assistant tools this surface replaces with its own (Ensemble Node's session tools replace agent assignment). */
@@ -201,8 +221,8 @@ export interface AssistantTurnArgs {
     keepDays?: number;
     ownWeb?: boolean;
     ownTools?: boolean;
-    /** The node's persona for a computer that runs the turn with Ensemble's tools only: it names no shell or files of the agent's own. */
-    personaWithoutOwnTools?: string;
+    /** The node's stable instructions for a computer that runs the turn with Ensemble's tools only: they name no shell or files of the agent's own. */
+    stableWithoutOwnTools?: string;
     nodeTools?: {
       policy: NodeTurnPolicy;
       ask: (request: OwnAsk, computer: { id: string; name: string }) => Promise<OwnAnswer>;
@@ -216,13 +236,84 @@ export interface AssistantTurnArgs {
     history?: string;
     title?: string;
   };
+  /** Filled in as the turn runs, for Ensemble Node's turn trace (node/trace.ts). Kept when the turn throws. */
+  trace?: LoopTrace;
 }
 
-/** The messages with the persona `to` in place of `from` (`agentPersona`'s system message). */
-function swapPersona(messages: readonly ModelMessage[], from: string | undefined, to: string | undefined): readonly ModelMessage[] {
+/** One tool call as a turn's trace records it: how long it ran and how big its result was, never its input or output. */
+export interface ToolCallTrace {
+  name: string;
+  ms: number;
+  state: string;
+  /** Characters of the whole result (its summary and data), of the preview for a held write, or of the error. */
+  resultChars: number;
+  /** Characters of what the model was told the call returned. */
+  shownChars: number;
+  /** The whole result was kept for read_tool_output: the model saw its start and end. */
+  offloaded: boolean;
+  /** The call only looked (registry.ts `readsOnly`). */
+  readOnly: boolean;
+}
+
+/**
+ * What a turn offered the model and how it ran, in sizes, counts and settings only: the tools of its first
+ * model call (a hash of their specs and how many), each tool call, tokens and cost across its model
+ * calls, and `loop`, how the loop ran so far (Ensemble's, or the agent's on the person's own plan).
+ */
+export interface LoopTrace {
+  tools: { hash: string; count: number } | null;
+  calls: ToolCallTrace[];
+  modelCalls: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  loop: (() => Record<string, unknown>) | null;
+}
+
+export function loopTrace(): LoopTrace {
+  return { tools: null, calls: [], modelCalls: 0, tokensIn: null, tokensOut: null, costUsd: null, loop: null };
+}
+
+/** The tools a model is offered, as a short fingerprint of their specs (names, descriptions and parameters) and their count. */
+export function toolsFingerprint(specs: readonly unknown[]): { hash: string; count: number } {
+  return { hash: createHash("sha256").update(JSON.stringify(specs)).digest("hex").slice(0, 16), count: specs.length };
+}
+
+/** A model call's usage added to the trace; a count stays null until a call reports one. */
+function traceUsage(trace: LoopTrace | undefined, tokensIn: number | null | undefined, tokensOut: number | null | undefined, usd: number | null | undefined): void {
+  if (!trace) return;
+  trace.modelCalls += 1;
+  const add = (total: number | null, value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? (total ?? 0) + value : total);
+  trace.tokensIn = add(trace.tokensIn, tokensIn);
+  trace.tokensOut = add(trace.tokensOut, tokensOut);
+  trace.costUsd = add(trace.costUsd, usd);
+}
+
+const jsonChars = (value: unknown): number => {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+};
+
+function callTrace(outcome: CallOutcome, tool: AnyHubTool | undefined): ToolCallTrace {
+  const { call } = outcome;
+  return {
+    name: call.name,
+    ms: outcome.ms ?? 0,
+    state: call.state ?? "ok",
+    resultChars: outcome.resultChars ?? (call.state === "failed" ? (call.error ?? "").length : (call.summary ?? "").length),
+    shownChars: jsonChars(outcome.forModel),
+    offloaded: outcome.offloaded ?? false,
+    readOnly: readsOnly(tool),
+  };
+}
+
+/** The messages with the system message `from` (a node's stable instructions) replaced by `to`. */
+function swapSystem(messages: readonly ModelMessage[], from: string | undefined, to: string | undefined): readonly ModelMessage[] {
   if (from === undefined || to === undefined) return messages;
-  const was = truncateText(from, 12_000);
-  return messages.map((message) => (message.role === "system" && message.content === was ? { ...message, content: truncateText(to, 12_000) } : message));
+  return messages.map((message) => (message.role === "system" && message.content === from ? { ...message, content: to } : message));
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -248,6 +339,8 @@ export interface AssistantTurnResult {
   credentialSource?: string;
   /** Records the reply's text names by id, so it can show their titles (saved on the reply). */
   refs?: AssistantRef[];
+  /** Ensemble's own loop paused at its checkpoint after this many model requests (loop-config.ts); the reply asks whether to go on. */
+  paused?: { steps: number };
 }
 
 const liveTurns = new Map<string, AbortController>();
@@ -332,6 +425,9 @@ async function drive(
   let stage: AttachStage = 0;
   const verified = { images: modelReadsImages(args.provider, args.model), files: documentsFor(args.provider, args.model) };
   const subscription = isSubscriptionProvider(args.provider);
+  // Step budget, inline result size, history and context for this model's class (loop-config.ts).
+  const loop = activeLoopConfig(app.log);
+  const limits = turnLimits(loop, args.provider, args.model, Boolean(args.code));
   const hubTools = (await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name));
   const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -346,13 +442,15 @@ async function drive(
       playbooks,
     ).map((playbook) => [playbook.name, playbook]),
   );
+  // Tools the loop adds during the turn (read_tool_output once a long result is kept), always shown.
+  const turnTools: AnyHubTool[] = [];
   const shown = () => {
     const selected = advertisedTools(tools, active.values(), args.message);
-    const ordered = [...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...selected];
+    const ordered = [...turnTools, ...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...selected];
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
   };
   const persona =
-    args.agentPersona !== undefined || (args.preamble !== undefined && args.actAs === undefined)
+    args.agentPersona !== undefined || args.nodeInstructions !== undefined || (args.preamble !== undefined && args.actAs === undefined)
       ? undefined
       : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
   // Instructions stay the same from message to message; what this message is about goes in its context.
@@ -365,6 +463,8 @@ async function drive(
     playbooks,
     ...(args.spaces ? { spaces: await args.spaces.instructions() } : {}),
     ...(args.where ? { where: args.where } : {}),
+    // A node's own instructions carry the shared rules (packages/prompts constitution).
+    ...(args.nodeInstructions ? { rules: false } : {}),
   });
   const context = turnContext(openPage, {
     today: clock.date,
@@ -374,7 +474,7 @@ async function drive(
     reference: args.referenceContext,
     playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, args.message) })),
   });
-  const prior = await priorTurns(app, args.conversationId, args.messageId, args.spaces);
+  const prior = await priorTurns(app, args.conversationId, args.messageId, args.spaces, { tokens: limits.historyTokens, rows: loop.historyRows });
   const history = prior.messages;
   const attached = await messageAttachments(app.prisma, userId, args.mentions, { signal: stop.signal });
   // Every record the model is shown by id, so a reply that names one by id can show its title instead.
@@ -385,9 +485,13 @@ async function drive(
     for (const ref of refs ?? []) known.set(ref.id.toLowerCase(), ref);
   };
 
-  const asked = `${context}\n\n${args.message}`;
+  // On the person's own AI plan the node's context tier leads the prompt, so the system prompt (and the session) stays the same.
+  const nodeContext = subscription ? (args.nodeInstructions?.context ?? "") : "";
+  const asked = `${nodeContext ? `${nodeContext}\n\n` : ""}${context}\n\n${args.message}`;
+  const node = args.nodeInstructions;
   const messages: ModelMessage[] = [
     { role: "system", content: system },
+    ...(node ? [{ role: "system" as const, content: subscription || !node.context ? node.stable : `${node.stable}\n\n${node.context}` }] : []),
     ...(args.agentPersona ? [{ role: "system" as const, content: truncateText(args.agentPersona, 12_000) }] : []),
     ...(args.preamble
       ? [{ role: "system" as const, content: truncateText(args.preamble, 2000) }]
@@ -405,6 +509,9 @@ async function drive(
     },
   ];
   if (contextRefs.length) args.emit({ type: "refs", refs: contextRefs });
+  // Only the version and hashes: a caller may pass the whole log, which is recorded once per turn instead.
+  const ref = args.instructionsRef;
+  const instructionsMeta = ref ? { instructions: { version: ref.version, hash: ref.hash, hashes: ref.hashes } } : {};
 
   let chatTools = chatToolSpecs(shown());
   let responsesTools = responsesToolSpecs(shown());
@@ -423,7 +530,64 @@ async function drive(
   /** The answer a `verify` round sent back: still the reply if the model gives no better one. */
   let checkedText = "";
 
-  const maxSteps = isSubscriptionProvider(args.provider) ? 0 : args.code ? MAX_CODE_STEPS : MAX_STEPS;
+  // The history rows sit just before the turn's own message; compaction may shorten them, never move them.
+  const historyAt = { start: messages.length - 1 - history.length, end: messages.length - 1 };
+  /** Whole results too long to show in place, kept for read_tool_output (tool-output.ts). */
+  const outputs = new TurnOutputs(limits.inlineChars, loop.keptOutputChars);
+  const guard = new RunawayGuard(loop.runaway);
+  /** Why runaway detection ended the turn: the next step is its tools-off answer. */
+  let runaway: "repeat" | "failing" | null = null;
+  const tally = { steps: 0, parallel: 0, retries: 0, nudges: 0, compactions: 0, rowsLeftOut: 0, resultsShortened: 0 };
+  const shortened = new Set<string>();
+  // An earlier result of this turn as its one-line summary; the whole of it stays readable.
+  const shorten = (callId: string, message: ModelMessage): ModelMessage | undefined => {
+    const call = calls.find((row) => row.id === callId);
+    if (!call || call.state !== "ok" || shortened.has(callId)) return undefined;
+    let earlier: unknown = message.content;
+    try {
+      earlier = JSON.parse(String(message.content ?? ""));
+    } catch {
+      // kept as text
+    }
+    const kept = earlier && typeof earlier === "object" && typeof (earlier as { output?: unknown }).output === "string" ? (earlier as { output: string }).output : null;
+    const short = (id: string) =>
+      toolResult(callId, call.name, { ok: true, summary: firstLine(call.summary || call.name), shortened: true, output: id, note: `Shortened to keep this turn within the model's context. The whole result is ${id}: read it with ${READ_TOOL_OUTPUT}.` });
+    if (messageChars(short(kept ?? "out_000")) >= messageChars(message)) return undefined;
+    shortened.add(callId);
+    return short(kept ?? outputs.keep(call.name, readableText(earlier)).id);
+  };
+  // read_tool_output joins the turn's tools once something was kept for it.
+  const offerReader = () => {
+    if (!outputs.used || byName.has(READ_TOOL_OUTPUT)) return;
+    const reader = readToolOutputTool(outputs);
+    byName.set(READ_TOOL_OUTPUT, reader);
+    turnTools.push(reader);
+    chatTools = chatToolSpecs(shown());
+    responsesTools = responsesToolSpecs(shown());
+  };
+  const doneSoFar = () => calls.filter((call) => call.state === "ok" || call.state === "awaiting_approval").map((call) => call.summary || call.name);
+  /** The model request at which a turn with no step cap pauses to ask whether to go on (its tools-off answer). */
+  const checkpoint = limits.checkpoint;
+  let paused = false;
+
+  const maxSteps = isSubscriptionProvider(args.provider) ? 0 : limits.steps;
+  /** How Ensemble's own loop ran (loop-config.ts): its config, steps against the cap, and what it did on its own. */
+  const loopSummary = () => ({
+    config: `${loop.version}:${loopConfigHash(loop)}`,
+    modelClass: limits.modelClass,
+    steps: tally.steps,
+    cap: Number.isFinite(maxSteps) ? maxSteps : null,
+    parallel: tally.parallel,
+    offloaded: outputs.count,
+    retries: tally.retries,
+    nudges: tally.nudges,
+    compactions: tally.compactions,
+    rowsLeftOut: tally.rowsLeftOut,
+    resultsShortened: tally.resultsShortened,
+    runaway,
+    paused: paused && !stop.signal.aborted,
+  });
+  if (args.trace && !subscription) args.trace.loop = () => ({ kind: "ensemble", ...loopSummary() });
   if (isSubscriptionProvider(args.provider)) {
     // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
     const agent = args.provider;
@@ -440,11 +604,14 @@ async function drive(
     const how = { ownWeb: args.subscription?.ownWeb !== false, node, ownTools: node ? Boolean(nodeTools) : args.subscription?.ownTools !== false };
     const conversation = agentConversation(messages, agent, how);
     const pendingProjectNames: string[] = [];
+    let used = 0;
+    if (args.trace) args.trace.loop = () => ({ kind: "subscription", agent, calls: used, ownTools: how.ownTools });
     // A call relayed from the computer arrives as its own request: it keeps this turn's AI activity context.
     const call = bindAiContext(async (name: string, input: unknown): Promise<ToolAnswer> => {
       if (stop.signal.aborted) return { text: JSON.stringify({ error: "The person stopped this turn." }), isError: true };
       const waiting = nodeTools?.parking();
       if (waiting) return { text: JSON.stringify({ error: `${waiting} Stop here: end your turn now without a reply. You go on when they answer.` }), isError: true };
+      used += 1;
       const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
       const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
       args.emit({ type: "status", text: statusFor([requested]) });
@@ -456,6 +623,7 @@ async function drive(
       if (settled!.call.state === "awaiting_approval") args.emit({ type: "pending", call: settled!.call, preview: settled!.call.summary ?? "" });
       else args.emit({ type: "tool", call: settled!.call });
       calls.push(settled!.call);
+      args.trace?.calls.push(callTrace(settled!, byName.get(settled!.call.name)));
       learn(settled!.call.refs);
       if (settled!.call.state === "ok" && settled!.call.isWrite) mutated = true;
       const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
@@ -464,6 +632,8 @@ async function drive(
       return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
     });
     try {
+      const offeredSpecs = toolSpecs();
+      if (args.trace) args.trace.tools = toolsFingerprint(offeredSpecs);
       const done = await runSubscriptionTurn({
         userId,
         settings,
@@ -472,8 +642,8 @@ async function drive(
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
         // A computer whose Ensemble is too old for the agent's own tools (in a node's turn: for the node's policy) is told it has only
-        // Ensemble's, by its run notes and by the node's persona for such a computer.
-        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(swapPersona(messages, args.agentPersona, args.subscription?.personaWithoutOwnTools), agent, { ...how, ownTools: false }).system } : {}),
+        // Ensemble's, by its run notes and by the node's instructions for such a computer.
+        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(swapSystem(messages, args.nodeInstructions?.stable, args.subscription?.stableWithoutOwnTools), agent, { ...how, ownTools: false }).system } : {}),
         prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
@@ -489,7 +659,7 @@ async function drive(
               },
             }
           : {}),
-        tools: toolSpecs(),
+        tools: offeredSpecs,
         ownWeb: how.ownWeb,
         ownTools: how.ownTools,
         ...(nodeTools ? { node: nodeTools.policy, ask: nodeTools.ask, onOwnTool: nodeTools.onOwnTool, onPark: nodeTools.park, parked: () => Boolean(nodeTools.parking()) } : {}),
@@ -516,6 +686,13 @@ async function drive(
       text = done.text.trim();
       answered = done.model || args.model;
       credits = null;
+      // The person's own plan pays: no cost is counted, as in the metric below.
+      traceUsage(args.trace, done.tokensIn, done.tokensOut, null);
+      if (args.trace) {
+        const session = { resumed: typeof done.resumed === "boolean" ? done.resumed : null, ...(done.restart ? { restart: done.restart.reason } : {}) };
+        const outside = done.outside?.turns.length ?? 0;
+        args.trace.loop = () => ({ kind: "subscription", agent, computer: done.computer, ...(done.computerId ? { computerId: done.computerId } : {}), session, ...(outside ? { outside } : {}), calls: used, ownTools: done.ownTools });
+      }
       await recordMetric(app.prisma, {
         userId,
         kind: "model.call",
@@ -535,6 +712,7 @@ async function drive(
           // Exchanges brought in from the agent's own app before this turn (assistant/outside.ts).
           ...(done.outside?.turns.length ? { outside: { app: done.outside.app, turns: done.outside.turns.length, earlier: done.outside.earlier } } : {}),
           title: truncateText(args.message, 80),
+          ...instructionsMeta,
         },
       }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
     } catch (error) {
@@ -551,39 +729,84 @@ async function drive(
       break;
     }
     await heartbeat(app.redis, userId, activityId);
-    const finalAnswer = step === maxSteps - 1;
+    tally.steps = step + 1;
+    // The last step a budget allows, the answer that ends a stuck turn, or the checkpoint of a turn with no cap: no tools.
+    const pausing = checkpoint !== null && step === checkpoint - 1 && runaway === null;
+    const finalAnswer = step === maxSteps - 1 || runaway !== null || pausing;
     if (finalAnswer) {
       messages.push({
         role: "system",
-        content:
-          "The retrieval budget is exhausted. Answer the user now using the page/reference material and tool results already supplied.",
+        content: runaway
+          ? runawayFinal(runaway, loop.runaway.failedSteps)
+          : pausing
+            ? checkpointFinal(checkpoint)
+            : "The retrieval budget is exhausted. Answer the user now using the page/reference material and tool results already supplied.",
       });
+    }
+    if (pausing && !paused) {
+      paused = true;
+      args.emit({ type: "status", text: `Pausing after ${checkpoint} steps to ask whether to go on.` });
     }
 
     let streamed = "";
-    let turn;
+    let turn: RuntimeTurn;
     keepRecentAttachments(messages);
+    const compacted = compactMessages(messages, {
+      tools: finalAnswer ? [] : chatTools,
+      limitTokens: Math.floor(limits.contextTokens * loop.compactAt),
+      keepExchanges: loop.keepExchanges,
+      history: historyAt,
+      shorten,
+    });
+    if (compacted) {
+      tally.compactions += 1;
+      tally.rowsLeftOut += compacted.rows;
+      tally.resultsShortened += compacted.results;
+      args.emit({ type: "status", text: "Shortened earlier parts of this turn to fit the model's context." });
+    }
+    offerReader();
+    // A call that failed in a way the runtime does not retry itself (a dropped connection or stream, a server
+    // error or timeout on the way: `loopRetries`) is asked again after each wait in `retryDelaysMs`, unless it had
+    // started answering.
+    const ask = async (): Promise<RuntimeTurn> => {
+      for (let attempt = 0; ; attempt += 1) {
+        streamed = "";
+        try {
+          return await askRuntimeStream({
+            messages,
+            model: args.model,
+            provider: args.provider,
+            ollamaUrl: settings.models.ollamaUrl,
+            ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
+            userId,
+            activityId,
+            chatTools: finalAnswer ? [] : chatTools,
+            responsesTools: finalAnswer ? [] : responsesTools,
+            signal: stop.signal,
+            purpose: args.purpose ?? "Hub chat",
+            onDelta(piece) {
+              streamed += piece;
+              args.emit({ type: "delta", text: piece });
+            },
+            onStatus(text) {
+              args.emit({ type: "status", text });
+            },
+          });
+        } catch (error) {
+          const wait = loop.retryDelaysMs[attempt];
+          if (wait === undefined || streamed || stop.signal.aborted || !loopRetries(error)) throw error;
+          tally.retries += 1;
+          app.log.warn({ err: error, provider: args.provider, model: args.model, attempt: attempt + 1, afterTools: calls.length }, "The model call failed; asking again");
+          args.emit({ type: "status", text: retryNotice(error, wait) });
+          await waitBeforeRetry(wait, stop.signal);
+          if (stop.signal.aborted) throw error;
+          await heartbeat(app.redis, userId, activityId);
+        }
+      }
+    };
     try {
-      turn = await askRuntimeStream({
-        messages,
-        model: args.model,
-        provider: args.provider,
-        ollamaUrl: settings.models.ollamaUrl,
-        ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
-        userId,
-        activityId,
-        chatTools: finalAnswer ? [] : chatTools,
-        responsesTools: finalAnswer ? [] : responsesTools,
-        signal: stop.signal,
-        purpose: args.purpose ?? "Hub chat",
-        onDelta(piece) {
-          streamed += piece;
-          args.emit({ type: "delta", text: piece });
-        },
-        onStatus(text) {
-          args.emit({ type: "status", text });
-        },
-      });
+      if (args.trace && !args.trace.tools) args.trace.tools = toolsFingerprint(finalAnswer ? [] : chatTools);
+      turn = await ask();
     } catch (error) {
       const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");
       if (cancelled) {
@@ -591,6 +814,8 @@ async function drive(
         if (streamed) text = streamed.trim();
         const known = usageKnown(error);
         const model = known.model || args.model;
+        const cost = callCost(args.provider, model, known.tokensIn, known.tokensOut);
+        if (known.tokensIn !== null || known.tokensOut !== null) traceUsage(args.trace, known.tokensIn, known.tokensOut, cost.estimatedUsd);
         try {
           await recordMetric(app.prisma, {
             userId,
@@ -601,9 +826,10 @@ async function drive(
               purpose: args.purpose ?? "Hub chat",
               tokensIn: known.tokensIn,
               tokensOut: known.tokensOut,
-              ...callCost(args.provider, model, known.tokensIn, known.tokensOut),
+              ...cost,
               title: truncateText(args.message, 80),
               cancelled: true,
+              ...instructionsMeta,
             },
           });
         } catch (metricError) {
@@ -626,9 +852,12 @@ async function drive(
       }
       const settled = replyAfterStreamFailure(streamed, error, false);
       if (settled.kind === "error") {
+        app.log.warn({ err: error, provider: args.provider, model: args.model, afterTools: calls.length }, "The model call failed");
         // The answer a check sent back still stands when the model fails after it.
-        if (!checkedText) throw error;
-        text = checkedText;
+        if (checkedText) text = checkedText;
+        // A stuck or paused turn still ends with what it did, never an error.
+        else if (runaway) text = runawayReply(runaway, doneSoFar());
+        else if (!paused) throw error;
         break;
       }
       text = settled.text;
@@ -644,6 +873,8 @@ async function drive(
       // A small model copies the history's "(You did: …)" note; that note is never part of a reply.
       text = withoutEcho(turn.text).trim();
     }
+    const cost = callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits);
+    traceUsage(args.trace, turn.tokensIn, turn.tokensOut, cost.estimatedUsd);
     try {
       await recordMetric(app.prisma, {
         userId,
@@ -654,8 +885,9 @@ async function drive(
           purpose: args.purpose ?? "Hub chat",
           tokensIn: turn.tokensIn,
           tokensOut: turn.tokensOut,
-          ...callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits),
+          ...cost,
           title: truncateText(args.message, 80),
+          ...instructionsMeta,
         },
       });
     } catch (error) {
@@ -722,6 +954,11 @@ async function drive(
         text = checkedText;
         break;
       }
+      if (runaway) {
+        text = runawayReply(runaway, doneSoFar());
+        break;
+      }
+      if (paused) break;
       throw new ToolBlockedError(
         "The model did not produce a final answer within the request budget. Its recorded actions are available separately.",
       );
@@ -729,26 +966,31 @@ async function drive(
 
     // Both APIs need the assistant's own request echoed back before its results.
     messages.push(assistantEcho(turn));
-    const batch = [];
+    const batch: CallOutcome[] = [];
     const pendingProjectNames: string[] = [];
-    for (const requested of turn.toolCalls) {
-      args.emit({ type: "status", text: statusFor([requested]) });
+    // Reads next to each other run at the same time; anything else runs alone, in the model's order.
+    for (const group of callGroups(turn.toolCalls, byName)) {
+      args.emit({ type: "status", text: statusFor(group) });
       if (stop.signal.aborted || (await stopRequested(app.redis, userId, activityId))) {
         stop.abort();
         break;
       }
       await updateActivity(app.redis, userId, activityId, {
         label: "Assistant is working",
-        detail: requested.name,
+        detail: group.map((requested) => requested.name).join(", "),
       });
-      const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName, known);
-      batch.push(outcome);
-      const proposed = proposedProjectName(outcome.call);
-      if (proposed) pendingProjectNames.push(proposed);
+      if (group.length > 1) tally.parallel += group.length;
+      const outcomes = await inOrder(group, loop.parallelReads, (requested) => runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName, known, outputs));
+      for (const outcome of outcomes) {
+        batch.push(outcome);
+        const proposed = proposedProjectName(outcome.call);
+        if (proposed) pendingProjectNames.push(proposed);
+      }
     }
     let loadedPlaybook = false;
     const opened: ContentPart[] = [];
-    for (const outcome of settleWriteBatch(batch)) {
+    const settledBatch = settleWriteBatch(batch);
+    for (const outcome of settledBatch) {
       if (outcome.pictures?.length) opened.push(...outcome.pictures);
       if (outcome.call.state === "awaiting_approval") {
         args.emit({ type: "pending", call: outcome.call, preview: outcome.call.summary ?? "" });
@@ -756,6 +998,7 @@ async function drive(
         args.emit({ type: "tool", call: outcome.call });
       }
       calls.push(outcome.call);
+      args.trace?.calls.push(callTrace(outcome, byName.get(outcome.call.name)));
       results.push({ call: outcome.call, result: outcome.forModel });
       learn(outcome.call.refs);
       if (outcome.call.state === "ok" && outcome.call.isWrite) mutated = true;
@@ -774,11 +1017,32 @@ async function drive(
       chatTools = chatToolSpecs(shown());
       responsesTools = responsesToolSpecs(shown());
     }
+    offerReader();
     if (stop.signal.aborted) break;
+    // Progress is judged by what each call returned (runaway.ts): the same call with the same result changed nothing.
+    const argumentsOf = new Map(turn.toolCalls.map((requested) => [requested.id, requested.arguments]));
+    const verdict = guard.step(
+      settledBatch.map((outcome) => ({
+        name: outcome.call.name,
+        input: argumentsOf.get(outcome.call.id) ?? "",
+        state: outcome.call.state,
+        digest: resultDigest(outcome.forModel),
+        readOnly: readsOnly(byName.get(outcome.call.name)),
+      })),
+    );
+    if (verdict?.kind === "nudge") {
+      tally.nudges += 1;
+      messages.push({ role: "user", content: repeatNudge(verdict) });
+    } else if (verdict?.kind === "stop") {
+      runaway = verdict.why;
+      args.emit({ type: "status", text: verdict.why === "repeat" ? "The same step kept repeating. Answering with what there is." : "Every call kept failing. Answering with what there is." });
+    }
   }
 
   const stopped = stop.signal.aborted;
+  if (paused && !stopped) text = pausedReply(checkpoint ?? tally.steps, text, doneSoFar());
   if (!text && checkedText) text = checkedText;
+  if (!text && runaway && !stopped) text = runawayReply(runaway, doneSoFar());
   if (!text) {
     text = stopped
       ? calls.length
@@ -825,6 +1089,8 @@ async function drive(
         writes: calls.filter((call) => call.isWrite).length,
         model: answered,
         typedWords: args.message.trim().split(/\s+/).filter(Boolean).length,
+        // How Ensemble's own loop ran (loop-config.ts): its config, steps against the cap, and what it did on its own.
+        ...(subscription ? {} : { loop: loopSummary() }),
       },
     });
   } catch (error) {
@@ -832,7 +1098,8 @@ async function drive(
   }
 
   const refs = refsInText(text, [...known.values()]).slice(0, MAX_REPLY_REFS);
-  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource, ...(refs.length ? { refs } : {}) };
+  const pause = paused && !stopped ? { paused: { steps: checkpoint ?? tally.steps } } : {};
+  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource, ...(refs.length ? { refs } : {}), ...pause };
 }
 
 interface CallOutcome {
@@ -841,6 +1108,32 @@ interface CallOutcome {
   forModel: unknown;
   /** Pictures and files the tool opened, for the model only (never stored with the call). */
   pictures?: ContentPart[];
+  /** How long the call took, how big its whole result was, and whether that was kept for read_tool_output (a turn's trace). */
+  ms?: number;
+  resultChars?: number;
+  offloaded?: boolean;
+}
+
+/** A step's calls in the model's order: each run of reads together (registry.ts `runsInParallel`), anything else alone. */
+export function callGroups<T extends { name: string }>(requested: readonly T[], offered: ReadonlyMap<string, AnyHubTool>): T[][] {
+  const groups: T[][] = [];
+  for (const call of requested) {
+    const last = groups.at(-1);
+    if (runsInParallel(offered.get(call.name)) && last && runsInParallel(offered.get(last[0]!.name))) last.push(call);
+    else groups.push([call]);
+  }
+  return groups;
+}
+
+/** Runs `work` on every item, at most `width` at a time, and gives the results in the items' order. */
+async function inOrder<T, R>(items: readonly T[], width: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const lane = async () => {
+    for (let index = next++; index < items.length; index = next++) results[index] = await work(items[index]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, width), items.length) }, lane));
+  return results;
 }
 
 /** Which writes wait under the person's setting, as one line of the assistant's instructions. */
@@ -872,21 +1165,23 @@ async function runOne(
   requested: { id: string; name: string; arguments: string },
   offered: ReadonlyMap<string, AnyHubTool>,
   known: ReadonlyMap<string, AssistantRef> = new Map(),
+  outputs?: TurnOutputs,
 ): Promise<CallOutcome> {
   const started = Date.now();
-  const outcome = await runTool(base, args, requested, offered, known);
+  const outcome = await runTool(base, args, requested, offered, known, outputs);
+  const ms = Date.now() - started;
   logAi({
     kind: "tool.call",
     userId: base.userId,
     app: "ensemble",
     name: requested.name,
     ok: outcome.call.state !== "failed",
-    durationMs: Date.now() - started,
+    durationMs: ms,
     input: outcome.call.input ?? requested.arguments,
     output: outcome.forModel,
     meta: { state: outcome.call.state, area: outcome.call.area, ...(outcome.call.isWrite ? { write: true } : {}), ...(outcome.pictures?.length ? { pictures: outcome.pictures.length } : {}) },
   });
-  return outcome;
+  return { ...outcome, ms };
 }
 
 async function runTool(
@@ -895,6 +1190,7 @@ async function runTool(
   requested: { id: string; name: string; arguments: string },
   offered: ReadonlyMap<string, AnyHubTool>,
   known: ReadonlyMap<string, AssistantRef> = new Map(),
+  outputs?: TurnOutputs,
 ): Promise<CallOutcome> {
   // Only what this turn offered can run: a Map lookup, never a name turned into code.
   const tool = offered.get(requested.name);
@@ -992,7 +1288,8 @@ async function runTool(
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
     const summary = withPastScheduleWarning(formatEntityText(result.summary, [...refs, ...known.values()], { plain: true }), input, ctx.settings.timezone);
-    const forModel = { ok: true, ...(space ? { space: space.name } : {}), summary, ...trim(result.data) };
+    const trimmed = trim(result.data, outputs, tool.name);
+    const forModel = { ok: true, ...(space ? { space: space.name } : {}), summary, ...trimmed.shown };
     const call: AssistantToolCall = {
       id: requested.id,
       name: tool.name,
@@ -1022,7 +1319,7 @@ async function runTool(
         });
       await (space ? space.run(acted) : acted());
     }
-    return { call, forModel, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
+    return { call, forModel, resultChars: summary.length + trimmed.chars, offloaded: trimmed.offloaded, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
   } catch (error) {
     const call = failed(requested, tool.area, describe(error), tool.isWrite);
     return { call, forModel: { error: call.error } };
@@ -1087,19 +1384,30 @@ const firstLine = (text: string): string => {
 /**
  * Keeps a tool's payload inside the context window.
  * Oversized results are handed back as a *string* preview rather than as
- * repaired JSON. A truncated string is honest and always parses.
+ * repaired JSON. A truncated string is honest and always parses. In Ensemble's
+ * own loop (`outputs`) the whole result is kept for read_tool_output, and the
+ * budget is the model class's; elsewhere the rest is gone. `chars` is the
+ * whole payload's size and `offloaded` says it was kept, for the turn's trace.
  */
-function trim(data: unknown): Record<string, unknown> {
-  if (data === undefined || data === null) return {};
+function trim(data: unknown, outputs?: TurnOutputs, tool = ""): { shown: Record<string, unknown>; chars: number; offloaded: boolean } {
+  if (data === undefined || data === null) return { shown: {}, chars: 0, offloaded: false };
   const json = JSON.stringify(data);
-  if (json === undefined) return {};
-  if (json.length <= MAX_TOOL_RESULT_CHARS) return { data };
-  const fitted = fitList(data);
-  if (fitted) return fitted;
+  if (json === undefined) return { shown: {}, chars: 0, offloaded: false };
+  const chars = json.length;
+  const limit = outputs?.inlineChars ?? MAX_TOOL_RESULT_CHARS;
+  if (json.length <= limit) return { shown: { data }, chars, offloaded: false };
+  const fitted = fitList(data, limit);
+  if (fitted) return { shown: fitted, chars, offloaded: false };
+  // Reading a kept output never keeps another.
+  if (outputs && tool !== READ_TOOL_OUTPUT) return { shown: outputs.offload(tool, readableText(data)), chars, offloaded: true };
   return {
-    truncated: true,
-    note: "The full result was too long to return. This is its start and its end, as text, with the middle cut out. Narrow your query and call again if you need the rest.",
-    preview: headAndTail(json, MAX_TOOL_RESULT_CHARS),
+    shown: {
+      truncated: true,
+      note: "The full result was too long to return. This is its start and its end, as text, with the middle cut out. Narrow your query and call again if you need the rest.",
+      preview: headAndTail(json, limit),
+    },
+    chars,
+    offloaded: false,
   };
 }
 
@@ -1186,7 +1494,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     ...(args.code ? { code: args.code } : {}),
     ...(args.toolsOff?.length ? { toolsOff: args.toolsOff } : {}),
     // A node's turn may research at length; the Hub chat's searches are counted (graph.ts, hub_web_search).
-    ...(args.agentPersona === undefined ? { turn: { webSearches: 0 } } : {}),
+    ...(args.agentPersona === undefined && args.nodeInstructions === undefined ? { turn: { webSearches: 0 } } : {}),
     ...(isSubscriptionProvider(args.provider) ? { ownPlan: true } : {}),
   };
 }
@@ -1200,17 +1508,20 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
  * Tool calls are replayed as a short assistant note rather than as real tool
  * messages: a tool result with no matching request in the same window is
  * rejected by both APIs.
+ *
+ * The newest messages come first, as many as fit `budget.tokens` (estimated at four characters a token).
  */
 async function priorTurns(
   app: FastifyInstance,
   conversationId: string,
-  excluded?: string,
-  spaces?: SpaceGateway,
+  excluded: string | undefined,
+  spaces: SpaceGateway | undefined,
+  budget: { tokens: number; rows: number },
 ): Promise<{ messages: ModelMessage[]; refs: AssistantRef[] }> {
   const rows = await app.prisma.assistantMessage.findMany({
     where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
     orderBy: { createdAt: "desc" },
-    take: 12,
+    take: budget.rows,
     select: { role: true, content: true, toolCalls: true, mentions: true, outside: true },
   });
   // A turn that reaches several spaces (Ensemble Node): an answer that used a space this turn cannot
@@ -1225,7 +1536,17 @@ async function priorTurns(
     const note = row.role === "user" ? attachedNote(row.mentions) : "";
     return note ? { ...row, content: `${row.content}\n\n${note}` } : row;
   });
-  return { messages: historyEntries(ordered), refs: historyRefs(ordered) };
+  let used = 0;
+  let first = ordered.length;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const entry = historyEntries([ordered[index]!])[0];
+    const cost = entry ? Math.ceil(messageChars(entry) / CHARS_PER_TOKEN) : 0;
+    if (used + cost > budget.tokens && first < ordered.length) break;
+    used += cost;
+    first = index;
+  }
+  const kept = ordered.slice(first);
+  return { messages: historyEntries(kept), refs: historyRefs(kept) };
 }
 
 const LEFT_OUT = "(An earlier answer is left out here: it used a space that cannot be reached any more.)";
