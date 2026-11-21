@@ -108,10 +108,11 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
   return "once";
 }
 
-const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
+const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files", desktop: "use" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName">): string {
+  if (card.scope === "app") return `@${card.nodeSlug} wants to use ${card.label} on your screen on ${card.deviceName}`;
   if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
   return `@${card.nodeSlug} wants to ${VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
@@ -119,7 +120,7 @@ function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "s
 
 /** Where the node would act, in words: "in app on Mira's laptop", or the address. */
 export function placeOf(card: Pick<NodeToolCard, "scope" | "label" | "deviceName">): string {
-  return card.scope === "origin" ? `${card.label} on ${card.deviceName}` : `in ${card.label} on ${card.deviceName}`;
+  return card.scope === "folder" ? `in ${card.label} on ${card.deviceName}` : `${card.label} on ${card.deviceName}`;
 }
 
 /**
@@ -137,7 +138,8 @@ export async function askOwner(app: Pick<FastifyInstance, "prisma">, owner: stri
   });
   if (same) return { row: same, created: false };
   // Where the computer's sandbox is weak, "always" would not cover commands there: it is not offered.
-  const options = [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
+  // A sensitive app on the owner's screen is answered once per mission, never for good.
+  const options = card.scope === "app" ? [CHOICES.mission] : [CHOICES.once, CHOICES.mission, ...(weak ? [] : [card.scope === "origin" ? CHOICES.origin : CHOICES.folder])];
   const row = await prisma.agentDecision.create({
     data: {
       userId: owner,

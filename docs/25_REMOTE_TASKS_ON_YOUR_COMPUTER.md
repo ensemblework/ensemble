@@ -217,7 +217,7 @@ Each call goes to the computer as a `node.tool.request` frame on its event strea
 
 Only a computer that reports `capabilities.nodeTools` (`NODE_TOOLS_API`) gets these frames; for an older one the node is told "Update Ensemble on <computer>". Version 2 adds `terminal`, `sudo`, files `share` and calls without a folder; version 3 (`NODE_TOOLS_RUN_STOP`) adds `run_stop`.
 
-`capabilities.nodeFiles` 1 (`NODE_FILES_API`) adds a folder to files `share` (zipped here), any file up to 100 MB (`NODE_FILE_MAX_BYTES`), and files `save`. A computer that reports `capabilities.live` (`LIVE_API`) also takes `live` calls: terminals kept open between calls (§10.4).
+`capabilities.nodeFiles` 1 (`NODE_FILES_API`) adds a folder to files `share` (zipped here), any file up to 100 MB (`NODE_FILE_MAX_BYTES`), and files `save`. A computer that reports `capabilities.live` (`LIVE_API`) also takes `live` calls: terminals kept open between calls (§10.4). One that reports `capabilities.desktop` (`DESKTOP_API`) takes `desktop` calls: its owner's real screen (§11), `desktop {name, input, operation, uploadId?, inlineImage}`, answered as a `NodeDesktopAnswer`.
 
 ##### Run a command
 
@@ -752,7 +752,7 @@ When the runtime exits it kills them all. At start-up (`startCapture`, or the fi
 
 | | Web | Electron | Other apps | Real desktop |
 | --- | --- | --- | --- | --- |
-| Linux (X11, Wayland or no screen) | Yes | With Xvfb | With Xvfb and the system's ffmpeg | No |
+| Linux (X11, Wayland or no screen) | Yes | With Xvfb | With Xvfb and the system's ffmpeg | Through desktop control (§11), once the owner allowed it at the computer |
 | macOS | Yes | Yes; the window shows on the screen | No | No |
 | Windows | Yes | No | No | No |
 
@@ -799,6 +799,69 @@ Each frame is the whole screen, sent when it changed, at most 10 a second (`TERM
 Input is `{t: "tty", text}`, `{t: "tty-key", key}`, `{t: "tty-size", cols, rows}` and `{t: "ping"}` (a browser's `text` and `key` events are taken too), applied whether the owner watches or controls: it is their shell, and it is not judged. Control (`takeover.control {on}`) makes the node's `terminal_send` wait (409).
 
 With `kind: "browser"` and `operation` the tab must be the node's; `view: "watch"` streams it as a takeover does while the node keeps it (not sensitive, input ignored but pings), and control marks it controlled and sensitive (the node is refused on it, as in a sign-in) and applies input; handing it back gives the tab back. A window the shown page opens (`page.on("popup")`, a tab of the same work in the broker) is shown instead, its frames saying `popup: true` with its title and site, and its opener again when it closes; under control it is paused for the node too. A tab's frames come from Chromium's screencast at a level `takeover/quality.ts` sets (watching 1024 pixels wide at JPEG quality 45, control 1280 at 55; a step smaller while frames take over 250 ms to send, a step better after five seconds of quick ones), at most two on their way at once, none like the last. A view ends as a takeover does (Stop, its time, a minute without input or ping, `stopRemoteWork`) or when its session or tab ends (`ended`, `tab_closed`, `closed_by_node` when the node closed the tab); the session or tab goes on after a view ends.
+
+## 11. Desktop control on the computer
+
+On Linux the local runtime drives its owner's real screen, keyboard and pointer for Ensemble Node and coding runs (`apps/hub-api/src/desktop/control/`), through a helper process (`apps/hub-api/desktop-helper/linux/ensemble_desktop.py`). A node reaches it with `node.tool.request` and `tool: "desktop"` (`capabilities.desktop: 1`, `DESKTOP_API`; `device.ts`); a coding run through its MCP server (`run-tools.ts`, listed and answered by `evidence/capture-tools.ts`). [35 §8.16.5](35_ENSEMBLE_NODE.md#8165-your-screen) says what the owner sees.
+
+Tools (`tool-specs.ts`): `desktop_status`, `desktop_apps`, `desktop_open`, `desktop_observe`, `desktop_act` (up to 20 steps: `click`, `double_click`, `right_click`, `move`, `drag`, `scroll`, `type`, `key`, `press`, `set_text`, `focus`, `wait`, `open`), `desktop_zoom`, `desktop_record` (`start`, `save`, `discard`) and `desktop_handoff` (`ask`, `release`, `status`).
+
+### 11.1 The helper
+
+| Part | What it does |
+| --- | --- |
+| Process | `python3 ensemble_desktop.py --state-dir <data>/desktop`, started on first use by `HelperProcess` (`helper-process.ts`) with the desktop session's variables only (bus, display, language: `helperEnv`); it fills a missing one from the systemd user manager. It ends 10 minutes after the last call, and starts again after a crash, at most 5 times in 10 minutes |
+| Protocol | JSON-RPC 2.0, one JSON object per line on stdin and stdout, one request at a time (`desktop_helper/rpc.py`, `protocol.ts`, `HELPER_PROTOCOL` 1); `hello` answers the version and methods. Every request carries `deadline_ms`, 1.5 s less than the runtime waits; a request the runtime stops waiting for is ended with the helper (`SIGKILL`), never done later. Errors carry `data.kind` (`consent_needed`, `no_session`, `element_gone`, `unsupported_here` and others) and `data.ran` (`no`, `maybe`, `yes`). `cancel` notifications stop a request between its steps; `event` notifications say the session started or closed, or a recording stopped |
+| Screen and input | The desktop portal: `RemoteDesktop` with keyboard and pointer, `ScreenCast` of every monitor with the cursor in the picture, `persist_mode` 2. The app id `com.ensemblework.Ensemble` is registered through the `Registry` portal where there is one, with a `.desktop` file of that name written to `~/.local/share/applications` if missing. The restore token is kept in `<data>/desktop/portal-restore-token` (mode 0600) and replaced at every start, so after the owner allowed it once, screen control starts without asking. Stopping it from the desktop's own screen-sharing indicator deletes the token: the next start asks again. Mutter's private remote desktop interfaces are not used |
+| Frames | Each monitor's PipeWire stream through GStreamer (`pipewiresrc` into an `appsink` that keeps the latest frame). A look waits until two frames match or 1.5 s pass and is a JPEG at most 1568 pixels on its long side |
+| Accessibility | AT-SPI: applications and windows, one window's elements with ids (`e1`, `e2`: role, name, states, actions, box inside the window; a password field's text is never read), an element's action, focus and text (`EditableText`) |
+| Apps | Installed apps from their `.desktop` files. An app opens with `gio launch` in a systemd scope of its own (`systemd-run --user --scope`), so it outlives the helper; the answer says how far it got (`accepted`, `process`, `window`, `inspectable`, `focused`) |
+| Typing | Key symbols through the portal; characters the keyboard layout cannot type go in through AT-SPI at the caret, else the portal's clipboard and Ctrl+V |
+| Recording | The same frames into a second GStreamer pipeline: H.264 in MP4 where an encoder works (`vah264lpenc`, `vah264enc`, `openh264enc`, `x264enc`), else VP8 in WebM; finished with an end of stream, then decoded whole for its real duration, a poster frame and a 320-pixel preview |
+| Readiness | `status` proves each fact with a probe: the session type, portal versions, consent, capture, input, accessibility, the encoder, the screen lock and idle time (GNOME's `ScreenSaver` and `IdleMonitor`, read only). `--check` prints the libraries' state as one line of JSON without a session |
+
+### 11.2 One controller, and the owner first
+
+`DesktopService` (`service.ts`, one per runtime: `index.ts`) runs one call at a time. One controller drives the desktop: a node's mission (`node:<nodeId>:<mission>`) or a run (`run:<jobId>`); another gets `busy` with its place in line. A claim lapses 90 s after its last call, never while it records. `desktop_status` and `desktop_apps` need no claim. Screen control ends 5 minutes after the last call (not while recording), with remote work (`stopRemoteWork`) and with the runtime.
+
+The owner takes the computer over by using it: input at the computer while the agent drives it (Mutter's idle time shorter than the time since the agent's own last input) gives them the **takeover lease** (`lease.ts`). The agent's input and screenshots are then refused (`owner_has_control`) until two minutes pass without input there, or `desktop_handoff release` after 15 quiet seconds. Each change of the lease bumps its counter: a look or a batch of steps it overlapped is discarded, and earlier looks are stale. `desktop_handoff ask` gives the lease to the owner itself, with a notice on the screen, and waits for them; with reason `consent` it starts screen control, so the portal's dialog shows meanwhile. A locked screen refuses input and looks (`screen_locked`).
+
+### 11.3 Looking and acting
+
+Every screenshot gets a capture id (`cap_` and 12 hex digits) bound to its controller, its screen's logical geometry, the portal session and its time (`ledger.ts`). Coordinates are taken only on the controller's latest look or a zoom of it, on a screen that is still the same; others are refused (`stale_capture`). A failed look leaves an observation debt: only `wait` and `open` run until a look works. Input that ran makes the look before it stale. A point maps from the image to the centre of the screen pixel it shows, in the screen's logical pixels, clamped inside that screen (`mapping.ts`). An element id aims at the element itself through AT-SPI.
+
+| Verdict | Meaning |
+| --- | --- |
+| `confirmed` | Its effect was seen: AT-SPI says so (the field holds the text, the element has the focus, its states changed), or the screen changed and settled |
+| `partial` | Part of it happened: characters the layout could not type, a field holding other text, an app started without a window |
+| `no_effect` | It ran, and the screen, settled before and after, did not change |
+| `refused` | The floor, a stale look, the owner's lease or the screen lock stopped it; it did not run |
+| `not_run` | An earlier step stopped the batch, or the owner must answer first |
+| `unknown` | It was sent and its effect was not seen (the screen kept changing), or the helper did not answer in time (`ran: maybe`) |
+
+Each step also says whether it ran (`no`, `maybe`, `yes`). A batch stops at the first step that is not `confirmed`, or `unknown` after it ran, and answers with a fresh look.
+
+The model's screenshots are kept in `<data>/desktop/captures` (the latest 40, mode 0600) and are not evidence. A node on Ensemble's API gets each one in the call's answer (`inlineImage`, `NodeDesktopAnswer.image`) as a picture with the tool's result. An agent on its owner's subscription, and a coding run, get a `[desktop screenshot cap_…]` line, which the computer that took it turns into an `ensemble-image:` line (`images.ts`, on `/api/engine/assistant/tool` and `/api/engine/tool`) that `scripts/ensemble-ask-mcp.mjs` gives the agent as an image.
+
+### 11.4 The hard floor and sensitive apps
+
+Refused whatever the mode or any answer (`floor.ts`):
+
+- Clicking, typing or pressing in Ensemble's own windows (`com.ensemblework.*`, its app names and window titles), on an Ensemble page in a browser (`ensembleAppOrigin`), and typing in a terminal that shows the `ensemble` command line. Wayland tells no app where other windows are, so a click or drag by position is refused while an Ensemble window or page shows on the screen at all; element actions stay exact.
+- Typing into the desktop's own password prompts (polkit, keyrings).
+- Typing text that holds a saved secret's value or a key's shape, and typing text into a password field. A saved secret goes by reference, `$NAME`, only into a password field: one saved without destinations into any, one limited to websites only on their pages (`secrets.ts`). Its value never comes back.
+
+A refusal is in the computer's ledger (`node.tool.refused` with its rule). Password managers, system settings, terminals, and banking or wallet apps (`sensitive.ts`) are asked about, never refused. For a node the call answers 428 with `NodeToolAsk` `{capability: "desktop", scope: "app", target: <app id>}`; the owner's card offers **This mission**, one answer per app and mission, kept as an `app` rule (`device-tools/policy.ts`). Unattended, they are allowed. A coding run asks its person once per app (`allowOrRefuse`, `desktop_app`); a read-only run only looks.
+
+### 11.5 Recordings and evidence
+
+`desktop_record start` records one screen into the work's evidence folder under a hidden name; `save` stops it, decodes it, writes its poster and preview, links it to a new name (never over another file) and hashes it. One recording runs at a time, for 120 s unless `maxSec` says otherwise (at most 600). A saved recording, and `capture_screenshot` and `capture_video` with `target: "desktop"` (`capture.ts`), become evidence held for the owner's preview (§4.11).
+
+### 11.6 Readiness and requirements
+
+A Linux computer reports `capabilities.desktop: 1` and `capabilities.desktopReadiness` (`ready`, `session`, `consent` `remembered` or `ask`, `recorder`, `reason`) on its heartbeat (`readiness.ts`), and the capture summary's `desktop` target says the same. The server offers desktop calls only to such a computer and, except `desktop_status`, only when it is ready.
+
+It needs a desktop session with `xdg-desktop-portal` (RemoteDesktop and ScreenCast), PipeWire and Python 3 with GObject bindings: on Ubuntu or Debian `python3-gi gir1.2-atspi-2.0 gir1.2-gstreamer-1.0 gstreamer1.0-pipewire gstreamer1.0-plugins-good` ([26](26_CLI.md)).
 
 ## In the code
 
@@ -867,7 +930,13 @@ The web tools: `src/browser/web-tools.test.ts` without a browser (the HTML reade
 
 `apps/hub-api/scripts/browser-live-check.mjs` runs them against the real sites (not in CI). Parts that need Xvfb, Electron or an H.264 encoder skip, saying so, where those are missing.
 
-There is no text recognition in images, so a desktop app's captures are always held. Other desktop apps on macOS, anything on Windows beyond web pages, and the real screen are not captured.
+There is no text recognition in images, so a desktop app's captures and pictures of the real screen are always held. Other desktop apps on macOS, anything on Windows beyond web pages, and the real screen outside Linux are not captured.
+
+### 11.7 Tests and limits
+
+`apps/hub-api/desktop-helper/linux/tests` (`python3 -m unittest` in `desktop-helper/linux`) cover the helper's message framing and error codes, coordinate mapping, key names and app ids. `src/desktop/control/desktop.test.ts` drives `DesktopService` against a stand-in helper process speaking the protocol (`fake-helper.mjs`): one call at a time, `busy` with places, stale and other-screen captures, the observation debt, the takeover lease and its counter, `ran: maybe` and a restart after a request is not answered in time, the hard floor, and a sensitive app asked once per mission through `runNodeDesktop`.
+
+Clicks by position cannot tell windows apart on Wayland, so the floor refuses them while Ensemble shows. A verdict from the screen sees a change, not that it was the right one: the fresh look is for the model to check. Desktop control works on Linux only.
 
 ### 9. Tests and limits
 

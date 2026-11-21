@@ -74,7 +74,8 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     if (!found.ok) return reply.code(found.status).send({ text: found.error, isError: true });
     const body = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) }).parse(request.body);
     try {
-      return await callThroughBridge(found.bridge, body.name, body.input);
+      // A desktop screenshot this computer took travels as a picture to the agent's MCP server.
+      return await (await import("../desktop/control/images.js")).withDesktopImages(await callThroughBridge(found.bridge, body.name, body.input));
     } catch (error) {
       request.log.warn({ err: error }, "assistant tool call failed");
       return { text: error instanceof Error ? error.message : "The tool failed.", isError: true };

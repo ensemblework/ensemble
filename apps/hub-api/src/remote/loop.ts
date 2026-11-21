@@ -173,6 +173,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // A node's command that needs a sign-in: its code goes to the owner's card, a page it opens to this computer's sign-in browser (C2).
     cliLogins: CLI_LOGINS_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
+    // A node's desktop control tools run here (docs/25 §11), and whether the owner's screen can be used now.
+    ...(await (await import("../desktop/control/readiness.js")).desktopCapabilities().catch(() => ({}))),
   };
 }
 
@@ -193,6 +195,8 @@ export async function stopRemoteWork(app: FastifyInstance, message: string, repo
   stopNodeCommands();
   await endAllTakeovers("stopped").catch(() => undefined);
   await (await import("../logins/requests.js")).endAllLogins(message).catch(() => undefined);
+  // Screen control ends with remote work: a node never keeps the owner's desktop past it.
+  await (await import("../desktop/control/index.js")).stopDesktop().catch(() => undefined);
   stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();

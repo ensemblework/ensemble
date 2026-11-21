@@ -4,7 +4,8 @@
  * never does. The owner's privacy rules come from this computer: the values of their saved secrets
  * (lib/run-secrets.ts) and the sites they never want captured or want to preview first (`captureSites`
  * in remote.json, `ensemble capture sites`). Apps started for capture run in the OS sandbox
- * (capture/sandbox.ts). When the runtime stops, every tab, app, display and recording ends.
+ * (capture/sandbox.ts). Desktop control (desktop/control) shares the owner's rules and ends with them.
+ * When the runtime stops, every tab, app, display, recording and screen control session ends.
  */
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
@@ -14,6 +15,8 @@ import { configureBrowser, runningBroker, shutdownBrowser } from "../browser/ind
 import type { PrivacyRules } from "../browser/privacy.js";
 import { captureCapabilities, configureCapture, runningCapture, shutdownCapture, startCapture } from "./index.js";
 import { captureAppWrapper } from "./sandbox.js";
+import { desktopCapture } from "../desktop/control/capture.js";
+import { configureDesktop, runningDesktop, stopDesktop } from "../desktop/control/index.js";
 
 /** Saved secret values are read again at most this often: a scan runs every few seconds while a tab is watched. */
 const SECRETS_MS = 5_000;
@@ -35,7 +38,8 @@ export function privacyRules(prisma: FastifyInstance["prisma"], userId = env.ENS
 export function startCaptureRuntime(app: Pick<FastifyInstance, "prisma" | "log">): () => Promise<void> {
   const log = (message: string) => app.log.info(message);
   configureBrowser({ privacy: privacyRules(app.prisma), log });
-  configureCapture({ wrapCommand: captureAppWrapper(), log });
+  configureCapture({ wrapCommand: captureAppWrapper(), log, desktop: desktopCapture });
+  configureDesktop({ log, secretValues: () => savedSecretValues(app.prisma, env.ENSEMBLE_DEV_USER_ID) });
   if (process.env.ENSEMBLE_RUNTIME_MODE !== "admin") {
     void startCapture()
       .then(({ reaped }) => {
@@ -44,13 +48,15 @@ export function startCaptureRuntime(app: Pick<FastifyInstance, "prisma" | "log">
       .catch((error: unknown) => app.log.warn({ err: error }, "capture: could not clean up after the last runtime"));
   }
   return async () => {
+    await stopDesktop().catch((error: unknown) => app.log.warn({ err: error }, "desktop: could not stop screen control"));
     await shutdownCapture().catch((error: unknown) => app.log.warn({ err: error }, "capture: could not stop every app"));
     await shutdownBrowser().catch((error: unknown) => app.log.warn({ err: error }, "browser: could not close every tab"));
   };
 }
 
-/** Ends one operation's tabs, recordings, apps and displays, if this runtime has any; starts nothing. */
+/** Ends one operation's tabs, recordings, apps and displays, and its hold on the desktop, if this runtime has any; starts nothing. */
 export async function releaseOperation(operation: string): Promise<void> {
+  await runningDesktop()?.release(`run:${operation}`).catch(() => undefined);
   // A sign-in still waiting for the owner ends with its work (logins/requests.ts).
   await (await import("../logins/requests.js")).endLoginsFor(operation).catch(() => undefined);
   await runningCapture()?.release(operation).catch(() => undefined);

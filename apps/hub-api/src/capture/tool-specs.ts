@@ -34,7 +34,7 @@ export const CAPTURE_TOOLS = [
   {
     name: "capture_screenshot",
     description:
-      "Save a screenshot to this work's evidence folder. Targets: web (a URL or tab; viewport, device, fullPage, element), electron and gui (an app from capture_app_start, on a private virtual display), terminal (a transcript rendered as PNG or HTML, secrets hidden). Password and code fields are masked; an image that may show a secret, or a desktop app's window, comes back held for the owner to preview.",
+      "Save a screenshot to this work's evidence folder. Targets: web (a URL or tab; viewport, device, fullPage, element), electron and gui (an app from capture_app_start, on a private virtual display), terminal (a transcript rendered as PNG or HTML, secrets hidden), desktop (the owner's real screen, through desktop control on Linux; the computer asks them the first time). Password and code fields are masked; an image that may show a secret, a desktop app's window or the owner's screen comes back held for the owner to preview.",
     input: z
       .object({
         target: z.enum(["web", "electron", "gui", "terminal", "desktop"]),
@@ -51,7 +51,7 @@ export const CAPTURE_TOOLS = [
   {
     name: "capture_video",
     description:
-      "Record a video into the evidence folder, with a poster frame and a small preview. mode realtime records as it happens (optionally running steps: click, type, press, wait, scroll); mode frames steps time frame by frame for smooth, exact animation video (web and Electron). MP4 where this computer has an H.264 encoder, else WebM. Two minutes at most unless the owner allows more.",
+      "Record a video into the evidence folder, with a poster frame and a small preview. mode realtime records as it happens (optionally running steps: click, type, press, wait, scroll); mode frames steps time frame by frame for smooth, exact animation video (web and Electron). MP4 where this computer has an H.264 encoder, else WebM. Two minutes at most unless the owner allows more. target desktop records the owner's real screen in real time, without steps, held for their preview.",
     input: z
       .object({
         target: z.enum(["web", "electron", "gui", "desktop"]),

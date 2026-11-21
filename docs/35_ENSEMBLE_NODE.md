@@ -335,6 +335,14 @@ A command such as a cloud CLI login can open a sign-in card in the private conve
 
 Sign-in commands normally run for 15 minutes. A newer attempt replaces the older attempt for that same login. **Not now** or expiry stops it; Node does not retry a declined login unasked. Ask the node to stop the background command if you no longer need it.
 
+#### 8.16.5 Your screen
+
+On a Linux computer Node can also use your real screen: open an app, look at it, click, type and record a video. The first time, the computer shows the system's own dialog asking whether Ensemble may control it; allow it there once and later uses start without asking. Stopping screen sharing from the system's indicator ends it, and the computer asks again next time.
+
+One conversation uses your screen at a time; others wait their turn. When you use the mouse or keyboard yourself, Node pauses, and it continues two minutes after your last input. Node can hand the screen to you on purpose (the system dialog, a password prompt, a sign-in), with a notice on the computer.
+
+Node never clicks or types in Ensemble's own windows or Ensemble pages (while one shows, it acts only on named elements), never types into the system's password prompts, and never types a secret as text: a saved secret goes only into a password field, by name. Password managers, system settings, terminals and banking apps ask you first on a card, once per app for that work; unattended work goes ahead. Recordings and screenshots of your screen are held for your preview.
+
 ### 8.17 Live terminal and browser
 
 Ask to watch Node's terminal or browser live. Open the private live-view card. Browser watching lets Node continue while your clicks are ignored; choose **Control** to pause Node and interact yourself. For a terminal, you can type while watching; Control prevents Node from typing at the same time.
@@ -495,6 +503,7 @@ The website lives in its own repository (`ensemblework/ensemble-node`, served fr
 | Live frames | `node/events.ts`: an SSE channel per account (`GET /api/node/events`) |
 | Rooms with other people (§12) | `node/audience.ts`: room-bound turns, disclosure cards; `node/trust.ts`: each person's settings for a room; `node/status-cards.ts`: status cards, `@leads status`; `node/peer-requests.ts`, `node/peer-routes.ts`: peer requests, Share to room, leaving |
 | Browsing and capture on a computer | The local runtime's `apps/hub-api/src/browser/` (browser broker) and `src/capture/` (screenshots, video, checks before sending), §8.16 and [25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer) |
+| The owner's screen | `apps/hub-api/src/desktop/control/` (the desktop service and its tools: `node-tools.ts` on the server, `device.ts` on the computer) and `apps/hub-api/desktop-helper/linux/`, §8.16.5 and [25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer) |
 | CLI overview | `GET /api/bridge/node` (read-only), the CLI's Node tab ([26](26_CLI.md)) |
 | Tables | `node_agents`, `node_rooms`, `node_room_members`, `node_messages`, `node_runs`, `node_turns`, `node_memories` (migration `20261022120000_ensemble_node`); `node_room_invites` (`20261023120000_node_rooms_invites`, which also renamed `group` rooms to `room` and numbered duplicate names); `node_runs.session_id`, `prompt` and `direct` (`20261028120000_node_sessions`); template charters that nobody edited follow the templates' current text (`20261028130000_node_template_charters`); `node_peer_requests`, `node_room_members.prefs`, `node_turns.peer_request_id` and `principals`, and the switch of existing rooms to v2 (`20261110120000_node_rooms_v2`, §12.9). Account export and deletion include invites the account sent or received, and peer requests it made or received (`lib/account-data.ts`). |
 
@@ -695,6 +704,7 @@ The assistant works in one space per conversation. A node acts for its owner in 
 | `computer_http {url, method?, body?, contentType?, computer?}` | Calls a development server on the computer itself (loopback only, every redirect checked; §8.13). |
 | `computer_files_write {folder?, path, content}`, `computer_files_move {folder?, path, to}`, `computer_files_delete {folder?, path}` | Writes (at most 1 MB), moves (never over a file) or deletes a file in a folder, by default the node's own (§8.13). |
 | `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, … `capture_screenshot`, `capture_video`, `capture_app_start`, `capture_check`, `capture_status` (each with `computer?`) | Browses and captures on the owner's computer with the same tools its coding agents have (§8.16); what they capture is the node's own evidence. A conversation turn offers the ones for app testing and video only for that work (tool tiers, §6.1). |
+| `desktop_status`, `desktop_apps`, `desktop_open`, `desktop_observe`, `desktop_act`, `desktop_zoom`, `desktop_record`, `desktop_handoff` (each with `computer?`) | Uses the owner's real screen on a Linux computer (§8.16.5): looks (a screenshot with a capture id, the app in front and its element ids), acts in steps aimed at an element or at coordinates on the latest look, each step answering whether it ran and what it did, records a video held for the owner's preview, and hands the screen to the owner. A sensitive app asks once per app and mission; Ensemble's own windows, password prompts and secrets typed as text are refused. |
 | `web_task {goal, url?, tab?, maxSteps ≤ 8, computer?}` | Multi-step work on a website (a dashboard, a console, a form), as a small agent loop on the server over the browser tools (§6.1). Returns `{status, answer, steps, evidence, tab, popup?}`. |
 | `node_helper {task, name?, role?, can?, folders?}` | Brings in a temporary helper for one side task, as a step of this turn's plan (§6.1); `can` is `read` (default), `sessions` or `computer` (only in `folders`, when named). |
 | `node_show {evidence, caption?}` | Chooses which screenshots, videos or files show with the node's reply (evidence ids): among several, older ones, or a run's (§8.14). What the turn captured shows by itself without it. Never a capture held for the owner's preview. Only in turns the owner started. |
@@ -1475,6 +1485,17 @@ The command's answer comes as soon as the owner is asked (a foreground one goes 
 - **When it ends.** Its end wakes the node (§8.13), not the card. A sign-in that ran out of time (killed at its limit, `timedOut` on its last chunk, or ended without success within 15 seconds of it) wakes no one: its card already says it expired. Nor does one whose sign-in card the owner answered Not now (or let expire): the card says so, and the node does not try again unasked (`quietCommand`, node/logins.ts). One that succeeded or failed earlier wakes the node, the owner being there.
 - **Hints.** The note that wakes the node adds what to do for a failure it knows (`node/sign-in-hints.ts`, one row per failure): `AADSTS530035` → "Device-code sign-in is blocked by this account's security defaults: run plain `az login` (browser sign-in) instead."; "No subscriptions found" with a tenant listed → `az login --tenant <id>` and `az account list --all`.
 - **Never mind.** `computer_run_stop` stops a sign-in like any background command (§8.13).
+
+#### 8.16.5 Your screen
+
+The desktop tools (`desktop_status`, `desktop_apps`, `desktop_open`, `desktop_observe`, `desktop_act`, `desktop_zoom`, `desktop_record`, `desktop_handoff`; `desktop/control/node-tools.ts`) go to a computer that reports `capabilities.desktop` as `node.tool.request` with `tool: "desktop"`, where the desktop service runs them for the node's mission ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)). A computer whose `desktopReadiness` is not ready refuses all but `desktop_status`, with what it needs.
+
+| Part | How |
+| --- | --- |
+| Pictures | A turn on Ensemble's API gets each screenshot as a picture with the tool's result (`inlineImage`); a turn on the owner's own subscription gets a `[desktop screenshot cap_…]` line that the agent's computer turns into an image when it took the screenshot. Screenshots are not evidence and are not posted in the chat |
+| Sensitive apps | The computer answers 428 with `{capability: "desktop", scope: "app"}`; the owner's card (`node/device-tool-decisions.ts`) offers **This mission** only, and the same call runs again once they answer. Unattended runs need no answer |
+| Recordings | `desktop_record save` has an upload id like a capture (§8.14); the video is the node's evidence, held for the owner's preview card |
+| Failures | Each step's verdict and whether it ran come back in the result; a refusal says which rule, and a busy desktop says the node's place in line |
 
 ### 8.17 Live terminal and browser
 
