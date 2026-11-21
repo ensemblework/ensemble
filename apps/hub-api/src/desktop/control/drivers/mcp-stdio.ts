@@ -258,6 +258,23 @@ export class McpStdioClient extends EventEmitter {
     });
   }
 
+  /** Ends the server at once, a call of its still running (it fails as `gone`); the next call starts it again. */
+  async kill(): Promise<void> {
+    const child = this.child;
+    if (!child) return;
+    this.stopping = true;
+    const ended = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2_000);
+      timer.unref?.();
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    child.kill("SIGKILL");
+    await ended;
+  }
+
   async stop(): Promise<void> {
     const child = this.child;
     if (!child) {

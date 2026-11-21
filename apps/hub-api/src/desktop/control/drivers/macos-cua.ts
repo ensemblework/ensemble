@@ -182,10 +182,14 @@ type RunningApp = { pid: number; name: string; bundle: string | null; active: bo
 type Win = { id: number; pid: number; app: string; title: string; bounds: { x: number; y: number; width: number; height: number } | null; onScreen: boolean; minimized: boolean; z: number | null; layer: number };
 type Tree = { pid: number; windowId: number; app: string; tokens: Map<string, string>; actions: Map<string, string[]> };
 type Recording = { id: string; dir: string; path: string; active: boolean; reason: string | null; video: string | null; timer: NodeJS.Timeout | null; startedAt: number };
-type Ctx = { until: number };
+/**
+ * One request: its end, the signal that its work ended (its caller let go), the stops it began after, and whether
+ * it acted on the desktop yet (so a request cut short says it ran).
+ */
+type Ctx = { until: number; signal?: AbortSignal; stops: number; sent: boolean };
 type Front = { apps: RunningApp[]; wins: Win[]; app: RunningApp | null; top: Win | null; prompt: Win | null };
 /** Why typing ended before the end of the text (the service says each in its words). */
-type TypingStop = "focus_moved" | "owner_input" | "out_of_time";
+type TypingStop = "focus_moved" | "owner_input" | "out_of_time" | "cancelled";
 
 /** An app from `list_apps`: an installed app that is not running has pid 0. */
 function appOf(item: Record<string, unknown>): RunningApp | null {
@@ -279,6 +283,8 @@ export class MacosCuaDriver extends EventEmitter {
   private readonly trees = new Map<string, Tree>();
   private treeCount = 0;
   private accessibilityOn = false;
+  /** How many times `stop` was called: a request that began before the latest goes no further. */
+  private stops = 0;
   /** The missing grants macOS was last asked about, and when. */
   private asked: { missing: string; at: number } | null = null;
   /** Bundle ids (lower case) of the apps LaunchServices opens https links with, and until when they hold. */
@@ -332,10 +338,25 @@ export class MacosCuaDriver extends EventEmitter {
     this.emit("exit", info);
   }
 
+  /**
+   * Ends the driver. A request under way goes no further (typing stops before its next chunk), and one still
+   * running after the grace (4 s, like the Linux helper's) ends with the driver, killed.
+   */
   async stop(): Promise<void> {
+    this.stops += 1;
+    let grace: NodeJS.Timeout | undefined;
+    const quiet = await Promise.race([
+      this.chain.then(() => true),
+      new Promise<boolean>((resolve) => {
+        grace = setTimeout(() => resolve(false), this.options.stopGraceMs ?? 4_000);
+        grace.unref?.();
+      }),
+    ]);
+    clearTimeout(grace);
+    if (!quiet) await this.mcp.kill();
     await this.serial(async () => {
       const recording = this.recording;
-      if (recording?.active) await this.mcp.call("stop_recording", {}, { timeoutMs: 10_000 }).catch(() => undefined);
+      if (recording?.active && this.mcp.running) await this.mcp.call("stop_recording", {}, { timeoutMs: 10_000 }).catch(() => undefined);
     }).catch(() => undefined);
     this.session = null;
     await this.mcp.stop();
@@ -343,9 +364,18 @@ export class MacosCuaDriver extends EventEmitter {
 
   /** One request of the helper protocol, after the one before it is done. */
   call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean; signal?: AbortSignal }): Promise<T> {
-    const ctx: Ctx = { until: this.now() + options.timeoutMs };
+    const ctx: Ctx = { until: this.now() + options.timeoutMs, signal: options.signal, stops: this.stops, sent: false };
     if (options.signal?.aborted) return Promise.reject(new HelperError("cancelled", "The work this request was for ended.", "no"));
-    return this.serial(() => this.dispatch(method, params, ctx)) as Promise<T>;
+    return this.serial(() => (this.ended(ctx) ? Promise.reject(this.cancelled(ctx)) : this.dispatch(method, params, ctx))) as Promise<T>;
+  }
+
+  /** Whether a request should go no further: the work it was for ended, or desktop control stopped since it began. */
+  private ended(ctx: Ctx): boolean {
+    return ctx.signal?.aborted === true || ctx.stops !== this.stops;
+  }
+
+  private cancelled(ctx: Ctx): HelperError {
+    return new HelperError("cancelled", ctx.stops !== this.stops ? "Desktop control stopped during this request." : "The work this request was for ended.", ctx.sent ? "yes" : "no");
   }
 
   private serial<T>(work: () => Promise<T>): Promise<T> {
@@ -414,12 +444,16 @@ export class MacosCuaDriver extends EventEmitter {
 
   /** One tool call within the request's time; a failure or refusal becomes a typed error. */
   private async tool(name: string, args: Record<string, unknown>, ctx: Ctx, effects = false): Promise<{ data: Record<string, unknown>; result: McpResult }> {
+    if (this.ended(ctx)) throw this.cancelled(ctx);
     const left = ctx.until - this.now();
-    if (left < 300) throw new HelperError("timeout", "Desktop control ran out of time for this request.", "no", true);
+    if (left < 300) throw new HelperError("timeout", "Desktop control ran out of time for this request.", ctx.sent ? "yes" : "no", true);
     const result = await this.mcp.call(name, args, { timeoutMs: left, effects });
     const data = obj(result?.structuredContent);
     const refused = data.effect === "refused" || data.status === "refused";
-    if (!result?.isError && !refused) return { data, result };
+    if (!result?.isError && !refused) {
+      if (effects) ctx.sent = true;
+      return { data, result };
+    }
     throw this.failure(name, result, data, effects);
   }
 
@@ -1081,8 +1115,9 @@ export class MacosCuaDriver extends EventEmitter {
    * Typing into the app in front, a few characters at a time, like the Linux helper. Between chunks it stops
    * when the window on top changed, a password prompt opened or the floor now refuses the window (`focus_moved`;
    * every few chunks also when another app came to the front), when the owner used the keyboard or mouse since
-   * the last key (`owner_input`: macOS's idle time is shorter than the time since it), and while one more chunk
-   * would not fit in the request's time (`out_of_time`). Once anything was typed, a failure says how much.
+   * the last key (`owner_input`: macOS's idle time is shorter than the time since it), while one more chunk
+   * would not fit in the request's time (`out_of_time`), and when the work it is for ended or desktop control
+   * stopped (`cancelled`). Once anything was typed, a failure says how much.
    */
   private async text(params: Record<string, unknown>, ctx: Ctx): Promise<Record<string, unknown>> {
     await this.inputReady(ctx);
@@ -1099,6 +1134,7 @@ export class MacosCuaDriver extends EventEmitter {
       for (let at = 0, chunk = 0; at < chars.length; at += TYPING_CHUNK, chunk += 1) {
         const began = this.now();
         if (at > 0) {
+          if (this.ended(ctx)) return answer("cancelled");
           if (ctx.until - began < slowest + TYPING_RESERVE_MS) return answer("out_of_time");
           if (await this.focusMoved(start, startTop, chunk % TYPING_FULL_CHECK === 0, ctx)) return answer("focus_moved");
         }
@@ -1119,6 +1155,7 @@ export class MacosCuaDriver extends EventEmitter {
       }
     } catch (error) {
       if (typed === 0) throw error;
+      if (error instanceof HelperError && error.kind === "cancelled") return answer("cancelled");
       throw typingFailed(error, typed, chars.length, typing && !(error instanceof HelperError && error.ran === "no"));
     }
     return answer(null);
@@ -1169,7 +1206,7 @@ export class MacosCuaDriver extends EventEmitter {
     }
     const recording: Recording = { id, dir, path, active: true, reason: null, video: null, timer: null, startedAt: this.now() };
     const maxMs = Math.min(15 * 60_000, Math.max(1_000, num(params.max_ms) ?? 120_000));
-    recording.timer = setTimeout(() => void this.serial(() => this.endRecording(recording, "max_duration", { until: this.now() + 30_000 })).catch(() => undefined), maxMs);
+    recording.timer = setTimeout(() => void this.serial(() => this.endRecording(recording, "max_duration", { until: this.now() + 30_000, stops: this.stops, sent: false })).catch(() => undefined), maxMs);
     recording.timer.unref?.();
     this.recording = recording;
     return { id, container: "mp4", codec: "h264", mime: "video/mp4" };

@@ -62,7 +62,7 @@ const drivers: Driver[] = [];
 const services: Service[] = [];
 let counter = 0;
 
-function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null; handlers?: string[]; clock?: boolean } = {}) {
+function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null; handlers?: string[]; clock?: boolean; stopGraceMs?: number } = {}) {
   const dir = join(root, `mac-${(counter += 1)}`);
   mkdirSync(dir, { recursive: true });
   const state = join(dir, "state.json");
@@ -103,7 +103,7 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
     return "";
   };
   const timing = options.clock ? { now: () => clock.now, sleep: async (ms: number) => void (clock.now += ms) } : {};
-  const driver = new MacosCuaDriver({ spawn: () => command(), version: "0.56.6", workDir: join(dir, "cua"), appPath: APP, macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000, ...timing });
+  const driver = new MacosCuaDriver({ spawn: () => command(), version: "0.56.6", workDir: join(dir, "cua"), appPath: APP, macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000, ...(options.stopGraceMs ? { stopGraceMs: options.stopGraceMs } : {}), ...timing });
   const service = new DesktopService({ helper: driver, captureDir: join(dir, "captures"), platform: "darwin", secretValues: async () => ["saved-value-123"] });
   drivers.push(driver);
   services.push(service);
@@ -111,6 +111,14 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
 }
 
 const caller = (key = "node:n1:m1", extra: Partial<Caller> = {}): Caller => ({ key, label: `@${key}`, budgetMs: 30_000, gate: async () => ({ allow: true }), ...extra });
+
+async function until(done: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > end) throw new Error("waited too long");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 after(async () => {
   for (const service of services) await service.stop();
@@ -513,6 +521,47 @@ test("a failure after some chunks went in says the step ran, with how much was t
       .join(""),
     text.slice(0, 24),
   );
+});
+
+test("a run that ends stops its typing before the next chunk, saying how much went in", async () => {
+  const h = mac();
+  const chunks = () => h.calls().filter((call) => call.tool === "type_text").length;
+  const text = "x".repeat(400);
+  const acting = h.service.act(caller("run:job-1"), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => chunks() >= 3);
+  const before = chunks();
+  await h.service.release("run:job-1");
+  const done = await acting;
+  const after = chunks();
+  assert.ok(after <= before + 1, `${before} chunks when it ended, ${after} after`);
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["partial", "yes"]);
+  assert.equal(done.steps[0]!.detail, `Typing stopped after ${after * 8} of 400 characters: the work it was for ended, or desktop control stopped, so the rest was not typed.`);
+});
+
+test("stopping desktop control during typing returns at once; a call still running after the grace ends with the driver", async () => {
+  const h = mac();
+  const chunks = () => h.calls().filter((call) => call.tool === "type_text").length;
+  const text = "y".repeat(400);
+  const acting = h.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => chunks() >= 2);
+  let started = Date.now();
+  await h.driver.stop();
+  assert.ok(Date.now() - started < 1_000, `stopped in ${Date.now() - started} ms`);
+  const done = await acting;
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(done.steps[0]!.detail!, /^Typing stopped after \d+ of 400 characters: the work it was for ended, or desktop control stopped/);
+
+  // The driver does not answer a chunk: after the grace it is killed, and the chunk may have gone in.
+  const hung = mac({ stopGraceMs: 1_000, world: { slow: { type_text: 30_000 } } });
+  const stuck = hung.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => hung.calls().some((call) => call.tool === "type_text"));
+  started = Date.now();
+  await hung.driver.stop();
+  const took = Date.now() - started;
+  assert.ok(took >= 900 && took < 3_000, `stopped in ${took} ms`);
+  const cut = await stuck;
+  assert.deepEqual([cut.steps[0]!.verdict, cut.steps[0]!.ran], ["unknown", "maybe"]);
+  assert.equal(hung.driver.health().crashes, 0, "killed on purpose, not counted as a crash");
 });
 
 test("lines from cua-driver that are not MCP messages are ignored: null, arrays, numbers, a 10 MB line, bytes that are not UTF-8", async () => {

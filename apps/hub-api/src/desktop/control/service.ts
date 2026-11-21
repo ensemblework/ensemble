@@ -303,9 +303,9 @@ const NO_SCREEN: ScreenRef = { node: -1, x: 0, y: 0, width: 0, height: 0, name: 
 type StepContext = { secrets: readonly string[]; allowed: Set<string>; background: boolean; idleMs: number | null };
 /**
  * Why the helper stopped typing before the end: the owner's input, the window in front changing, a secret it could
- * not type whole, or (macOS) no time for another chunk.
+ * not type whole, or (macOS) no time for another chunk, or the work it was for ending.
  */
-type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable" | "out_of_time";
+type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable" | "out_of_time" | "cancelled";
 type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; maxMs: number; mime: string; container: string; codec: string; ended: string | null; endedAt: number | null; lost: boolean; counter: number };
 
 class Deadline {
@@ -1211,6 +1211,7 @@ export class DesktopService {
         return { verdict: "partial", ran: "yes", detail: `${what}: your owner used the keyboard or mouse, so the computer is theirs until two minutes after their last input.` };
       }
       if (stopped === "out_of_time") return { verdict: "partial", ran: "yes", detail: `${what}: this call ran out of time, so the rest was not typed.${secretName ? "" : ` Look, then type the rest (from character ${done + 1}) in another step.`}` };
+      if (stopped === "cancelled") return { verdict: "partial", ran: "yes", detail: `${what}: the work it was for ended, or desktop control stopped, so the rest was not typed.` };
       return { verdict: "partial", ran: "yes", detail: `${what}: the window in front changed, so the rest was not typed.` };
     }
     const told = effectOutcome(effect);
