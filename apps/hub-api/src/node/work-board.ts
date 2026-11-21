@@ -10,7 +10,7 @@ import { tasksWith } from "./task-assignment.js";
 import { labelStatus } from "../services/tasks.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
-const LIVE_MISSION = ["draft", "running", "reporting"];
+const LIVE_MISSION = ["draft", "running", "replanning", "reporting"];
 
 /**
  * Tools that never change anything (lookups). Every other tool counts as acting: from its first

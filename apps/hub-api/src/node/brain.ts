@@ -32,7 +32,7 @@ import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
-import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
+import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
@@ -259,6 +259,11 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     await saveCursor(readUpTo);
     return { status: "skipped" };
   }
+  // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
+  // its update is written from the plan as it is now. Null: the plan no longer waits for its lead.
+  const leadPlan = turn.reason === "plan" && turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id) : undefined;
+  if (leadPlan === null) return { status: "skipped" };
+  const note = leadPlan?.note ?? turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
     rootMessageId: trigger ? (trigger.rootMessageId ?? (trigger.authorKind === "human" ? trigger.id : null)) : null,
@@ -290,7 +295,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // A node that was not called for a while gets a backlog: it is marked as context, apart from the message
   // it was called for, so it answers that one (a node once answered an old message instead of the new ask).
   const calledAt = trigger ? shown.findIndex((row) => row.id === trigger.id) : -1;
-  const packet = packetSections({ work, note: turn.note, room: room.title, lines: shown.map(line), calledAt, board });
+  const packet = packetSections({ work, note, room: room.title, lines: shown.map(line), calledAt, board });
   const transcript = packetText(packet);
 
   const settings = await loadSettings(prisma, spaceId);
@@ -693,7 +698,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // Only where only the owner reads, like tool chips: sharing them with others is the owner's own act.
   const ownerReads = single || Boolean(replyPrivateTo);
   const media: Media[] = takeTurnMedia(turn.id);
-  if (ownerReads && turn.planId && !turn.planStep && text && text !== NO_REPLY) {
+  if (ownerReads && turn.planId && !turn.planStep && leadPlan?.kind !== "replan" && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
   const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};

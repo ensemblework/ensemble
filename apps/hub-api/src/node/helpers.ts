@@ -184,6 +184,12 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
             .default("read")
             .describe("What it may do: read (default: workspace, web, connected apps), sessions (also run its own coding-agent session on your owner's computer), computer (also check things on the computer with computer tools)."),
           folders: z.array(z.string().min(1).max(300)).max(5).optional().describe("For computer: the folders it may use."),
+          reviews: z
+            .string()
+            .min(1)
+            .max(60)
+            .optional()
+            .describe("To make it an independent review: the @handle of the node in your plan whose latest build or writing it reviews. It judges each acceptance criterion with evidence; a rejection sends that work back for repair, then it reviews again."),
         })
         .strict(),
       isWrite: false,
@@ -244,7 +250,9 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
           originRoomId: scope.room.id,
           originPrivate: Boolean(scope.privateTo),
           visibleTo,
-          step: { node: helper, handle: helper.slug, brief: input.task, after: [], kind: "research", executor: "helper" },
+          step: input.reviews
+            ? { node: helper, handle: helper.slug, brief: input.task, after: [input.reviews.replace(/^@/, "")], kind: "review", verifies: input.reviews.replace(/^@/, ""), executor: "helper" }
+            : { node: helper, handle: helper.slug, brief: input.task, after: [], kind: "research", executor: "helper" },
         });
         await prisma.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...(room.settings as Prisma.JsonObject), planId: added.planId } } });
         publishTo([owner], "node.room", { roomId: room.id });

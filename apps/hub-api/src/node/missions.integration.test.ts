@@ -123,6 +123,15 @@ async function crewOf(user: HttpUser, templates: string[]) {
 const report = (outcome: "done" | "pass" | "fail" | "blocked", summary: string, extra: Record<string, unknown> = {}): Step => ({ calls: [{ name: "node_step_report", arguments: { outcome, summary, ...extra } }], then: "(no reply)" });
 const delegate = (to: string, brief: string, extra: Record<string, unknown> = {}): Call => ({ name: "node_delegate", arguments: { to, brief, ...extra } });
 const planCard = async (user: HttpUser, roomId: string) => (await read(user, roomId)).filter((row) => row.kind === "plan").at(-1)!;
+/** The owner's one-press card for a stuck step (docs/35 §6.4), answered: approve tries again, discard finishes without it. */
+async function decideStuck(user: HttpUser, roomId: string, decision: "approve" | "discard") {
+  const card = (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").at(-1);
+  assert.ok(card, "the owner has the card for the stuck step");
+  const answered = await user.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision } });
+  assert.equal(answered.statusCode, 200, answered.body);
+  await settleTurns();
+  return card;
+}
 
 test("F1: a failed check never releases the next feature; the build is repaired, checked again, then the next feature runs", async () => {
   const kofi = await person("Kofi");
@@ -178,7 +187,8 @@ test("prose is not a result: the worker is asked once to report, then the step i
   const kofi = await person("Kofi");
   const { crew } = await crewOf(kofi, ["manager", "researcher", "docs-writer"]);
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("look into it")) return { calls: [delegate("researcher", "Research it.", { kind: "research" }), delegate("docs", "Write it up.", { after: ["researcher"], kind: "write" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("look into it and write it up")) return { calls: [delegate("researcher", "Research it.", { kind: "research" }), delegate("docs", "Write it up.", { after: ["researcher"], kind: "write" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
     if (turn.slug === "manager") return { text: "The research was not reported, so the write-up waits." };
     if (turn.slug === "researcher") return { text: "I looked around and it seems fine." };
     return { text: "unexpected" };
@@ -186,10 +196,16 @@ test("prose is not a result: the worker is asked once to report, then the step i
   await say(kofi, crew.id, "@manager look into it and write it up");
   assert.deepEqual(seen.map((row) => row.slug), ["manager", "researcher", "researcher", "manager"]);
   assert.match(seen[2]!.transcript, /not reported yet\. Report it now with node_step_report/);
+  // The unreported step is stuck: its lead had its one re-plan turn, and the plan waits for its owner's card.
+  assert.match(seen[3]!.transcript, /one re-plan turn[\s\S]*@researcher \(research, blocked, unverified\)/);
+  assert.equal((await planCard(kofi, crew.id)).data.status, "running");
+  const card = await decideStuck(kofi, crew.id, "discard");
+  assert.match(card.body, /@researcher's step in @manager's plan is stuck\. Not reported \(prose only\)[\s\S]*Try it again, or finish the plan without it\?/);
   const plan = await planCard(kofi, crew.id);
   assert.deepEqual(plan.data.steps.map((row: { status: string; outcome: string }) => [row.status, row.outcome]), [["blocked", "unverified"], ["skipped", "unknown"]]);
   assert.equal(plan.data.status, "partially_completed");
-  assert.match(seen[3]!.transcript, /held by @researcher's step/);
+  assert.match(seen[4]!.transcript, /held by @researcher's step/);
+  assert.match(seen[4]!.transcript, /your owner chose to finish without it/);
 });
 
 test("a verification that passes with a skipped check is refused, and the tool asks for a consistent report", async () => {
@@ -197,7 +213,7 @@ test("a verification that passes with a skipped check is refused, and the tool a
   const { crew } = await crewOf(kofi, ["manager", "feature-engineer", "tester"]);
   let tries = 0;
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("check it")) return { calls: [delegate("builder", "Build.", { kind: "build" }), delegate("tester", "Check it.", { after: ["builder"], kind: "verify" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("build it and check it")) return { calls: [delegate("builder", "Build.", { kind: "build" }), delegate("tester", "Check it.", { after: ["builder"], kind: "verify" })], then: "Planned." };
     if (turn.slug === "manager") return { text: "Reported." };
     if (turn.slug === "builder") return report("done", "Built.", { subject: { commit: "abc1234" } });
     if (turn.slug === "tester") {
@@ -452,7 +468,11 @@ test("an outbox effect delivered twice starts one turn; a restart re-runs a turn
   const cut = await h.prisma.nodeTurn.create({
     data: { userId: kofi.id, nodeId: step.nodeId, roomId: crew.id, reason: "plan", status: "running", note: "Your step: research it.", planId: plan.id, planStep: step.id, lane: `work:${plan.id}:${step.id}` },
   });
-  await h.prisma.nodeStep.update({ where: { missionId_id: { missionId: plan.id, id: step.id } }, data: { status: "working", outcome: "unknown", nudged: false, endedAt: null } });
+  // As a retry would: a new attempt (the first one's result was taken once and stays).
+  await h.prisma.nodeStep.update({
+    where: { missionId_id: { missionId: plan.id, id: step.id } },
+    data: { status: "working", outcome: "unknown", nudged: false, endedAt: null, attempt: 2, attempts: [...step.attempts, { n: 2, reason: "retry", outcome: "unknown", summary: null, startedAt: new Date().toISOString(), endedAt: null }] },
+  });
   await h.prisma.nodeMission.update({ where: { id: plan.id }, data: { status: "running" } });
   await recoverTurns(h.app);
   await settleTurns();

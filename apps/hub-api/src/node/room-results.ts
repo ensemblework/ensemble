@@ -41,7 +41,7 @@ export class RoomResultError extends Error {
 }
 
 type DeliverTo = { roomId?: unknown; audience?: unknown; taskId?: unknown; deliveredAt?: unknown };
-const RUNNING = ["draft", "running", "reporting"];
+const RUNNING = ["draft", "running", "replanning", "reporting"];
 
 async function spaceOwnerOf(db: Db, spaceId: string): Promise<string | null> {
   const row = await db.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });

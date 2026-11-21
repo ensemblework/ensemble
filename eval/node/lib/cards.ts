@@ -4,7 +4,8 @@
  * permission "for this run", held writes, sessions, drafts and proposals are approved. Cards only a
  * person can answer (a password, a secret, a sign-in) are declined, as by an owner who is away, and
  * so is any request to see or use the owner's own screen: an agent's private screen is fine, the
- * owner's never is. Both are reported.
+ * owner's never is. Both are reported. A stuck plan step's card is answered "finish without it", so a
+ * run never retries the same failure until its deadline.
  */
 
 /** What the agent asked in a question when the owner cannot answer it now. */
@@ -70,6 +71,7 @@ export function planCard(card: CardRow): Plan | null {
   if (card.kind !== "approval") return null;
   if (ownersScreen(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "declined", note: `a request for the owner's own screen (${type}), which the eval never allows` };
   if (APPROVED.has(type)) return { url: `/api/node/approvals/${card.id}`, body: { decision: "approve" }, answer: type === "media_preview" ? "send" : "approve" };
+  if (type === "plan_decision") return { url: `/api/node/approvals/${card.id}`, body: { decision: "discard" }, answer: "finish without it", note: "a stuck plan step: the plan finishes without it and its lead reports" };
   return { skip: `a ${type} card the harness does not know how to answer` };
 }
 

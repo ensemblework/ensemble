@@ -28,6 +28,7 @@ const { sweepHelpers, HELPER_IDLE_MS } = await import("./helpers.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
 const { setTurnRetryDelaysForTests } = await import("./queue.js");
 const { createSpaceUser, SPACE_COOKIE } = await import("../spaces/store.js");
+const { resetHeuristicsCache } = await import("./heuristics.js");
 after(() => h.close());
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string; rateLimited?: boolean };
@@ -299,6 +300,15 @@ async function laptopFor(user: HttpUser, name: string) {
 const startCall = (title: string, prompt: string) => ({ calls: [{ name: "node_session_start", arguments: { title, prompt, folder: "ensemble" } }], then: `Started: ${title}.` });
 const sendCall = (session: string, prompt: string, delivery: string, title?: string) => ({ calls: [{ name: "node_session_send", arguments: { session, prompt, delivery, ...(title ? { title } : {}) } }], then: "On it." });
 const working = (jobId: string) => h.prisma.workspaceJob.update({ where: { id: jobId }, data: { status: "running", claimedAt: new Date(), startedAt: new Date() } });
+/** The owner's one-press card for a stuck plan step (docs/35 §6.4): approve tries again, discard finishes without it. */
+async function decideStuck(user: HttpUser, roomId: string, decision: "approve" | "discard") {
+  const card = (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").at(-1);
+  assert.ok(card, "the owner has the card for the stuck step");
+  const answered = await user.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision } });
+  assert.equal(answered.statusCode, 200, answered.body);
+  await settleTurns();
+  return card;
+}
 const cardOf = async (user: HttpUser, roomId: string, jobId: string) => (await read(user, roomId)).find((row) => row.kind === "run" && row.data.jobId === jobId)!;
 
 test("a node runs its owner's own coding agent in a session, off the board, and reports when it ends", async () => {
@@ -775,26 +785,36 @@ test("stopping a crew stops its plan and the runs its steps started; a step whos
   await settleTurns();
   assert.deepEqual(seen.map((row) => row.slug), [], "nobody reports a stopped plan");
 
-  // A step whose runs keep failing: after the cap the session tools refuse and the node reports.
-  script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build kept failing; it needs you." };
-    if (turn.slug === "manager" && turn.transcript.includes("again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
-    if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
-    return { text: "unexpected" };
-  };
-  await say(kofi, crew.id, "try it again");
-  for (let round = 0; round < 6; round += 1) {
-    const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
-    if (!open.length) break;
-    await h.prisma.workspaceJob.updateMany({ where: { id: { in: open.map((row) => row.id) } }, data: { status: "failed", error: "The model refused.", finishedAt: new Date() } });
-    await pollRuns(h.app);
-    await settleTurns();
+  // A step whose runs keep failing: after the cap (config: plans.maxStepFailures) the session tools refuse and the node reports.
+  process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = JSON.stringify({ plans: { maxStepFailures: 4 } });
+  resetHeuristicsCache();
+  try {
+    script = (turn) => {
+      if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
+      if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build kept failing; it needs you." };
+      if (turn.slug === "manager" && turn.transcript.includes("try it again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
+      if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
+      return { text: "unexpected" };
+    };
+    await say(kofi, crew.id, "try it again");
+    for (let round = 0; round < 6; round += 1) {
+      const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
+      if (!open.length) break;
+      await h.prisma.workspaceJob.updateMany({ where: { id: { in: open.map((row) => row.id) } }, data: { status: "failed", error: "The model refused.", finishedAt: new Date() } });
+      await pollRuns(h.app);
+      await settleTurns();
+    }
+    const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
+    assert.equal(second.data.steps[0].status, "blocked");
+    assert.equal(second.data.steps.length, 1);
+    assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "a step stops after the configured four failed runs");
+    // Stuck: its lead had its re-plan turn; the owner finishes without it on the card, and the lead reports.
+    await decideStuck(kofi, crew.id, "discard");
+    assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
+  } finally {
+    delete process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG;
+    resetHeuristicsCache();
   }
-  const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
-  assert.equal(second.data.steps[0].status, "blocked");
-  assert.equal(second.data.steps.length, 1);
-  assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "a step stops after four failed runs");
-  assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
 });
 
 test("the CLI's Node tab reads a bridge overview; Node routes refuse narrow keys; deleting a node removes its DM", async () => {
@@ -1355,6 +1375,7 @@ test("steps that finish together start the next one once; a declined step card l
   await h.prisma.nodeAgent.update({ where: { id: ids[1] }, data: { autonomy: { computerWork: "ask" } } });
   seen.length = 0;
   script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
     if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build was not run: you declined it." };
     if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it on the laptop." } }], then: "Planned." };
     if (turn.slug === "builder" && turn.transcript.includes("declined")) return reportCall("blocked", "Nothing was run: my owner declined the build.", { blockedBy: "needs_owner" });
@@ -1368,6 +1389,8 @@ test("steps that finish together start the next one once; a declined step card l
   assert.equal(card.data.plan.id, plan.id);
   assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 200);
   await settleTurns();
+  // The blocked step is stuck: after its lead's re-plan turn, its owner finishes without it on one card.
+  await decideStuck(kofi, crew.id, "discard");
   const after = (await read(kofi, crew.id)).find((row) => row.id === plan.id)!;
   assert.equal(after.data.status, "partially_completed", "a blocked step is not a success");
   assert.match(after.data.steps[0].result, /declined/);

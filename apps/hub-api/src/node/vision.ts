@@ -19,7 +19,7 @@ import { evidenceContent } from "../evidence/store.js";
 import { askRuntimeStream, type ModelMessage } from "../lib/model-turn.js";
 import { truncateText } from "../lib/text.js";
 import { checkedMedia } from "./media.js";
-import type { Check, StepReport } from "./report.js";
+import { CHECKING_KINDS, type Check, type StepReport } from "./report.js";
 
 /** Pictures judged per report, and the largest one sent. */
 const MAX_PICTURES = 4;
@@ -136,7 +136,7 @@ export async function withVisionChecks(app: FastifyInstance, input: { ownerId: s
     const turn = await askRuntimeStream({ messages, model, provider: INCLUDED_PROVIDER, reasoningEffort: "low", userId: input.ownerId, activityId: `node-vision:${input.missionId}:${input.stepId}`, chatTools: [], responsesTools: [], timeoutMs: 120_000, purpose: "Node vision check" });
     const judged = parseJudgement(turn.text, pictures.map((picture) => picture.id));
     if (!judged.length) return report;
-    const verify = step.kind === "verify";
+    const verify = CHECKING_KINDS.has(step.kind);
     const checks: Check[] = judged.map((row) => {
       const picture = pictures.find((item) => item.id === row.id)!;
       return {

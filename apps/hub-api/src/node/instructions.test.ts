@@ -211,7 +211,7 @@ test("a step's report uses node_step_report's own outcomes; the wider ones are f
   const reply = completion.find((line) => line.startsWith("- A reply about work"))!;
   for (const outcome of StepReport.shape.outcome.options) assert.match(step, new RegExp(`\\b${outcome}\\b`), `${outcome} is named for a step`);
   for (const text of [step, renderSection("node/66-helper-report", { parent: "assistant" }), sectionText("node/21-step-rules")]) {
-    assert.doesNotMatch(text, /\b(partial|failed|stopped|uncertain)\b/, "outcomes node_step_report refuses");
+    assert.doesNotMatch(text, /\bfailed\b/, "an outcome node_step_report refuses");
   }
   assert.match(reply, /done, partial, blocked, failed, stopped or uncertain/);
   assert.match(reply, /what remains, the one decision Mira must make, and who did it/);

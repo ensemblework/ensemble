@@ -18,12 +18,34 @@ test("F2: every requested feature must be covered by a step or deferred with a r
   assert.deepEqual(validatePlan({ ...plan, deferred: [{ requirementId: "resize" }, { requirementId: "board" }] }), []);
 });
 
-test("a requirement with acceptance criteria needs a verify step that checks a build before it", () => {
+test("every acceptance criterion that must pass is judged by a verify or review step after the work it checks", () => {
   const base: PlanShape = { requirements: [req("md", ["tables"])], deferred: [], constraints: {}, steps: [step("b1", "build", ["md"])] };
-  assert.match(validatePlan(base).join(" "), /no verify step/);
-  assert.match(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), step("t1", "verify", ["md"])] }).join(" "), /must name the build step/);
-  assert.match(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), step("t1", "verify", ["md"], [], "b1")] }).join(" "), /must come after the build/);
+  assert.match(validatePlan(base).join(" "), /Acceptance “tables” of “md” must be checked, but no verify or review step judges it/);
+  assert.match(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), step("t1", "verify", ["md"])] }).join(" "), /must name the step it checks/);
+  assert.match(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), step("t1", "verify", ["md"], [], "b1")] }).join(" "), /must come after the step it checks \(“b1”\)/);
   assert.deepEqual(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), step("t1", "verify", ["md"], ["b1"], "b1")] }), []);
+  assert.deepEqual(validatePlan({ ...base, requirements: [{ id: "md", acceptance: [{ id: "tables", mandatory: false }] }] }), [], "a criterion that need not pass needs no check");
+  // A check that names the criteria it judges leaves the others unjudged.
+  const two: PlanShape = { ...base, requirements: [req("md", ["tables", "links"])], steps: [step("b1", "build", ["md"]), { ...step("t1", "verify", ["md"], ["b1"], "b1"), acceptanceIds: ["tables"] }] };
+  assert.match(validatePlan(two).join(" "), /Acceptance “links” of “md” must be checked/);
+  assert.doesNotMatch(validatePlan(two).join(" "), /“tables” of “md” must be checked/);
+  assert.match(validatePlan({ ...two, steps: [step("b1", "build", ["md"]), { ...step("t1", "verify", ["md"], ["b1"], "b1"), acceptanceIds: ["nope"] }] }).join(" "), /judges “nope”, which is not an acceptance criterion/);
+  assert.match(validatePlan({ ...base, steps: [step("b1", "build", ["md"]), { ...step("w1", "write", ["md"], ["b1"]), acceptanceIds: ["tables"] }] }).join(" "), /only verify and review steps judge acceptance criteria/);
+});
+
+test("a review is independent: another node than the builder, of a build or writing before it", () => {
+  const plan: PlanShape = { requirements: [req("ui", ["motion"])], deferred: [], constraints: {}, steps: [{ ...step("b1", "build", ["ui"]), worker: "n1" }, { ...step("r1", "review", ["ui"], ["b1"], "b1"), worker: "n1" }] };
+  assert.match(validatePlan(plan).join(" "), /Review step “r1” goes to the node that does “b1”/);
+  assert.deepEqual(validatePlan({ ...plan, steps: [plan.steps[0]!, { ...plan.steps[1]!, worker: "n2" }] }), []);
+  const research: PlanShape = { ...plan, steps: [step("s1", "research", ["ui"]), step("r1", "review", ["ui"], ["s1"], "s1")] };
+  assert.match(validatePlan(research).join(" "), /reviews “s1”, which is not a build or writing step/);
+});
+
+test("how big a plan may be comes from the config, not the contract", () => {
+  const steps = Array.from({ length: 40 }, (_, index) => step(`s${index}`, "other", []));
+  assert.deepEqual(validatePlan({ requirements: [], deferred: [], constraints: {}, steps }), [], "no limit of its own");
+  assert.match(validatePlan({ requirements: [], deferred: [], constraints: {}, steps }, { maxSteps: 30 }).join(" "), /40 steps; a plan holds at most 30/);
+  assert.match(validatePlan({ requirements: [req("a"), req("b")], deferred: [{ requirementId: "a" }, { requirementId: "b" }], constraints: {}, steps: [] }, { maxRequirements: 1 }).join(" "), /2 requirements; a plan holds at most 1/);
 });
 
 test("serial order: features are chained through their checks, and one build step per feature", () => {

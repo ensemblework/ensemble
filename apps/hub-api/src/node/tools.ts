@@ -20,7 +20,7 @@ import { deviceTools } from "./device-tools.js";
 import { webTaskTool } from "./web-task.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { crewMember, findCrew, notInCrew } from "./crew.js";
-import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
+import { acceptanceFor, addStep, finishStep, kindFromRole, loadPlan, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 import { planTools } from "./plan-tools.js";
 import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
@@ -259,7 +259,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       }
       const row = await prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: step.planId, id: step.stepId } }, select: { kind: true, status: true } });
       if (!row || !["waiting", "working"].includes(row.status)) throw new ToolBlockedError("This step has already ended.");
-      const verdict = verdictOf(row.kind, input, await mandatoryIds(prisma, step.planId, step.stepId));
+      const criteria = await acceptanceFor(prisma, step.planId, step.stepId);
+      const verdict = verdictOf(row.kind, input, criteria.mandatory, criteria.judged);
       // A report that contradicts its own checks goes back to the worker to fix, rather than being guessed at.
       if (verdict.problem && input.outcome !== "blocked") throw new ToolBlockedError(verdict.problem, "Report again: name each check with its verdict, and choose the outcome they support.");
       await finishStep(ctx.app, step.planId, step.stepId, { status: input.outcome === "blocked" ? "blocked" : "done", result: input.summary, report: input });
@@ -282,8 +283,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         area: "tasks",
         description:
           "Report your plan step when it is finished (or cannot be). This is your result: a reply in prose does not count. " +
-          "outcome: done (a build, writing, research), pass or fail (a verification: pass only if every check passed, fail with the failing check), blocked (cannot be done: say why in summary). " +
-          "Put the commit (or URL) you built or tested in subject, each check with its verdict in checks, and links or files in evidence.",
+          "outcome: done (a build, writing, research), pass or fail (a verification or review: pass only if every check passed, fail with the failing check), partial (part of it is done: what is left in remaining), uncertain (it ran, but you cannot tell whether it works), blocked (cannot be done: say why in summary), stopped. Partial and uncertain never count as done. " +
+          "Put the commit (or URL) you built or tested in subject; each check with its verdict, the acceptance id it covers and its evidence strength (A a file or record made now, B output seen in this session, C recollection; a review's pass needs A or B) in checks; links or files in evidence; the one decision only your owner can make in ownerDecision.",
         input: StepReport,
         isWrite: false,
         risk: "low",
@@ -345,8 +346,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         model: z.string().max(120).optional().describe("Only when your owner names a model for the agent runs (as they wrote it, for example GPT 6.1 Sol)."),
         effort: z.string().max(20).optional().describe("Only when your owner names a thinking level (low, medium, high, extra high, max)."),
         context: z.enum(["default", "long_context"]).optional().describe("long_context when your owner asks for the long (1M) context window."),
-        kind: z.enum(STEP_KINDS).optional().describe("build (code), verify (an independent check of a build: give it after the build and verifies), write (docs, copy), research, or other. Defaults from the node's role."),
-        verifies: Handle.optional().describe("For a verify step: the node whose (latest) build step it checks. A failed check sends that build back for repair automatically, then this check runs again; steps after the check wait until it passes."),
+        kind: z.enum(STEP_KINDS).optional().describe("build (code), verify (an independent check of a build: give it after the build and verifies), review (an independent review of a build or writing by another node, judging each acceptance criterion), write (docs, copy), research, or other. Defaults from the node's role."),
+        verifies: Handle.optional().describe("For a verify or review step: the node whose (latest) build or writing step it checks. A failed check sends that work back for repair automatically, then this check runs again; steps after the check wait until it passes."),
       }).strict(),
       isWrite: false,
       risk: "low",

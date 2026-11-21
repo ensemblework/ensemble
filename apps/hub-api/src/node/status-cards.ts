@@ -109,7 +109,7 @@ export async function statusCard(db: Db, room: NodeRoom, accountId: string, view
       userId: accountId,
       AND: [
         { OR: [{ originRoomId: room.id }, { deliverTo: { path: ["roomId"], equals: room.id } }] },
-        { OR: [{ status: { in: ["draft", "running", "reporting"] } }, { endedAt: { gte: new Date(Date.now() - RECENT_MS) } }] },
+        { OR: [{ status: { in: ["draft", "running", "replanning", "reporting"] } }, { endedAt: { gte: new Date(Date.now() - RECENT_MS) } }] },
       ],
     },
     orderBy: { createdAt: "desc" },

@@ -33,6 +33,12 @@ test("cards: approve what can be approved, decline what needs a person, ignore s
   assert.equal(planCard({ id: "x", kind: "approval", data: { type: "session", status: "applied" } }), null);
   assert.equal(planCard({ id: "y", kind: "approval", data: { type: "computer", status: "pending" } }), null);
   assert.equal(planCard({ id: "z", kind: "text", data: { type: "live" } }), null);
+  assert.deepEqual(planCard({ id: "p", kind: "approval", data: { type: "plan_decision", status: "pending" } }), {
+    url: "/api/node/approvals/p",
+    body: { decision: "discard" },
+    answer: "finish without it",
+    note: "a stuck plan step: the plan finishes without it and its lead reports",
+  });
 });
 
 test("a request for the owner's own screen is declined; an agent's private screen is allowed", () => {

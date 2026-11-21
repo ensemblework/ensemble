@@ -1,12 +1,14 @@
 /**
- * The mission contract (ensemble-node docs/design B6, plan §7.3–7.4): the lead proposes a whole plan in
- * one call (node_plan) and code validates it before anything starts. Every requested deliverable is a
- * requirement that a step covers or that is deferred with a reason; checks are verify steps naming
- * the build they check; serial work is chained; constraints are written once, on the mission, and
- * rendered into every step's note by code instead of being copied into briefs by a model.
+ * The mission contract (ensemble-node docs/design B6, plan §7.3–7.4; docs/35 §6.3): the lead proposes a
+ * whole plan in one call (node_plan) and code validates it before anything starts. Every requested
+ * deliverable is a requirement that a step covers or that is deferred with a reason; every acceptance
+ * criterion that must be checked maps to a verify or review step that judges it; a check names the step
+ * it checks, and a review is done by another node than the one whose work it reviews; serial work is
+ * chained; constraints are written once, on the mission, and rendered into every step's note by code
+ * instead of being copied into briefs by a model.
  */
 import { z } from "zod";
-import { STEP_KINDS } from "./report.js";
+import { CHECKING_KINDS, STEP_KINDS } from "./report.js";
 
 const Id = z.string().trim().min(1).max(60).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/, "Use letters, digits, dots, dashes or underscores.");
 const Handle = z.string().min(1).max(60).transform((value) => value.trim().replace(/^@/, "").toLowerCase());
@@ -34,17 +36,51 @@ export const Constraints = z
   .strict();
 export type Constraints = z.infer<typeof Constraints>;
 
-const Acceptance = z.object({ id: Id, text: z.string().trim().min(1).max(500), mandatory: z.boolean().optional() }).strict();
+/**
+ * How an acceptance criterion is proven (docs/35 §6.3): test (logic), browser (behaviour sampled in a real
+ * browser), preference (an emulated preference such as reduced motion, with the invariant sampled),
+ * route (the documented steps followed as written, in a clean place), capture (a real recording, only for
+ * visible proof), delivery (the file reached the chat and opens there), inspection (read and judged).
+ */
+export const PROOF_KINDS = ["test", "browser", "preference", "route", "capture", "delivery", "inspection"] as const;
+export type ProofKind = (typeof PROOF_KINDS)[number];
+
+/** Shapes far above any plan: they keep a request bounded. How big a plan may be is config (node/heuristics.ts `plans`). */
+const CEILING = { steps: 500, requirements: 200, acceptance: 50, deferred: 200, artifacts: 30 } as const;
+
+const Acceptance = z
+  .object({
+    id: Id,
+    text: z.string().trim().min(1).max(500),
+    /** Default true: a verify or review step must judge it before the work starts (validatePlan). */
+    mandatory: z.boolean().optional(),
+    proof: z.enum(PROOF_KINDS).optional(),
+  })
+  .strict();
 
 export const RequirementInput = z
   .object({
     id: Id,
     text: z.string().trim().min(1).max(1000),
-    acceptance: z.array(Acceptance).max(20).default([]),
+    acceptance: z.array(Acceptance).max(CEILING.acceptance).default([]),
     evidence: z.array(z.enum(["screenshot", "test", "commit", "doc", "url", "video"])).max(6).optional(),
   })
   .strict();
 export type RequirementInput = z.infer<typeof RequirementInput>;
+
+/**
+ * Something every step works from (a spec, a design, a data file): an attached file's evidence id, a URL,
+ * a page, a commit. Its hash is how a change is noticed: an evidence id's comes from the file itself; for
+ * anything else the lead gives it, or the artifact is listed without one and never conflicts.
+ */
+export const ArtifactInput = z
+  .object({
+    ref: z.string().trim().min(1).max(500),
+    hash: z.string().trim().min(6).max(128).optional(),
+    label: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+export type ArtifactInput = z.infer<typeof ArtifactInput>;
 
 const Run = z
   .object({ agent: z.string().max(40).optional(), model: z.string().max(120).optional(), effort: z.string().max(20).optional(), context: z.enum(["default", "long_context"]).optional() })
@@ -55,12 +91,17 @@ export const StepInput = z
     id: Id,
     to: Handle,
     kind: z.enum(STEP_KINDS),
-    requirementIds: z.array(Id).max(20).default([]),
+    requirementIds: z.array(Id).max(CEILING.requirements).default([]),
     brief: z.string().trim().min(1).max(4000),
-    after: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
+    after: z.array(z.string().trim().min(1).max(60)).max(40).default([]),
+    /** For a verify or review step: the step it checks (a build; a review may also check writing). */
     verifies: Id.optional(),
+    /** For a verify or review step: the acceptance criteria it judges. Left out: every criterion of its requirements. */
+    acceptanceIds: z.array(Id).max(CEILING.acceptance).optional(),
     /** An integration step (a build): the build steps whose worktrees or snapshots it combines into the folder (B13). */
-    integrates: z.array(Id).max(20).optional(),
+    integrates: z.array(Id).max(40).optional(),
+    /** In a revision: the stuck step this one replaces (node_plan_revise). Steps after it come after this one instead. */
+    replaces: z.string().trim().min(1).max(60).optional(),
     run: Run.optional(),
   })
   .strict();
@@ -71,10 +112,12 @@ export const Deferral = z.object({ requirementId: Id, reason: z.string().trim().
 export const PlanInput = z
   .object({
     goal: z.string().trim().min(1).max(500),
-    requirements: z.array(RequirementInput).max(20).default([]),
+    requirements: z.array(RequirementInput).max(CEILING.requirements).default([]),
     constraints: Constraints.default({}),
-    steps: z.array(StepInput).min(1).max(30),
-    deferred: z.array(Deferral).max(20).default([]),
+    steps: z.array(StepInput).min(1).max(CEILING.steps),
+    deferred: z.array(Deferral).max(CEILING.deferred).default([]),
+    /** What every step works from, with the hash its changes are noticed by. */
+    artifacts: z.array(ArtifactInput).max(CEILING.artifacts).optional(),
   })
   .strict();
 export type PlanInput = z.infer<typeof PlanInput>;
@@ -82,7 +125,18 @@ export type PlanInput = z.infer<typeof PlanInput>;
 /** Briefs carry only the step's own objective: constraints are on the mission. */
 export const BRIEF_MAX = 1500;
 
-type StepLike = { id: string; kind: string; after: string[]; verifies?: string | null; requirementIds: string[]; brief?: string; integrates?: readonly string[] | null };
+type StepLike = {
+  id: string;
+  kind: string;
+  after: string[];
+  verifies?: string | null;
+  requirementIds: string[];
+  brief?: string;
+  integrates?: readonly string[] | null;
+  acceptanceIds?: readonly string[] | null;
+  /** Who does it: its node's id when known, else its handle. A review is done by someone else than the work it reviews. */
+  worker?: string | null;
+};
 
 /** Ancestors of a step through `after` (transitively). */
 function ancestors(steps: Map<string, StepLike>, id: string, seen = new Set<string>()): Set<string> {
@@ -116,7 +170,7 @@ function hasCycle(steps: Map<string, StepLike>): string | null {
 }
 
 export type PlanShape = {
-  requirements: Array<{ id: string; acceptance: Array<{ id: string }> }>;
+  requirements: Array<{ id: string; acceptance: Array<{ id: string; mandatory?: boolean }> }>;
   deferred: Array<{ requirementId: string }>;
   constraints: Pick<Constraints, "order" | "parallel" | "integrate" | "folder">;
   steps: StepLike[];
@@ -154,12 +208,12 @@ function parallelProblems(plan: PlanShape, steps: Map<string, StepLike>): string
       }
       if (integrated.has(id)) problems.push(`Build “${id}” is integrated by both “${integrated.get(id)}” and “${step.id}”: one integration step brings in each build.`);
       integrated.set(id, step.id);
-      const checks = plan.steps.filter((row) => row.kind === "verify" && row.verifies === id).map((row) => row.id);
+      const checks = plan.steps.filter((row) => CHECKING_KINDS.has(row.kind) && row.verifies === id).map((row) => row.id);
       const missing = [id, ...checks].filter((need) => steps.has(need) && !before.has(need));
       if (missing.length) problems.push(`Integration step “${step.id}” must come after “${id}” and its checks: add ${missing.map((need) => `“${need}”`).join(", ")} to after.`);
     }
-    const checked = step.integrates.some((id) => plan.steps.some((row) => row.kind === "verify" && row.verifies === id));
-    if (checked && !plan.steps.some((row) => row.kind === "verify" && row.verifies === step.id)) {
+    const checked = step.integrates.some((id) => plan.steps.some((row) => CHECKING_KINDS.has(row.kind) && row.verifies === id));
+    if (checked && !plan.steps.some((row) => CHECKING_KINDS.has(row.kind) && row.verifies === step.id)) {
       problems.push(`Integration step “${step.id}” needs a verify step after it (verifies “${step.id}”): the checks run again on the integrated result.`);
     }
   }
@@ -175,25 +229,33 @@ function parallelProblems(plan: PlanShape, steps: Map<string, StepLike>): string
   return problems;
 }
 
+/** How big a plan may be (node/heuristics.ts `plans`), and how long a brief. */
+export type PlanLimits = { briefMax?: number; maxSteps?: number; maxRequirements?: number };
+
 /**
  * What is wrong with a plan, as sentences for the lead to fix (empty when it is valid): unknown or
- * duplicate ids, cycles, requirements no step covers (and not deferred), requirements with acceptance
- * criteria but no verify step, verifications that do not check a build before them, and serial
- * features that are not chained through their checks.
+ * duplicate ids, cycles, a plan bigger than its limits, requirements no step covers (and not deferred),
+ * acceptance criteria that must be checked but that no verify or review step judges, checks that do
+ * not check a step before them, a review by the node whose work it reviews, and serial features that
+ * are not chained through their checks.
  */
-export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {}): string[] {
+export function validatePlan(plan: PlanShape, options: PlanLimits = {}): string[] {
   const problems: string[] = [];
   const steps = new Map<string, StepLike>();
   for (const step of plan.steps) {
     if (steps.has(step.id)) problems.push(`Two steps have the id “${step.id}”.`);
     steps.set(step.id, step);
   }
+  if (options.maxSteps && plan.steps.length > options.maxSteps) problems.push(`The plan has ${plan.steps.length} steps; a plan holds at most ${options.maxSteps}. Give a node a bigger step, or make a second plan when this one ends.`);
+  if (options.maxRequirements && plan.requirements.length > options.maxRequirements) problems.push(`The plan has ${plan.requirements.length} requirements; a plan holds at most ${options.maxRequirements}. Group related deliverables, or defer some to a later plan.`);
   const known = (id: string) => steps.has(id) || Boolean(plan.existing?.has(id));
   const requirementIds = new Set<string>();
   const acceptanceIds = new Set<string>();
+  const acceptanceOf = new Map<string, Set<string>>();
   for (const requirement of plan.requirements) {
     if (requirementIds.has(requirement.id)) problems.push(`Two requirements have the id “${requirement.id}”.`);
     requirementIds.add(requirement.id);
+    acceptanceOf.set(requirement.id, new Set(requirement.acceptance.map((item) => item.id)));
     for (const item of requirement.acceptance) {
       if (acceptanceIds.has(item.id)) problems.push(`Two acceptance criteria have the id “${item.id}”; ids must be unique across the plan.`);
       acceptanceIds.add(item.id);
@@ -203,12 +265,23 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
     for (const before of step.after) if (!known(before)) problems.push(`Step “${step.id}” comes after “${before}”, which is not a step of this plan.`);
     for (const requirement of step.requirementIds) if (!requirementIds.has(requirement)) problems.push(`Step “${step.id}” covers “${requirement}”, which is not a requirement of this plan.`);
     if (options.briefMax && (step.brief ?? "").length > options.briefMax) problems.push(`Step “${step.id}”'s brief is ${(step.brief ?? "").length} characters; keep it to the step's own objective (at most ${options.briefMax}). Where to work, branches, publishing and agent settings go in constraints.`);
-    if (step.kind === "verify") {
-      if (!step.verifies) problems.push(`Verify step “${step.id}” must name the build step it checks (verifies).`);
-      else if (!known(step.verifies)) problems.push(`Verify step “${step.id}” checks “${step.verifies}”, which is not a step of this plan.`);
-      else if (steps.has(step.verifies) && steps.get(step.verifies)!.kind !== "build") problems.push(`Verify step “${step.id}” checks “${step.verifies}”, which is not a build step.`);
-      else if (steps.has(step.verifies) && !ancestors(steps, step.id).has(step.verifies)) problems.push(`Verify step “${step.id}” must come after the build it checks (“${step.verifies}”): add it to after.`);
-    } else if (step.verifies) problems.push(`Step “${step.id}” has verifies but is not a verify step.`);
+    if (CHECKING_KINDS.has(step.kind)) {
+      const what = step.kind === "review" ? "Review" : "Verify";
+      const target = step.verifies ? steps.get(step.verifies) : undefined;
+      if (!step.verifies) problems.push(`${what} step “${step.id}” must name the step it checks (verifies).`);
+      else if (!known(step.verifies)) problems.push(`${what} step “${step.id}” checks “${step.verifies}”, which is not a step of this plan.`);
+      else if (target && step.kind === "verify" && target.kind !== "build") problems.push(`Verify step “${step.id}” checks “${step.verifies}”, which is not a build step.`);
+      else if (target && step.kind === "review" && target.kind !== "build" && target.kind !== "write") problems.push(`Review step “${step.id}” reviews “${step.verifies}”, which is not a build or writing step.`);
+      else if (target && !ancestors(steps, step.id).has(step.verifies)) problems.push(`${what} step “${step.id}” must come after the step it checks (“${step.verifies}”): add it to after.`);
+      else if (target && step.kind === "review" && step.worker && target.worker && step.worker === target.worker) {
+        problems.push(`Review step “${step.id}” goes to the node that does “${step.verifies}”: an independent review is done by another node (or a helper), never by the one whose work it reviews.`);
+      }
+      const judgeable = new Set(step.requirementIds.flatMap((id) => [...(acceptanceOf.get(id) ?? [])]));
+      for (const id of step.acceptanceIds ?? []) if (!judgeable.has(id)) problems.push(`Step “${step.id}” judges “${id}”, which is not an acceptance criterion of the requirements it covers.`);
+    } else {
+      if (step.verifies) problems.push(`Step “${step.id}” has verifies but is not a verify or review step.`);
+      if (step.acceptanceIds?.length) problems.push(`Step “${step.id}” has acceptanceIds, but only verify and review steps judge acceptance criteria.`);
+    }
   }
   const cycle = hasCycle(steps);
   if (cycle) problems.push(`The steps' order has a cycle through “${cycle}”.`);
@@ -219,8 +292,16 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
   const active = plan.requirements.filter((row) => !deferred.has(row.id));
   for (const requirement of active) {
     const steps = covering(requirement.id);
-    if (!steps.length) problems.push(`No step covers requirement “${requirement.id}”: add a step for it, or defer it with a reason.`);
-    else if (requirement.acceptance.length && !steps.some((step) => step.kind === "verify")) problems.push(`Requirement “${requirement.id}” has acceptance criteria but no verify step checks it.`);
+    if (!steps.length) {
+      problems.push(`No step covers requirement “${requirement.id}”: add a step for it, or defer it with a reason.`);
+      continue;
+    }
+    for (const item of requirement.acceptance.filter((row) => row.mandatory !== false)) {
+      const judged = steps.some((step) => CHECKING_KINDS.has(step.kind) && (!step.acceptanceIds?.length || step.acceptanceIds.includes(item.id)));
+      if (!judged) {
+        problems.push(`Acceptance “${item.id}” of “${requirement.id}” must be checked, but no verify or review step judges it: add one that covers “${requirement.id}” (or names “${item.id}” in acceptanceIds), or set mandatory: false when it need not be checked.`);
+      }
+    }
   }
   if (plan.constraints.order === "serial" && !cycle) {
     for (const step of plan.steps) {
@@ -229,7 +310,7 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
     }
     for (let index = 1; index < active.length; index += 1) {
       const previous = covering(active[index - 1]!.id);
-      const gate = previous.filter((step) => step.kind === "verify");
+      const gate = previous.filter((step) => CHECKING_KINDS.has(step.kind));
       const anchors = (gate.length ? gate : previous).map((step) => step.id);
       for (const build of covering(active[index]!.id).filter((step) => step.kind === "build" || step.kind === "write")) {
         const before = ancestors(steps, build.id);
