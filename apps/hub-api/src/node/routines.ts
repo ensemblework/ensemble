@@ -14,7 +14,7 @@ import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { truncateText } from "../lib/text.js";
 import { addNode, roomPeople } from "./store.js";
-import { addStep, createPlan, currentPlan, missionEnded, PlanError, planVisibility, startPlan, type PlanNode, type RoutineLink } from "./plans.js";
+import { addStep, answerPlanDecision, createPlan, currentPlan, missionEnded, PLAN_DECISION_CARD, PlanError, planVisibility, startPlan, type PlanNode, type RoutineLink } from "./plans.js";
 import { BRIEF_MAX, PlanInput, validatePlan } from "./plan-contract.js";
 import { CronError, describeCron, nextRun, parseCron, validTimeZone } from "./cron.js";
 import { nodeSpaces } from "./spaces.js";
@@ -49,7 +49,7 @@ export async function backgroundJob(prisma: PrismaClient, jobId: string): Promis
  */
 export async function expireBackgroundCards(app: FastifyInstance, now = Date.now()): Promise<number> {
   const prisma = app.prisma;
-  const missions = await prisma.nodeMission.findMany({ where: { routine: { not: Prisma.DbNull }, status: { in: ["running", "reporting"] } }, select: { id: true }, take: 200 });
+  const missions = await prisma.nodeMission.findMany({ where: { routine: { not: Prisma.DbNull }, status: { in: ["running", "replanning", "reporting"] } }, select: { id: true }, take: 200 });
   let expired = 0;
   for (const mission of missions) {
     const cards = await prisma.nodeMessage.findMany({
@@ -66,6 +66,11 @@ export async function expireBackgroundCards(app: FastifyInstance, now = Date.now
       // A sign-in card's computer frees its tab (node/logins.ts).
       if (login) void loginCardClosed(app, updated).catch(() => undefined);
       const step = (card.data as { plan?: { step?: unknown } }).plan?.step;
+      // A stuck step's card unanswered: the plan finishes without it (or keeps its result), so the routine ends.
+      if ((card.data as { type?: unknown }).type === PLAN_DECISION_CARD) {
+        if (typeof step === "string") await answerPlanDecision(app, mission.id, step, Number((card.data as { attempt?: unknown }).attempt ?? 0), "discard");
+        continue;
+      }
       if (typeof step === "string" && card.authorNodeId) {
         await enqueueTurn(app, {
           nodeId: card.authorNodeId,

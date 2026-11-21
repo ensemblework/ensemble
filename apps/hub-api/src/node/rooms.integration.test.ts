@@ -130,6 +130,13 @@ const approve = (user: HttpUser, cardId: string, decision: "approve" | "discard"
   user.inject({ method: "POST", url: `/api/node/approvals/${cardId}`, payload: { decision, ...(body ? { body } : {}) } });
 const autoPost = (user: HttpUser, nodeId: string) => user.inject({ method: "PATCH", url: `/api/node/nodes/${nodeId}`, payload: { autonomy: { sharedRooms: "auto" } } });
 const cards = async (user: HttpUser, roomId: string, type: string) => (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === type);
+/** A stuck step's card (docs/35 §6.4): after its lead's re-plan turn, its owner finishes the plan without it. */
+async function finishWithout(user: HttpUser, roomId: string) {
+  const card = (await cards(user, roomId, "plan_decision")).find((row) => row.data.status === "pending");
+  assert.ok(card, "the owner has the card for the stuck step");
+  assert.equal((await approve(user, card.id, "discard")).statusCode, 200);
+  await settleTurns();
+}
 const turnsOf = (nodeIds: string[], roomId: string) => h.prisma.nodeTurn.findMany({ where: { nodeId: { in: nodeIds }, roomId }, orderBy: { createdAt: "asc" } });
 
 /** Akash with a lead (@manager) and a builder; Ben with a lead (@ben-lead... its handle) and a tester; in one room. */
@@ -614,8 +621,10 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   assert.match(constraints.notes.join(" "), /fresh clone at exactly that commit[\s\S]*No secrets in the environment; run sandboxed[\s\S]*Report pass or fail with each check/);
   const trust = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/trust` })).trust.people.find((row: any) => row.accountId === ben.id);
   assert.deepEqual([trust.effective.workRequests, trust.effective.acceptKinds], ["accept", ["review"]]);
-  // The step never reports (the script), so the mission ends by itself: the card says how, by code.
+  // The step never reports (the script): stuck after its lead's re-plan turn, so Akash finishes without it
+  // on one card, and the mission ends: the card says how, by code.
   await settleTurns();
+  await finishWithout(akash, room.id);
   const ended = await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } });
   assert.ok(["succeeded", "partially_completed", "failed", "stopped"].includes(ended.status), ended.status);
   const reviewed = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === second.id)!;
@@ -1753,6 +1762,8 @@ test("follow-up #1: a request's public card shows only what the requester wrote 
   assert.equal(accepted.statusCode, 200, accepted.body);
   await settleTurns();
   await settleTurns();
+  // Its step never reports (the script): Akash finishes without it on his card.
+  await finishWithout(akash, room.id);
   const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: request.id } });
   assert.deepEqual([done.status, done.text, done.brief], ["done", "Please add a CSV export to the invoices page.", "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter"]);
   assert.match(seen.find((row) => row.transcript.includes("Your owner accepted Ben's request"))!.transcript, /CANARY-AKASH-BRIEF[\s\S]*Ben asked: “Please add a CSV export/, "Akash's lead plans from his words");

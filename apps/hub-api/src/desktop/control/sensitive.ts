@@ -7,9 +7,9 @@
 export type SensitiveCategory = "password_manager" | "system_settings" | "terminal" | "banking";
 
 const RULES: Array<{ category: SensitiveCategory; pattern: RegExp }> = [
-  { category: "password_manager", pattern: /\b(?:keepass(?:xc)?|bitwarden|1password|onepassword|lastpass|dashlane|enpass|proton ?pass|nordpass|keeper|passbolt|kwalletmanager|seahorse|passwords and keys|gnome[- ]?keyring|secrets)\b/i },
-  { category: "system_settings", pattern: /\b(?:org\.gnome\.settings|gnome-control-center|control center|systemsettings|system settings|settings|kcmshell\d*|unity-control-center|cinnamon-settings|xfce4-settings-manager|software-properties|org\.gnome\.software|snap-store|app center|gnome-software|discover|synaptic|update-manager|software & updates|firmware|users|org\.gnome\.diskutility|gnome-disks|gparted|nm-connection-editor|network connections)\b/i },
-  { category: "terminal", pattern: /\b(?:ptyxis|gnome-terminal|terminal|console|kgx|konsole|xterm|uxterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|xfce4-terminal|lxterminal|guake|yakuake|termius)\b/i },
+  { category: "password_manager", pattern: /\b(?:keepass(?:xc)?|bitwarden|1password|onepassword|lastpass|dashlane|enpass|proton ?pass|nordpass|keeper|passbolt|kwalletmanager|seahorse|passwords and keys|gnome[- ]?keyring|secrets|com\.apple\.passwords|keychain ?access|com\.apple\.keychainaccess)\b/i },
+  { category: "system_settings", pattern: /\b(?:org\.gnome\.settings|gnome-control-center|control center|systemsettings|system settings|settings|kcmshell\d*|unity-control-center|cinnamon-settings|xfce4-settings-manager|software-properties|org\.gnome\.software|snap-store|app center|gnome-software|discover|synaptic|update-manager|software & updates|firmware|users|org\.gnome\.diskutility|gnome-disks|gparted|nm-connection-editor|network connections|com\.apple\.systempreferences|system preferences|app store|com\.apple\.appstore|disk utility|com\.apple\.diskutility)\b/i },
+  { category: "terminal", pattern: /\b(?:ptyxis|gnome-terminal|terminal|console|kgx|konsole|xterm|uxterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|xfce4-terminal|lxterminal|guake|yakuake|termius|iterm2?|com\.googlecode\.iterm2|hyper|tabby)\b/i },
   { category: "banking", pattern: /\b(?:bank|banking|wallet|electrum|exodus|ledger live|ledger-live|trezor|monero|bitcoin|gnucash|homebank|kmymoney|moneydance|money manager)\b/i },
 ];
 

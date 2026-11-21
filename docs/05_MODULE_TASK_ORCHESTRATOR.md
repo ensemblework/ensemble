@@ -22,7 +22,7 @@ Runs of one agent session ([41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)) run
 
 A project's tasks done by the person's own agent share the project's folder (`orchestration.projectFolders`), a new run may continue one of the agent's sessions on its computer that fits the task, within one project (`orchestration.linkedSessions`), and the sessions of retired work are deleted from the agents (`orchestration.cleanSessions`); all three are on by default ([41](41_AGENT_SESSIONS.md) §2, §4 and §6).
 
-Minutes, model turns and tool calls are separate per-run budgets; waiting on a person does not use minutes. Provider request concurrency has its own limiter.
+Minutes, model turns and tool calls are separate per-run budgets; minutes and model turns are the owner's own (none unless set in Settings, Task limits, a run profile or the assignment), and waiting on a person does not use minutes. Provider request concurrency has its own limiter.
 
 ## 5. Decisions and publishing
 

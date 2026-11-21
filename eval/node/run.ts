@@ -167,6 +167,7 @@ function result(task: Task, repeat: number, startedAt: string, status: RunResult
       agentTools: ev.agentTools.length,
       approvals: ev.cards.length,
       unanswered: ev.cards.filter((card) => !card.answered).length,
+      stuckSteps: ev.cards.filter((card) => card.type === "plan_decision").length,
       errors: allErrors.length,
       noAnswerTurns: noAnswer,
       errorMessages: ev.messages.filter((row) => row.kind === "error").length,

@@ -1,21 +1,28 @@
 /**
  * The mission outbox (ensemble-node docs/design B4, plan §9.1): effects of committed mission changes,
  * delivered at least once. A delivery is applied once by its consumer: a turn carries the effect's
- * operation id under a unique constraint, so a redelivered row finds that turn and adds nothing.
+ * operation id under a unique constraint, so a redelivered row finds that turn and adds nothing; a card
+ * carries it as its client id.
+ *
+ * Kinds: turn (a step's attempt starts: straight to a coding agent, or a turn of its node), report (the
+ * lead's report turn), replan (the lead's one re-plan turn for stuck steps), decide (the owner's card for
+ * a stuck step), expire_cards, and wake (an agent run ended: its node's turn, written with the run's
+ * reportedAt so the end is taken once).
  *
  * A change kicks the dispatcher right after its commit; a sweep every few seconds picks up rows a
  * crash or a failed delivery left, so a restart resumes coordination from committed state.
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeOutbox } from "@prisma/client";
-import { enqueueTurn, inBackground } from "./queue.js";
-import { endPlan, finishStep, loadPlan, onMissionEffects, reportNote, stepNote, type PlanData } from "./plans.js";
-import { updateMessageData } from "./store.js";
+import { enqueueTurn, inBackground, type TurnRequest } from "./queue.js";
+import { endPlan, finishStep, loadPlan, missionEnded, onMissionEffects, PLAN_DECISION_CARD, replanNote, replanSkipped, reportNote, stepNote, type PlanData, type PlanStep } from "./plans.js";
+import { postMessage, updateMessageData } from "./store.js";
 import { loginCardClosed } from "./logins.js";
 import { closeComputerQuestion } from "./device-tool-decisions.js";
-import type { AttemptReason } from "./missions-core.js";
-import { dispatchStep } from "./dispatch.js";
+import type { AttemptReason, Stuck } from "./missions-core.js";
+import { dispatchStep, packetWho, stepPacket } from "./dispatch.js";
 import { helperRoomOf } from "./helpers.js";
+import { parseReport } from "./report.js";
 
 const CLAIM_MS = 60_000;
 const SWEEP_MS = Number(process.env.ENSEMBLE_NODE_OUTBOX_SWEEP_MS ?? 5_000) || 5_000;
@@ -70,13 +77,36 @@ export async function dispatchOutbox(app: FastifyInstance): Promise<number> {
 
 async function deliver(app: FastifyInstance, row: NodeOutbox): Promise<void> {
   const payload = (row.payload ?? {}) as Record<string, unknown>;
+  if (row.kind === "wake") return deliverWake(app, row, payload);
   const planId = row.missionId;
   if (!planId) return;
   const plan = await loadPlan(app.prisma, planId);
   if (!plan) return;
   if (row.kind === "turn") return deliverTurn(app, row, plan.data, plan.message.roomId, payload);
   if (row.kind === "report") return deliverReport(app, row, plan.data, payload);
+  if (row.kind === "replan") return deliverReplan(app, row, plan.data);
+  if (row.kind === "decide") return deliverDecide(app, row, plan.data, payload);
   if (row.kind === "expire_cards") await expireCards(app, planId, Array.isArray(payload.steps) ? (payload.steps as string[]) : null, String(payload.why ?? "Its work ended."));
+}
+
+/**
+ * An agent run ended and its node is told (node/runs.ts writes this row with the run's reportedAt, in one
+ * transaction). The turn carries the row's operation id, so a redelivery adds nothing. A node that is
+ * paused or gone cannot take it: a plan step it was for ends with what the run reported.
+ */
+async function deliverWake(app: FastifyInstance, row: NodeOutbox, payload: Record<string, unknown>): Promise<void> {
+  const request = payload.request as TurnRequest | undefined;
+  if (!request?.nodeId || !request.roomId) return;
+  const queued = await enqueueTurn(app, { ...request, operationId: row.operationId });
+  if (queued || !request.planId || !request.planStep) return;
+  const report = parseReport(payload.report);
+  const ended = String(payload.status ?? "succeeded");
+  await finishStep(
+    app,
+    request.planId,
+    request.planStep,
+    report ? { status: "done", result: report.summary, report } : { status: ended === "succeeded" ? "done" : "stopped", result: String(payload.summary ?? `The run ${ended}.`) },
+  );
 }
 
 async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData, planRoomId: string, payload: Record<string, unknown>): Promise<void> {
@@ -86,13 +116,15 @@ async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData
   const step = data.steps.find((candidate) => candidate.id === stepId);
   // The attempt it was for is over (stopped, ended, superseded): nothing to deliver.
   if (!step || step.status !== "working" || step.attempt !== attempt) return;
-  if (data.status !== "running" && data.status !== "reporting") return;
+  if (data.status !== "running" && data.status !== "replanning" && data.status !== "reporting") return;
   // Work in files goes straight to a coding agent from its packet (B8); the node takes a turn otherwise.
   const dispatched = await dispatchStep(app, data, step, reason, planRoomId);
   if (dispatched?.done) return;
+  // Its node's turn: the attempt's packet is stored all the same (its version, what it works from), and the update says what changed.
+  const header = reason === "nudge" ? null : await nodePacket(app, data, step, reason);
   const note = dispatched
-    ? `${stepNote(data, step, reason)}\n\nEnsemble could not hand this step straight to a coding agent: ${dispatched.why}\nDecide where it runs (node_session_start, or node_session_send to your session), or report it blocked with why.`
-    : stepNote(data, step, reason);
+    ? `${stepNote(data, step, reason, header)}\n\nEnsemble could not hand this step straight to a coding agent: ${dispatched.why}\nDecide where it runs (node_session_start, or node_session_send to your session), or report it blocked with why.`
+    : stepNote(data, step, reason, header);
   // A helper works in its own thread (node/helpers.ts), the only room it is in.
   const roomId = step.executor === "helper" ? ((await helperRoomOf(app.prisma, step.nodeId))?.id ?? planRoomId) : planRoomId;
   const queued = await enqueueTurn(app, {
@@ -105,6 +137,11 @@ async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData
     operationId: row.operationId,
   });
   if (!queued) await finishStep(app, data.missionId, step.id, { status: "blocked", result: `@${step.handle} is paused or gone, so it could not start.`, outcome: "blocked", attempt });
+}
+
+async function nodePacket(app: FastifyInstance, data: PlanData, step: PlanStep, reason: AttemptReason) {
+  const who = await packetWho(app.prisma, data, step);
+  return who ? ((await stepPacket(app.prisma, data, step, reason, who))?.header ?? null) : null;
 }
 
 async function deliverReport(app: FastifyInstance, row: NodeOutbox, data: PlanData, payload: Record<string, unknown>): Promise<void> {
@@ -122,6 +159,76 @@ async function deliverReport(app: FastifyInstance, row: NodeOutbox, data: PlanDa
     operationId: row.operationId,
   });
   if (!reported) await endPlan(app, data.missionId);
+}
+
+/** The lead's one re-plan turn for stuck steps. A lead that cannot take it (paused or gone) skips the rung: its owner is asked. */
+async function deliverReplan(app: FastifyInstance, row: NodeOutbox, data: PlanData): Promise<void> {
+  if (data.status !== "replanning") return;
+  const queued = await enqueueTurn(app, {
+    nodeId: data.leadNodeId,
+    roomId: data.originRoomId,
+    reason: "plan",
+    note: replanNote(data),
+    planId: data.missionId,
+    private: data.originPrivate,
+    operationId: row.operationId,
+  });
+  if (!queued) await replanSkipped(app, data.missionId);
+}
+
+/** What the owner's card for a stuck step asks, and what each answer does. */
+export function decisionQuestion(data: PlanData, step: PlanStep, why: Stuck): { question: string; approve: string; discard: string } {
+  const last = step.attempts.at(-1);
+  const result = (step.result ?? last?.summary ?? "").replace(/\s+/g, " ").trim();
+  const said = result ? ` ${result.length > 300 ? `${result.slice(0, 299)}…` : result}` : "";
+  if (why === "conflict") {
+    const conflict = last?.conflicts?.[0];
+    const what = conflict ? `${conflict.label ?? conflict.ref} changed (${conflict.was.slice(0, 12)} is now ${conflict.now.slice(0, 12)})` : "What it worked from changed";
+    return { question: `@${step.handle}'s step in @${data.leadHandle}'s plan: ${what} after it worked from it. Redo it with the new version, or keep its result as it is?`, approve: "Redo with the new version", discard: "Keep the result" };
+  }
+  const how = why === "same_error" ? "keeps failing the same way" : step.outcome === "fail" ? "failed its checks again" : "is stuck";
+  return {
+    question: `@${step.handle}'s step in @${data.leadHandle}'s plan ${how}.${said}${last?.ownerDecision ? ` It needs you to decide: ${last.ownerDecision}` : ""} Try it again, or finish the plan without it?`,
+    approve: "Try again",
+    discard: "Finish without it",
+  };
+}
+
+/**
+ * The last rung of the ladder: a card for the owner in the conversation the plan came from, with the one
+ * decision the stuck step needs. One press settles it (node/approvals.ts, plans.ts answerPlanDecision).
+ */
+async function deliverDecide(app: FastifyInstance, row: NodeOutbox, data: PlanData, payload: Record<string, unknown>): Promise<void> {
+  const stepId = String(payload.stepId ?? "");
+  const attempt = Number(payload.attempt ?? 0);
+  const step = data.steps.find((candidate) => candidate.id === stepId);
+  const last = step?.attempts.at(-1);
+  if (!step || !last || last.n !== attempt || last.decision || step.supersededBy || missionEnded(data.status)) return;
+  const mission = await app.prisma.nodeMission.findUnique({ where: { id: data.missionId }, select: { userId: true } });
+  if (!mission) return;
+  const why: Stuck = payload.why === "conflict" || payload.why === "same_error" ? payload.why : "stuck";
+  const asked = decisionQuestion(data, step, why);
+  await postMessage(app.prisma, {
+    roomId: data.originRoomId,
+    userId: mission.userId,
+    authorKind: "node",
+    authorNodeId: data.leadNodeId,
+    kind: "approval",
+    body: asked.question,
+    data: {
+      type: PLAN_DECISION_CARD,
+      status: "pending",
+      plan: { id: data.missionId, step: step.id },
+      attempt,
+      why,
+      question: asked.question,
+      approveLabel: asked.approve,
+      discardLabel: asked.discard,
+      calls: [{ callId: `${step.id}:${attempt}`, name: "node_plan_decision", summary: `${asked.approve} or ${asked.discard.toLowerCase()}` }],
+    },
+    visibleTo: [mission.userId],
+    clientId: row.operationId,
+  });
 }
 
 /** Cards of ended work still waiting on the owner close: an answer now would act for work that is over. */

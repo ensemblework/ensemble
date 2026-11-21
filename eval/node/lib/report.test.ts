@@ -114,3 +114,26 @@ test("a skipped task counts in no total and is listed with what it requires", ()
   assert.match(text, /## Skipped\n\n- \*\*restart-reconciliation\*\*: requires tool-journal/);
   assert.doesNotMatch(text, /\*\*restart-reconciliation\*\*: all checks passed/);
 });
+
+test("a stuck plan step the harness finished without is counted and listed as a problem, with the step and why", () => {
+  const stuck = { id: "p", type: "plan_decision", answer: "finish without it", answered: true, at: "", note: "step s2-abc stuck: @builder's step in @manager's plan is stuck. No access to the repo." };
+  const saved: Saved = {
+    label: "baseline",
+    stamp: "s",
+    commit: "abc",
+    agent: "copilot-cli",
+    model: "gpt-6-luna",
+    judgeModel: "gpt-6-luna",
+    tasks: ["a"],
+    repeat: 1,
+    startedAt: "t0",
+    finishedAt: "t1",
+    results: [run("a", { cards: [stuck], metrics: { ...run("a").metrics, approvals: 1, stuckSteps: 1 } })],
+    cleanup: [],
+    notes: [],
+  };
+  const text = markdown(saved);
+  assert.match(text, /- \*\*a\*\*: all checks passed\.\n {2}- Stuck steps finished without them: step s2-abc stuck: @builder's step in @manager's plan is stuck\. No access to the repo\./);
+  assert.match(summaryTable(saved.results).split("\n")[2]!, /\| 1 \(1 stuck\) \|/);
+  assert.equal(totals(saved.results).stuckSteps, 1);
+});

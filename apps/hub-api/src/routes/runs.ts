@@ -78,9 +78,10 @@ type JobFactsRow = {
   toolCalls: number;
   tokensIn: number;
   tokensOut: number;
-  maxTurns: number;
+  /** The owner's limits; null: none. */
+  maxTurns: number | null;
   maxToolCalls: number;
-  maxMinutes: number;
+  maxMinutes: number | null;
   evidence: unknown;
   results: unknown;
   deviceId: string | null;

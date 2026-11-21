@@ -89,7 +89,18 @@ export type CaptureResult = {
   at: number;
 };
 
-export type HelperApp = { name: string; toolkit: string; pid: number | null; app_id: string | null; windows: Array<{ index: number; title: string; role: string; active: boolean; showing: boolean; iconified: boolean }> };
+/**
+ * A running app and its windows. `box` (screen pixels, the streams' space) and `z` (higher is further in front)
+ * come only from a desktop that says where windows are (macOS); then a click by position is judged by the
+ * window it lands in.
+ */
+export type HelperApp = {
+  name: string;
+  toolkit: string;
+  pid: number | null;
+  app_id: string | null;
+  windows: Array<{ index: number; title: string; role: string; active: boolean; showing: boolean; iconified: boolean; box?: [number, number, number, number] | null; z?: number | null }>;
+};
 
 export type FocusInfo = {
   app: { name: string; toolkit: string; pid: number | null; app_id: string | null } | null;
@@ -114,7 +125,8 @@ export type TreeResult = {
 export type Fact = { state: string; detail?: string; fix?: string; [key: string]: unknown };
 
 export type StatusResult = {
-  facts: Record<"session" | "portal" | "consent" | "capture" | "input" | "a11y" | "recorder" | "screen", Fact>;
+  /** Linux: session, portal, consent, capture, input, a11y, recorder, screen. macOS: driver, accessibility, screen_recording, capture, input, recorder, screen. */
+  facts: Record<string, Fact>;
   session: { state: string; epoch: number; streams?: Stream[] };
   registered: boolean;
   recordings: Array<{ id: string; active: boolean; wall_ms: number }>;

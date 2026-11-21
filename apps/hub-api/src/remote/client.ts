@@ -62,7 +62,7 @@ export interface HostedClient {
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown; codeTurn?: unknown }): Promise<void>;
   /**
    * One file the run's worker attached (protocol 6), its bytes as the body, before complete. "stored" or
    * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.

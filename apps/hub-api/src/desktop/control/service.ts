@@ -17,13 +17,17 @@
  * lease, lock and activity do not apply. On the owner's screen a batch runs in the background unless it
  * asks for the foreground: steps aim at elements through accessibility only, never moving the pointer,
  * typing or changing the focus there, and wait while the owner uses the app they act in.
+ *
+ * On macOS (`platform: "darwin"`, drivers/macos-cua.ts) there is only the owner's screen. An app opens behind
+ * the owner's windows without asking for their screen, typing and keys aimed at an element go in through
+ * accessibility in either mode, and each action's verdict starts from the driver's own account of it.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import { copyFile, link, mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { hideSecretValues } from "../../lib/redact.js";
-import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, type FloorHit } from "./floor.js";
+import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, windowAt, type FloorHit, type Point } from "./floor.js";
 import type { HelperHealth } from "./helper-process.js";
 import { Controllers, LEASE_IDLE_MS, OWNER_INPUT_MARGIN_MS, TakeoverLease, type LeaseView } from "./lease.js";
 import { newCaptureId, ObservationLedger, type Capture, type ScreenRef } from "./ledger.js";
@@ -122,6 +126,8 @@ export type GateApp = { id: string; name: string; category: GateCategory };
 export const OWNER_SCREEN_GATE: GateApp = { id: "screen:owner", name: "the pointer and keyboard", category: "screen" };
 
 export const NEEDS_SCREEN = "Needs the screen: ask to use the owner's screen (foreground: true asks them once) or use the agent screen.";
+/** macOS has no agent screen. */
+const NEEDS_SCREEN_MAC = "Needs the screen: ask to use the owner's screen (foreground: true asks them once).";
 /** The owner's answer for a sensitive app: allowed, to be asked (once per app and run), or refused with why. */
 export type GateAnswer = { allow: true } | { allow: false; ask: true } | { allow: false; ask: false; reason: string };
 
@@ -179,7 +185,7 @@ export type AppsResult = { screen: ScreenName; installed: Array<{ id: string; na
 
 export type OpenResult = { screen: ScreenName; app: { id: string; name: string }; stages: Record<string, boolean>; focused: boolean; via: string | null; waitedMs: number };
 
-export type LiveFrame = { screen: ScreenName; mime: "image/jpeg"; base64: string; width: number; height: number; at: number };
+export type LiveFrame = { screen: ScreenName; mime: "image/jpeg" | "image/png"; base64: string; width: number; height: number; at: number };
 
 export type StillRef = { path: string; mime: string; size: number; width: number; height: number };
 export type SavedRecording = {
@@ -233,6 +239,8 @@ export type DesktopServiceOptions = {
   helperIdleMs?: number;
   /** Screenshots kept in `captureDir`. */
   keepScreenshots?: number;
+  /** The helper's system: the Linux helper (default) or cua-driver on macOS. */
+  platform?: "linux" | "darwin";
 };
 
 /** Why every desktop capture waits for the owner's preview: nothing can check a screen for secrets. */
@@ -269,12 +277,24 @@ export async function sweepRecordingParts(root: string, olderThanMs: number, kee
 }
 
 const POINTER_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "drag"]);
-/** Steps that work through accessibility alone, on an element: the owner's pointer, keyboard and focus stay theirs. */
-function backgroundStep(step: DesktopStep): boolean {
+/**
+ * Steps that work through accessibility alone, on an element: the owner's pointer, keyboard and focus stay
+ * theirs. On macOS an app also opens without taking the front, and keys go to an element through accessibility.
+ */
+function backgroundStep(step: DesktopStep, mac = false): boolean {
   if (step.action === "wait") return true;
+  if (mac && step.action === "open") return true;
   if (!step.element) return false;
   if (step.action === "click") return !step.button || step.button === "left";
-  return ["press", "set_text", "select", "toggle", "scroll", "type"].includes(step.action);
+  return ["press", "set_text", "select", "toggle", "scroll", "type", ...(mac ? ["key"] : [])].includes(step.action);
+}
+
+/** A step's verdict from the driver's own account of it (cua-driver's `effect`), when it gives one. */
+function effectOutcome(effect: unknown): Omit<StepOutcome, "index" | "action"> | null {
+  if (effect === "confirmed") return { verdict: "confirmed", ran: "yes" };
+  if (effect === "partial") return { verdict: "partial", ran: "yes", detail: "Only part of it went through." };
+  if (effect === "suspected_noop") return { verdict: "no_effect", ran: "yes", detail: "Sent, but the app showed no sign of taking it." };
+  return null;
 }
 const INPUT_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "move", "drag", "scroll", "type", "key"]);
 
@@ -354,6 +374,10 @@ export class DesktopService {
   }
 
   private readonly now = (): number => (this.options.now ?? Date.now)();
+
+  private get mac(): boolean {
+    return this.options.platform === "darwin";
+  }
 
   private sleep(ms: number): Promise<void> {
     return this.options.sleep ? this.options.sleep(ms) : new Promise((resolve) => setTimeout(resolve, ms).unref?.());
@@ -753,7 +777,7 @@ export class DesktopService {
       }
     }
     if (this.lease.counter !== counter) {
-      await rm(path, { force: true }).catch(() => undefined);
+      await rm(shot.image.path ?? path, { force: true }).catch(() => undefined);
       throw new DesktopError("owner_has_control", "Your owner took over while the screen was being read, so that screenshot was discarded. Wait until they are done.", "no");
     }
     this.lastScreen.set(caller.key, screen.node);
@@ -769,7 +793,8 @@ export class DesktopService {
       hash: shot.hash,
       parent: null,
       tree: tree ? { id: tree.tree_id, app: { name: tree.app.name, id: tree.app.app_id, pid: tree.app.pid, toolkit: tree.app.toolkit }, window: tree.window.title, elements: new Map(tree.elements.map((element) => [element.id, element])) } : null,
-      path,
+      // A helper that cannot write JPEG (macOS) names the picture it wrote.
+      path: shot.image.path ?? path,
     });
     void this.pruneScreenshots();
     if (shot.settled === false) notes.push("The screen was still changing when this was taken.");
@@ -918,7 +943,7 @@ export class DesktopService {
         let failed = false;
         try {
           const background = mode === "background";
-          if (background && !backgroundStep(step)) throw new DesktopError("needs_screen", `${NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
+          if (background && !backgroundStep(step, this.mac)) throw new DesktopError("needs_screen", `${this.mac ? NEEDS_SCREEN_MAC : NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
           if (deadline.abort.signal.aborted) throw new DesktopError("cancelled", "The work these steps were for ended, so this one did not run.", "no");
           const { idleMs } = await this.guard(deadline, background ? "background" : "screen");
           counter ??= this.lease.counter;
@@ -975,16 +1000,24 @@ export class DesktopService {
     return category ? { id: app.app_id ?? app.name.toLowerCase(), name: app.name, category } : null;
   }
 
-  /** The sensitive apps a click by position could land in: the one in front, and any with a window that shows. */
-  private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[]): GateApp[] {
+  /**
+   * The sensitive apps a click by position could land in: where the desktop says which window is at each point
+   * (macOS), that window's app (the app in front for a point outside every window); else the one in front and
+   * any with a window that shows.
+   */
+  private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[], points: readonly Point[] = []): GateApp[] {
     const found = new Map<string, GateApp>();
-    const front = focus.app ? this.gateApp(focus.app) : null;
-    if (front) found.set(front.id, front);
-    for (const app of apps) {
-      if (!app.windows.some((window) => window.showing && !window.iconified)) continue;
-      const gate = this.gateApp(app);
+    const add = (app: { name: string; app_id: string | null } | null) => {
+      const gate = app ? this.gateApp(app) : null;
       if (gate) found.set(gate.id, gate);
+    };
+    const hits = points.map((point) => windowAt(apps, point));
+    if (hits.length && hits.every((hit) => hit !== undefined)) {
+      for (const hit of hits) add(hit ? hit.app : focus.app);
+      return [...found.values()];
     }
+    add(focus.app);
+    for (const app of apps) if (app.windows.some((window) => window.showing && !window.iconified)) add(app);
     return [...found.values()];
   }
 
@@ -1050,14 +1083,14 @@ export class DesktopService {
   }
 
   private async step(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
-    if (context.background && step.action !== "wait") return this.elementStep(caller, step, deadline, context);
+    if (context.background && step.action !== "wait" && !(this.mac && step.action === "open")) return this.elementStep(caller, step, deadline, context);
     switch (step.action) {
       case "wait": {
         await this.sleep(Math.min(step.ms ?? 0, Math.max(0, deadline.remaining() - 6_000)));
         return { verdict: "confirmed", ran: "yes" };
       }
       case "open": {
-        const opened = await this.openApp(caller, step.app!, 8_000, deadline, context.allowed);
+        const opened = await this.openApp(caller, step.app!, 8_000, deadline, context.allowed, !context.background);
         return { verdict: opened.stages.window ? "confirmed" : opened.stages.accepted ? "partial" : "no_effect", ran: "yes", detail: `${opened.app.name}: ${Object.entries(opened.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(", ") || "not started"}` };
       }
       case "press":
@@ -1082,6 +1115,8 @@ export class DesktopService {
         return this.pointerStep(caller, step, batchCapture, deadline, context);
       case "type":
       case "key":
+        // macOS does not say which element has the keyboard: typing and keys aimed at an element go in through accessibility.
+        if (this.mac && step.element) return this.elementStep(caller, step, deadline, context);
         return this.keyboardStep(caller, step, deadline, context);
     }
   }
@@ -1113,9 +1148,10 @@ export class DesktopService {
       ]).catch((error: unknown) => {
         throw new DesktopError("refused", `What is on the screen could not be checked (${fromHelper(error).message}), so the ${step.action === "scroll" ? "scroll" : "click"} was not sent.`, "no");
       });
-      if (POINTER_STEPS.has(step.action)) this.refuse(pointerFloor(focus, apps.apps, this.options.env));
-      // The desktop does not say which window a point is in: every sensitive app that shows may be where it lands.
-      for (const app of this.sensitiveShowing(focus, apps.apps)) await this.gate(caller, app, context.allowed);
+      const points = [at, from, to].filter((point): point is { x: number; y: number } => point !== null);
+      if (POINTER_STEPS.has(step.action)) this.refuse(pointerFloor(focus, apps.apps, this.options.env, points));
+      // Where the desktop does not say which window a point is in, every sensitive app that shows may be where it lands.
+      for (const app of this.sensitiveShowing(focus, apps.apps, points)) await this.gate(caller, app, context.allowed);
     }
     if (step.action === "move") {
       await this.call("input.pointer", { display: node, x: at!.x, y: at!.y, action: "move" }, deadline, { effects: true, maxMs: 5_000 });
@@ -1128,13 +1164,16 @@ export class DesktopService {
       this.lease.agentInput();
     }
     const before = await this.frameState(node, deadline, 600).catch(() => null);
+    let sent: { effect?: unknown } | null = null;
     try {
-      if (step.action === "drag") await this.call("input.drag", { display: node, from: [from!.x, from!.y], to: [to!.x, to!.y], button: step.button ?? "left" }, deadline, { effects: true, maxMs: 15_000 });
-      else if (step.action === "scroll") await this.call("input.scroll", { display: node, direction: step.direction, amount: step.amount ?? 3, ...(at ? { x: at.x, y: at.y } : {}) }, deadline, { effects: true, maxMs: 10_000 });
-      else await this.call("input.pointer", { display: node, x: at!.x, y: at!.y, action: "click", button: step.action === "right_click" ? "right" : (step.button ?? "left"), count: step.action === "double_click" ? 2 : 1 }, deadline, { effects: true, maxMs: 8_000 });
+      if (step.action === "drag") sent = await this.call("input.drag", { display: node, from: [from!.x, from!.y], to: [to!.x, to!.y], button: step.button ?? "left" }, deadline, { effects: true, maxMs: 15_000 });
+      else if (step.action === "scroll") sent = await this.call("input.scroll", { display: node, direction: step.direction, amount: step.amount ?? 3, ...(at ? { x: at.x, y: at.y } : {}) }, deadline, { effects: true, maxMs: 10_000 });
+      else sent = await this.call("input.pointer", { display: node, x: at!.x, y: at!.y, action: "click", button: step.action === "right_click" ? "right" : (step.button ?? "left"), count: step.action === "double_click" ? 2 : 1 }, deadline, { effects: true, maxMs: 8_000 });
     } finally {
       this.lease.agentInput();
     }
+    const told = effectOutcome(sent?.effect);
+    if (told) return told;
     const after = await this.frameState(node, deadline, 1_500).catch(() => null);
     const verdict = this.screenVerdict(before, after);
     return { verdict, ran: "yes", ...(verdict === "unknown" ? { detail: "Sent; the screen kept changing, so its effect was not seen." } : verdict === "no_effect" ? { detail: "Sent, and nothing on the screen changed." } : {}) };
@@ -1180,12 +1219,14 @@ export class DesktopService {
     const before = await this.frameState(node, deadline, 400).catch(() => null);
     let typed: { keysym: number; atspi: number; clipboard: number; untyped: number } | null = null;
     let stopped: TypingStop | null = null;
+    let effect: unknown = null;
     try {
-      if (step.action === "key") await this.call("input.keys", { keys: step.keys, repeat: step.repeat ?? 1 }, deadline, { effects: true, maxMs: 10_000 });
+      if (step.action === "key") effect = (await this.call<{ effect?: unknown } | null>("input.keys", { keys: step.keys, repeat: step.repeat ?? 1 }, deadline, { effects: true, maxMs: 10_000 }))?.effect;
       else {
-        const answer = await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number }; stopped?: TypingStop | null }>("input.text", { text, ...(secretName ? { secret: true } : {}) }, deadline, { effects: true, maxMs: Math.min(60_000, 5_000 + text!.length * 60) });
+        const answer = await this.call<{ typed: { keysym: number; atspi: number; clipboard: number; untyped: number }; stopped?: TypingStop | null; effect?: unknown }>("input.text", { text, ...(secretName ? { secret: true } : {}) }, deadline, { effects: true, maxMs: Math.min(60_000, 5_000 + text!.length * 60) });
         typed = answer.typed;
         stopped = answer.stopped ?? null;
+        effect = answer.effect;
       }
     } catch (error) {
       const failure = fromHelper(error);
@@ -1208,6 +1249,8 @@ export class DesktopService {
       }
       return { verdict: "partial", ran: "yes", detail: `${what}: the window in front changed, so the rest was not typed.` };
     }
+    const told = effectOutcome(effect);
+    if (told && !(typed && typed.untyped > 0)) return told;
     const after = await this.frameState(node, deadline, 1_000).catch(() => null);
     if (typed && typed.untyped > 0) return { verdict: "partial", ran: "yes", detail: `${typed.untyped} characters could not be typed on this keyboard layout.` };
     if (step.action === "type" && !secretName && typeof beforeText === "string") {
@@ -1252,16 +1295,32 @@ export class DesktopService {
     }
     const node = capture.screen.node;
     const before = screen ? await this.frameState(node, deadline, 400).catch(() => null) : null;
-    const action = step.action === "set_text" || (typing && secret) ? "set_text" : typing ? "insert_text" : step.action === "focus" ? "focus" : step.action === "select" ? "select" : step.action === "toggle" ? "toggle" : step.action === "scroll" ? "scroll_to" : "press";
-    let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[] };
+    const action = step.action === "key" ? "key" : step.action === "set_text" || (typing && secret) ? "set_text" : typing ? "insert_text" : step.action === "focus" ? "focus" : step.action === "select" ? "select" : step.action === "toggle" ? "toggle" : step.action === "scroll" ? "scroll_to" : "press";
+    let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[]; effect?: unknown };
     try {
-      done = await this.call("a11y.do", { tree_id: tree.id, element: element.id, action, ...(step.name ? { name: step.name } : {}), ...(text !== null ? { text } : {}), ...(context.background ? { background: true } : {}) }, deadline, { effects: true, maxMs: 8_000 });
+      done = await this.call(
+        "a11y.do",
+        {
+          tree_id: tree.id,
+          element: element.id,
+          action,
+          ...(step.name ? { name: step.name } : {}),
+          ...(text !== null ? { text } : {}),
+          ...(step.action === "key" ? { keys: step.keys, repeat: step.repeat ?? 1 } : {}),
+          ...(secret ? { secret: true } : {}),
+          ...(context.background ? { background: true } : {}),
+        },
+        deadline,
+        { effects: true, maxMs: 8_000 },
+      );
     } catch (error) {
       const failure = fromHelper(error);
       if (failure.code === "element_gone") this.ledger.invalidate(caller.key);
       if (secret) throw new DesktopError(failure.code, "Filling the password field did not finish.", failure.ran);
       throw failure;
     }
+    const told = effectOutcome(done.effect);
+    if (told) return told;
     if (!done.done) return { verdict: "no_effect", ran: "yes", detail: `The app did not take the ${action.replace("_", " ")}.` };
     if (action === "set_text" || action === "insert_text") {
       if (done.verified === true) return { verdict: "confirmed", ran: "yes" };
@@ -1281,6 +1340,13 @@ export class DesktopService {
   async open(caller: Caller, input: { app: string; waitSec?: number }): Promise<OpenResult> {
     return this.runAs(caller, async (deadline) => {
       const allowed = new Set<string>();
+      if (this.mac) {
+        // macOS opens an app behind the owner's windows: no pointer, keyboard or screen of theirs is used.
+        await this.guard(deadline, "background");
+        const opened = await this.openApp(caller, input.app, (input.waitSec ?? 8) * 1000, deadline, allowed, false);
+        this.ledger.invalidate(caller.key);
+        return opened;
+      }
       // An app opened on the owner's screen takes its front: that is the foreground, asked once per mission.
       if (this.screenName === "owner") await this.gate(caller, OWNER_SCREEN_GATE, allowed);
       await this.guard(deadline);
@@ -1290,8 +1356,9 @@ export class DesktopService {
     });
   }
 
-  private async openApp(caller: Caller, ref: string, waitMs: number, deadline: Deadline, allowed: Set<string>): Promise<OpenResult> {
-    await this.ensureSession(deadline);
+  /** `front`: bring it to the front once it is open (always, but for an app opened in the background on macOS). */
+  private async openApp(caller: Caller, ref: string, waitMs: number, deadline: Deadline, allowed: Set<string>, front = true): Promise<OpenResult> {
+    if (front || !this.mac) await this.ensureSession(deadline);
     const found = await this.call<{ apps: Array<{ id: string; name: string }> }>("apps.catalog", { query: ref, limit: 5 }, deadline);
     const exact = found.apps.find((app) => app.id.toLowerCase() === ref.toLowerCase() || app.name.toLowerCase() === ref.toLowerCase()) ?? found.apps[0];
     if (!exact) throw new DesktopError("not_found", `No installed app is called ${ref}. desktop_apps lists them.`, "no");
@@ -1303,8 +1370,8 @@ export class DesktopService {
       { effects: true, maxMs: Math.min(30_000, waitMs + 10_000) },
     );
     let focused = Boolean(launched.stages.focused);
-    let via: string | null = focused ? "launch" : null;
-    if (!focused && launched.app.running && this.lease.holder === "agent") {
+    let via: string | null = focused ? "launch" : front ? null : "background";
+    if (front && !focused && launched.app.running && this.lease.holder === "agent") {
       const moved = await this.call<{ focused: boolean; via: string | null }>("apps.focus", { app: launched.app.running.pid ?? launched.app.name, allow_input: true, search: launched.app.name }, deadline, { effects: true, maxMs: 10_000 }).catch(() => null);
       if (moved?.via === "search") this.lease.agentInput();
       focused = Boolean(moved?.focused);
@@ -1574,7 +1641,7 @@ export class DesktopService {
       const session = await this.ensureSession(deadline);
       const screen = this.pickScreen(session, input.display);
       const shot = await this.call<CaptureResult>("frame.capture", { display: screen.node, max_long_edge: Math.min(1920, Math.max(160, Math.round(input.maxWidth ?? 1024))), format: "jpeg", quality: 60, inline: true }, deadline, { maxMs: 8_000 });
-      return { screen: this.screenName, mime: "image/jpeg", base64: shot.image.base64 ?? "", width: shot.image.width, height: shot.image.height, at: shot.at };
+      return { screen: this.screenName, mime: shot.image.mime === "image/png" ? "image/png" : "image/jpeg", base64: shot.image.base64 ?? "", width: shot.image.width, height: shot.image.height, at: shot.at };
     });
   }
 

@@ -639,13 +639,14 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   }, [saveAll]);
 
   const afterReview = () => {
-    for (const query of [["reviews"], ["code-source", key, source], ["code-progress", key, source], ["code-versions"], ["scm"], ["task-jobs"]]) void client.invalidateQueries({ queryKey: query });
+    for (const query of [["reviews"], ["code-source", key, source], ["code-progress", key, source], ["code-versions"], ["scm"], ["task-jobs"], ["code-thread"]]) void client.invalidateQueries({ queryKey: query });
     for (const path of tabs) setReloads((current) => ({ ...current, [path]: (current[path] ?? 0) + 1 }));
   };
   const complete = useMutation({
     mutationFn: () => code.completeReview(source.review!),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["reviews"] });
+      void client.invalidateQueries({ queryKey: ["code-thread"] });
     },
   });
   const accept = useMutation({

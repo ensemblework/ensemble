@@ -10,18 +10,21 @@ import { tasksWith } from "./task-assignment.js";
 import { labelStatus } from "../services/tasks.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
-const LIVE_MISSION = ["draft", "running", "reporting"];
+const LIVE_MISSION = ["draft", "running", "replanning", "reporting"];
 
 /** Tools that only look but keep what they saw for the owner (evidence, a picture with the reply): a merge would drop it. */
 const KEEPS_WHAT_IT_SAW = new Set(["capture_screenshot", "browser_screenshot", "browser_view", "computer_terminal_screenshot"]);
+/** Looks that keep their screenshot for the owner only when asked to (`share`, desktop/control/tool-specs.ts). */
+const SHARES_WHAT_IT_SAW = new Set(["desktop_observe", "desktop_zoom"]);
 
 /**
  * Whether a call can change something: a write, any tool not marked as only looking (`readOnly`:
  * assistant/registry.ts `readsOnly`, from the tool's own flags), or one that keeps what it saw. From
  * its first such call the turn is not aborted to merge a newer message, and a restart reconciles it.
  */
-export function actsOnTheWorld(call: { name: string; isWrite: boolean; readOnly?: boolean }): boolean {
-  return call.isWrite || call.readOnly !== true || KEEPS_WHAT_IT_SAW.has(call.name);
+export function actsOnTheWorld(call: { name: string; isWrite: boolean; readOnly?: boolean; input?: unknown }): boolean {
+  const shares = SHARES_WHAT_IT_SAW.has(call.name) && (call.input as { share?: unknown } | null | undefined)?.share === true;
+  return call.isWrite || call.readOnly !== true || KEEPS_WHAT_IT_SAW.has(call.name) || shares;
 }
 
 function ago(date: Date | null | undefined): string {

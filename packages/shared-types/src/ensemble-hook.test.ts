@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { answerText, heartbeat, questionInput, toolsFor } from "../../../scripts/ensemble-ask-mcp.mjs";
+import { answerText, heartbeat, instructionsFor, questionInput, toolsFor } from "../../../scripts/ensemble-ask-mcp.mjs";
 import { ACTIVITY_EVENTS, answeredInput, chatOutput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
 
 const hookCommand = (source: string) => `node ensemble-hook.mjs --source ${source}`;
@@ -146,10 +146,10 @@ test("the run's ensemble MCP server offers the person's board only in Chat, the 
   assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "ensemble_context", "ensemble_apps", "ensemble_app_call", "secret_http"]);
 });
 
-test("the Code tab's agent has Ensemble's actions and the ranked search as well as the board, and no task-run report", () => {
+test("the Code tab's agent has Ensemble's actions, the ranked search and its report as well as the board", () => {
   const tools = toolsFor({ ENSEMBLE_CHAT: "1", ENSEMBLE_CODE_AGENT: "1" });
-  assert.deepEqual(tools.map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_context", "ensemble_search", "ensemble_actions", "ensemble_act", "ensemble_apps", "ensemble_app_call", "secret_http"]);
-  assert.doesNotMatch(tools.find((tool) => tool.name === "ensemble_act")!.description, /report_result/);
+  assert.deepEqual(tools.map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "report_result", "attach_evidence", "ensemble_context", "ensemble_search", "ensemble_actions", "ensemble_act", "ensemble_apps", "ensemble_app_call", "secret_http"]);
+  assert.match(instructionsFor({ ENSEMBLE_CHAT: "1", ENSEMBLE_CODE_AGENT: "1" }), /end with report_result: Ensemble runs each check's rerun again/);
   // Outside Chat the flag means nothing: a task run keeps its own tools.
   assert.deepEqual(toolsFor({ ENSEMBLE_CODE_AGENT: "1" }).map((tool) => tool.name), toolsFor({}).map((tool) => tool.name));
 });

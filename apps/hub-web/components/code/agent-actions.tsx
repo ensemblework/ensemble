@@ -7,7 +7,7 @@
  * (an agent block that says where it came from, hub-api pages/agent-output.ts).
  */
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { CheckSquare, Copy, ExternalLink, FilePlus2, FileText, Flag, FolderOpen, Link2, NotebookPen, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Users } from "lucide-react";
+import { CheckSquare, Copy, ExternalLink, FilePlus2, FileText, Flag, FolderOpen, GitFork, Link2, NotebookPen, Pencil, Pin, PinOff, Plus, Search, Square, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { copyText } from "@/components/context-menu/builders";
 import type { MenuSpec } from "@/components/context-menu/menu-store";
@@ -299,6 +299,8 @@ export type TurnMenuDeps = {
   reviewHref: string | null;
   quote: () => void;
   again: (() => void) | null;
+  /** A new thread from this turn: its first message starts a new session with a handoff record of the thread so far. */
+  fork: (() => void) | null;
   viewOnly: boolean;
   /** Goes to a page of the Hub without reloading it. */
   go: (href: string) => void;
@@ -325,7 +327,12 @@ export function turnMenu(deps: TurnMenuDeps): MenuSpec {
           ...(deps.runId ? [{ id: "run", label: "Open the run", icon: ExternalLink, run: () => deps.go(`/runs?run=${deps.runId}`) }] : []),
         ],
       },
-      { items: deps.again && !deps.viewOnly ? [{ id: "again", label: "Use this message again", icon: Plus, run: deps.again }] : [] },
+      {
+        items: [
+          ...(deps.again && !deps.viewOnly ? [{ id: "again", label: "Use this message again", icon: Plus, run: deps.again }] : []),
+          ...(deps.fork && !deps.viewOnly ? [{ id: "fork", label: "Fork from here", icon: GitFork, run: deps.fork }] : []),
+        ],
+      },
     ],
   };
 }

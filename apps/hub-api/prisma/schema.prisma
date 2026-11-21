@@ -461,6 +461,12 @@ model Run {
   deletedAt              DateTime?       @map("deleted_at")
   /// The finished piece of work, as Markdown — not the step log.
   result                 String?
+  /// The turn packet a Code tab turn sent (workspace/turn-packet.ts): mode, sections and sizes, and the
+  /// hashes of what it delivered, which the next turn in the same agent session compares against.
+  packet                 Json?
+  /// How the run ended, each state kept apart (workspace/completion.ts): conversation, files, checks
+  /// Ensemble ran again, accepted, pull request.
+  completion             Json?
   task                   Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
   steps                  RunStep[]
   approvals              Approval[]
@@ -562,8 +568,9 @@ model WorkspaceJob {
   summary              String?
   resourceKeys         String[]            @default([]) @map("resource_keys")
   repository           Json                @default("{}")
-  maxTurns             Int                 @default(40) @map("max_turns")
-  maxMinutes           Int                 @default(60) @map("max_minutes")
+  /// Null: no limit. A limit is the owner's own (Settings or a run profile), never Ensemble's.
+  maxTurns             Int?                @map("max_turns")
+  maxMinutes           Int?                @map("max_minutes")
   completeDeliverable  Boolean             @default(false) @map("complete_deliverable")
   context              Json?
   evidence             Json?
@@ -609,6 +616,7 @@ model WorkspaceJob {
   evidenceFiles        JobEvidence[]
 
   sessionChoices       SessionChoice[]
+  handoffs             SessionHandoff[]
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
   @@index([deviceId, status, sequence])
@@ -693,6 +701,30 @@ model SessionChoice {
 
   @@index([userId, createdAt])
   @@map("session_choices")
+}
+
+/// A portable record of an agent session's work (`ensemble.handoff.v1`, workspace/handoff-record.ts),
+/// made when a Code tab thread switches agent or subscription, or is forked: the new session's first
+/// turn carries it, and the run folder keeps it as `.ensemble/handoff/<id>.md`. Data, never lossless.
+/// (Not `AgentHandoff`, which is a task opened in an agent's own app.)
+model SessionHandoff {
+  /// `hof_<day>_<random>`
+  id          String        @id
+  userId      String        @map("user_id")
+  /// The run that received it (the new session's first run).
+  jobId       String?       @map("job_id")
+  /// The run of the session it was made from.
+  sourceJobId String?       @map("source_job_id")
+  /// agent | subscription | fork | session_gone
+  reason      String
+  record      Json
+  chars       Int
+  createdAt   DateTime      @default(now()) @map("created_at")
+  job         WorkspaceJob? @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([jobId])
+  @@map("session_handoffs")
 }
 
 /// Retention deletes chunks by `createdAt`; WorkspaceEvent stays the place for milestones.
@@ -3264,7 +3296,7 @@ model NodeMission {
   kind          String     @default("plan")
   /// 1: migrated from the plan card's JSON (steps keep their old meaning). 3: this table.
   contract      Int        @default(3)
-  /// draft | running | reporting | succeeded | partially_completed | failed | stopped
+  /// draft | running | replanning (the lead's one re-plan turn for stuck steps) | reporting | succeeded | partially_completed | failed | stopped
   status        String     @default("draft")
   revision      Int        @default(0)
   /// Compare-and-set counter for every change.
@@ -3288,6 +3320,14 @@ model NodeMission {
   routine       Json?
   /// The lead was told the outcome (its report turn ran).
   reportedAt    DateTime?  @map("reported_at")
+  /// What every step works from (node/plans.ts `MissionArtifact`): [{ ref, label, hash, kind, at, versions: [{ hash, at }] }].
+  /// A new hash for a ref after a step was given the old one is a conflict that holds that step's acceptance.
+  artifacts     Json       @default("[]")
+  /// What the watchdog already raised for this mission (node/watchdog.ts): { <condition>: ISO time }, each once.
+  watchdog      Json       @default("{}")
+  /// The lead's plan turn that last started for it (node/plans.ts beginPlanTurn): { id, kind: report | replan, at }.
+  /// Only that turn's end concludes the mission (report) or ends its re-plan (replan).
+  leadTurn      Json?      @map("lead_turn")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
   endedAt       DateTime?  @map("ended_at")
@@ -3308,27 +3348,30 @@ model NodeStep {
   nodeId         String      @map("node_id")
   handle         String
   name           String
-  /// build | verify | write | research | other
+  /// build | verify | review (an independent check by another node) | write | research | other
   kind           String      @default("other")
   /// node: the step's node takes turns for it. self: the lead's own work. session: dispatched straight to an agent session.
   executor       String      @default("node")
   brief          String
   /// Step ids that must be done (or passed) before this one starts.
   after          String[]    @default([])
-  /// For a verify step: the build step it checks.
+  /// For a verify or review step: the step it checks.
   verifies       String?
   /// For an integration step (a build): the build steps whose worktrees or snapshots it brings into the folder (B13).
   integrates     String[]    @default([])
   requirementIds String[]    @default([]) @map("requirement_ids")
+  /// For a verify or review step: the acceptance criteria it judges. Empty: every criterion of its requirements.
+  acceptanceIds  String[]    @default([]) @map("acceptance_ids")
   /// Agent run settings the lead gave: { agent, model, effort, context }.
   run            Json?
   /// waiting | working | done | blocked | skipped | stopped
   status         String      @default("waiting")
-  /// unknown | done | pass | fail | blocked | unverified: the current attempt's result.
+  /// unknown | done | pass | fail | blocked | unverified | partial | uncertain | stopped: the current attempt's result.
   outcome        String      @default("unknown")
   /// The current attempt: 1, 2, …
   attempt        Int         @default(1)
-  /// Earlier and current attempts: [{ n, reason, outcome, summary, checks, candidate, signature, startedAt, endedAt }]
+  /// Earlier and current attempts: [{ n, reason, outcome, summary, checks, candidate, signature, reportedAt,
+  /// deliveredTo, deliveredAt, packet, conflicts, escalation, decision, startedAt, endedAt }] (node/missions-core.ts `Attempt`).
   attempts       Json        @default("[]")
   /// The current attempt's StepReport (node/report.ts).
   report         Json?
@@ -3341,6 +3384,12 @@ model NodeStep {
   conversationId String?     @map("conversation_id")
   /// The worker was asked once to report; another miss makes the attempt unverified.
   nudged         Boolean     @default(false)
+  /// The task packet its current attempt was given (node/packet.ts): { header, body }, the header with its hash.
+  packet         Json?
+  /// The packet's version: 1 for the first attempt's, one more for each attempt after it. 0: none yet.
+  packetVersion  Int         @default(0) @map("packet_version")
+  /// A re-plan replaced this step (node_plan_revise `replaces`): the step that does its part now.
+  supersededBy   String?     @map("superseded_by")
   startedAt      DateTime?   @map("started_at")
   endedAt        DateTime?   @map("ended_at")
   createdAt      DateTime    @default(now()) @map("created_at")
@@ -3359,7 +3408,7 @@ model NodeOutbox {
   id           String    @id @default(uuid())
   operationId  String    @unique @map("operation_id")
   missionId    String?   @map("mission_id")
-  /// turn | report | refresh | expire_decisions | notify
+  /// turn | report | replan | decide | expire_cards | wake
   kind         String
   payload      Json      @default("{}")
   availableAt  DateTime  @default(now()) @map("available_at")

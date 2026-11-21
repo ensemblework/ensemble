@@ -3,11 +3,11 @@
  * the web all come through here, so trust, folder, unattended and platform
  * checks are the same for every front door.
  */
-import { withMentionedContent } from "./mentioned.js";
+import { hasAttached, withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -95,6 +95,16 @@ export const Assign = z.object({
    */
   surface: z.literal("code").optional(),
   /**
+   * A Code tab turn: the owner's run profile instructions, sent to the agent with the turn packet
+   * (code-turn.ts), not shown as part of the message.
+   */
+  profileInstructions: z.string().max(4000).optional(),
+  /**
+   * A Code tab turn that forks `continueFromJobId`: a new agent session in the same folder, seeded with
+   * a handoff record of the session up to that run (docs/41 §2), instead of continuing it.
+   */
+  fork: z.boolean().optional(),
+  /**
    * An agent session (workspace/sessions.ts) to do the task in: its agent, computer and folder, and
    * the agent's own conversation, continued from the session's latest run.
    */
@@ -152,6 +162,16 @@ function codeFolderPath(value: string | undefined): string {
     throw new GuardError("That folder is not one Code can use on that computer.");
   }
   return path;
+}
+
+/** A Code tab turn's run profile instructions and fork, kept on its job's context (code-turn.ts). */
+function withCodeTurn(context: Prisma.InputJsonValue | undefined, body: Pick<AssignInput, "chat" | "surface" | "profileInstructions" | "fork" | "continueFromJobId">): Prisma.InputJsonValue | undefined {
+  if (!body.chat || body.surface !== "code") return context;
+  const profile = body.profileInstructions?.trim();
+  const fork = body.fork === true && body.continueFromJobId ? { from: body.continueFromJobId } : null;
+  if (!profile && !fork) return context;
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return { ...base, ...(profile ? { profileInstructions: profile } : {}), ...(fork ? { fork } : {}) } as Prisma.InputJsonValue;
 }
 
 function withNewSession(context: Prisma.InputJsonValue | undefined): Prisma.InputJsonValue {
@@ -365,7 +385,7 @@ async function createDeviceJob(
   provider: string,
   model: string,
   tierEffort: string | null,
-  orchestration: { sandboxNetwork: boolean; maxMinutes: number; maxTurns: number; outsideAccess: string },
+  orchestration: { sandboxNetwork: boolean; maxMinutes: number | null; maxTurns: number | null; ownLimits?: readonly string[]; outsideAccess: string },
   options: CreateJobOptions,
 ): Promise<{ jobId: string }> {
   if (body.kind === "code" && body.branchMode !== "as-is" && (!body.branch || !BRANCH.test(body.branch))) {
@@ -387,6 +407,7 @@ async function createDeviceJob(
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,
     pullRequest: Boolean(body.pullRequest),
+    fork: codeTurn && body.fork === true,
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -418,11 +439,11 @@ async function createDeviceJob(
       reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
       resourceKeys: worktreeKeys(assigned.resourceKeys, options.context),
-      maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
-      maxTurns: body.maxTurns ?? orchestration.maxTurns,
+      maxMinutes: body.maxMinutes ?? runLimits(orchestration).maxMinutes,
+      maxTurns: body.maxTurns ?? runLimits(orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -573,8 +594,11 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
   if (body.surface === "code" && !body.chat) throw new GuardError("The Code tab's agent works one message at a time: send it as a chat turn.");
-  // A Code tab message carries what it @mentions, read in full, wherever the agent runs (workspace/mentioned.ts).
-  if (body.surface === "code") body.instructions = await withMentionedContent(prisma, userId, body.instructions);
+  // A Code tab message carries what it @mentions, read in full where the records are (workspace/mentioned.ts). One
+  // from the web comes with what the web read, which this computer has no copy of, and goes to the agent as it came.
+  if (body.surface === "code" && !(jobOrigin(options.context) === "web" && hasAttached(body.instructions))) {
+    body.instructions = await withMentionedContent(prisma, userId, body.instructions);
+  }
   if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
@@ -691,10 +715,10 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
       resourceKeys,
-      maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
-      maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
+      maxMinutes: body.maxMinutes ?? runLimits(settings.orchestration).maxMinutes,
+      maxTurns: body.maxTurns ?? runLimits(settings.orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withCodeTurn(withToolsOff(withDecided(withSecrets(options.context, body.secrets), null, project), body.toolsOff), body), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true ? (body.surface === "code" ? { surface: "code" } : {}) : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   // The decision and every candidate's signals, kept to calibrate the weights (session-choice/config.ts).

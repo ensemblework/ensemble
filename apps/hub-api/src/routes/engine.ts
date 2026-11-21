@@ -92,7 +92,7 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     return { tools: runCaptureToolList() };
   });
 
-  // The person's board for their own agent in Chat, a task run's report and evidence (evidence/run-tools.ts), and its browser and capture tools: the same run secret.
+  // The person's board for their own agent in Chat, a task run's or Code tab turn's report and evidence (evidence/run-tools.ts), and a task run's browser and capture tools: the same run secret.
   app.post("/api/engine/tool", async (request, reply) => {
     const host = request.ip.replace(/^::ffff:/, "");
     if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
@@ -150,7 +150,8 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       }
     }
     if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
-      if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
+      // A Code tab turn reports too: Ensemble runs its checks again when it ends (workspace/completion.ts).
+      if (chat && !codeAgent) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs and Code tab turns, not Chat." });
       try {
         return { text: await runRunTool(run.ctx, body.name as (typeof RUN_TOOLS)[number], body.input) };
       } catch (error) {

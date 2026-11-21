@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseJudgement, picturesAsked, visionModel } from "./vision.js";
+import { verdictOf, type StepReport } from "./report.js";
+import { parseJudgement, picturesAsked, visionChecks, visionModel } from "./vision.js";
 
 const included = { AZURE_FOUNDRY_RESOURCE: "ensemble-ai", AZURE_FOUNDRY_API_KEY: "test-key", ENSEMBLE_INCLUDED_MODELS: "gpt-6-luna,gpt-6.1-sol,deepseek-v4-flash" };
 
@@ -29,4 +30,17 @@ test("the judge's answer counts only for the pictures it was shown, once each", 
   const text = `Here: {"pictures":[{"id":"${ids[0]}","verdict":"fail","reason":"Blank page."},{"id":"${ids[0]}","verdict":"pass"},{"id":"someone-else","verdict":"pass"},{"id":"${ids[1]}","verdict":"maybe"}]}`;
   assert.deepEqual(parseJudgement(text, ids), [{ id: ids[0], verdict: "fail", reason: "Blank page." }]);
   assert.deepEqual(parseJudgement("not json", ids), []);
+});
+
+test("a review whose screenshot the picture check confirms passes: the picture's check is evidence of strength A", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const pictures = [{ id, name: "steps.png", caption: null }];
+  const confirmed = visionChecks([{ id, verdict: "pass", reason: "The three steps show in order." }], pictures, "review");
+  assert.deepEqual(confirmed.map((check) => [check.verdict, check.strength, check.evidence]), [["pass", "A", [id]]]);
+  const report: StepReport = { outcome: "pass", summary: "The steps show in order.", checks: [{ id: "A1", name: "steps in order", verdict: "pass", strength: "A", evidence: [id] }, ...confirmed] };
+  assert.deepEqual(verdictOf("review", report, ["A1"], ["A1"]), { outcome: "pass", problem: null });
+  // A picture that does not show what was asked fails a review or verification; elsewhere it only stays unshown.
+  const wrong = [{ id, verdict: "fail" as const, reason: "A sign-in page." }];
+  assert.equal(visionChecks(wrong, pictures, "review")[0]!.verdict, "fail");
+  assert.equal(visionChecks(wrong, pictures, "build")[0]!.verdict, "blocked");
 });

@@ -17,7 +17,7 @@ import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assist
 import { publishTo } from "./events.js";
 import { handleFrom, SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { stopTurns } from "./queue.js";
-import { addStep, planVisibility, stopPlans } from "./plans.js";
+import { addStep, currentPlan, PlanError, planVisibility, stopPlans } from "./plans.js";
 import { addNode, addPerson, createNode, freeRoomTitle, nodeNameTaken, numbered, postMessage, roomTitleTaken } from "./store.js";
 import { AVATAR_COLORS, NODE_TEMPLATES } from "./templates.js";
 import type { SessionToolScope } from "./sessions.js";
@@ -184,6 +184,12 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
             .default("read")
             .describe("What it may do: read (default: workspace, web, connected apps), sessions (also run its own coding-agent session on your owner's computer), computer (also check things on the computer with computer tools)."),
           folders: z.array(z.string().min(1).max(300)).max(5).optional().describe("For computer: the folders it may use."),
+          reviews: z
+            .string()
+            .min(1)
+            .max(60)
+            .optional()
+            .describe("To make it an independent review: the @handle of the node in your plan whose latest build or writing it reviews. It judges each acceptance criterion with evidence; a rejection sends that work back for repair, then it reviews again."),
         })
         .strict(),
       isWrite: false,
@@ -197,6 +203,19 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
           throw new ToolBlockedError(`You already have ${limits.perNode} helpers working, as many as your owner set.`, "Wait until one has reported, give one of them this task with node_delegate, or do it yourself.");
         }
         if (all.filter((row) => working(row, now)).length >= limits.perAccount) throw new ToolBlockedError(`Your owner has ${limits.perAccount} helpers working, as many as they set.`, "Wait until one has reported, or do this yourself.");
+        const continuing = scope.plan && !scope.plan.planStep ? scope.plan.planId : null;
+        // A review checks a build or writing already in this turn's plan: that is found before anything is made.
+        const reviewed = input.reviews?.trim().replace(/^@/, "");
+        if (reviewed) {
+          const plan = await currentPlan(prisma, node.id, scope.turnId, continuing);
+          const target = [...(plan?.data.steps ?? [])].reverse().find((row) => row.handle === reviewed && !row.supersededBy && (row.kind === "build" || row.kind === "write"));
+          if (!target) {
+            throw new ToolBlockedError(
+              `There is no build or writing step of @${reviewed} in this turn's plan to review.`,
+              "Plan the work first (node_plan, or node_delegate for its build), then bring in the reviewer in the same turn.",
+            );
+          }
+        }
         // Finished helpers stay for their owner to read; the quietest go once there are too many.
         const idle = mine.filter((row) => !row.busy).sort((a, b) => a.lastActive - b.lastActive);
         for (const old of idle.slice(0, Math.max(0, mine.length - KEEP_HELPERS + 1))) {
@@ -234,18 +253,27 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
         publishTo([owner], "node.room", { roomId: room.id });
         // The brief opens its thread without waking anyone: the task runs as a step of this turn's plan.
         await postMessage(prisma, { roomId: room.id, userId: owner, authorKind: "node", authorNodeId: node.id, body: input.task, data: { brief: { helperNodeId: helper.id } } });
-        const continuing = scope.plan && !scope.plan.planStep ? scope.plan.planId : null;
         const visibleTo = await planVisibility(prisma, owner, scope.room, scope.privateTo);
-        const added = await addStep(prisma, {
-          lead: node,
-          turnId: scope.turnId,
-          continuing,
-          room: scope.room,
-          originRoomId: scope.room.id,
-          originPrivate: Boolean(scope.privateTo),
-          visibleTo,
-          step: { node: helper, handle: helper.slug, brief: input.task, after: [], kind: "research", executor: "helper" },
-        });
+        let added: Awaited<ReturnType<typeof addStep>>;
+        try {
+          added = await addStep(prisma, {
+            lead: node,
+            turnId: scope.turnId,
+            continuing,
+            room: scope.room,
+            originRoomId: scope.room.id,
+            originPrivate: Boolean(scope.privateTo),
+            visibleTo,
+            step: reviewed
+              ? { node: helper, handle: helper.slug, brief: input.task, after: [reviewed], kind: "review", verifies: reviewed, executor: "helper" }
+              : { node: helper, handle: helper.slug, brief: input.task, after: [], kind: "research", executor: "helper" },
+          });
+        } catch (error) {
+          // The step could not join the plan: the helper made for it goes, with its thread.
+          await removeNodeRows(prisma, helper);
+          if (error instanceof PlanError) throw new ToolBlockedError(error.message);
+          throw error;
+        }
         await prisma.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...(room.settings as Prisma.JsonObject), planId: added.planId } } });
         publishTo([owner], "node.room", { roomId: room.id });
         return toolOk(

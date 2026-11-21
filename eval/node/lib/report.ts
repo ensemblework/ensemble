@@ -3,16 +3,21 @@
  * with the measures v2 is meant to move: turns that ended without a reply, error messages in the
  * chat, false claims and input tokens per task, per suite.
  */
-import type { CleanupEntry, RunResult, Saved } from "./types.js";
+import type { CardLog, CleanupEntry, RunResult, Saved } from "./types.js";
+import { FINISHED_WITHOUT, KEPT } from "./cards.js";
 
 /** A turn that failed because the agent ended without a reply or anything done (a turn that did work answers from its tool log); result files may hold the earlier wording. */
 export const NO_ANSWER = /returned no answer|ended its turn without replying/i;
 
-/** A result with its no-answer and error-message counts, read from its errors when an older file lacks them. */
+/** A stuck plan step's card (the owner's one decision for a step the plan could not get past). */
+const stuck = (card: CardLog) => card.type === "plan_decision";
+
+/** A result with its no-answer, error-message and stuck-step counts, read from its errors and cards when an older file lacks them. */
 export function withMetrics(result: RunResult): RunResult {
   const noAnswerTurns = result.metrics.noAnswerTurns ?? result.errors.filter((line) => /^turn of @/.test(line) && NO_ANSWER.test(line)).length;
   const errorMessages = result.metrics.errorMessages ?? result.errors.filter((line) => line.startsWith("error message in the chat:")).length;
-  return { ...result, metrics: { ...result.metrics, noAnswerTurns, errorMessages } };
+  const stuckSteps = result.metrics.stuckSteps ?? result.cards.filter(stuck).length;
+  return { ...result, metrics: { ...result.metrics, noAnswerTurns, errorMessages, stuckSteps } };
 }
 
 const pct = (value: number) => `${Math.round(value * 100)}%`;
@@ -40,6 +45,7 @@ export type Totals = {
   agentTools: number;
   approvals: number;
   unanswered: number;
+  stuckSteps: number;
   errors: number;
   noAnswerTurns: number;
   errorMessages: number;
@@ -67,6 +73,7 @@ export function totals(rows: RunResult[]): Totals {
     agentTools: sum(results.map((row) => row.metrics.agentTools)),
     approvals: sum(results.map((row) => row.metrics.approvals)),
     unanswered: sum(results.map((row) => row.metrics.unanswered)),
+    stuckSteps: sum(results.map((row) => row.metrics.stuckSteps ?? 0)),
     errors: sum(results.map((row) => row.metrics.errors)),
     noAnswerTurns: sum(results.map((row) => row.metrics.noAnswerTurns ?? 0)),
     errorMessages: sum(results.map((row) => row.metrics.errorMessages ?? 0)),
@@ -81,7 +88,13 @@ function row(input: RunResult, repeats: number): string {
   const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
   if (isSkipped(result)) return `| ${name} | ${result.suite} | skipped | | | | | | | | | | | | | |`;
   const status = result.status === "done" ? (result.pass ? "pass" : "fail") : result.status;
-  return `| ${name} | ${result.suite} | ${status} | ${result.verifiedPass ? "yes" : "no"} | ${pct(result.score)} | ${result.falseClaims.length} | ${m.noAnswerTurns ?? 0} / ${m.errorMessages ?? 0} | ${m.turns} | ${m.modelCalls} | ${m.ensembleTools} | ${m.agentTools} | ${thousands(m.tokensIn)} / ${thousands(m.tokensOut)} | ${m.credits.toFixed(2)} | ${seconds(m.wallMs)} | ${m.approvals}${m.unanswered ? ` (${m.unanswered} unanswered)` : ""} | ${m.errors} |`;
+  return `| ${name} | ${result.suite} | ${status} | ${result.verifiedPass ? "yes" : "no"} | ${pct(result.score)} | ${result.falseClaims.length} | ${m.noAnswerTurns ?? 0} / ${m.errorMessages ?? 0} | ${m.turns} | ${m.modelCalls} | ${m.ensembleTools} | ${m.agentTools} | ${thousands(m.tokensIn)} / ${thousands(m.tokensOut)} | ${m.credits.toFixed(2)} | ${seconds(m.wallMs)} | ${approvalsCell(m.approvals, m.unanswered, m.stuckSteps ?? 0)} | ${m.errors} |`;
+}
+
+/** Approvals, with those not answered and those for stuck plan steps. */
+function approvalsCell(approvals: number, unanswered: number, stuckSteps: number): string {
+  const notes = [unanswered ? `${unanswered} unanswered` : "", stuckSteps ? `${stuckSteps} stuck` : ""].filter(Boolean);
+  return `${approvals}${notes.length ? ` (${notes.join(", ")})` : ""}`;
 }
 
 const HEADER = [
@@ -91,7 +104,7 @@ const HEADER = [
 
 export function summaryTable(results: RunResult[], repeats = 1): string {
   const t = totals(results);
-  const total = `| **total** | | **${t.passed}/${t.runs}**${t.skipped ? ` (${t.skipped} skipped)` : ""} | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.noAnswerTurns} / ${t.errorMessages} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${t.approvals}${t.unanswered ? ` (${t.unanswered} unanswered)` : ""} | ${t.errors} |`;
+  const total = `| **total** | | **${t.passed}/${t.runs}**${t.skipped ? ` (${t.skipped} skipped)` : ""} | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.noAnswerTurns} / ${t.errorMessages} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${t.errors} |`;
   return [...HEADER, ...results.map((result) => row(result, repeats)), total].join("\n");
 }
 
@@ -103,7 +116,7 @@ export function suiteTable(results: RunResult[]): string {
   const suites = [...new Set(results.map((result) => result.suite))];
   const line = (name: string, rows: RunResult[]) => {
     const t = totals(rows);
-    return `| ${name} | ${t.runs} | ${t.skipped} | ${t.passed} | ${t.verified} | ${t.runs ? pct(t.meanScore) : "n/a"} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${t.approvals}${t.unanswered ? ` (${t.unanswered} unanswered)` : ""} | ${minutes(t.wallMs)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
+    return `| ${name} | ${t.runs} | ${t.skipped} | ${t.passed} | ${t.verified} | ${t.runs ? pct(t.meanScore) : "n/a"} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${minutes(t.wallMs)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
   };
   return [
     "| suite | tasks run | skipped | passed | verified | mean score | turns ended with no answer | error messages | false claims | input tokens per task | approvals | time | credits per task |",
@@ -127,10 +140,10 @@ function cleanupLines(entries: CleanupEntry[]): string[] {
   ];
 }
 
-/** Every task that failed, claimed something false, hit an error or met a card the harness could not approve. */
+/** Every task that failed, claimed something false, hit an error, met a card the harness could not approve or had a plan step stuck. */
 function problemLines(results: RunResult[], repeats: number): string[] {
   const lines: string[] = [];
-  const problems = results.filter((result) => !isSkipped(result) && (!result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined")));
+  const problems = results.filter((result) => !isSkipped(result) && (!result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined" || stuck(card))));
   if (!problems.length) lines.push("None.");
   for (const result of problems) {
     const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
@@ -142,6 +155,12 @@ function problemLines(results: RunResult[], repeats: number): string[] {
     if (unanswered.length) lines.push(`  - Cards not answered: ${unanswered.map((card) => `${card.type}${card.note ? ` (${cell(card.note)})` : ""}`).join(", ")}.`);
     const declined = result.cards.filter((card) => card.answered && card.answer === "declined");
     if (declined.length) lines.push(`  - Cards declined: ${declined.map((card) => `${card.type}${card.note ? ` (${cell(card.note)})` : ""}`).join(", ")}.`);
+    const decided = (answer: string) => result.cards.filter((card) => card.answered && stuck(card) && card.answer === answer).map((card) => cell(card.note ?? "a plan step"));
+    const listed = (notes: string[]) => `${notes.map((note) => note.replace(/\.$/, "")).join("; ")}.`;
+    const without = decided(FINISHED_WITHOUT);
+    if (without.length) lines.push(`  - Stuck steps finished without them: ${listed(without)}`);
+    const kept = decided(KEPT);
+    if (kept.length) lines.push(`  - Steps kept although what they worked from changed: ${listed(kept)}`);
   }
   return lines;
 }
@@ -155,7 +174,7 @@ function skippedLines(results: RunResult[], repeats: number): string[] {
 
 /** What the columns mean, for every summary. */
 export const COLUMNS =
-  "Score is the share of a task's checks that passed; a task passes when all do. A skipped task needs something this checkout lacks (its requirement is listed): it ran nothing and counts in no total. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not).";
+  "Score is the share of a task's checks that passed; a task passes when all do. A skipped task needs something this checkout lacks (its requirement is listed): it ran nothing and counts in no total. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not); stuck: those for a plan step that got stuck, which the harness finished without, or kept as it was when what the step worked from changed (each is listed below with the step and why).";
 
 /** Several saved runs side by side: their suites, then every task. */
 export function summary(title: string, runs: Array<{ name: string; saved: Saved }>): string {

@@ -17,7 +17,9 @@
  * ensemble_search, answered by /api/engine/tool for that chat's run only.
  * A turn of the Code tab's agent (ENSEMBLE_CODE_AGENT=1 as well) also has
  * Ensemble's actions (ensemble_actions, ensemble_act: tasks, pages, boards,
- * diagrams, plots…), ensemble_context and the ranked ensemble_search.
+ * diagrams, plots…), ensemble_context, the ranked ensemble_search, and
+ * report_result and attach_evidence (Ensemble runs the checks it reports again
+ * when the turn ends, hub-api src/workspace/completion.ts).
  * In a task run it offers report_result (the run's structured result) and
  * attach_evidence (a file the owner should see), answered by the same route
  * (hub-api src/evidence/run-tools.ts, docs/30 §9), ensemble_context and ensemble_search (the
@@ -197,11 +199,11 @@ const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log"
 const REPORT_TOOL = {
   name: "report_result",
   description:
-    "Report your result once, when you finish or cannot go on. outcome: done (you built or wrote it), pass or fail (you verified something: list each check with its verdict), or blocked (say why in blockedBy). Ensemble checks it (a commit or contentHash you name must exist in your folder) and keeps it as the run's result; calling it again replaces it. Attach files first with attach_evidence and name them in checks or evidence.",
+    "Report your result once, when you finish or cannot go on. outcome: done (you built or wrote all of it), pass or fail (you verified or reviewed something: list each check with its verdict), partial (part of it is done: what is left in remaining), uncertain (it ran, but you cannot tell whether it works), blocked (say why in blockedBy) or stopped. Partial and uncertain never count as done. Ensemble checks it (a commit or contentHash you name must exist in your folder) and keeps it as the run's result; calling it again replaces it. Attach files first with attach_evidence and name them in checks or evidence.",
   inputSchema: {
     type: "object",
     properties: {
-      outcome: { type: "string", enum: ["done", "pass", "fail", "blocked"] },
+      outcome: { type: "string", enum: ["done", "pass", "fail", "blocked", "partial", "stopped", "uncertain"] },
       summary: { type: "string", maxLength: 2000, description: "One paragraph: what you did and what came of it." },
       checks: {
         type: "array",
@@ -215,6 +217,7 @@ const REPORT_TOOL = {
             verdict: { type: "string", enum: ["pass", "fail", "blocked", "skipped"] },
             detail: { type: "string", maxLength: 2000, description: "What you saw: the failure, the output that matters." },
             evidence: { type: "array", maxItems: 20, items: { type: "string" }, description: "Evidence ids from attach_evidence, URLs or paths." },
+            strength: { type: "string", enum: ["A", "B", "C"], description: "How strong the evidence is: A a file or record you made and measured now, B output you saw in this session, C what you recall or assume. A review's pass needs A or B." },
             rerun: {
               type: "object",
               description: "How to run the check again without you.",
@@ -246,12 +249,21 @@ const REPORT_TOOL = {
             kind: { type: "string", enum: ["commit", "file", "url", "log", "screenshot", "video", "report", "evidence"] },
             ref: { type: "string", description: "An evidence id, a commit, a URL or a path." },
             caption: { type: "string", maxLength: 300 },
+            strength: { type: "string", enum: ["A", "B", "C"] },
           },
           required: ["kind", "ref"],
           additionalProperties: false,
         },
       },
       blockedBy: { type: "string", enum: ["needs_owner", "login_required", "missing_access", "environment", "no_report", "no_progress", "unknown"] },
+      remaining: { type: "array", maxItems: 20, items: { type: "string", maxLength: 500 }, description: "What is left, in order, when the outcome is partial or blocked." },
+      ownerDecision: { type: "string", maxLength: 500, description: "The one decision only your owner can make, when there is one." },
+      provenance: {
+        type: "object",
+        description: "Who did the work, as far as you know: your agent and the model you are (modelReported). Ensemble adds what it observed.",
+        properties: { agent: { type: "string" }, modelRequested: { type: "string" }, modelSent: { type: "string" }, modelReported: { type: "string" }, computer: { type: "string" }, session: { type: "string" } },
+        additionalProperties: false,
+      },
     },
     required: ["outcome", "summary"],
     additionalProperties: false,
@@ -303,18 +315,15 @@ export function instructionsFor(env = process.env) {
   const never = "You already act in Ensemble through this server: never open Ensemble's web app (app.ensemblework.com, test.ensemblework.com or a board, task or page link) in a browser to sign in or to read the person's work, and never ask the person to sign in to it.";
   if (env.ENSEMBLE_ASSISTANT_TURN) return `This server's tools are the person's Ensemble: their tasks, boards, pages, files and settings, in the space this chat works in. ${never}`;
   const apps = "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack and others) are reached through ensemble_apps and ensemble_app_call with their own connections: use those rather than asking for app keys or signing in to the app.";
-  if (env.ENSEMBLE_CHAT === "1" && env.ENSEMBLE_CODE_AGENT === "1") return `You are the agent in the person's Ensemble Code tab. Their Ensemble is reached through this server: ensemble_actions and ensemble_act change their records (tasks, pages, boards, diagrams, plots, projects, people, meeting notes, comments) at once, with Ensemble's Undo; ensemble_search and ensemble_context read them; ensemble_create_task makes a card only when the person asks for one. ${apps} ${never}`;
+  if (env.ENSEMBLE_CHAT === "1" && env.ENSEMBLE_CODE_AGENT === "1") return `You are the agent in the person's Ensemble Code tab. Their Ensemble is reached through this server: ensemble_actions and ensemble_act change their records (tasks, pages, boards, diagrams, plots, projects, people, meeting notes, comments) at once, with Ensemble's Undo; ensemble_search and ensemble_context read them; ensemble_create_task makes a card only when the person asks for one. When you change code or check something, end with report_result: Ensemble runs each check's rerun again in this folder after you finish. ${apps} ${never}`;
   if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search; ensemble_context opens any ensemble:// record and what it links to. ${apps} ${never}`;
   return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. When the task asks you to change Ensemble itself (pages, boards, diagrams, plots, the task's fields), use ensemble_actions and ensemble_act. ${apps} ${never}`;
 }
 
-/** ensemble_act in a Code-tab turn: there is no report_result to send a result through. */
-const CODE_ACT_TOOL = { ...ACT_TOOL, description: ACT_TOOL.description.replace(" Your own result still goes through report_result.", "") };
-
 export function toolsFor(env = process.env) {
   if (env.ENSEMBLE_CHAT === "1" && env.ENSEMBLE_CODE_AGENT === "1") {
     const board = CHAT_TOOLS.filter((tool) => tool.name !== "ensemble_search");
-    return [TOOL, ...board, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, CODE_ACT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL];
+    return [TOOL, ...board, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, ACT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL];
   }
   return env.ENSEMBLE_CHAT === "1"
     ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL]
