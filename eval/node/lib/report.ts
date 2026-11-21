@@ -161,7 +161,7 @@ function problemLines(results: RunResult[], repeats: number): string[] {
 
 /** What the columns mean, for every summary. */
 export const COLUMNS =
-  "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not); stuck: those for a plan step that got stuck, which the harness finished without (each is listed below with the step and why).";
+  "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not); stuck: those for a plan step that got stuck, which the harness finished without, or kept as it was when what the step worked from changed (each is listed below with the step and why).";
 
 /** Several saved runs side by side: their suites, then every task. */
 export function summary(title: string, runs: Array<{ name: string; saved: Saved }>): string {
