@@ -99,6 +99,7 @@ packaging/              CLI release metadata: Homebrew, Scoop, winget, nfpm, AUR
 infra/                  local docker-compose; deploy/ (VM), deploy/home/ (production), deploy/testing/ (isolated web testing)
 design/                 generated brand assets (pnpm brand:build)
 docs/                   current guides
+eval/node/              Ensemble Node task suite and results (docs/42)
 ```
 
 More: [docs/17_REPOSITORY_STRUCTURE.md](docs/17_REPOSITORY_STRUCTURE.md).

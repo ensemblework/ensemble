@@ -67,7 +67,8 @@ ensemble/
 ├── .github/               workflows/ (ci, deploy, desktop, cli-release), actions/vercel-deploy,
 │                          agents/, skills/ (block-diagrams, ensemble-context), copilot-instructions.md
 ├── data/import/           Git-ignored local import drop zone
-├── eval/, skills/         Empty placeholders (.gitkeep)
+├── eval/node/             Ensemble Node task suite, harness and results (docs/42)
+├── skills/                Empty placeholder (.gitkeep)
 ├── private/               Git-ignored operator runbooks; never publish secrets
 ├── release.json           Canonical version for every surface
 ├── AGENTS.md              Instructions for coding agents (CLAUDE.md and .github/copilot-instructions.md point here)
