@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ModelQuotaError } from "./model-quota.js";
 import { RuntimeError } from "./runtime.js";
-import { assistantEcho, errorFromStreamFrame, prepareProviderMessages, type RuntimeTurn } from "./model-turn.js";
+import { assistantEcho, errorFromStreamFrame, isTransientModelError, prepareProviderMessages, runtimeFailureFromBody, type RuntimeTurn } from "./model-turn.js";
+import { ModelTimeoutError } from "./model-timeout.js";
+import { safePublicError } from "./text.js";
+import { errorFromRuntimeBody } from "../runtime/errors.js";
+import { ASSISTANT_UNAVAILABLE } from "@ensemble/shared-types";
 
 test("assistantEcho keeps a streamed thought signature", () => {
   const signature = "sig-from-stream";
@@ -162,4 +166,25 @@ test("a quota stream frame is model_quota_exceeded and not a generic 502", () =>
 
   const other = errorFromStreamFrame({ message: "boom", kind: "other", status: 500 }, "gemini-3.5-flash", now);
   assert.equal(other.statusCode, 502);
+});
+
+test("a provider failure with no words is a plain sentence, asked again, with the detail kept for the logs", () => {
+  const frame = { message: "", kind: "other", status: 502 };
+  const error = errorFromStreamFrame(frame, "gpt-5-mini");
+  assert.equal(error.message, "The model's service failed (502). Nothing more was changed.");
+  assert.deepEqual(error.cause, { status: 502, kind: "other", message: "" });
+  assert.equal(isTransientModelError(error), true);
+  assert.equal(runtimeFailureFromBody(502, JSON.stringify({ detail: frame }), "gpt-5-mini").message, error.message);
+  assert.equal(runtimeFailureFromBody(502, "<html><body>502 Bad Gateway</body></html>", "gpt-5-mini").message, error.message);
+  assert.equal(safePublicError(new Error(JSON.stringify({ detail: frame })), "The model could not answer."), "The model could not answer.");
+  assert.equal(safePublicError(new Error(JSON.stringify({ detail: frame })), JSON.stringify({ detail: frame })), "Something went wrong. Nothing else was changed.");
+  assert.equal(errorFromRuntimeBody(502, JSON.stringify({ detail: { message: "" } })).message, "The request failed (502). Nothing more was changed.");
+
+  assert.equal(isTransientModelError(new RuntimeError("OpenAI is rate-limiting this key.", 429, false, "rate_limit")), true);
+  assert.equal(isTransientModelError(new TypeError("terminated")), true, "a dropped stream");
+  assert.equal(isTransientModelError(new ModelQuotaError("gpt-5-mini", new Date())), false);
+  assert.equal(isTransientModelError(new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true)), false, "Ensemble's runtime was never reached");
+  assert.equal(isTransientModelError(new ModelTimeoutError("gpt-5-mini", 60_000)), false, "the call's own limit");
+  assert.equal(isTransientModelError(new RuntimeError("The model rejected that request.", 400, false, "invalid")), false);
+  assert.equal(isTransientModelError(new Error("A tool bug.")), false);
 });

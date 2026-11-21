@@ -102,6 +102,7 @@ export const codeTools: readonly AnyHubTool[] = [
     description: "List files and folders in the folder Ensemble Code was opened in (or a subfolder). Skips .git, node_modules and build output.",
     input: z.object({ path: z.string().optional().describe("Relative to the launch folder. Default: the launch folder."), depth: z.number().int().min(1).max(4).default(2) }),
     isWrite: false,
+    parallelSafe: true,
     risk: "low",
     async run(ctx, input) {
       const code = session(ctx);
@@ -124,6 +125,7 @@ export const codeTools: readonly AnyHubTool[] = [
     description: "Read a text file in or under the launch folder (or another folder the person names). Keys and app data are never readable.",
     input: z.object({ path: z.string().min(1), fromLine: z.number().int().min(1).optional(), toLine: z.number().int().min(1).optional() }),
     isWrite: false,
+    parallelSafe: true,
     risk: "low",
     async run(ctx, input) {
       const code = session(ctx);
@@ -146,6 +148,7 @@ export const codeTools: readonly AnyHubTool[] = [
     description: "Search file contents under the launch folder with a regular expression (case-insensitive). Returns file:line: text.",
     input: z.object({ pattern: z.string().min(1).max(200), path: z.string().optional(), maxResults: z.number().int().min(1).max(200).default(60) }),
     isWrite: false,
+    parallelSafe: true,
     risk: "low",
     async run(ctx, input) {
       const code = session(ctx);
@@ -184,6 +187,7 @@ export const codeTools: readonly AnyHubTool[] = [
     description: "Read a PDF, Word (.docx), Excel (.xlsx) or PowerPoint (.pptx) file, or any text file, as plain text.",
     input: z.object({ path: z.string().min(1) }),
     isWrite: false,
+    parallelSafe: true,
     risk: "low",
     async run(ctx, input) {
       const code = session(ctx);
@@ -285,6 +289,7 @@ export const codeTools: readonly AnyHubTool[] = [
     description: "How agent runs are doing: one job by id, or the latest ones. Status, progress, the summary when done, and any question waiting for the person.",
     input: z.object({ jobId: z.string().uuid().optional() }),
     isWrite: false,
+    parallelSafe: true,
     risk: "low",
     async run(ctx, input) {
       const jobs = await ctx.prisma.workspaceJob.findMany({

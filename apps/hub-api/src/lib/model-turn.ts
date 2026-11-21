@@ -23,6 +23,7 @@ import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
 import { callLimitMs, isTimeoutError, ModelTimeoutError } from "./model-timeout.js";
 import { longFetch } from "./long-fetch.js";
 import { logAi, newMessages } from "./ai-activity.js";
+import { isAbortError, isTransportDrop } from "./stream-drop.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -252,7 +253,12 @@ export function runtimeFailureFromBody(status: number, raw: string, model = "tha
   const unreachable = unreachableFromRaw(raw, model);
   if (unreachable) return unreachable;
   const failure = parseRuntimeBody(status, truncateText(raw, 2000));
-  return failureToError(failure, model, provider);
+  return withDetail(failureToError(failure, model, provider), failure);
+}
+
+/** What the provider said, for the logs only: people read the error's own sentence. */
+function withDetail<T extends Error>(error: T, failure: ModelFailure): T {
+  return Object.assign(error, { cause: { status: failure.status, kind: failure.kind, message: truncateText(failure.message, 500) } });
 }
 
 function failureToError(failure: ModelFailure, model: string, provider?: string | null): RuntimeError {
@@ -291,7 +297,7 @@ export function errorFromStreamFrame(
     return new ModelQuotaError(model, quotaResetInstant(now, retry), retry);
   }
   const httpStatus = failure.status === 503 || failure.status === 400 || failure.status === 429 || failure.status === 404 ? failure.status : 502;
-  return new RuntimeError(friendlyModelError(failure, data.model ?? model, data.provider ?? provider), httpStatus, false, failure.kind);
+  return withDetail(new RuntimeError(friendlyModelError(failure, data.model ?? model, data.provider ?? provider), httpStatus, false, failure.kind), failure);
 }
 
 type AskArgs = {
@@ -365,6 +371,7 @@ async function askRuntimeOnce(args: AskArgs): Promise<RuntimeTurn> {
     throw new RuntimeError(
       ASSISTANT_UNAVAILABLE,
       503,
+      true,
     );
   }
   if (!response.ok) throw await runtimeFailure(response, args.model, args.provider);
@@ -477,4 +484,65 @@ async function streamOnce(args: Parameters<typeof askRuntime>[0] & StreamTurnHan
   if (streamError && !turn) throw streamError;
   if (!turn) throw new RuntimeError("The model stream ended without a turn.", 502);
   return turn;
+}
+
+const PASSING_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const LASTING_KINDS = new Set(["quota", "credits", "auth", "not_found", "invalid", "timeout"]);
+const NETWORK_TIMEOUTS = new Set(["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
+
+/**
+ * A model call that may work when asked again a little later: a rate limit, a server error (500, 502,
+ * 503, 504), a network timeout or a stream that dropped. Never a Stop, quota or credits, a key or a
+ * request the model refused, a host that was never reached, or the call's own time limit (asking again
+ * would only wait that long once more).
+ */
+export function isTransientModelError(error: unknown): boolean {
+  if (!(error instanceof Error) || isAbortError(error)) return false;
+  if (error instanceof IncludedLimitError || error instanceof ModelQuotaError || error instanceof ModelUnreachableError || error instanceof ModelTimeoutError) return false;
+  if (isTransportDrop(error)) return true;
+  if (error instanceof RuntimeError) {
+    if (error.unreachable || (error.kind && LASTING_KINDS.has(error.kind))) return false;
+    return error.kind === "rate_limit" || PASSING_STATUSES.has(error.statusCode);
+  }
+  if (error instanceof ProviderError) return error.kind !== "quota" && PASSING_STATUSES.has(error.status);
+  const code = (error as { code?: unknown; cause?: { code?: unknown } }).code ?? (error as { cause?: { code?: unknown } }).cause?.code;
+  return typeof code === "string" && NETWORK_TIMEOUTS.has(code);
+}
+
+/** A rate limit, which some callers handle on their own (an Ensemble Node turn falls back to its fast model). */
+export function isRateLimit(error: unknown): boolean {
+  if (error instanceof ModelQuotaError || error instanceof IncludedLimitError) return false;
+  return (error instanceof RuntimeError && (error.kind === "rate_limit" || error.statusCode === 429)) || (error instanceof ProviderError && error.kind === "rate_limit");
+}
+
+/** One line for the status while the loop waits to ask again. */
+export function retryNotice(error: unknown, waitMs: number): string {
+  const seconds = Math.max(1, Math.round(waitMs / 1000));
+  const again = `Trying again in ${seconds} second${seconds === 1 ? "" : "s"}.`;
+  if (isTransportDrop(error)) return `The connection to the model dropped. ${again}`;
+  if (isRateLimit(error)) return `The model's service is rate-limiting this key. ${again}`;
+  const status = error instanceof RuntimeError ? error.statusCode : error instanceof ProviderError ? error.status : null;
+  return status ? `The model's service failed (${status}). ${again}` : `The model's service did not answer. ${again}`;
+}
+
+let retryWaitForTests: ((ms: number) => Promise<void>) | null = null;
+
+/** Test seam: replaces the wait before a failed model call is asked again. */
+export function setModelRetryWaitForTests(wait: ((ms: number) => Promise<void>) | null): void {
+  retryWaitForTests = wait;
+}
+
+/** Waits before a failed model call is asked again; Stop ends the wait at once. */
+export function waitBeforeRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (retryWaitForTests) return retryWaitForTests(ms);
+  return new Promise((resolve) => {
+    if (signal?.aborted || ms <= 0) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }

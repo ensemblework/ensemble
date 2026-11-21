@@ -1,5 +1,6 @@
 /** User-facing sentences for model failures. The browser shows these, not vendor JSON. */
 import { knownProvider } from "../runtime/payload.js";
+import { looksInternal, looksLikeData } from "./text.js";
 
 export interface ModelFailure {
   status: number;
@@ -15,7 +16,10 @@ export function parseRuntimeBody(status: number, raw: string): ModelFailure {
   let quotaId: string | undefined;
   let retryAfterSeconds: number | undefined;
   try {
-    const body = JSON.parse(raw) as { detail?: unknown; error?: unknown; message?: unknown };
+    const parsed = JSON.parse(raw) as unknown;
+    // A JSON body is never the message itself: without a sentence in it the message is empty.
+    message = typeof parsed === "string" ? parsed.trim() : "";
+    const body = (parsed && typeof parsed === "object" ? parsed : {}) as { detail?: unknown; error?: unknown; message?: unknown };
     const detail = body.detail ?? body.error ?? body.message;
     if (typeof detail === "string" && detail.trim()) message = detail.trim();
     if (detail && typeof detail === "object") {
@@ -80,7 +84,7 @@ export function friendlyModelError(failure: ModelFailure, model?: string | null,
       ? failure.message
       : failure.message.includes("can't be decrypted")
         ? failure.message
-        : failure.message || "The model key was rejected. Check it in Settings → Models.";
+        : publicSentence(failure.message) ?? "The model key was rejected. Check it in Settings → Models.";
   }
   if (failure.kind === "rate_limit") {
     const quota = failure.quotaId ? ` (${failure.quotaId})` : "";
@@ -102,8 +106,18 @@ export function friendlyModelError(failure: ModelFailure, model?: string | null,
     if (/invalid argument|INVALID_ARGUMENT|^\s*\{/.test(failure.message)) {
       return "The model rejected that request. Nothing was changed.";
     }
-    return failure.message || "The model rejected that request.";
+    return publicSentence(failure.message) ?? "The model rejected that request.";
   }
   if (/^no key for/i.test(failure.message)) return failure.message;
-  return failure.message || "The model request failed.";
+  return publicSentence(failure.message) ?? serviceFailed(failure.status);
+}
+
+/** What people read when the model's service failed without saying why in words. */
+function serviceFailed(status: number): string {
+  return `The model's service failed (${status}). Nothing more was changed.`;
+}
+
+function publicSentence(message: string): string | null {
+  const text = message.trim();
+  return text && !looksLikeData(text) && !looksInternal(text) ? text : null;
 }
