@@ -42,7 +42,7 @@ export type Drive = {
   cleanups: Array<() => Promise<void> | void>;
 };
 
-type State = { handled: Set<string>; fenced: Set<string>; seen: Map<string, string>; isCodeEngine: (value: string) => boolean };
+type State = { handled: Set<string>; fenced: Set<string>; seen: Map<string, string>; isCodeEngine: (value: string) => boolean; holding: boolean };
 const states = new WeakMap<Drive, State>();
 
 export async function startDrive(input: { world: World; owner: Owner; task: Task; repeat: number; dir: string; deviceId: string; trace: Trace; ledger: SessionLedger; log: (line: string) => void; timeoutMs: number }): Promise<Drive> {
@@ -53,6 +53,10 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
     const response = await owner.inject({ method, url, ...(payload === undefined ? {} : { payload: payload as Record<string, unknown> }) });
     if (response.statusCode >= 300) throw new Error(`${method} ${url} answered ${response.statusCode}: ${response.body.slice(0, 300)}`);
     return (response.body ? response.json() : {}) as T;
+  };
+  const request = async (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, payload?: unknown) => {
+    const response = await owner.inject({ method, url, ...(payload === undefined ? {} : { payload: payload as Record<string, unknown> }) });
+    return { status: response.statusCode, body: response.body, json: () => (response.body ? response.json() : null) as unknown };
   };
   const ctx: TaskContext = {
     world,
@@ -67,6 +71,47 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
     log: input.log,
     onCleanup: (work) => void cleanups.push(work),
     api,
+    request,
+    holdCards: (on) => {
+      states.get(drive)!.holding = on;
+      trace.write("hold", { cards: on });
+    },
+    peerSay: async (fromKey, roomKey, text) => {
+      const from = ctx.nodes[fromKey];
+      const roomId = ctx.rooms[roomKey];
+      if (!from || !roomId) throw new Error(`No node "${fromKey}" or room "${roomKey}" in this task.`);
+      const { postMessage, mentionsFor } = await import("../../../apps/hub-api/src/node/store.js");
+      const { dispatchMessage } = await import("../../../apps/hub-api/src/node/queue.js");
+      const members = await world.prisma.nodeRoomMember.findMany({ where: { roomId } });
+      const { message } = await postMessage(world.prisma, { roomId, userId: owner.id, authorKind: "node", authorNodeId: from.id, body: text, mentions: mentionsFor(text, members, []) });
+      await dispatchMessage(world.app, message);
+      trace.write("peer", { from: from.slug, room: roomKey, text });
+      input.log(`@${from.slug} → ${roomKey}: ${text.slice(0, 120)}`);
+      return message.id;
+    },
+    computer: {
+      offline: async () => {
+        await world.computer.offline();
+        trace.write("computer", { action: "offline" });
+      },
+      online: async () => {
+        await world.computer.online();
+        trace.write("computer", { action: "online" });
+      },
+      restart: async (downMs) => {
+        trace.write("computer", { action: "restart", downMs: downMs ?? null });
+        await world.computer.restart(downMs);
+        trace.write("computer", { action: "restarted" });
+      },
+      dropLink: (ms) => {
+        world.link.drop(ms);
+        trace.write("computer", { action: "link dropped", ms });
+      },
+      isOnline: async () => {
+        const device = await world.prisma.device.findUnique({ where: { id: input.deviceId }, select: { revokedAt: true, lastSeenAt: true } });
+        return Boolean(device && !device.revokedAt && world.deviceOnline(device.lastSeenAt));
+      },
+    },
     makeNode: async (key, templateId, options = {}) => {
       const made = await api<{ node: { id: string; slug: string }; room: { id: string } }>("POST", "/api/node/nodes", { templateId, ...(options.name ? { name: options.name } : {}), ...(options.slug ? { slug: options.slug } : {}) });
       await world.prisma.nodeAgent.update({ where: { id: made.node.id }, data: { provider: world.agent, model: world.model } });
@@ -85,7 +130,7 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
     },
   };
   const drive: Drive = { ctx, world, owner, trace, ledger: input.ledger, started: Date.now(), deadline: Date.now() + input.timeoutMs, cards: [], errors: [], notes: [], cleanups };
-  states.set(drive, { handled: new Set(), fenced: new Set(), seen: new Map(), isCodeEngine: (value) => isCodeEngine(value) });
+  states.set(drive, { handled: new Set(), fenced: new Set(), seen: new Map(), isCodeEngine: (value) => isCodeEngine(value), holding: false });
   return drive;
 }
 
@@ -118,6 +163,7 @@ function logCard(drive: Drive, entry: CardLog): void {
 /** Answers every owner card that is waiting, once each. */
 async function answerCards(drive: Drive): Promise<void> {
   const state = states.get(drive)!;
+  if (state.holding) return;
   const prisma = drive.world.prisma;
   const decisions = await prisma.agentDecision.findMany({ where: { userId: drive.owner.id, status: "pending" }, orderBy: { requestedAt: "asc" } });
   for (const row of decisions) {

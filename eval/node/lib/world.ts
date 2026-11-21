@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HttpUser } from "../../../apps/hub-api/src/test/http.js";
 import { startComputer } from "./computer.js";
+import { startLink } from "./link.js";
 
 export type Log = (line: string) => void;
 export type Owner = { id: string; name: string; email: string; inject: HttpUser["inject"] };
@@ -170,7 +171,8 @@ export function agentHome(dir: string): boolean {
   return Object.keys(accounts).length > 0;
 }
 
-export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log }) {
+/** `durableComputer`: the computer keeps its database on disk, for a run with a task that restarts it. */
+export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log; durableComputer?: boolean }) {
   // Chromium's singleton socket lives in the computer's TMPDIR, and a Unix socket path holds at most 107 bytes.
   if (Buffer.byteLength(join(options.workDir, "nv-XXXXXX", "pc", "tmp")) > 60) throw new Error(`The work folder ${options.workDir} is too deep for the computer's browser: pick one with a shorter path.`);
   mkdirSync(options.workDir, { recursive: true });
@@ -202,8 +204,10 @@ export async function bootWorld(options: { workDir: string; agent: string; model
   const { stopJob } = await import("../../../apps/hub-api/src/workspace/worker.js");
   const { startNode } = await import("../../../apps/hub-api/src/node/runs.js");
   const stopNode = startNode(harness.app);
-  const computer = await startComputer(dirs.computer).catch(async (error: unknown) => {
+  const link = await startLink({ host: "127.0.0.1", port });
+  const computer = await startComputer(dirs.computer, { durable: options.durableComputer === true }).catch(async (error: unknown) => {
     stopNode();
+    await link.close().catch(() => undefined);
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
     bus.stop();
@@ -226,12 +230,13 @@ export async function bootWorld(options: { workDir: string; agent: string; model
 
   /**
    * Pairs this computer with the owner, as `ensemble login` does, and waits until it is online with the
-   * agent signed in. The owner's default run profile then runs coding sessions there with that agent and model.
+   * agent signed in. The owner's default run profile then runs coding sessions there with that agent and
+   * model. `viaLink`: the computer reaches Ensemble through the link a task can cut (lib/link.ts).
    */
-  async function pair(owner: Owner): Promise<{ id: string; name: string }> {
+  async function pair(owner: Owner, pairing: { viaLink?: boolean } = {}): Promise<{ id: string; name: string }> {
     const coded = await owner.inject({ method: "POST", url: "/api/devices/pair", payload: {} });
     if (coded.statusCode !== 201) throw new Error(`No pairing code: ${coded.statusCode} ${coded.body.slice(0, 200)}`);
-    await computer.pair(base, (coded.json() as { code: string }).code, "Eval computer");
+    await computer.pair(pairing.viaLink ? link.base : base, (coded.json() as { code: string }).code, "Eval computer");
     const deadline = Date.now() + 120_000;
     for (;;) {
       const device = await prisma.device.findFirst({ where: { userId: owner.id, revokedAt: null }, orderBy: { createdAt: "desc" } });
@@ -258,6 +263,7 @@ export async function bootWorld(options: { workDir: string; agent: string; model
   async function close(): Promise<void> {
     stopNode();
     await computer.close().catch(() => undefined);
+    await link.close().catch(() => undefined);
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
     bus.stop();
@@ -279,6 +285,10 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     unpair,
     share: computer.share,
     unshare: computer.unshare,
+    /** The computer's own process and its connection to Ensemble. */
+    computer: { offline: computer.offline, online: computer.online, restart: computer.restart, durable: options.durableComputer === true },
+    link,
+    deviceOnline,
     stopJob,
     close,
   };

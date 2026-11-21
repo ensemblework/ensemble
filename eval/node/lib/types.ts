@@ -3,7 +3,7 @@
  */
 import type { World, Owner } from "./world.js";
 
-export type Suite = "core" | "crew" | "hard";
+export type Suite = "core" | "crew" | "hard" | "orch" | "code" | "work";
 
 /** Where a check's answer comes from: the reply text, the database or files, the trace of tools, live ground truth, or the rubric judge. */
 export type CheckKind = "reply" | "state" | "trace" | "truth" | "judge";
@@ -20,9 +20,14 @@ export type Judge = (rubric: string, answer?: string) => Promise<Verdict>;
 /** A node the task made, by the key the task gave it. */
 export type MadeNode = { id: string; slug: string; roomId: string };
 
-/** One owner message, sent after an optional wait, then followed by a wait for quiet unless `wait` is "none". */
+/**
+ * One owner message, sent after an optional wait, then followed by a wait for quiet unless `wait` is
+ * "none". A step with `act` and no `say` is something the harness does instead (stops the computer, edits a
+ * fact, switches a setting); what it answers goes in the trace.
+ */
 export type Step = {
-  say: string | ((ctx: TaskContext) => string);
+  say?: string | ((ctx: TaskContext) => string);
+  act?: { what: string; run: (ctx: TaskContext) => Promise<string | void> };
   /** Key of the room in `ctx.rooms`; "main" when left out. */
   room?: string;
   /** Wait for this before sending: it answers what it saw (truthy) or null while it waits. */
@@ -55,6 +60,27 @@ export type TaskContext = {
   makeCrew: (key: string, title: string, members: string[], lead: string) => Promise<string>;
   /** A call to Ensemble's API as the owner; throws unless it answers 2xx. */
   api: <T = Record<string, unknown>>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, payload?: unknown) => Promise<T>;
+  /** The same call, answering its status and body whatever they are. */
+  request: (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, payload?: unknown) => Promise<{ status: number; body: string; json: () => unknown }>;
+  /** While on, the owner answers no card: they wait as for an owner who is away. */
+  holdCards: (on: boolean) => void;
+  /** A message from one of the task's nodes in a room, as that node would post it (its mentions wake who they name). */
+  peerSay: (fromKey: string, roomKey: string, text: string) => Promise<string>;
+  /** The owner's computer: its link to Ensemble and its own process. */
+  computer: ComputerControl;
+};
+
+export type ComputerControl = {
+  /** Stops the computer's connection to Ensemble (its remote loop), as when it sleeps or loses the network for good. */
+  offline: () => Promise<void>;
+  /** Starts it again. */
+  online: () => Promise<void>;
+  /** Kills the computer's process at once (SIGKILL) and starts it again on the same folders. */
+  restart: (downMs?: number) => Promise<void>;
+  /** Cuts every connection between the computer and Ensemble for this long; only where the task pairs through the harness's link. */
+  dropLink: (ms: number) => void;
+  /** Whether the computer is online for Ensemble now. */
+  isOnline: () => Promise<boolean>;
 };
 
 export type Message = {
@@ -135,7 +161,15 @@ export type Task = {
   checks: (input: GradeInput) => Check[] | Promise<Check[]>;
   /** Replies that would be false if nothing backs them, with what backs them (lib/grade.ts `falseClaims`). */
   claims?: Array<{ says: RegExp; backed: (ev: Evidence) => boolean; what: string }>;
+  /** What the checkout must have for the task to run (lib/capabilities.ts); without it the task is skipped, not failed. */
+  requires?: Capability[];
+  /** Pair the computer through the harness's link (lib/link.ts), so the task can cut it. */
+  link?: boolean;
+  /** The task kills and restarts the computer's process: the run then keeps the computer's database on disk. */
+  restartsComputer?: boolean;
 };
+
+export type Capability = "tool-journal" | "code-tab-harness";
 
 export type RunMetrics = {
   wallMs: number;
@@ -162,7 +196,9 @@ export type RunResult = {
   suite: Suite;
   category: string;
   repeat: number;
-  status: "done" | "timeout" | "error";
+  /** skipped: the checkout lacks what the task requires (`skipped` says what); it counts in no total. */
+  status: "done" | "timeout" | "error" | "skipped";
+  skipped?: string;
   score: number;
   pass: boolean;
   verifiedPass: boolean;

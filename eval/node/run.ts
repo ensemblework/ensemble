@@ -24,6 +24,7 @@ import { markdown, NO_ANSWER, suiteTable, summary, summaryTable, withMetrics } f
 import { redactor } from "./lib/redact.js";
 import { copilotSessionIds, copilotSessionsIn, deleteSessions, SessionLedger, type LedgerEntry } from "./lib/sessions.js";
 import { makeJudge } from "./lib/judge.js";
+import { missing } from "./lib/capabilities.js";
 import { collectEvidence } from "./lib/evidence.js";
 import { busy, endNodes, finalSessions, runCleanups, say, startDrive, stopEverything, tick, traceFile, traceNodeRecords, waitQuiet, waitUntil } from "./lib/drive.js";
 import { agentHome, bootWorld, hermetic, keyringBus, type World } from "./lib/world.js";
@@ -54,10 +55,10 @@ const RUN_NOTES = [
   "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
 ];
 
-type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; summary: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[] };
+type Args = { tasks: string; agent: string; model: string; repeat: number; label: string; judgeModel: string; regrade: string | null; combine: string | null; report: string | null; summary: string | null; cleanup: string | null; workDir: string; keep: boolean; protect: string[]; ignoreRequires: boolean };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, report: null, summary: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [] };
+  const args: Args = { tasks: "all", agent: "copilot-cli", model: "gpt-6-luna", repeat: 1, label: "", judgeModel: "gpt-6-luna", regrade: null, combine: null, report: null, summary: null, cleanup: null, workDir: tmpdir(), keep: false, protect: [], ignoreRequires: false };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]!;
     const value = () => {
@@ -78,6 +79,7 @@ function parseArgs(argv: string[]): Args {
     else if (flag === "--cleanup") args.cleanup = value();
     else if (flag === "--work-dir") args.workDir = resolve(value());
     else if (flag === "--keep") args.keep = true;
+    else if (flag === "--ignore-requires") args.ignoreRequires = true;
     else if (flag === "--protect") args.protect.push(...value().split(",").map((id) => id.trim()).filter(Boolean));
     else throw new Error(`Unknown argument ${flag}`);
   }
@@ -128,6 +130,13 @@ function tokensOf(usage: Evidence["usage"]): { tokensIn: number; tokensOut: numb
   return { tokensIn: Math.max(usage.tokensIn, usage.ensembleTokensIn), tokensOut: Math.max(usage.tokensOut, usage.ensembleTokensOut) };
 }
 
+const EMPTY: Evidence = { replies: [], answers: [], messages: [], tools: [], agentTools: [], turns: [], tasks: [], pages: [], memories: [], routines: [], missions: [], runs: [], jobs: [], cards: [], sessions: [], usage: { turns: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, credits: 0, ensembleCalls: 0, ensembleTokensIn: 0, ensembleTokensOut: 0, models: [] }, extra: {} };
+
+/** A task this checkout cannot run: it lacks what the task requires. Nothing runs and nothing counts. */
+function skippedResult(task: Task, repeat: number, why: string): RunResult {
+  return { ...result(task, repeat, new Date().toISOString(), "skipped", EMPTY, { checks: [], claims: [] }, [], 0, ""), skipped: why };
+}
+
 function result(task: Task, repeat: number, startedAt: string, status: RunResult["status"], ev: Evidence, graded: { checks: Check[]; claims: string[] }, errors: string[], wallMs: number, trace: string): RunResult {
   const { score, pass, verified } = scoreOf(graded.checks);
   const failedTurns = ev.turns.filter((turn) => turn.status === "failed");
@@ -142,8 +151,8 @@ function result(task: Task, repeat: number, startedAt: string, status: RunResult
     repeat,
     status,
     score,
-    pass: pass && status !== "error",
-    verifiedPass: verified && status !== "error",
+    pass: pass && status !== "error" && status !== "skipped",
+    verifiedPass: verified && status !== "error" && status !== "skipped",
     checks: graded.checks,
     falseClaims: graded.claims,
     metrics: {
@@ -182,7 +191,7 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   const redact = redactor({ [world.dirs.root]: "<work>", [REPO]: "<repo>", [hostname()]: "<computer>" });
   const trace = traceFile(tracePath, redact);
   const owner = await world.newOwner("Mira Chen");
-  const device = await world.pair(owner);
+  const device = await world.pair(owner, { viaLink: task.link === true });
   const dir = join(world.dirs.tasks, `${task.id}-${repeat + 1}`);
   mkdirSync(dir, { recursive: true });
   const drive = await startDrive({ world, owner, task, repeat, dir, deviceId: device.id, trace, ledger, log: (line) => log(`  ${line}`), timeoutMs: task.timeoutMs ?? (task.suite === "crew" ? 25 * 60_000 : CORE_MS) });
@@ -200,11 +209,16 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
         trace.write("before", { what: step.before.what, seen });
         if (!seen) drive.notes.push(`Sent the next message without seeing: ${step.before.what}.`);
       }
-      await say(drive, step.room ?? "main", typeof step.say === "function" ? step.say(ctx) : step.say);
-      if (step.wait !== "none") {
+      if (step.act) {
+        const said = await step.act.run(ctx);
+        trace.write("act", { what: step.act.what, ...(said ? { result: said } : {}) });
+        log(`  harness: ${step.act.what}${said ? `: ${said}` : ""}`);
+      }
+      if (step.say !== undefined) await say(drive, step.room ?? "main", typeof step.say === "function" ? step.say(ctx) : step.say);
+      if (step.wait !== "none" && (step.say !== undefined || step.wait === "quiet")) {
         const outcome = await waitQuiet(drive, 6000, step.quietMs);
         trace.write("wait", { outcome, busy: await busy(drive) });
-        if (outcome === "busy") drive.notes.push(`Still working ${Math.round(step.quietMs! / 60_000)} min after "${typeof step.say === "function" ? "the message" : step.say}": ${(await busy(drive)).join(", ")}.`);
+        if (outcome === "busy") drive.notes.push(`Still working ${Math.round(step.quietMs! / 60_000)} min after "${typeof step.say === "string" ? step.say : step.act ? step.act.what : "the message"}": ${(await busy(drive)).join(", ")}.`);
         if (outcome === "timeout") {
           status = "timeout";
           drive.errors.push(`timed out after ${Math.round((Date.now() - started) / 60_000)} min (${(await busy(drive)).join(", ") || "nothing listed"})`);
@@ -248,6 +262,8 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   // Leave nothing running, delete the task's nodes, then end the pairing and delete this task's agent sessions.
   await stopEverything(drive).catch((error: unknown) => drive.errors.push(`harness: stop: ${error instanceof Error ? error.message : String(error)}`));
   await runCleanups(drive);
+  // A task that took the computer offline leaves it online for the next.
+  await world.computer.online().catch((error: unknown) => drive.errors.push(`harness: computer online: ${error instanceof Error ? error.message : String(error)}`));
   await endNodes(drive).catch((error: unknown) => drive.errors.push(`harness: end nodes: ${error instanceof Error ? error.message : String(error)}`));
   await world.unpair().catch((error: unknown) => drive.errors.push(`harness: unpair: ${error instanceof Error ? error.message : String(error)}`));
   await finalSessions(drive);
@@ -278,7 +294,9 @@ async function main(): Promise<void> {
   const file = `${stamp}-${args.label}`;
   const saved: Saved = { label: args.label, stamp, commit: commit(), agent: args.agent, model: args.model, judgeModel: args.judgeModel, tasks: tasks.map((task) => task.id), repeat: args.repeat, startedAt: new Date().toISOString(), finishedAt: null, results: [], cleanup: [], notes: [...RUN_NOTES] };
   log(`${tasks.length} tasks × ${args.repeat} on ${args.agent} ${args.model}, judge ${args.judgeModel}. Results: ${relative(REPO, join(RESULTS, file))}.{json,md}`);
-  const world = await bootWorld({ workDir: args.workDir, agent: args.agent, model: args.model, log });
+  const runnable = (task: Task) => args.ignoreRequires || !missing(task.requires);
+  const world = await bootWorld({ workDir: args.workDir, agent: args.agent, model: args.model, log, durableComputer: tasks.some((task) => task.restartsComputer && runnable(task)) });
+  if (args.ignoreRequires) saved.notes.push("Run with --ignore-requires: tasks ran on a checkout without what they require (a harness check, not a result).");
   saved.notes.push(world.keyringOnly ? "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through." : "The session bus is off (no xdg-dbus-proxy here).");
   saved.notes.push(`The owner's time zone is ${world.timeZone}, the eval process's (TZ).`);
   const ledger = new SessionLedger(join(world.dirs.root, "ledger.jsonl"), before, new Set(args.protect));
@@ -295,14 +313,22 @@ async function main(): Promise<void> {
         if (stopping) break;
         log(`${task.id} #${repeat + 1}: ${task.title}`);
         let outcome: RunResult;
+        const lacking = args.ignoreRequires ? null : missing(task.requires);
+        if (lacking) {
+          outcome = skippedResult(task, repeat, lacking);
+          saved.results.push(outcome);
+          saveRun(file, saved);
+          log(`skip ${task.id}: ${lacking}`);
+          continue;
+        }
         try {
           outcome = await runTask(world, task, repeat, { label: args.label, ledger, judge, cleanup: saved.cleanup, log, stopping: () => stopping });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`  harness error: ${message}`);
+          await world.computer.online().catch(() => undefined);
           await world.unpair().catch(() => undefined);
-          const empty: Evidence = { replies: [], answers: [], messages: [], tools: [], agentTools: [], turns: [], tasks: [], pages: [], memories: [], routines: [], missions: [], runs: [], jobs: [], cards: [], sessions: [], usage: { turns: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, credits: 0, ensembleCalls: 0, ensembleTokensIn: 0, ensembleTokensOut: 0, models: [] }, extra: {} };
-          outcome = result(task, repeat, new Date().toISOString(), "error", empty, { checks: [check("harness", false, "state", { note: message })], claims: [] }, [`harness: ${message}`], 0, "");
+          outcome = result(task, repeat, new Date().toISOString(), "error", EMPTY, { checks: [check("harness", false, "state", { note: message })], claims: [] }, [`harness: ${message}`], 0, "");
         }
         saved.results.push(outcome);
         saveRun(file, saved);
