@@ -772,15 +772,18 @@ test("a turn someone else can steer goes to no computer whose Ensemble would loa
   const previous = process.env.ENSEMBLE_DESKTOP;
   delete process.env.ENSEMBLE_DESKTOP;
   const cursor = { id: "cursor-agent", via: "cli", version: "2026.11.19", signedIn: true, models: [{ id: "default", label: "Default" }], checkedAt: "now" };
-  const computer = (turns: number) => fakePrisma([{ id: "d1", userId: "u1", name: "Studio Mac", lastSeenAt: new Date(), capabilities: { assistantTurns: turns, agents: [cursor, claudeSignedIn] }, revokedAt: null }]);
+  const codex = { id: "codex", via: "cli", version: "0.163.0", signedIn: true, models: [{ id: "gpt-5.5", label: "GPT-5.5" }], checkedAt: "now" };
+  const computer = (turns: number) => fakePrisma([{ id: "d1", userId: "u1", name: "Studio Mac", lastSeenAt: new Date(), capabilities: { assistantTurns: turns, agents: [cursor, codex, claudeSignedIn] }, revokedAt: null }]);
   const tier = { provider: "included", model: "fast" };
   const settings = { models: { computer: null, easy: tier, medium: tier, high: tier, max: tier } } as never;
   // Stopped from the start: a turn the computer may take ends as soon as it is handed over.
-  const turn = (agent: "cursor-agent" | "claude-code", turns: number) =>
+  const turn = (agent: "cursor-agent" | "codex" | "claude-code", turns: number) =>
     runSubscriptionTurn({ userId: "u1", settings, agent, model: null, system: "Ensemble", prompt: "Hello from Ben.", tools: [], others: true, prisma: computer(turns), call: async () => ({ text: "{}" }), signal: AbortSignal.abort() });
   try {
     await assert.rejects(turn("cursor-agent", 6), /Update Ensemble on Studio Mac: the version there would give Cursor your own MCP servers when it answers other people/);
-    await assert.rejects(turn("claude-code", 6), /Stopped/, "Claude Code goes ahead: it never loads them");
+    await assert.rejects(turn("claude-code", 5), /Stopped/, "Claude Code goes ahead: it never loads them");
+    await assert.rejects(turn("codex", 5), /Update Ensemble on Studio Mac: the version there would give ChatGPT your own MCP servers/);
+    await assert.rejects(turn("codex", 6), /Stopped/, "Codex leaves them out from the follow-ups version on");
     await assert.rejects(turn("cursor-agent", ASSISTANT_TURN_OTHERS), /Stopped/, "a computer that leaves them out takes it");
   } finally {
     if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;

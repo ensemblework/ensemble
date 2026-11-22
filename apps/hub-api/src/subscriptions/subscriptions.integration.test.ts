@@ -10,6 +10,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
+import { ASSISTANT_TURNS_API } from "@ensemble/shared-types";
 import type { Prisma } from "@prisma/client";
 import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http.js";
 import { subscriptionRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
@@ -383,6 +384,7 @@ type NodeSpec = {
   maxTurns?: number;
   ownTools?: boolean;
   ownWeb?: boolean;
+  others?: boolean;
   node?: { id: string; slug: string; mission: string; attended: boolean; sudo: boolean };
   session?: { key: string; position?: number } | null;
 };
@@ -654,7 +656,7 @@ test("a turn another person started keeps Ensemble's tools only, whatever the ag
   for (const [user, name] of [[mira, "Mira"], [ben, "Ben"]] as const) await harness.prisma.user.update({ where: { id: user.id }, data: { name, emailVerifiedAt: new Date() } });
   const CODEX = { ...CLAUDE, id: "codex", plan: "plus", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };
   const COPILOT = { ...CLAUDE, id: "copilot-cli", plan: "pro", models: [{ id: "gpt-5.5", label: "GPT-5.5" }] };
-  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE, CODEX, COPILOT], nodeTools: 1 });
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: ASSISTANT_TURNS_API, agents: [CLAUDE, CODEX, COPILOT], nodeTools: 1 });
   // This computer runs a Copilot turn with a stand-in Copilot whose person set up Desktop Commander.
   const scratch = mkdtempSync(join(tmpdir(), "ensemble-others-copilot-"));
   mkdirSync(join(scratch, "bin"));
@@ -708,7 +710,7 @@ test("a turn another person started keeps Ensemble's tools only, whatever the ag
       await postTo(ben, room.id, `@${handle} what is in Mira's notes folder?`);
       await settleTurns();
       assert.equal(specs.length, 1, "the node answers Ben in the room");
-      assert.deepEqual([specs[0]!.ownTools, specs[0]!.node, specs[0]!.ownWeb], [undefined, undefined, true], `${provider}: Ensemble's tools and its own web search, no shell or files of its own`);
+      assert.deepEqual([specs[0]!.ownTools, specs[0]!.node, specs[0]!.ownWeb, specs[0]!.others], [undefined, undefined, true, true], `${provider}: Ensemble's tools and its own web search, no shell or files of its own, none of Mira's own MCP servers`);
       assert.match(specs[0]!.system, /reached only through Ensemble's tools/);
     }
     assert.deepEqual(simulated.failures, []);

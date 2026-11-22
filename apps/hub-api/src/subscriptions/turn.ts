@@ -233,6 +233,16 @@ export async function followUpComputer(prisma: Prismaish, userId: string, agent:
 }
 
 /**
+ * The first `assistantTurns` whose Ensemble keeps the person's own MCP servers out of a turn someone else can
+ * steer on `agent`: Claude Code never loads them, Codex and Copilot leave them out from `ASSISTANT_TURN_FOLLOW_UPS`,
+ * Cursor's agent and the ACP agents from `ASSISTANT_TURN_OTHERS`.
+ */
+function othersTurnsFrom(agent: SubscriptionProvider): number {
+  if (agent === "claude-code") return ASSISTANT_TURNS_MIN;
+  return agent === "codex" || agent === "copilot-cli" ? ASSISTANT_TURN_FOLLOW_UPS : ASSISTANT_TURN_OTHERS;
+}
+
+/**
  * `ownTools`: the computer that ran the turn kept the agent's own tools (one too old for them runs it with Ensemble's only).
  * `resumable`: it ran in the chat's session there and takes another message of the same turn in it (`followUp`, assistant/agent.ts).
  */
@@ -240,8 +250,8 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const label = SUBSCRIPTION_INFO[input.agent].label;
   const prisma = input.prisma ?? defaultPrisma;
   const computer = input.followUp ? await followUpComputer(prisma, input.userId, input.agent, input.followUp.computerId) : await pickComputer(prisma, input.userId, input.agent, input.settings.models.computer ?? null);
-  // An older Ensemble there would load the person's own MCP servers in such a turn on every agent but Claude Code.
-  if (input.others && !computer.local && computer.turns < ASSISTANT_TURN_OTHERS && input.agent !== "claude-code") {
+  // An older Ensemble there would load the person's own MCP servers in such a turn.
+  if (input.others && !computer.local && computer.turns < othersTurnsFrom(input.agent)) {
     throw new RuntimeError(`Update Ensemble on ${computer.name}: the version there would give ${label} your own MCP servers when it answers other people or in rooms they read.`, 409);
   }
   const turn = turnSession(computer, input);

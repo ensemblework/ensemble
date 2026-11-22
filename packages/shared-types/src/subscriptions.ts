@@ -308,8 +308,9 @@ export const ASSISTANT_TURN_MAX_TURNS = 64;
 export const ASSISTANT_TURN_FOLLOW_UPS = 6;
 /**
  * The first `assistantTurns` that keeps the owner's own MCP servers out of a turn someone else can steer
- * (`others`) on every agent, or refuses it. Older computers load them on every agent but Claude Code, so
- * they get no such turn.
+ * (`others`) on every agent, or refuses it. Older computers load them on Cursor's agent and the ACP agents,
+ * and before `ASSISTANT_TURN_FOLLOW_UPS` on Codex and Copilot too, so they get no such turn on those
+ * (Claude Code never loads them).
  */
 export const ASSISTANT_TURN_OTHERS = 7;
 /**
