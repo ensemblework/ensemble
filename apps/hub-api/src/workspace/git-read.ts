@@ -7,11 +7,11 @@
  * options known to be safe. A long option is matched the way git matches it, by a unique prefix, against
  * every option of that subcommand listed here, the unsafe ones included: an unknown, ambiguous or unsafe
  * option is not a read. Never a read: a `VAR=value` in front (`GIT_EXTERNAL_DIFF`, `GIT_CONFIG_COUNT`,
- * `GIT_SSH_COMMAND`: the shell segment's `assigned`), `-c`, `--config-env`, `--exec-path`, a pager,
- * `-O`/`--open-files-in-pager`, `--ext-diff`, `--textconv`, `--upload-pack`, `--receive-pack`, `--exec`,
- * `--output`, `--edit`/`-e`, `ls-remote` and `fetch` (they reach a remote and run its helpers), and any
- * config write. What a read finds in a repository's own config (a pager, fsmonitor, a diff driver) is the
- * callers' check (workspace/tools.ts `gitConfigSafe`).
+ * `GIT_SSH_COMMAND`: the shell segment's `assigned`), `--bare`, `-c`, `--config-env`, `--exec-path`, a pager,
+ * `-O`/`--open-files-in-pager`, `--ext-diff`, `--textconv`, `--submodule=diff`, `--upload-pack`, `--receive-pack`,
+ * `--exec`, `--output`, `--edit`/`-e`, `ls-remote` and `fetch` (they reach a remote and run its helpers), and any
+ * config write. What a read finds in the repository itself (a pager, fsmonitor, a diff driver, a hook, a checked-out
+ * submodule) is the callers' check (git-config.ts `repositorySafe`, through workspace/tools.ts).
  */
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -185,16 +185,19 @@ const NESTED: Readonly<Record<string, Readonly<Record<string, Spec>>>> = {
 };
 
 /** git's global options that only say where it looks and how it reads paths (exact: git takes no abbreviation of these). */
-const GLOBAL_FLAGS = new Set(["--no-pager", "-P", "--bare", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-replace-objects"]);
+/** `--bare` is not one: it makes the folder git is in its git folder, which the repository check does not follow. */
+const GLOBAL_FLAGS = new Set(["--no-pager", "-P", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-replace-objects"]);
 const GLOBAL_VALUES = new Set(["-C", "--git-dir", "--work-tree", "--namespace"]);
 
-export type GitGlobals = { dirs: string[]; gitDir: string | null; sub: string; rest: string[] } | null;
+/** `at`: the subcommand's index in the argv. */
+export type GitGlobals = { dirs: string[]; gitDir: string | null; workTree: string | null; sub: string; at: number; rest: string[] } | null;
 
 /** The global options of a git argv, the subcommand and its arguments; null when a global option is not one that only says where git looks. */
 export function gitParts(argv: readonly string[]): GitGlobals {
   const args = argv.slice(1);
   const dirs: string[] = [];
   let gitDir: string | null = null;
+  let workTree: string | null = null;
   let index = 0;
   for (; index < args.length && args[index]!.startsWith("-"); index += 1) {
     const arg = args[index]!;
@@ -206,9 +209,10 @@ export function gitParts(argv: readonly string[]): GitGlobals {
     if (value === undefined) return null;
     if (name === "-C") dirs.push(value);
     if (name === "--git-dir") gitDir = value;
+    if (name === "--work-tree") workTree = value;
   }
   const sub = args[index];
-  return sub ? { dirs, gitDir, sub, rest: args.slice(index + 1) } : null;
+  return sub ? { dirs, gitDir, workTree, sub, at: index + 1, rest: args.slice(index + 1) } : null;
 }
 
 /** The option a long option names, by git's unique-prefix rule; null when unknown, ambiguous or unsafe. `--no-<option>` turns a known one off. */
@@ -229,6 +233,9 @@ function longOption(spec: Spec, given: string): { name: string; kind: Kind } | n
   return base ? { name: `no-${base}`, kind: "flag" } : null;
 }
 
+/** Options safe only with these values: `--submodule=diff` runs `git diff` inside each submodule, with its own settings. */
+const SAFE_VALUES: Readonly<Record<string, readonly string[]>> = { submodule: ["log", "short"] };
+
 /** An option's value given as the next word: there, and not itself an option. */
 const valueNext = (args: readonly string[], at: number): boolean => at < args.length && !args[at]!.startsWith("-");
 
@@ -247,6 +254,7 @@ function readsWith(spec: Spec, args: readonly string[]): boolean {
       const option = longOption(spec, eq > 0 ? arg.slice(2, eq) : arg.slice(2));
       if (!option) return false;
       if (option.kind === "flag" && eq > 0) return false;
+      if (eq > 0 && SAFE_VALUES[option.name] && !SAFE_VALUES[option.name]!.includes(arg.slice(eq + 1))) return false;
       // A value in the next word is skipped only when it cannot be an option: were git to read this option as a flag, that
       // word would be its next option.
       if (option.kind === "value" && eq < 0 && !valueNext(args, (index += 1))) return false;

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { env } from "../config.js";
 import { compileSeatbeltProfile, SECRET_HOME_PATHS } from "./sandbox/seatbelt.js";
-import { programArgv } from "./shell-parse.js";
+import { globRegex, programArgv } from "./shell-parse.js";
 import { capabilities } from "./sandbox/spawn.js";
 import { ensembleDataDenies, isEnsembleData } from "./data-denies.js";
 
@@ -234,6 +234,36 @@ export function outsideRefusal(real: string, write: boolean, home = HOME): strin
     return "Another account's files are off limits.";
   }
   if (write && (real === "/" || real === dirname(home))) return "Writing at the top of the disk is refused.";
+  return null;
+}
+
+/**
+ * For a path with glob characters whose names cannot all be listed: why `outsideRefusal` would refuse a name it could
+ * reach, matching its components against each protected folder's (keys and sign-ins, Ensemble's data and git helper;
+ * for writes also start-up files, Ensemble's code and the system's folders), or a glob where an account's name stands
+ * under a folder of accounts. null when it can reach none of them.
+ */
+export function globRefusal(pattern: string, write: boolean, home = HOME): string | null {
+  const split = (path: string) => path.split(process.platform === "win32" ? /[\\/]/ : "/").filter(Boolean);
+  const parts = split(pattern);
+  const glob = (part: string) => /[*?[]/.test(part);
+  // The words judged here have lost their quotes: every glob character counts, and a backslash is part of a name.
+  const fits = (index: number, name: string) => (glob(parts[index]!) ? (globRegex(parts[index]!.replace(/\\/g, "\\\\"))?.test(name) ?? true) : parts[index] === name);
+  const reaches = (folder: string) => {
+    const names = split(folder);
+    return parts.length >= names.length && names.every((name, index) => fits(index, name));
+  };
+  for (const name of SECRET_PATHS) if (reaches(join(home, name))) return `~/${name} holds keys, sign-ins or browser data.`;
+  if ([...ensembleDataDenies({ home }), join(knownWorkspace(), ".askpass"), join(configuredWorkspace(), ".askpass")].some(reaches)) return "Ensemble's own data is off limits.";
+  if (write) {
+    for (const name of STARTUP_PATHS) if (reaches(join(home, name))) return `~/${name} runs at sign-in or start-up, so a run does not change it.`;
+    if (reaches(ENSEMBLE_SOURCE)) return "This is Ensemble's own code: a run does not change it.";
+    for (const root of [...SYSTEM_ROOTS, ...windowsSystemRoots()]) if (reaches(root)) return `${root} holds the operating system or installed apps.`;
+  }
+  for (const folder of ACCOUNT_FOLDERS) {
+    const names = split(folder);
+    if (parts.length > names.length && names.every((name, index) => fits(index, name)) && glob(parts[names.length]!)) return "Another account's files are off limits.";
+  }
   return null;
 }
 

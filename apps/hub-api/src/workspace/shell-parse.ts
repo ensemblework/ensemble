@@ -20,13 +20,90 @@ export type ShellSegment = {
    * expands `${VAR}` in its string. What the program will be given cannot be judged from the command.
    */
   fed?: boolean;
+  /**
+   * The words of `argv` with an unquoted `*`, `?` or `[…]`, as glob patterns: quoted characters escaped with `\`, so
+   * `"*"x*` is `\*x*`. The shell expands each to the names it matches, so a name such as `-Osh` in the folder can
+   * become an option of the program (workspace/tools.ts `segmentReadsOnly` looks).
+   */
+  globs?: Array<{ index: number; pattern: string }>;
 };
+
+/** A glob pattern's own text for `text` the shell took literally (quoted or escaped): its glob characters escaped. */
+const literalGlob = (text: string): string => text.replace(/[\\*?[\]]/g, "\\$&");
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A regular expression for one path component of a glob pattern (`*`, `?`, `[…]` with `!` or `^`, `\x` taken as
+ * `x`), in any case and taking dot names too, so it matches at least what the shell matches; null for a bracket form
+ * this does not read (`[[:alpha:]]`), which callers take as matching anything.
+ */
+export function globRegex(component: string): RegExp | null {
+  let source = "";
+  for (let at = 0; at < component.length; at += 1) {
+    const char = component[at]!;
+    if (char === "\\") source += escapeRegex(component[(at += 1)] ?? "\\");
+    else if (char === "*") source += "[^/]*";
+    else if (char === "?") source += "[^/]";
+    else if (char === "[") {
+      let end = at + 1;
+      if (component[end] === "!" || component[end] === "^") end += 1;
+      if (component[end] === "]") end += 1;
+      while (end < component.length && component[end] !== "]") end += component[end] === "\\" ? 2 : 1;
+      if (end >= component.length) {
+        source += "\\[";
+        continue;
+      }
+      let body = component.slice(at + 1, end);
+      if (/\[[:=.]/.test(body)) return null;
+      const negate = body[0] === "!" || body[0] === "^";
+      if (negate) body = body.slice(1);
+      let set = "";
+      for (let index = 0; index < body.length; index += 1) {
+        let member = body[index]!;
+        if (member === "\\" && index + 1 < body.length) member = body[(index += 1)]!;
+        else if (member === "-" && index > 0 && index < body.length - 1) {
+          set += "-";
+          continue;
+        }
+        set += /[\\\][^-]/.test(member) ? `\\${member}` : member;
+      }
+      source += `[${negate ? "^/" : ""}${set}]`;
+      at = end;
+    } else source += escapeRegex(char);
+  }
+  try {
+    return new RegExp(`^${source}$`, "i");
+  } catch {
+    return null;
+  }
+}
+
+/** The part of a glob pattern before its first unescaped `/`: what the start of each name it expands to is matched against. */
+export function firstGlobComponent(pattern: string): string {
+  for (let at = 0; at < pattern.length; at += 1) {
+    if (pattern[at] === "\\") at += 1;
+    else if (pattern[at] === "/") return pattern.slice(0, at);
+  }
+  return pattern;
+}
+
+/** Whether a pattern from `parseShell` has an unescaped `*` or `?`, or an unescaped `[` with a `]` after it. */
+export function hasGlob(pattern: string): boolean {
+  for (let at = 0; at < pattern.length; at += 1) {
+    const char = pattern[at]!;
+    if (char === "\\") at += 1;
+    else if (char === "*" || char === "?") return true;
+    else if (char === "[" && /(^|[^\\])\]/.test(pattern.slice(at + 2))) return true;
+  }
+  return false;
+}
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** Words in front of the real program that change how it runs; `xargs` also gives it more arguments (`FEEDERS`). */
 const WRAPPERS = new Set(["time", "nice", "nohup", "command", "builtin", "exec", "stdbuf", "timeout", "caffeinate", "xargs", "setsid", "ionice", "chrt", "taskset", "unbuffer"]);
-/** Wrappers that add arguments of their own at run time: from the input or a file (`xargs`), or by expanding variables (`env -S`). */
-const FEEDERS = new Set(["xargs"]);
+/** Programs that add arguments of their own at run time, from the input or a file: anywhere in front of the program, the words cannot say what runs. */
+const FEEDERS = new Set(["xargs", "parallel"]);
 /** A wrapper's options that take the next word as their value. */
 const VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   env: new Set(["-u", "--unset", "-C", "--chdir"]),
@@ -67,15 +144,12 @@ export function expandWord(word: string, home = homedir()): string {
   return expanded;
 }
 
-/** Whether the wrappers in front of a program give it arguments the words do not show (`xargs …`, `env -S …`). */
-export function fedArguments(words: string[]): boolean {
-  for (const word of words) {
-    if (ASSIGNMENT.test(word)) continue;
-    const name = word.split(/[\\/]/).pop()!;
-    if (FEEDERS.has(name)) return true;
-    if (name !== "env" && !WRAPPERS.has(name) && !word.startsWith("-") && !/^\d+(\.\d+)?[smhd]?$/.test(word)) return false;
-  }
-  return false;
+/**
+ * Whether the words stripped from in front of a program give it arguments the words do not show: `xargs` or `parallel`
+ * anywhere among them, whatever the wrappers' own options and values (`timeout -s KILL 5 xargs …`).
+ */
+export function fedArguments(front: string[]): boolean {
+  return front.some((word) => FEEDERS.has(word.split(/[\\/]/).pop()!));
 }
 
 /** The program and its arguments without leading `VAR=value` assignments and wrappers like `env` or `nohup`. */
@@ -117,6 +191,9 @@ export function parseShell(command: string, root: string, home = homedir()): She
   let words: string[] = [];
   let redirects: ShellSegment["redirects"] = [];
   let word = "";
+  /** The word as a glob pattern (`ShellSegment.globs`); `patterns` keeps it for each of `words` that has a glob. */
+  let pattern = "";
+  let patterns: Array<string | null> = [];
   let inWord = false;
   let redirect: { write: boolean } | "skip" | "heredoc" | null = null;
   const heredocs: Array<{ end: string; tabs: boolean }> = [];
@@ -126,9 +203,13 @@ export function parseShell(command: string, root: string, home = homedir()): She
     if (!inWord) return;
     if (redirect === "heredoc") heredocs.push({ end: word, tabs: heredocTabs });
     else if (redirect && redirect !== "skip") redirects.push({ path: expandWord(word, home), write: redirect.write });
-    else if (!redirect) words.push(word);
+    else if (!redirect) {
+      words.push(word);
+      patterns.push(hasGlob(pattern) ? pattern : null);
+    }
     redirect = null;
     word = "";
+    pattern = "";
     inWord = false;
   };
   const endSegment = () => {
@@ -136,11 +217,13 @@ export function parseShell(command: string, root: string, home = homedir()): She
     redirect = null;
     const argv = programArgv(words);
     const front = words.slice(0, words.length - argv.length);
+    const offset = words.length - argv.length;
+    const globs = patterns.flatMap((glob, at) => (glob !== null && at >= offset ? [{ index: at - offset, pattern: glob }] : []));
     const assigned = front.some((word) => ASSIGNMENT.test(word) || word.split(/[\\/]/).pop() === "env");
     // `env -S '…'` splits and expands its string (programArgv reads the words it gives), `xargs` adds what it reads.
     const fed = fedArguments(front) || envSplits(words);
     if (argv.length || redirects.length || assigned) {
-      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}), ...(fed ? { fed: true } : {}) });
+      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}), ...(fed ? { fed: true } : {}), ...(globs.length ? { globs } : {}) });
       const name = argv[0]?.split(/[\\/]/).pop();
       // `bash -c '…'` (or -lc, sh, zsh): the script is shell too, read as commands of its own.
       if (name && SHELLS.has(name)) {
@@ -154,6 +237,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       } else if (name === "popd") cwd = root;
     }
     words = [];
+    patterns = [];
     redirects = [];
   };
   const skipHeredocs = (from: number): number => {
@@ -175,7 +259,9 @@ export function parseShell(command: string, root: string, home = homedir()): She
     const char = command[index]!;
     if (char === "'") {
       const end = command.indexOf("'", index + 1);
-      word += command.slice(index + 1, end < 0 ? command.length : end);
+      const quoted = command.slice(index + 1, end < 0 ? command.length : end);
+      word += quoted;
+      pattern += literalGlob(quoted);
       inWord = true;
       index = end < 0 ? command.length : end;
       continue;
@@ -186,6 +272,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
         const here = command[cursor]!;
         if (here === "\\" && cursor + 1 < command.length && '"\\$`\n'.includes(command[cursor + 1]!)) {
           word += command[cursor + 1];
+          pattern += literalGlob(command[cursor + 1]!);
           cursor += 2;
           continue;
         }
@@ -193,10 +280,12 @@ export function parseShell(command: string, root: string, home = homedir()): She
           const close = closing(command, cursor + 1);
           nested.push({ text: command.slice(cursor + 2, close), cwd });
           word += command.slice(cursor, close + 1);
+          pattern += literalGlob(command.slice(cursor, close + 1));
           cursor = close + 1;
           continue;
         }
         word += here;
+        pattern += literalGlob(here);
         cursor += 1;
       }
       inWord = true;
@@ -206,6 +295,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
     if (char === "\\" && index + 1 < command.length) {
       if (command[index + 1] !== "\n") {
         word += command[index + 1];
+        pattern += literalGlob(command[index + 1]!);
         inWord = true;
       }
       index += 1;
@@ -216,6 +306,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       // $((arithmetic)) is not a command.
       if (command[index + 2] !== "(") nested.push({ text: command.slice(index + 2, close), cwd });
       word += command.slice(index, close + 1);
+      pattern += literalGlob(command.slice(index, close + 1));
       inWord = true;
       index = close;
       continue;
@@ -224,6 +315,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       const end = command.indexOf("`", index + 1);
       nested.push({ text: command.slice(index + 1, end < 0 ? command.length : end), cwd });
       word += "`…`";
+      pattern += "`…`";
       inWord = true;
       index = end < 0 ? command.length : end;
       continue;
@@ -246,6 +338,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       // A word of digits right before it is a file descriptor: `2>`.
       if (inWord && /^\d+$/.test(word)) {
         word = "";
+        pattern = "";
         inWord = false;
       } else pushWord();
       if (char === "<" && command[index + 1] === "<") {
@@ -288,6 +381,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       continue;
     }
     word += char;
+    pattern += char;
     inWord = true;
   }
   endSegment();
