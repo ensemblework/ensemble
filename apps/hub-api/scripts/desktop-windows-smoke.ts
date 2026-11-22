@@ -16,7 +16,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 if (process.platform !== "win32") throw new Error("The Windows desktop smoke test runs on Windows only.");
@@ -46,6 +46,10 @@ const asked: string[] = [];
 const caller: Caller = { key: "node:smoke:windows", label: "the Windows smoke test", budgetMs: 120_000, gate: async (app) => (asked.push(`${app.category}: ${app.name}`), { allow: true }) };
 const children: ChildProcess[] = [];
 const failures: string[] = [];
+/** What could not be checked because Windows keeps the foreground on a window that is no app's (`--foreground-may-be-held`). */
+const unchecked: string[] = [];
+const heldOk = process.argv.includes("--foreground-may-be-held");
+let held: string | null = null;
 
 /** A check that lets the rest of the smoke run; the run fails at the end. */
 function expect(ok: unknown, message: string): boolean {
@@ -54,6 +58,16 @@ function expect(ok: unknown, message: string): boolean {
     console.log(`  FAILED: ${message}`);
   }
   return Boolean(ok);
+}
+
+/** A check of the owner's screen: not made while a window that is no app's holds the foreground on a runner that may have one. */
+function onScreen(ok: () => unknown, message: string): boolean {
+  if (held && heldOk) {
+    unchecked.push(message);
+    console.log(`  NOT CHECKED (${held}, a window that is no app's, holds the foreground): ${message}`);
+    return false;
+  }
+  return expect(ok(), message);
 }
 
 step("the session probe");
@@ -116,22 +130,29 @@ try {
   step("bring it to the front (asks for the owner's screen once)");
   const front = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
   console.log(`  ${JSON.stringify(front.steps)}`);
-  console.log(`  in front: ${await frontName()}`);
-  // Windows' foreground lock can keep it behind (seen on the Windows 11 arm64 runner, whose foreground is the shell):
-  // then the step says so, and the click into its text below brings it forward.
+  console.log(`  in front: ${(await frontApp()) ?? "no app"}`);
+  // Windows' foreground lock can keep it behind: then the step says so, and a click into its text brings it forward.
   expect(front.steps[0]!.verdict === "confirmed" || (front.steps[0]!.verdict === "partial" && /did not come to the front/.test(front.steps[0]!.detail ?? "")), `the open step brought Notepad to the front or said it did not (${front.steps[0]!.verdict}: ${front.steps[0]!.detail ?? ""})`);
 
   step("click into its text, by its place on a screenshot, and go to its end");
   const at = await editorPoint();
   const aim = await service.observe(caller, { elements: false });
   assert.ok(aim.display && aim.scale, "a screenshot to aim at");
-  const click = await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale), y: Math.round(at.y / aim.scale), captureId: aim.captureId }, { action: "key", keys: "ctrl+End" }], observe: false });
-  console.log(`  at ${at.x},${at.y}, then ctrl+End: ${JSON.stringify(click.steps)}`);
-  expect(click.steps.every((done) => done.ran === "yes"), "the click and the keys ran");
-  const inFront = await frontName();
-  console.log(`  in front: ${inFront}`);
+  // A click into an empty text box may change nothing on the screen (no_effect), which ends a batch: the keys go apart.
+  const click = await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale), y: Math.round(at.y / aim.scale), captureId: aim.captureId }], observe: false });
+  console.log(`  at ${at.x},${at.y}: ${JSON.stringify(click.steps)}`);
+  expect(click.steps[0]!.ran === "yes", "the click ran");
+  if (!(await frontApp())) {
+    // Nothing that is an app holds the foreground, and a click into Notepad does not reach it: a system window covers
+    // the desktop (the Windows 11 arm64 runner shows Windows' first sign-in privacy screen; screen.png shows it).
+    held = foregroundHolder();
+    console.log(`  the foreground: ${held}`);
+  }
+  if (onScreen(() => /notepad/i.test(frontAppName), `Notepad is in front after the click`)) {
+    const end = await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "ctrl+End" }], observe: false });
+    console.log(`  ctrl+End: ${JSON.stringify(end.steps)}`);
+    expect(end.steps[0]!.ran === "yes", "ctrl+End ran");
 
-  if (expect(/notepad/i.test(inFront), `Notepad is in front after the click (${inFront})`)) {
     step(`type "${TEXT}" in chunks`);
     const chunksBefore = calls.filter((call) => call.name === "type_text").length;
     const typed = await service.act(caller, { foreground: true, steps: [{ action: "type", text: TEXT }], observe: false });
@@ -144,6 +165,8 @@ try {
     const text = await notepadText();
     console.log(`  ${JSON.stringify(text)}`);
     expect(text.includes(TEXT), `typed in front, Notepad holds ${JSON.stringify(text)} (${typed.steps[0]!.verdict}: ${typed.steps[0]!.detail ?? ""})`);
+  } else {
+    onScreen(() => false, `"${TEXT}" typed in chunks in front and read back`);
   }
 
   step("screenshot");
@@ -156,15 +179,14 @@ try {
   expect(colours(pixels.data) > 16, "the picture is not blank");
   copyFileSync(look.image.path, join(out, "screen.png"));
 
-  if (/notepad/i.test(await frontName())) {
+  const keysInFront = /notepad/i.test((await frontApp()) ?? "");
+  if (onScreen(() => keysInFront, "Notepad is in front for the keys")) {
     step("keys: select all and delete");
     const keys = await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "ctrl+a" }, { action: "key", keys: "BackSpace" }], observe: false });
     console.log(`  ${JSON.stringify(keys.steps)}`);
     expect(keys.steps.every((done) => done.ran === "yes"), "the keys ran");
     const cleared = await notepadText();
     expect(!cleared.includes(TEXT) && !cleared.includes(BEHIND), `after the keys Notepad holds ${JSON.stringify(cleared)}`);
-  } else {
-    expect(false, "Notepad is in front for the keys");
   }
 
   step("recording");
@@ -202,9 +224,14 @@ try {
 
   step("close Notepad without saving");
   // A title bar's Close button is not pressed through UI Automation in the background (cua-driver posts a click that
-  // the title bar ignores): alt+F4 goes to Notepad in front.
-  if (expect(await notepadInFront(), `Notepad is in front for alt+F4 (${await frontName()})`)) {
-    console.log(`  alt+F4: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false })).steps)}`);
+  // the title bar ignores): alt+F4 goes to Notepad in front, or its File menu's Exit is pressed in the background.
+  if (!held && expect(await notepadInFront(), `Notepad is in front for alt+F4 (${(await frontApp()) ?? "no app"})`)) {
+    // Windows may not see Notepad read the keys before its window closes: then they ran "maybe", never "no".
+    const closing = await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false });
+    console.log(`  alt+F4: ${JSON.stringify(closing.steps)}`);
+    expect(closing.steps[0]!.ran !== "no", `alt+F4 ran (${closing.steps[0]!.ran})`);
+  } else if (held) {
+    await exitByMenu();
   }
   // Closed: no window of Notepad's twice in a row; a prompt to save is answered "Don't save" by its button, else by
   // its key in front.
@@ -223,22 +250,29 @@ try {
     if (!dontSave) continue;
     presses += 1;
     if (presses <= 2) console.log(`  Don't Save, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: dontSave.id }], observe: false })).steps)}`);
-    else if (presses === 3) console.log(`  Don't Save by its key (n), in front of ${await frontName()}: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "n" }], observe: false })).steps)}`);
+    else if (presses === 3 && !held) console.log(`  Don't Save by its key (n), in front of ${(await frontApp()) ?? "no app"}: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "n" }], observe: false })).steps)}`);
   }
-  expect(gone >= 2, "Notepad is closed");
+  if (held && gone < 2) onScreen(() => false, "Notepad closed without saving (alt+F4 needs it in front; its File menu's Exit in the background did not close it)");
+  else expect(gone >= 2, "Notepad is closed");
   console.log(`  the owner was asked about: ${JSON.stringify(asked)}`);
   expect(asked.some((item) => item.startsWith("screen")), "the owner's screen was asked for");
-  writeFileSync(join(out, "result.json"), JSON.stringify({ ok: failures.length === 0, failures, seconds: (Date.now() - started) / 1000, readiness: { checks: readiness.checks, recorder: readiness.recorder } }, null, 2));
+  writeFileSync(join(out, "result.json"), JSON.stringify({ ok: failures.length === 0, failures, unchecked, held, seconds: (Date.now() - started) / 1000, readiness: { checks: readiness.checks, recorder: readiness.recorder } }, null, 2));
 } finally {
   for (const child of children) child.kill();
   await service.stop().catch(() => undefined);
   await driver.stop().catch(() => undefined);
 }
+if (unchecked.length) {
+  // Said on the job's page: these need the owner's screen, which this runner does not give.
+  const why = `${held}, a window that is no app's, holds the foreground on this runner and covers the desktop (screen.png in the artifact shows it), so what needs the owner's screen was not checked here: ${unchecked.join("; ")}. The background steps were checked.`;
+  console.log(`::warning title=Desktop control smoke: the owner's screen was not checked::${why}`);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Desktop control smoke\n\n${why}\n`);
+}
 if (failures.length) {
   console.log(`\n${failures.length} check(s) failed:\n${failures.map((failure) => `  - ${failure}`).join("\n")}`);
   process.exit(1);
 }
-step("all checks passed");
+step(unchecked.length ? `all checks passed but ${unchecked.length} that need the owner's screen` : "all checks passed");
 
 /** cua-driver's calls: each action with its answer, and any call that failed or took more than 3 s. */
 function trace(target: object): Array<{ name: string; ms: number; error: boolean }> {
@@ -266,19 +300,48 @@ function trace(target: object): Array<{ name: string; ms: number; error: boolean
 
 /** Notepad in front: brought there by an open step, else by a click into its text. */
 async function notepadInFront(): Promise<boolean> {
-  if (/notepad/i.test(await frontName())) return true;
+  if (/notepad/i.test((await frontApp()) ?? "")) return true;
   console.log(`  bring Notepad forward: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false })).steps)}`);
-  if (/notepad/i.test(await frontName())) return true;
+  if (/notepad/i.test((await frontApp()) ?? "")) return true;
   const at = await editorPoint();
   const aim = await service.observe(caller, { elements: false });
   console.log(`  click into its text: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale!), y: Math.round(at.y / aim.scale!), captureId: aim.captureId }], observe: false })).steps)}`);
-  return /notepad/i.test(await frontName());
+  return /notepad/i.test((await frontApp()) ?? "");
 }
 
-/** The app in front, as desktop control sees it. */
-async function frontName(): Promise<string> {
-  const look = await service.observe(caller, { screenshot: false, elements: false }).catch((error: unknown) => ({ focus: { app: `(${error instanceof Error ? error.message.slice(0, 120) : "no answer"})`, window: null } }));
-  return `${look.focus?.app ?? "nothing"}${look.focus?.window ? ` “${look.focus.window}”` : ""}`;
+let frontAppName = "";
+/** The app in front with its window's title, as desktop control sees it; null when no app is. */
+async function frontApp(): Promise<string | null> {
+  const look = await service.observe(caller, { screenshot: false, elements: false }).catch(() => null);
+  frontAppName = look?.focus?.app ? `${look.focus.app}${look.focus.window ? ` “${look.focus.window}”` : ""}` : "";
+  return frontAppName || null;
+}
+
+/** The program and window class of the foreground window, from Windows itself (Windows PowerShell 5.1). */
+function foregroundHolder(): string {
+  const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
+  const script = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public static class Fg { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n); }'; $h = [Fg]::GetForegroundWindow(); $p = [uint32]0; [void][Fg]::GetWindowThreadProcessId($h, [ref]$p); $c = New-Object System.Text.StringBuilder 256; [void][Fg]::GetClassName($h, $c, 256); "$((Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName).exe (window class $c)"`;
+  const answer = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: shellEnv, timeout: 60_000 });
+  return answer.stdout.trim().split("\n").pop()?.trim() || "a window Windows did not name";
+}
+
+/** Notepad's File menu, then Exit (or Close window), pressed through UI Automation in the background. */
+async function exitByMenu(): Promise<void> {
+  const look = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
+  const file = look.tree?.elements.find((element) => element.role === "menu item" && /^file$/i.test(element.name));
+  if (!file) return void console.log("  no File menu");
+  console.log(`  File, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: file.id }], observe: false })).steps)}`);
+  for (let tries = 0; tries < 6; tries += 1) {
+    await sleep(500);
+    const menu = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 300 }).catch(() => null);
+    const exit = menu?.tree?.elements.find((element) => /^(?:exit|close window)$/i.test(element.name.replace(/&/g, "").trim()));
+    if (!exit) {
+      if (tries === 5) console.log(`  no Exit among ${JSON.stringify(menu?.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`).slice(0, 60))}`);
+      continue;
+    }
+    console.log(`  ${exit.name}, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: exit.id }], observe: false })).steps)}`);
+    return;
+  }
 }
 
 /** Notepad's text, read through UI Automation (its editor's value). */

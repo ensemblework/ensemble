@@ -357,6 +357,12 @@ test("the owner's pointer and keyboard are asked once per mission; keys and clic
   const keys = await h.service.act(owner, { foreground: true, steps: [{ action: "key", keys: "cmd+s" }] });
   assert.equal(keys.steps[0]!.verdict, "confirmed");
   assert.deepEqual(h.calls().find((call) => call.tool === "hotkey")!.args, { keys: ["ctrl", "s"], scope: "desktop" }, "a Mac's cmd is ctrl here");
+  // Keys Windows took but did not see the app read (alt+F4 that closed it): they may have gone in, never "not run".
+  h.set({ keysStall: true });
+  const closing = await h.service.act(owner, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }] });
+  assert.deepEqual([closing.steps[0]!.verdict, closing.steps[0]!.ran], ["unknown", "maybe"], closing.steps[0]!.detail);
+  assert.match(closing.steps[0]!.detail!, /may still arrive/);
+  h.set({ keysStall: false });
   assert.deepEqual(asked.map((app) => app.id), ["screen:owner"], "one press for the mission");
 });
 

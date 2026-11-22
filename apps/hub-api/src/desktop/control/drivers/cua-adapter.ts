@@ -435,6 +435,10 @@ export abstract class CuaAdapter extends EventEmitter {
     const code = str(error.code) ?? str(refusal.code) ?? str(data.code) ?? str(data.error);
     const text = str(error.hint) ?? str(refusal.message) ?? textOf(result) ?? str(data.hint) ?? `${name} failed.`;
     const kind = kindOf(code, text, effects);
+    // Windows took the input but did not see the app read it within 2 s (its window may have closed): it may still arrive.
+    if (effects && /\b(?:input|text)_delivery_stalled\b/.test(textOf(result) ?? "")) {
+      return new HelperError("input_failed", "Windows did not confirm within 2 seconds that the app read the input: it was sent and may still arrive, or the app's window closed. Look before repeating it.", "maybe", false, code ? { code } : {});
+    }
     // A refusal is decided before anything is sent; a bare failure of an action may have gone part way.
     const ran: Ran = code !== null || data.effect === "refused" || data.status === "refused" || !effects ? "no" : "maybe";
     if (kind === "consent_needed") return this.consentError(code, text, ran);

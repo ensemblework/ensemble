@@ -228,7 +228,11 @@ const tools = {
     return ok(action(live.effects?.type_text ?? "confirmed", { route: args.element_token ? "accessibility" : "synthetic_events" }));
   },
   press_key: (args, live) => ok(action(live.effects?.press_key ?? "unverifiable", { route: "synthetic_events" })),
-  hotkey: (args, live) => ok(action(live.effects?.hotkey ?? "unverifiable", { route: "synthetic_events" })),
+  hotkey: (args, live) => {
+    // Windows inserted the keys and the app did not read them within 2 s (alt+F4 closing its window does that).
+    if (live.keysStall) return failed("input_delivery_stalled: Windows did not confirm that the target read the key delivery input within 2000 ms. It was inserted and may still appear in the target. Nothing was retried; inspect the target before repeating it.", { code: "tool_invocation_failed", foreground_restored: false });
+    return ok(action(live.effects?.hotkey ?? "unverifiable", { route: "synthetic_events" }));
+  },
   scroll: (args, live) => ok(action(live.effects?.scroll ?? "unverifiable", { route: "synthetic_events" })),
   drag: () => {
     world.seed += 1;

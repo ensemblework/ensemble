@@ -2,7 +2,9 @@ name: desktop-windows-smoke
 
 # Desktop control on a real Windows desktop: the pinned Cua Driver (checked by its SHA-256 and Authenticode
 # signature) and the session probe under DesktopService, on the runner's interactive session
-# (apps/hub-api/scripts/desktop-windows-smoke.ts). It keeps the screenshot it took as an artifact.
+# (apps/hub-api/scripts/desktop-windows-smoke.ts). It keeps the screenshot it took as an artifact. On the Windows 11
+# arm64 runner Windows' first sign-in privacy screen covers the desktop and holds the foreground: there the steps that
+# need the owner's screen are reported as not checked (a warning on the job's page), and the background steps must pass.
 on:
   pull_request:
     paths:
@@ -29,8 +31,10 @@ jobs:
         include:
           - os: windows-2022
             arch: x64
+            args: ""
           - os: windows-11-arm
             arch: arm64
+            args: --foreground-may-be-held
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -77,7 +81,7 @@ jobs:
           DATABASE_URL: postgresql://localhost/unused
         run: |
           $env:ENSEMBLE_CUA_DRIVER_DIR = Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke\bin'
-          pnpm --filter @ensemble/hub-api exec tsx scripts/desktop-windows-smoke.ts --out (Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke\out')
+          pnpm --filter @ensemble/hub-api exec tsx scripts/desktop-windows-smoke.ts --out (Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke\out') ${{ matrix.args }}
 
       - name: Keep the screenshot
         if: always()
