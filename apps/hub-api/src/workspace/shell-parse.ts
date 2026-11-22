@@ -20,13 +20,19 @@ export type ShellSegment = {
    * expands `${VAR}` in its string. What the program will be given cannot be judged from the command.
    */
   fed?: boolean;
+  /**
+   * An unquoted glob that can expand to a name starting with `-` (`*`, `*.md`, `?x`, `-*`: nothing or a `-` before it),
+   * before `--` (anywhere for `find`, whose expressions follow its operands): a file named `-Osh` in the folder would
+   * become an option of the program. What it will be given cannot be judged from the command.
+   */
+  optionGlob?: boolean;
 };
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** Words in front of the real program that change how it runs; `xargs` also gives it more arguments (`FEEDERS`). */
 const WRAPPERS = new Set(["time", "nice", "nohup", "command", "builtin", "exec", "stdbuf", "timeout", "caffeinate", "xargs", "setsid", "ionice", "chrt", "taskset", "unbuffer"]);
-/** Wrappers that add arguments of their own at run time: from the input or a file (`xargs`), or by expanding variables (`env -S`). */
-const FEEDERS = new Set(["xargs"]);
+/** Programs that add arguments of their own at run time, from the input or a file: anywhere in front of the program, the words cannot say what runs. */
+const FEEDERS = new Set(["xargs", "parallel"]);
 /** A wrapper's options that take the next word as their value. */
 const VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   env: new Set(["-u", "--unset", "-C", "--chdir"]),
@@ -67,15 +73,12 @@ export function expandWord(word: string, home = homedir()): string {
   return expanded;
 }
 
-/** Whether the wrappers in front of a program give it arguments the words do not show (`xargs …`, `env -S …`). */
-export function fedArguments(words: string[]): boolean {
-  for (const word of words) {
-    if (ASSIGNMENT.test(word)) continue;
-    const name = word.split(/[\\/]/).pop()!;
-    if (FEEDERS.has(name)) return true;
-    if (name !== "env" && !WRAPPERS.has(name) && !word.startsWith("-") && !/^\d+(\.\d+)?[smhd]?$/.test(word)) return false;
-  }
-  return false;
+/**
+ * Whether the words stripped from in front of a program give it arguments the words do not show: `xargs` or `parallel`
+ * anywhere among them, whatever the wrappers' own options and values (`timeout -s KILL 5 xargs …`).
+ */
+export function fedArguments(front: string[]): boolean {
+  return front.some((word) => FEEDERS.has(word.split(/[\\/]/).pop()!));
 }
 
 /** The program and its arguments without leading `VAR=value` assignments and wrappers like `env` or `nohup`. */
@@ -118,6 +121,9 @@ export function parseShell(command: string, root: string, home = homedir()): She
   let redirects: ShellSegment["redirects"] = [];
   let word = "";
   let inWord = false;
+  /** Where in the word an unquoted `*`, `?` or `[` follows nothing or a `-` (an expansion that can start with `-`); `globs` keeps whether each of `words` has one. */
+  let globAt: number[] = [];
+  let globs: boolean[] = [];
   let redirect: { write: boolean } | "skip" | "heredoc" | null = null;
   const heredocs: Array<{ end: string; tabs: boolean }> = [];
   let heredocTabs = false;
@@ -126,21 +132,29 @@ export function parseShell(command: string, root: string, home = homedir()): She
     if (!inWord) return;
     if (redirect === "heredoc") heredocs.push({ end: word, tabs: heredocTabs });
     else if (redirect && redirect !== "skip") redirects.push({ path: expandWord(word, home), write: redirect.write });
-    else if (!redirect) words.push(word);
+    else if (!redirect) {
+      words.push(word);
+      // `[` is a glob only with its `]` (`[ -f x ]` is the test command).
+      globs.push(globAt.some((at) => word[at] !== "[" || word.indexOf("]", at + 1) > 0));
+    }
     redirect = null;
     word = "";
     inWord = false;
+    globAt = [];
   };
   const endSegment = () => {
     pushWord();
     redirect = null;
     const argv = programArgv(words);
     const front = words.slice(0, words.length - argv.length);
+    // A glob that can expand into an option, before any `--` (after it every word is an operand, but for find's expressions).
+    const ends = argv[0]?.split(/[\\/]/).pop() === "find" ? -1 : argv.indexOf("--");
+    const optionGlob = globs.slice(words.length - argv.length).some((glob, index) => glob && (ends < 0 || index < ends));
     const assigned = front.some((word) => ASSIGNMENT.test(word) || word.split(/[\\/]/).pop() === "env");
     // `env -S '…'` splits and expands its string (programArgv reads the words it gives), `xargs` adds what it reads.
     const fed = fedArguments(front) || envSplits(words);
     if (argv.length || redirects.length || assigned) {
-      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}), ...(fed ? { fed: true } : {}) });
+      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}), ...(fed ? { fed: true } : {}), ...(optionGlob ? { optionGlob: true } : {}) });
       const name = argv[0]?.split(/[\\/]/).pop();
       // `bash -c '…'` (or -lc, sh, zsh): the script is shell too, read as commands of its own.
       if (name && SHELLS.has(name)) {
@@ -154,6 +168,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       } else if (name === "popd") cwd = root;
     }
     words = [];
+    globs = [];
     redirects = [];
   };
   const skipHeredocs = (from: number): number => {
@@ -287,6 +302,7 @@ export function parseShell(command: string, root: string, home = homedir()): She
       endSegment();
       continue;
     }
+    if ((char === "*" || char === "?" || char === "[") && (word === "" || word.startsWith("-"))) globAt.push(word.length);
     word += char;
     inWord = true;
   }

@@ -331,6 +331,32 @@ test("one allowlist decides what git only reads, for both judges: known options 
   assert.equal(reads("git config --list get"), true, "a list, with a word git ignores");
   // An alias can stand in for whatchanged (git 2.53), so it is never a read.
   assert.equal(reads("git whatchanged -1"), false);
+  // xargs or parallel anywhere in front, whatever the wrappers' own options; a glob that can expand to an option.
+  for (const command of [
+    `printf '%s\n' '"-Oecho X"' | timeout -s KILL 5 xargs git grep -e foo`,
+    "printf -- '--output=notes.txt' | timeout --signal KILL 5 xargs git log -1",
+    "printf -- '--output=notes.txt' | stdbuf -o L xargs git log -1",
+    "printf -- '-1' | nice -n 5 parallel git log",
+    "git grep -n TODO *", "git log -p *.md", "cat ?sh", "ls -*", "find -- *", "cat \"\"*",
+    // A submodule diff runs git inside each submodule; --bare makes the folder git is in its git folder.
+    "git log -p --submodule=diff", "git diff --submodule=diff", "git --bare log",
+  ]) assert.equal(reads(command), false, command);
+  for (const command of ["git grep -n TODO -- *", "ls src/*.ts", "ls ./*", "cat 'a*'", "[ -f x ]", "git log -p --submodule", "git diff --submodule=log"]) assert.equal(reads(command), true, command);
+  // Other read-only programs, with an option that runs a program or writes a file, are not reads either.
+  for (const command of [
+    "sed 'e touch x' a.txt", "sed -n 's/a/b/w out.txt' a.txt", "sed 's/a/b/e' a.txt", "sed -n 1w out.txt a.txt", "sed 'r ../notes.txt' a.txt", "sed -f script.sed a.txt",
+    "sed -i 1d a.txt", "sed --in=.bak 1d a.txt",
+    "fd -x rm", "fd --exec-batch rm", "rg --pre ./x.sh foo", "ag --pag=./x foo", "tree -o out.txt", "yq -i '.a = 1' a.yml", "sort --compress-program=./x a.txt",
+    "sort --out=b.txt a.txt", "uniq a.txt b.txt", "xxd a.bin b.txt", "date 01011200", "date -s tomorrow", "hostname box", "file -C", "less -o log.txt a.txt",
+    "bat --pager ./x a.txt", "jq -n env", "jq -n '$ENV.HOME'", `yq -n 'load("x.yml")'`, "curl --trace t.txt https://example.com", "curl -K cfg https://example.com",
+    "curl -w '%output{x.txt}' https://example.com", "ack foo",
+  ]) assert.equal(reads(command), false, command);
+  for (const command of [
+    "sed -n 1,20p a.txt", "sed -n '/foo/p' a.txt", "sed 5q a.txt", "sed -n -e 1p -e 5p a.txt", "sed 's/a/b/g' a.txt", "sed -E 's|x+|y|2;y/ab/cd/' a.txt",
+    "uniq -c a.txt", "uniq -f 1 a.txt", "xxd -l 64 a.bin",
+    "date +%s", "date -d '2 days ago' +%F", "date -Iseconds", "hostname", "jq .name package.json", "sort -t , -k 2 a.csv", "curl -sS https://example.com",
+    "tree -L 2", "fd -e ts", "rg -n foo",
+  ]) assert.equal(reads(command), true, command);
   // Wrappers that only change how a program runs keep a read a read; chained and nested commands are each judged.
   for (const command of ["command git status", "exec git status", "nice -n 5 git status", "timeout 5 git log -1", "time git diff --stat", "git show HEAD:src/a.ts", "git diff --no-index a.txt b.txt"]) assert.equal(reads(command), true, command);
   for (const command of ["sudo git status", "doas git status", "bash -c 'git log --output=x'", "git status; rm x", "git status && rm x", "git status || rm x", "git status | xargs rm", "git status\nrm x"]) {
@@ -378,27 +404,40 @@ test("Ensemble's own board tools go ahead without a prompt, even in Ask in an un
 test("in Ask in an untrusted folder, commands that only read files in the folder run without asking; anything else still asks", async () => {
   const folder = mkdtempSync(join(tmpdir(), "ensemble-quiet-"));
   const elsewhere = mkdtempSync(join(tmpdir(), "ensemble-quiet-outside-"));
+  /** A git folder git itself takes as one (HEAD, objects, refs), with this config. */
+  const gitDir = (dir: string, config: string) => {
+    mkdirSync(join(dir, "objects"), { recursive: true });
+    mkdirSync(join(dir, "refs"), { recursive: true });
+    writeFileSync(join(dir, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(dir, "config"), config);
+  };
   try {
-    mkdirSync(join(folder, ".git"));
-    writeFileSync(join(folder, ".git", "config"), "[core]\n\tbare = false\n");
+    gitDir(join(folder, ".git"), "[core]\n\tbare = false\n");
     mkdirSync(join(folder, "src"));
     writeFileSync(join(folder, "src", "a.ts"), "x");
     writeFileSync(join(folder, "README.md"), "hi");
     writeFileSync(join(elsewhere, "id_rsa"), "secret");
     symlinkSync(join(elsewhere, "id_rsa"), join(folder, "notes"));
-    mkdirSync(join(folder, "evil", ".git"), { recursive: true });
-    writeFileSync(join(folder, "evil", ".git", "config"), "[core]\n\tpager = ./run.sh\n");
+    gitDir(join(folder, "evil", ".git"), "[core]\n\tpager = ./run.sh\n");
     // Settings git never writes in this shape, and a hook a read can run: not quiet either.
-    mkdirSync(join(folder, "lfs", ".git"), { recursive: true });
-    writeFileSync(join(folder, "lfs", ".git", "config"), '[filter "lfs"]\n\tsmudge = ./run.sh\n');
+    gitDir(join(folder, "lfs", ".git"), '[filter "lfs"]\n\tsmudge = ./run.sh\n');
     mkdirSync(join(folder, "hooked", ".git", "hooks"), { recursive: true });
-    writeFileSync(join(folder, "hooked", ".git", "config"), "[core]\n\tbare = false\n");
+    gitDir(join(folder, "hooked", ".git"), "[core]\n\tbare = false\n");
     writeFileSync(join(folder, "hooked", ".git", "hooks", "post-index-change"), "#!/bin/sh\n./run.sh\n");
     chmodSync(join(folder, "hooked", ".git", "hooks", "post-index-change"), 0o755);
+    // A repository whose commondir names evil's: git reads evil's settings. An empty .git is passed, as git passes it.
+    gitDir(join(folder, "common", ".git"), "[core]\n\tbare = false\n");
+    writeFileSync(join(folder, "common", ".git", "commondir"), "../../evil/.git\n");
+    mkdirSync(join(folder, "empty", ".git"), { recursive: true });
+    // A file whose name is an option: a glob in front of `--` would hand it to git.
+    writeFileSync(join(folder, "-Osh"), "");
     // A saved "Deny for this run" answers the question each non-quiet command would put to the person.
     const prisma = { decisionRule: { findFirst: async () => ({ decision: "deny" }) } };
     const asking = (over: Partial<Ctx> = {}) => ctx({ root: folder, trusted: false, explicitTrust: false, silentWorkspace: false, job: { unattended: false }, prisma, ...over } as never);
-    const quiet = ["ls -la", "cat README.md | head -20", "grep -rn foo src && wc -l src/a.ts", "rg TODO src", "find . -name '*.ts' -type f", "ls src/*.ts", "git status", "git log --oneline -5", "git branch -a", "git describe --tags", "cat a 2>/dev/null", "sort data.txt | uniq -c"];
+    const quiet = [
+      "ls -la", "cat README.md | head -20", "grep -rn foo src && wc -l src/a.ts", "rg TODO src", "find . -name '*.ts' -type f", "ls src/*.ts", "git status", "git log --oneline -5",
+      "git branch -a", "git describe --tags", "cat a 2>/dev/null", "sort data.txt | uniq -c", "cd empty && git status", "git grep -n TODO -- src/*.ts",
+    ];
     for (const command of quiet) assert.equal((await judgeEngineCall(asking(), { tool: "Bash", input: { command } })).decision, "allow", command);
     const asks = [
       "npm test",
@@ -417,6 +456,12 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
       "cd hooked && git status",
       "printf -- '--output=notes.txt' | xargs git log -1",
       "echo -delete | xargs find .",
+      `printf '%s\n' '"-Oecho X"' | timeout -s KILL 5 xargs git grep -e foo`,
+      "printf -- '--output=notes.txt' | stdbuf -o L xargs git log -1",
+      "git grep -n TODO *",
+      "cat *",
+      "cd common && git status",
+      "git log -p --submodule=diff",
       "git whatchanged -1",
       "cat notes",
       "cat *otes",
