@@ -5,6 +5,7 @@
  * streams its reply and finishes. Plus the subscriptions list, check and sign-in for the web.
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -769,6 +770,7 @@ test("an answer about the agent's own calls covers only what its card says: neve
     assert.match(card.body, /@assistant wants to change files in ~\/projects\/site on Mira's laptop/);
     assert.deepEqual(card.data!.options, ["Allow changes and commands", "Allow changes and commands for this run"]);
     assert.deepEqual(card.data!.own, { kind: "write" }, "the card says what kind of the agent's own calls it is about");
+    assert.equal(card.data!.plan, undefined, "a chat's card names no plan");
     const decided = await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "Allow changes and commands for this run" } });
     assert.equal(decided.statusCode, 200, decided.body);
 
@@ -780,6 +782,34 @@ test("an answer about the agent's own calls covers only what its card says: neve
     await settleTurns();
     const grant = { id: card.data!.decisionId, scope: "mission", target };
     assert.deepEqual(answers, [{ decision: "allow", grant }, { decision: "allow", grant }, { decision: "allow", grant: { id: program.data!.decisionId, scope: "once", target: "program:crontab" } }], "the computer tools' answer for the folder did not count; one answer for both changes");
+    assert.deepEqual(simulated.failures, []);
+  } finally {
+    simulated.stop();
+  }
+});
+
+test("a card from the lead's own turn on a plan names the plan, with no step: its answers cover the plan's work", async () => {
+  const { enqueueTurn, settleTurns } = await import("../node/queue.js");
+  const mira = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: mira.id }, data: { name: "Mira" } });
+  const { key, device } = await pairedComputer(mira, "Mira's laptop", { assistantTurns: 5, agents: [CLAUDE], nodeTools: 1 });
+  const { node, room } = await nodeOnPlan(mira);
+  const plan = await harness.prisma.nodeMission.create({ data: { id: randomUUID(), userId: mira.id, leadNodeId: node.id, originRoomId: room.id, status: "running", goal: "Tidy the site" } });
+  const change = { capability: "files", target: "/home/mira/projects/site", label: "~/projects/site", scope: "folder", operation: "Change: ~/projects/site/index.html", what: "change index.html" };
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` });
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/ask`, payload: change });
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: finished("Done.") });
+  });
+  try {
+    // The lead carries on the plan's work after its owner answered it.
+    assert.ok(await enqueueTurn(harness.app, { nodeId: node.id, roomId: room.id, reason: "approval", note: "Mira answered: go on with the site's pages.", planId: plan.id }));
+    const card = await until(async () => (await roomMessages(mira, room.id)).find((row) => row.kind === "approval" && row.data?.type === "computer" && row.data?.status === "pending"), "the card about the change");
+    await mira.inject({ method: "POST", url: `/api/decisions/${card.data!.decisionId}/decide`, payload: { decision: "deny", reason: "No" } });
+    await settleTurns();
+    assert.deepEqual(card.data!.plan, { id: plan.id, step: null });
     assert.deepEqual(simulated.failures, []);
   } finally {
     simulated.stop();
