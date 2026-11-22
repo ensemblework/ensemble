@@ -15,7 +15,7 @@ import type { RunTotals } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import type { StepReport } from "../node/report.js";
 import { keepCodeTurnResult, type CodeTurnResult } from "../workspace/code-turn.js";
-import { saveCompletion, taskStatusAfter, verifiedReason, type Completion } from "../workspace/completion.js";
+import { saveCompletion, settleTask, taskStatusAfter, taskStatusAtStartOf, verifiedReason, type Completion } from "../workspace/completion.js";
 import { acceptanceChecksFor } from "../workspace/acceptance-checks.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
@@ -41,7 +41,7 @@ const RUN_END = { succeeded: "success", failed: "failed", cancelled: "cancelled"
 async function hadChecks(db: FinishDb, job: Pick<WorkspaceJob, "id" | "userId" | "taskId">, report: StepReport | null): Promise<boolean> {
   if (report?.checks?.some((check) => check.rerun)) return true;
   const task = await db.task.findUnique({ where: { id: job.taskId }, select: { description: true, notes: true } });
-  return (await acceptanceChecksFor(db, { userId: job.userId, jobId: job.id, text: `${task?.description ?? ""}\n${task?.notes ?? ""}` }).catch(() => [])).length > 0;
+  return (await acceptanceChecksFor(db, { userId: job.userId, jobId: job.id, parts: [task?.description ?? "", task?.notes ?? ""] }).catch(() => [])).length > 0;
 }
 
 function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelled" | "needs_info" {
@@ -141,30 +141,8 @@ export async function finishDeviceJob(
     const checks = assigned ? (input.completion?.checks ?? null) : null;
     const ended = taskStatusAfter({ outcome: RUN_END[outcome], markDone: job.markDone, checks, hasChecks: assigned && !checks && outcome === "succeeded" && (await hadChecks(tx, job, input.report ?? null)) });
     const next = ended.status;
-    const fresh = await tx.task.findUnique({ where: { id: job.taskId }, select: { status: true, owner: true } });
-    if (fresh && fresh.owner === "agent" && fresh.status !== next) {
-      await tx.task.update({
-        where: { id: job.taskId },
-        data: {
-          status: next,
-          completedAt: next === "done" ? now : null,
-          blockedQuestion: next === "blocked" ? ({ question: ended.question ?? error ?? "The agent stopped.", options: [] } as Prisma.InputJsonValue) : undefined,
-        },
-      });
-      await tx.taskTransition.create({
-        data: {
-          userId: job.userId,
-          taskId: job.taskId,
-          fromStatus: fresh.status,
-          toStatus: next,
-          fromOwner: "agent",
-          toOwner: "agent",
-          actor: "agent",
-          reason: error ?? verifiedReason(ended.verified),
-          runId,
-        },
-      });
-    }
+    // Moved only from the status the claim left it in: one its owner set while the run worked or its checks ran stands.
+    const moved = await settleTask(tx, { userId: job.userId, taskId: job.taskId, jobId: job.id, runId, expected: taskStatusAtStartOf(job.context) ?? "in_progress", status: next, question: ended.question ?? error, reason: error ?? verifiedReason(ended.verified), verified: ended.verified, now });
     // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
     // A node's run reports in its chat, where the node goes on (retries, asks): it does not notify here.
     const nodeRun = await tx.nodeRun.findUnique({ where: { jobId: job.id }, select: { id: true } });
@@ -172,7 +150,7 @@ export async function finishDeviceJob(
     const codeTurn = Boolean(codeTurnOf(job.context));
     if (codeTurn && !nodeRun) {
       if (outcome !== "cancelled") await noticeCodeTurn(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, failed: outcome === "succeeded" ? null : (error ?? summary) });
-    } else if (outcome === "succeeded" && next === "waiting_approval" && !nodeRun && !isChatTurn(job.context)) await noticeReadyForReview(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, runId });
+    } else if (outcome === "succeeded" && moved && next === "waiting_approval" && !nodeRun && !isChatTurn(job.context)) await noticeReadyForReview(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, runId });
     if ((outcome !== "succeeded" || ended.verified === "failed") && outcome !== "cancelled" && !nodeRun && !codeTurn) await tx.notification.create({
       data: {
         userId: job.userId,

@@ -15,12 +15,12 @@ import { z } from "zod";
 import { parseReport, REPORT_OUTCOMES, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
 import { agentEnv } from "../subscriptions/detect.js";
-import { acceptanceFolder, type AcceptanceCheck } from "./acceptance-checks.js";
+import { acceptanceFolder, isCheckCommand, type AcceptanceCheck } from "./acceptance-checks.js";
 import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
 import { judgeEngineCall } from "./engines/judge.js";
 import { runCommand, type RunResult } from "./runner.js";
 import type { ChangedFile } from "./changed-files.js";
-import type { JobContext } from "./tools.js";
+import { askPerson, RUN_RULE_SOURCE, type JobContext } from "./tools.js";
 
 export const COMPLETION_SCHEMA = "ensemble.completion.v1";
 /** One check's rerun stops here and counts as failed. */
@@ -193,10 +193,30 @@ export type RerunOptions = {
   stopped?: () => Promise<string | null>;
   /** The commands the run's task or plan step names in its acceptance criteria, run after the reported checks. */
   acceptance?: readonly AcceptanceCheck[];
-  /** Tests replace the judge and the command runner. */
+  /** Tests replace the judge, the owner's card and the command runner. */
   judge?: typeof judgeEngineCall;
+  ask?: typeof askPerson;
   run?: typeof runCommand;
 };
+
+/** The owner's card for the commands a task's criteria name: one per run, "Allow for this run" covers them all. */
+export const ACCEPTANCE_TOOL = "run checks";
+const NOT_A_CHECK = "Ensemble runs only a task's test, lint, build or typecheck commands, written plainly, as its checks; this one was not run.";
+const DENIED = "You did not let Ensemble run the checks this task names.";
+const UNANSWERED = "Nobody answered whether Ensemble may run the checks this task names.";
+
+/** The owner's answer to running the commands a task's criteria name: an answer kept for this run, else one card for all of them. */
+async function ownerAllows(ctx: JobContext, commands: readonly string[], options: RerunOptions): Promise<"allow" | "deny" | "expired"> {
+  const rule = ctx.prisma
+    ? await ctx.prisma.decisionRule.findFirst({ where: { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName: ACCEPTANCE_TOOL }, orderBy: { createdAt: "desc" } }).catch(() => null)
+    : null;
+  if (rule) return rule.decision === "deny" ? "deny" : "allow";
+  await options.progress?.("Waiting for you: run this task's checks");
+  const ask = options.ask ?? askPerson;
+  const title = `Run this task's checks: ${commands.join(" · ")}`;
+  const answer = await ask(ctx, { event: "permission", toolName: ACCEPTANCE_TOOL, title: title.length > 200 ? `${title.slice(0, 199)}…` : title, command: commands.join("\n") }).catch(() => ({ decision: "expired" as const, answer: null }));
+  return answer.decision;
+}
 
 /** Variables that say where a toolchain lives, which the agent's commands had with its PATH. */
 const TOOLCHAIN_ENV = ["CARGO_HOME", "RUSTUP_HOME", "PYENV_ROOT", "NVM_DIR", "PNPM_HOME", "BUN_INSTALL", "VOLTA_HOME", "DENO_INSTALL", "GOPATH", "GOROOT", "JAVA_HOME", "ASDF_DIR", "ASDF_DATA_DIR", "SDKMAN_DIR"];
@@ -283,14 +303,14 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
   const runs: CheckRun[] = [];
   const ran = new Set<string>();
   let stop: string | null = null;
-  const once = async (base: Omit<CheckRun, "verdict" | "reason">): Promise<CheckRun> => {
+  const once = async (base: Omit<CheckRun, "verdict" | "reason">, judgeCtx: JobContext = ctx): Promise<CheckRun> => {
     stop ??= options.signal.aborted ? "The run was stopped before this check ran." : ((await options.stopped?.().catch(() => null)) ?? null);
     if (stop) return { ...base, verdict: "not_run", reason: stop };
     const where = await rerunFolder(ctx, base.cwd);
     if ("refused" in where) return { ...base, verdict: "not_run", reason: where.refused };
     ran.add(`${where.cwd}\0${base.command.replace(/\s+/g, " ").trim()}`);
     await options.progress?.(`Checking: ${base.name}`.slice(0, 200));
-    const answer = await judge(ctx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: base.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
+    const answer = await judge(judgeCtx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: base.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
     if (answer.decision !== "allow") return { ...base, verdict: "not_run", reason: answer.message ?? "The run's rules did not let it run." };
     let result: RunResult;
     try {
@@ -321,12 +341,31 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
     if (!check.rerun) continue;
     runs.push(await once({ name: check.name, id: check.id ?? null, command: check.rerun.command, cwd: check.rerun.cwd ?? null, expects: check.rerun.expects, claimed: check.verdict, exitCode: null, ms: 0, counts: null, output: "" }));
   }
+  const planned: Array<Omit<CheckRun, "verdict" | "reason">> = [];
   for (const check of options.acceptance ?? []) {
     const cwd = await acceptanceFolder(ctx.root, check.folder);
     const where = await rerunFolder(ctx, cwd);
     if (!("refused" in where) && ran.has(`${where.cwd}\0${check.command.replace(/\s+/g, " ").trim()}`)) continue;
     const claimed = report?.checks?.find((row) => row.id === check.id)?.verdict ?? "skipped";
-    runs.push(await once({ name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" }));
+    planned.push({ name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" });
+  }
+  // Text anyone could have written: each command is held to the check forms again here, and the owner allows them
+  // on one card unless the run is unattended. Once allowed they run as in Review only; a read-only run stays read-only.
+  const runnable = planned.filter((row) => isCheckCommand(row.command));
+  let judgeCtx = ctx;
+  let refused: string | null = null;
+  if (runnable.length && !ctx.job.unattended) {
+    stop ??= options.signal.aborted ? "The run was stopped before this check ran." : ((await options.stopped?.().catch(() => null)) ?? null);
+    if (!stop) {
+      const answer = await ownerAllows(ctx, [...new Set(runnable.map((row) => row.command))], options);
+      if (answer === "allow") judgeCtx = { ...ctx, accessMode: ctx.accessMode === "review" ? "review" : "auto" };
+      else if (!options.signal.aborted) refused = answer === "deny" ? DENIED : UNANSWERED;
+    }
+  }
+  for (const base of planned) {
+    if (!isCheckCommand(base.command)) runs.push({ ...base, verdict: "not_run", reason: NOT_A_CHECK });
+    else if (refused) runs.push({ ...base, verdict: "not_run", reason: refused });
+    else runs.push(await once(base, judgeCtx));
   }
   return runs;
 }
@@ -514,6 +553,47 @@ export function taskStatusAfter(input: { outcome: Parameters<typeof completionOf
   return { status: "waiting_approval", verified: "not_verified", question: null };
 }
 
+type Db = PrismaClient | Prisma.TransactionClient;
+
+/** The status a claimed run left its task in (kept on the job's context by the claim), or null for a job claimed without it. */
+export function taskStatusAtStartOf(context: unknown): string | null {
+  const value = typeof context === "object" && context !== null ? (context as { taskStatusAtStart?: unknown }).taskStatusAtStart : undefined;
+  return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * Moves a run's task where its end puts it, only from the status the run left it in when it started
+ * (`expected`), and only while the agent holds it: a status its owner chose meanwhile (a status edit
+ * keeps the task with the agent) stands, and the run notes what it would have done and why (a
+ * `task_kept` event, beside its completion record). True when the task moved.
+ */
+export async function settleTask(
+  db: Db,
+  input: { userId: string; taskId: string; jobId: string; runId: string; expected: string; status: string; question: string | null; reason: string; verified: Verified | null; now?: Date },
+): Promise<boolean> {
+  if (input.status === input.expected) return false;
+  const now = input.now ?? new Date();
+  const current = await db.task.findUnique({ where: { id: input.taskId }, select: { status: true, owner: true } });
+  if (!current || current.owner !== "agent" || current.status === input.status) return false;
+  if (current.status === input.expected) {
+    const moved = await db.task.updateMany({
+      where: { id: input.taskId, owner: "agent", status: input.expected },
+      data: {
+        status: input.status as never,
+        completedAt: input.status === "done" ? now : null,
+        ...(input.status === "blocked" ? { blockedQuestion: { question: input.question ?? "The agent stopped.", options: [] } as Prisma.InputJsonValue } : {}),
+      },
+    });
+    if (moved.count === 1) {
+      await db.taskTransition.create({ data: { userId: input.userId, taskId: input.taskId, fromStatus: input.expected as never, toStatus: input.status as never, fromOwner: "agent", toOwner: "agent", actor: "agent", reason: input.reason, runId: input.runId } });
+      return true;
+    }
+  }
+  const kept = (await db.task.findUnique({ where: { id: input.taskId }, select: { status: true } }))?.status ?? current.status;
+  await db.workspaceEvent.create({ data: { jobId: input.jobId, kind: "task_kept", data: { status: kept, wanted: input.status, verified: input.verified, ...(input.question ? { question: input.question } : {}) } } });
+  return false;
+}
+
 /** Why a task moved when its run finished: what Ensemble's runs of the run's checks showed. */
 export function verifiedReason(verified: Verified | null): string {
   return verified === "passed" ? "Agent finished; its checks passed when Ensemble ran them again" : verified === "failed" ? "Agent finished; its checks failed when Ensemble ran them again" : verified === "not_verified" ? "Agent finished, not verified" : "Agent finished";
@@ -546,8 +626,6 @@ export function verifiedReport(report: StepReport, completion: Completion | null
   const outcome: StepReport["outcome"] = verified === "failed" ? "fail" : verified === "not_verified" ? "uncertain" : report.outcome;
   return { ...report, outcome, checks: checks.slice(0, 50) };
 }
-
-type Db = PrismaClient | Prisma.TransactionClient;
 
 /** A run's completion record as a computer sends it with the run's end: every text scrubbed (`scrub`); null when the run has none. */
 export async function runCompletionOf(db: Db, job: { runId: string | null }, scrub: (text: string) => string): Promise<Completion | null> {

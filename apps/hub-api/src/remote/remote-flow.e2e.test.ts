@@ -5,7 +5,7 @@
  * after the lease expires while the app is quit.
  */
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { makeTestDirectory } from "../test/temporary.js";
 import { join } from "node:path";
 import test from "node:test";
@@ -294,7 +294,7 @@ test("with web approvals on, a push the computer asks about goes ahead on an all
   }
 });
 
-test("an assigned run's acceptance command runs again here when the agent finishes: it failed, so its task is not done, and the web gets what it showed", { timeout: 180_000 }, async (t) => {
+test("an assigned run's acceptance command runs again here when the agent finishes, after one press on the owner's card: it failed, so its task is not done, and the web gets what it showed", { timeout: 180_000 }, async (t) => {
   const root = makeTestDirectory("ensemble-remote-checks-");
   const stub = await startStubRuntime();
   const host = await startFakeHost();
@@ -318,22 +318,30 @@ test("an assigned run's acceptance command runs again here when the agent finish
     assert.equal(shared.status, 200, JSON.stringify(shared.body));
     const paired = await side.api("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
     assert.equal(paired.status, 200, JSON.stringify(paired.body));
-    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
+    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true } });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
     await until("the computer says it runs a run's checks again", async () => host.capabilities()?.runVerification === 1);
+    writeFileSync(join(source, "check.js"), "process.exit(3);\n");
+    git(source, "add", "check.js");
+    git(source, "commit", "--quiet", "-m", "acceptance check");
 
     const title = "Export the Q3 numbers";
-    const command = 'node -e "process.exit(3)"';
-    const hosted = host.enqueue(spec(title, { mode: "review", markDone: true, acceptance: [{ id: "AC-1", text: `AC-1 \`${command}\` passes.`, command, folder: null }] }));
+    const command = "node check.js";
+    // Review only runs the agent's own commands unasked; the commands a task's text names ask its owner once, here from the web.
+    const hosted = host.enqueue(spec(title, { mode: "review", markDone: true, acceptance: [{ id: "AC-1", text: `AC-1 \`${command}\` passes.`, command, folder: null }, { id: "AC-2", text: "`npm run db:reset` passes", command: "npm run db:reset", folder: null }] }));
+    const ask = await until("the owner's card for the task's checks", async () => host.asks().find((row) => row.jobId === hosted && row.body.toolName === "run checks"));
+    assert.match(String(ask.body.title), /^Run this task's checks: node check\.js$/, "only the command that is a check, on one card");
+    host.answer(ask.id, { decision: "allow", scope: "once", actionHash: ask.actionHash });
     await until("the hosted job completes", async () => host.job(hosted).complete?.outcome === "succeeded");
+    assert.equal(host.asks().filter((row) => row.jobId === hosted).length, 1, "one press");
     const completion = host.job(hosted).complete!.completion as { conversation: { state: string }; checks: { state: string; runs: Array<{ id: string; from?: string; verdict: string; exitCode: number | null }> } };
     assert.equal(completion.conversation.state, "finished");
     assert.equal(completion.checks.state, "failed");
-    assert.deepEqual(completion.checks.runs.map((run) => [run.id, run.from, run.verdict, run.exitCode]), [["AC-1", "acceptance", "fail", 3]]);
+    assert.deepEqual(completion.checks.runs.map((run) => [run.id, run.from, run.verdict, run.exitCode]), [["AC-1", "acceptance", "fail", 3], ["AC-2", "acceptance", "not_run", null]], "the computer held each command to the check forms again");
     const card = await waitJob(side, title, "web", ["succeeded"]);
     const task = await side.api<{ task: { status: string; blockedQuestion: { question: string } | null } }>(`/api/tasks/${card.taskId}`);
     assert.equal(task.body.task.status, "blocked", "not done here either: its check failed");
-    assert.match(task.body.task.blockedQuestion?.question ?? "", /Its checks failed when Ensemble ran them again: AC-1 node -e "process\.exit\(3\)": It exited 3\./);
+    assert.match(task.body.task.blockedQuestion?.question ?? "", /Its checks failed when Ensemble ran them again: AC-1 node check\.js: It exited 3\./);
   } catch (error) {
     console.error(side.logs().slice(-8000));
     throw error;

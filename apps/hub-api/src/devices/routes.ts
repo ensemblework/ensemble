@@ -493,6 +493,12 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       // The run it continues was set as it was claimed: the one that actually ran before it (workspace/sessions.ts).
       Object.assign(next, await claimedLinks(prisma, next.id));
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
+      // The status the run leaves its task in: its end moves the task only from there (devices/finish.ts).
+      const startedAs = await prisma.task.findUnique({ where: { id: next.taskId }, select: { status: true } });
+      if (startedAs) {
+        next.context = { ...(typeof next.context === "object" && next.context !== null ? (next.context as Record<string, unknown>) : {}), taskStatusAtStart: startedAs.status } as Prisma.JsonValue;
+        await prisma.workspaceJob.update({ where: { id: next.id }, data: { context: next.context as Prisma.InputJsonValue } });
+      }
       sseHub.publish(next.userId, { event: "task", data: { id: next.taskId, action: "agent" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       // A Code tab turn gets its own packet (`codePacket` below), not the task brief's context.
@@ -530,7 +536,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions, { space: next.userId, runner: next.runnerAccountId }).catch(() => null) : null;
       const codePacket = codeTurn ? await packetSource(prisma, next.userId, next).catch(() => null) : null;
       // An assigned run: the commands its task's or its node's plan step's acceptance criteria name, run again on the computer when the agent says it is done.
-      const acceptance = next.kind === "code" && runContext.chat !== true ? await acceptanceChecksFor(prisma, { userId: next.userId, jobId: next.id, text: [next.task.description, next.task.notes, page].join("\n") }).catch(() => null) : null;
+      const acceptance = next.kind === "code" && runContext.chat !== true ? await acceptanceChecksFor(prisma, { userId: next.userId, jobId: next.id, parts: [next.task.description, next.task.notes, page] }).catch(() => null) : null;
       const choiceConfig = runSettings ? await activeConfig(app.log) : null;
       const description = [
         page ? `${PAGE_HEADING}\n${page}` : "",

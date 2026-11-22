@@ -65,7 +65,7 @@ import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
-import { saveCompletion, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
+import { saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
 import { acceptanceChecksFor, acceptanceInContext, type AcceptanceCheck } from "./acceptance-checks.js";
 import { parseReport } from "../node/report.js";
 import { jobOrigin } from "../remote/origin.js";
@@ -1596,20 +1596,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   }
 
   const taskStatus = chat ? "in_progress" : ended.status;
-  const fresh = await prisma.task.findUnique({ where: { id: job.taskId }, select: { status: true, owner: true } });
-  if (fresh && fresh.owner === "agent" && fresh.status !== taskStatus) {
-    await prisma.task.update({
-      where: { id: job.taskId },
-      data: {
-        status: taskStatus,
-        completedAt: taskStatus === "done" ? new Date() : null,
-        blockedQuestion: taskStatus === "blocked" ? ({ question: ended.question ?? error ?? "The agent stopped.", options: [] } as never) : undefined,
-      },
-    });
-    await prisma.taskTransition.create({
-      data: { userId, taskId: job.taskId, fromStatus: fresh.status, toStatus: taskStatus, fromOwner: "agent", toOwner: "agent", actor: "agent", reason: error ?? verifiedReason(ended.verified), runId: run.id },
-    });
-  }
+  // The run started the task in progress: its end moves it only from there, so a status set meanwhile stands.
+  const moved = await settleTask(prisma, { userId, taskId: job.taskId, jobId: job.id, runId: run.id, expected: "in_progress", status: taskStatus, question: ended.question ?? error, reason: error ?? verifiedReason(ended.verified), verified: ended.verified });
   await prisma.run.update({
     where: { id: run.id },
     data: {
@@ -1655,7 +1643,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // A Code tab thread's turn notifies only while the person is away from the Code tab, and opens the thread.
   if (codeTurnOf(job.context) && !nodeRun) {
     if (outcome !== "cancelled") await noticeCodeTurn(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, failed: outcome === "success" ? null : (error ?? summary) }).catch(() => undefined);
-  } else if (outcome === "success" && !chat && taskStatus === "waiting_approval" && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
+  } else if (outcome === "success" && !chat && moved && taskStatus === "waiting_approval" && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
   if ((outcome !== "success" || ended.verified === "failed") && outcome !== "cancelled" && !nodeRun && !codeTurnOf(job.context)) await prisma.notification.create({
     data: {
       userId,
@@ -1676,7 +1664,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
  */
 async function runAcceptance(prisma: FastifyInstance["prisma"], job: { id: string; userId: string; context: unknown; task: { description: string; notes: string } }): Promise<AcceptanceCheck[]> {
   const sent = jobOrigin(job.context) === "web" ? acceptanceInContext(job.context) : null;
-  return sent ?? acceptanceChecksFor(prisma, { userId: job.userId, jobId: job.id, text: `${job.task.description}\n${job.task.notes}` });
+  return sent ?? acceptanceChecksFor(prisma, { userId: job.userId, jobId: job.id, parts: [job.task.description, job.task.notes] });
 }
 
 

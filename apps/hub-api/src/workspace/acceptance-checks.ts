@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { acceptanceOf as stepAcceptance } from "../node/packet.js";
+import { gitReadsOnly } from "./git-read.js";
 import { within } from "./guard.js";
 import { acceptanceOf, type Criterion } from "./turn-packet.js";
 
@@ -23,45 +24,151 @@ export type AcceptanceCheck = z.infer<typeof AcceptanceCheck>;
 
 export const MAX_ACCEPTANCE_CHECKS = 12;
 
-/** Programs that run a project's build, tests or checkers: only a command of one of them, or of a script in the project, is run again. */
-const PROGRAMS = new Set([
-  "node", "npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno", "tsx", "tsc", "eslint", "prettier", "biome", "playwright", "jest", "vitest", "mocha",
-  "python", "python3", "pytest", "py.test", "tox", "nox", "uv", "poetry", "pdm", "hatch", "ruff", "mypy", "flake8", "pylint", "black",
-  "cargo", "go", "make", "just", "cmake", "ctest", "ninja", "bash", "sh", "zsh", "shellcheck", "ruby", "bundle", "rake", "rspec",
-  "mvn", "mvnw", "gradle", "gradlew", "java", "dotnet", "php", "phpunit", "composer", "swift", "xcodebuild", "mix", "dart", "flutter", "perl", "rscript", "julia", "git",
-]);
-/** Words that make a command reach outside the computer, change the project's dependencies or reset its state: a criterion naming one says what was done, never a check to run again. */
-const OUTWARD = new Set([
-  "publish", "unpublish", "deploy", "push", "upload", "login", "logout", "release", "reset", "install", "uninstall", "add", "remove", "update", "upgrade",
-  "vercel", "netlify", "wrangler", "firebase", "flyctl", "heroku", "kubectl", "terraform", "helm", "twine",
-]);
-/** What git may run as a check: commands that only read. */
-const GIT_READS = new Set(["diff", "status", "log", "show", "grep", "ls-files", "check-ignore", "check-attr", "rev-parse", "rev-list", "describe", "blame", "cat-file", "ls-tree", "merge-base"]);
-/** What follows a command that is run: it passes, succeeds, exits 0, is clean. */
-const RUNS_AFTER = /^\s*(?:pass(?:es|ing)?\b|succeed(?:s|ing)?\b|exit(?:s|ing)?\s+(?:with\s+)?(?:code\s+)?0\b|returns?\s+0\b|is\s+(?:green|clean|ok)\b|runs?\s+clean(?:ly)?\b|completes?\b)/i;
-/** What comes before a command that is run: run, execute, the command. */
-const RUNS_BEFORE = /\b(?:run(?:ning|s)?|execut(?:e|es|ing)|command)\s*:?\s*$/i;
+/** What the criterion says about a command right after it: it passes, succeeds, exits 0 (also "should pass", "must succeed"). */
+const SAID_AFTER = /^\s*(?:(?:should|must|will|shall|has to|have to|needs? to)\s+)?(?:pass(?:es|ing)?|succeed(?:s|ing)?|exits?\s+(?:with\s+)?(?:code\s+|status\s+)?0|returns?\s+0)\b/i;
+/** What the criterion says right before a command: run it, execute it. */
+const SAID_BEFORE = /\b(?:run|execute)\s*:?\s*$/i;
+/** Words that turn "run `X`" around: never run, do not run, avoid, without. */
+const NEGATED = /\b(?:never|not|nor|avoid(?:ing)?|without|skip(?:ping)?|stop(?:ping)?|don'?t|doesn'?t|won'?t|shouldn'?t|mustn'?t|can'?t|cannot)\b/i;
+/** Other spans the same words cover: "`A`, `B` and `C` pass". */
+const LISTED = /^(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s+)`[^`\n]+`)+/i;
 /** A folder the criterion names: "in the export folder", "in `packages/web/`". */
 const FOLDER_NAMED = /\bin (?:the )?`?([\w.@-][\w.@/-]*?)\/?`? (?:folder|directory|dir|package)\b/i;
 const FOLDER_PATH = /\bin `([\w.@-][\w.@/-]*?)\/?`/;
 const NOT_A_FOLDER = new Set(["this", "that", "the", "same", "current", "project", "repository", "repo", "root", "run's", "its", "your", "my", "our", "their", "work", "working"]);
 
+/** Whether the criterion says the span at `at` runs or passes: never under "never run" or "do not run". */
+function said(text: string, at: number, length: number): boolean {
+  const after = text.slice(at + length).replace(LISTED, "");
+  if (SAID_AFTER.test(after)) return true;
+  const before = text.slice(0, at);
+  return SAID_BEFORE.test(before) && !NEGATED.test(before.split(/[.!?;\n]/).pop() ?? "");
+}
+
+/** Letters, digits and `_ . : = / -`, one space between words: nothing a shell or PowerShell reads as syntax, a variable, a glob, a quote or a home folder. */
+const PLAIN = /^[A-Za-z0-9_.:=/-]+(?: [A-Za-z0-9_.:=/-]+)*$/;
+const WORD = /^[A-Za-z0-9_.:-]+$/;
+
+/** A word that names a place stays in the run's folder: never absolute, a drive, a URL, or out through `..`. */
+function staysInside(word: string): boolean {
+  const value = word.startsWith("-") && word.includes("=") ? word.slice(word.indexOf("=") + 1) : word;
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || /^[A-Za-z][\w+.-]*:\/\//.test(value)) return false;
+  return !value.split("/").includes("..");
+}
+
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+/** A package script that checks: test, lint, build, check, typecheck or verify, alone or with `:` or `-` after. */
+const CHECK_SCRIPT = /^(?:test|lint|build|check|typecheck|verify)(?:[:-][A-Za-z0-9:._-]*)?$/i;
+/** Words a checking script never has anywhere in its name: it deploys, publishes, resets, migrates or changes things. */
+const RISKY = ["deploy", "release", "publish", "reset", "drop", "migrat", "seed", "clean", "push", "prod", "watch", "install", "upload", "commit", "delete", "destroy", "purge", "wipe", "update", "write"];
+/** Short ones, as a whole part of the name (`lint:fix`, `test:rm`), so `format`, `fixtures` and `server` stay clear. */
+const RISKY_PART = new Set(["rm", "rmrf", "fix", "serve", "start"]);
+
+function riskyScript(name: string): boolean {
+  const lower = name.toLowerCase();
+  return RISKY.some((word) => lower.includes(word)) || lower.split(/[:._-]/).some((part) => RISKY_PART.has(part));
+}
+
+type Args = {
+  /** Flags allowed as they are. */
+  flags: RegExp;
+  /** Flags followed by a value word (`-k export`, `-p web/tsconfig.json`): the value is a plain word, or a path in the folder. */
+  valued?: Readonly<Record<string, "word" | "path">>;
+  /** Words after the flags: paths in the folder (test files, packages), or none. */
+  paths?: RegExp;
+  /** After `--`: what the test binary or linter takes. */
+  rest?: RegExp;
+};
+
+function argsAllowed(args: readonly string[], spec: Args): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--" && spec.rest) return args.slice(index + 1).every((word) => spec.rest!.test(word));
+    const valued = spec.valued?.[arg];
+    if (valued) {
+      const value = args[index + 1];
+      index += 1;
+      if (!value || value.startsWith("-") || (valued === "word" ? !WORD.test(value) : !(spec.paths ?? /^[\w./-]+$/).test(value) || !staysInside(value))) return false;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      if (!spec.flags.test(arg)) return false;
+      continue;
+    }
+    if (!spec.paths?.test(arg) || !staysInside(arg)) return false;
+  }
+  return true;
+}
+
+const TEST_PATHS = /^[\w./-]+(?:::[\w.-]+)*$/;
+const PYTEST: Args = {
+  flags: /^(?:-q{1,2}|-v{1,2}|-x|-s|-l|-ra|-rA|--quiet|--verbose|--exitfirst|--no-header|--strict-markers|--lf|--last-failed|--ff|--failed-first|--disable-warnings|--tb=(?:auto|long|short|line|native|no)|--maxfail=\d{1,3}|--durations=\d{1,3})$/,
+  valued: { "-k": "word", "-m": "word", "-n": "word" },
+  paths: TEST_PATHS,
+};
+const CARGO: Args = {
+  flags: /^(?:--workspace|--all|--all-targets|--all-features|--release|--locked|--offline|--frozen|-q|--quiet|-v|--verbose|--lib|--bins|--tests|--doc|--no-fail-fast)$/,
+  valued: { "-p": "word", "--package": "word", "--features": "word" },
+  rest: /^(?:-[DWA]|--nocapture|--include-ignored|--ignored|--exact|--show-output|--test-threads=\d{1,3}|[A-Za-z_][\w:-]*)$/,
+};
+const GO: Args = { flags: /^-(?:v|race|short|cover|failfast|count=\d{1,3}|timeout=\w+|vet=off)$/, valued: { "-run": "word", "-count": "word", "-timeout": "word" }, paths: /^\.(?:\/[\w.-]+)*$/ };
+const JS_RUNNER: Args = { flags: /^(?:--run|--runInBand|-i|--ci|--coverage|--silent|--passWithNoTests|--bail|--recursive|--exit|--reporter=[\w-]+)$/, paths: TEST_PATHS };
+const TSC: Args = { flags: /^(?:--noEmit|--pretty)$/, valued: { "-p": "path", "--project": "path" }, paths: /^[\w./-]+$/ };
+const ESLINT: Args = { flags: /^(?:--quiet|--no-cache|--max-warnings=\d{1,4}|--format=[\w-]+)$/, valued: { "--max-warnings": "word" }, paths: /^[\w./-]+$/ };
+const RUFF: Args = { flags: /^(?:--quiet|-q|--no-cache|--statistics|--check|--diff)$/, paths: /^[\w./-]+$/ };
+const MYPY: Args = { flags: /^(?:--strict|--ignore-missing-imports|--pretty|--no-incremental|--no-error-summary|--show-error-codes)$/, valued: { "-p": "word", "--package": "word", "-m": "word", "--module": "word" }, paths: /^[\w./-]+$/ };
+
 /**
- * Whether a backticked span is a check to run again: a known program with its arguments, or a script of
- * the project (`./check.sh`); a program or script alone only where the criterion says it runs or passes
- * (`said`). Never one that changes what lies outside the folder (OUTWARD), nor git beyond reading.
+ * Whether a command is one Ensemble runs as a task's check (docs/16 §9): plain words only (`PLAIN`), every
+ * place in the run's folder, and one of the test, lint, build and typecheck forms: `npm|pnpm|yarn|bun test`,
+ * `npm|pnpm|yarn|bun run <script>` for a checking script with no risky word in its name, pytest (also
+ * `python -m pytest`), `cargo test|build|check|clippy`, `go test|vet|build`, vitest, jest, mocha,
+ * `tsc --noEmit`, eslint, `ruff check`, `ruff format --check`, mypy, `node <file>.js` or `python <file>.py`
+ * with nothing else, and git that only reads (`gitReadsOnly`, the judges' own test). Never an interpreter's
+ * `-e` or `-c`, npx and other package runners, make, or a shell. The web uses it to take a criterion's
+ * command, and the computer again before it runs one.
  */
-function checkCommand(span: string, said: boolean): boolean {
-  if (span.length < 2 || span.length > 300) return false;
-  const [first = "", ...rest] = span.split(/\s+/);
-  const script = /^\.{1,2}\//.test(first);
-  if (!script && !/^\/?[A-Za-z][\w.+/-]*$/.test(first)) return false;
-  const program = first.replace(/^.*\//, "").toLowerCase();
-  if (!script && !PROGRAMS.has(program)) return false;
-  if (!rest.length && !said) return false;
-  const words = rest.filter((word) => !word.startsWith("-")).map((word) => word.toLowerCase());
-  if (program === "git" && !GIT_READS.has(words[0] ?? "")) return false;
-  return !words.some((word) => OUTWARD.has(word));
+export function isCheckCommand(command: string): boolean {
+  if (command.length > 300 || !PLAIN.test(command)) return false;
+  const words = command.split(" ");
+  if (!words.every(staysInside)) return false;
+  const [program = "", sub = "", ...rest] = words;
+  if (PACKAGE_MANAGERS.has(program)) {
+    if (sub === "test") return rest.length === 0;
+    return sub === "run" && rest.length === 1 && CHECK_SCRIPT.test(rest[0]!) && !riskyScript(rest[0]!);
+  }
+  switch (program) {
+    case "pytest":
+    case "py.test":
+      return argsAllowed(words.slice(1), PYTEST);
+    case "python":
+    case "python3":
+      if (sub === "-m") return rest[0] === "pytest" && argsAllowed(rest.slice(1), PYTEST);
+      return words.length === 2 && /^[\w./-]+\.py$/.test(sub);
+    case "node":
+      return words.length === 2 && /^[\w./-]+\.(?:js|mjs|cjs)$/.test(sub);
+    case "cargo":
+      return ["test", "build", "check", "clippy"].includes(sub) && argsAllowed(rest, CARGO);
+    case "go":
+      return ["test", "vet", "build"].includes(sub) && argsAllowed(rest, GO);
+    case "vitest":
+      return argsAllowed(sub === "run" ? rest : words.slice(1), JS_RUNNER);
+    case "jest":
+    case "mocha":
+      return argsAllowed(words.slice(1), JS_RUNNER);
+    case "tsc":
+      return words.includes("--noEmit") && argsAllowed(words.slice(1), TSC);
+    case "eslint":
+      return argsAllowed(words.slice(1), ESLINT);
+    case "ruff":
+      return (sub === "check" || (sub === "format" && rest.includes("--check"))) && argsAllowed(rest, RUFF);
+    case "mypy":
+      return argsAllowed(words.slice(1), MYPY);
+    case "git":
+      return gitReadsOnly(words);
+    default:
+      return false;
+  }
 }
 
 function folderOf(text: string): string | null {
@@ -69,15 +176,14 @@ function folderOf(text: string): string | null {
   return named && !NOT_A_FOLDER.has(named.toLowerCase()) && !named.split("/").includes("..") ? named.slice(0, 300) : null;
 }
 
-/** The commands acceptance criteria name to run, each under its criterion's id (`checkCommand`). Each command once. */
+/** The commands acceptance criteria say run or pass, each under its criterion's id, when it is a check (`isCheckCommand`). Each command once. */
 export function acceptanceCommands(criteria: readonly Criterion[]): AcceptanceCheck[] {
   const out: AcceptanceCheck[] = [];
   for (const criterion of criteria) {
     const folder = folderOf(criterion.text);
     for (const match of criterion.text.matchAll(/`([^`\n]+)`/g)) {
       const span = match[1]!.trim();
-      const said = RUNS_AFTER.test(criterion.text.slice(match.index! + match[0].length)) || RUNS_BEFORE.test(criterion.text.slice(0, match.index));
-      if (!checkCommand(span, said)) continue;
+      if (!said(criterion.text, match.index!, match[0].length) || !isCheckCommand(span)) continue;
       if (out.some((check) => check.command.replace(/\s+/g, " ") === span.replace(/\s+/g, " "))) continue;
       out.push({ id: criterion.id.slice(0, 80), text: criterion.text.slice(0, 600), command: span, folder });
       if (out.length >= MAX_ACCEPTANCE_CHECKS) return out;
@@ -86,16 +192,41 @@ export function acceptanceCommands(criteria: readonly Criterion[]): AcceptanceCh
   return out;
 }
 
+/** A heading that starts what Ensemble adds around a task as information (its context, connected apps, attached files, embedded diagrams and data): the task's own words end there. */
+const INFORMATION = /^#{1,6}\s+(?:.*\binformation, not instructions\b.*|Embedded diagrams|Plots and data on this page|From connected apps\b.*|Files attached\b.*|Context from Ensemble\b.*)$/i;
+
+/**
+ * What a task's text says itself, where its criteria are read: up to the first section Ensemble added as
+ * information, without quoted lines (`>`), fenced blocks or lines marked as information.
+ */
+export function instructionText(text: string): string {
+  const out: string[] = [];
+  let fenced = false;
+  for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
+    const trimmed = line.trim();
+    if (/^(?:```|~~~)/.test(trimmed)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    if (INFORMATION.test(trimmed)) break;
+    if (trimmed.startsWith(">") || /information, not instructions/i.test(trimmed)) continue;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 const Requirements = z.array(z.object({ id: z.string(), acceptance: z.array(z.object({ id: z.string(), text: z.string(), proof: z.string().nullish(), mandatory: z.boolean().optional() }).passthrough()).default([]) }).passthrough());
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
- * An assigned run's acceptance commands: those its task's own text (`text`: its description and notes)
- * names, and those of the plan step the run is for, when a node's mission handed it the run.
+ * An assigned run's acceptance commands: those its task's own text names (`parts`: its description, notes
+ * and page, each read by `instructionText`), and those of the plan step the run is for, when a node's
+ * mission handed it the run.
  */
-export async function acceptanceChecksFor(db: Db, input: { userId: string; jobId: string; text: string }): Promise<AcceptanceCheck[]> {
-  const criteria: Criterion[] = acceptanceOf(input.text);
+export async function acceptanceChecksFor(db: Db, input: { userId: string; jobId: string; parts: readonly string[] }): Promise<AcceptanceCheck[]> {
+  const criteria: Criterion[] = acceptanceOf(input.parts.map(instructionText).join("\n\n"));
   const run = await db.nodeRun.findUnique({ where: { jobId: input.jobId }, select: { userId: true, planId: true, planStep: true } }).catch(() => null);
   if (run?.planId && run.planStep && run.userId === input.userId) {
     const mission = await db.nodeMission.findUnique({ where: { id: run.planId }, select: { requirements: true } });

@@ -131,7 +131,7 @@ test("a computer that does not run checks again keeps the old behaviour; a plan 
   });
   await h.prisma.nodeStep.create({ data: { missionId: mission.id, id: "S1", position: 0, nodeId: env.node.id, handle: env.node.slug, name: "Build", kind: "build", brief: "Write the export.", requirementIds: ["R1"], status: "working", attempt: 1 } });
   const step = await nodeRun(env, "Export the Q2 numbers", { planId: mission.id, planStep: "S1" });
-  const acceptance = await acceptanceChecksFor(h.prisma, { userId: env.mira.id, jobId: step.job.id, text: NOTES });
+  const acceptance = await acceptanceChecksFor(h.prisma, { userId: env.mira.id, jobId: step.job.id, parts: [NOTES] });
   assert.deepEqual(acceptance.map((check) => [check.id, check.command]), [["AC-1", "node accept.js"], ["AC-9", "npm test"]], "the task's and the step's commands");
   const report = { outcome: "done", summary: "Exported.", checks: [{ id: "AC-1", name: "acceptance", verdict: "pass", rerun: { command: "node accept.js", expects: "exit_0" } }] };
   const runs = [{ ...acceptanceRun("fail", "It exited 1."), name: "acceptance", claimed: "pass" as const, from: undefined }];
@@ -140,4 +140,39 @@ test("a computer that does not run checks again keeps the old behaviour; a plan 
   const ended = await h.prisma.nodeStep.findFirstOrThrow({ where: { missionId: mission.id, id: "S1" } });
   assert.notEqual(ended.status, "done", "the worker said pass; Ensemble's run failed");
   assert.equal(ended.outcome, "blocked", "a builder whose own check failed is blocked (report.ts verdictOf)");
+});
+
+test("the owner's own choice while the checks ran stands: the run moves its task only from the status it left it in, and keeps what its checks showed", async () => {
+  const env = await setup(true);
+  const run = await nodeRun(env, "Export the Q3 numbers again");
+  // Mira marks it done while her computer runs the checks: a status edit keeps the task with the agent.
+  const marked = await env.mira.inject({ method: "PATCH", url: `/api/tasks/${run.task.id}`, payload: { status: "done" } });
+  assert.equal(marked.statusCode, 200, marked.body);
+  await finish(env, run, { completion: completionWith("fail", "It exited 1.") });
+  const task = await h.prisma.task.findUniqueOrThrow({ where: { id: run.task.id } });
+  assert.deepEqual([task.status, task.owner, Boolean(task.completedAt)], ["done", "agent", true], "her done stands");
+  assert.equal(await h.prisma.taskTransition.count({ where: { taskId: run.task.id, actor: "agent", toStatus: "blocked" } }), 0);
+  const kept = await h.prisma.run.findFirstOrThrow({ where: { workspaceJob: { id: run.job.id } }, select: { completion: true } });
+  assert.equal((kept.completion as { checks: { state: string } }).checks.state, "failed", "the run keeps what its checks showed");
+  const noted = await h.prisma.workspaceEvent.findFirstOrThrow({ where: { jobId: run.job.id, kind: "task_kept" } });
+  assert.deepEqual(noted.data, { status: "done", wanted: "blocked", verified: "failed", question: "Its checks failed when Ensemble ran them again: AC-1 node accept.js: It exited 1." });
+  const note = await told(run.job.id);
+  assert.match(note, /Its owner marked the task done; it stays done, though its checks failed/);
+  assert.doesNotMatch(note, /The task was not marked done/);
+});
+
+test("a run claimed while its task was in another status moves it from that status: the claim records where it left the task", async () => {
+  const env = await setup(true);
+  const task = await h.prisma.task.create({ data: { userId: env.mira.id, title: "Export the numbers once more", notes: NOTES, owner: "agent", status: "done", completedAt: new Date() } });
+  const job = await h.prisma.workspaceJob.create({ data: { userId: env.mira.id, taskId: task.id, deviceId: env.laptop.id, kind: "code", executionMode: "native", model: "gpt-6-luna", provider: "copilot-cli", status: "queued", markDone: true } });
+  const claimed = await env.key.inject({ method: "POST", url: "/api/devices/self/claim" });
+  assert.equal(claimed.statusCode, 200, claimed.body);
+  const spec = json(claimed) as { id: string; leaseToken: string; acceptance?: Array<{ command: string }> };
+  assert.equal(spec.id, job.id);
+  assert.deepEqual(spec.acceptance?.map((check) => check.command), ["node accept.js"]);
+  const stored = await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: job.id } });
+  assert.equal((stored.context as { taskStatusAtStart?: string }).taskStatusAtStart, "done");
+  const done = await env.key.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/complete`, payload: { leaseToken: spec.leaseToken, outcome: "succeeded", summary: "Done.", completion: completionWith("fail", "It exited 1.") } });
+  assert.equal(done.statusCode, 200, done.body);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status, "blocked", "moved from the status the claim left it in");
 });

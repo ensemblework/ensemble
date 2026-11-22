@@ -12,7 +12,7 @@ Settings saved before the sandbox became a beta hold it on by default. At startu
 
 ## 4. Trust and run modes
 
-Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 for Ensemble's own agent and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me. A coding agent's program that runs as the administrator or changes the computer is asked about in every mode, Run unattended too ([30 §1](30_ENGINES.md#1-claude-code-as-the-engine-implementation-reference)).
+Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 for Ensemble's own agent and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me. A coding agent's program that runs as the administrator or changes the computer is asked about in every mode, Run unattended too ([30 §1](30_ENGINES.md#1-claude-code-as-the-engine-implementation-reference)). The checks a task's acceptance criteria name, which Ensemble runs again when an assigned run ends, are asked about once per run on one card in Ask and Review only, in trusted folders too, and go ahead only in Run unattended ([16 §9](16_CODE_TAB.md#9-the-agent-implementation-reference)).
 
 | Mode | Behaviour |
 | --- | --- |
