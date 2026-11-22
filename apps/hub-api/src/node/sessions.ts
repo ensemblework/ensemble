@@ -47,6 +47,8 @@ import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
 import { missionContext } from "./placement.js";
 import { deleteAgentSession } from "../workspace/delete-session.js";
+import { acceptanceChecksFor } from "../workspace/acceptance-checks.js";
+import { checkFilesNote } from "../workspace/check-files.js";
 
 export { sessionOwners };
 
@@ -804,6 +806,9 @@ async function deliver(
     if (step) env = { ...env, plan: step };
   }
   const where = `${session.agentName}${session.computer ? ` on ${session.computer}` : ""}, ${session.folder}`;
+  // The task it works on has acceptance checks that run files or scripts: the agent hears not to edit them.
+  const checks = await checksNote(prisma, node.userId, { taskId: (delivery === "steer" || delivery === "amend") && active ? active.taskId : (input.taskId ?? null), prompt: input.prompt, jobId: active?.id ?? session.id });
+  if (checks && !input.prompt.includes(checks)) input = { ...input, prompt: `${input.prompt}\n\n${checks}` };
 
   if (delivery === "steer") {
     // Not started yet: the change goes into its brief.
@@ -933,6 +938,13 @@ async function deliver(
     summary: `${verb} (${where}).${waiting} You hear when it ends.`,
     data: { session: sessionId, jobId, delivery, queuedBehind: delivery === "queue" ? chain.length : 0 },
   };
+}
+
+/** The line a message to a session gets when its task's acceptance checks (or its own words', for work off the board) run files or scripts (workspace/check-files.ts). */
+async function checksNote(prisma: PrismaClient, userId: string, input: { taskId: string | null; prompt: string; jobId: string }): Promise<string | null> {
+  const task = input.taskId ? await prisma.task.findFirst({ where: { id: input.taskId, userId }, select: { description: true, notes: true } }) : null;
+  const acceptance = await acceptanceChecksFor(prisma, { userId, jobId: input.jobId, parts: task ? [task.description, task.notes] : [input.prompt] }).catch(() => []);
+  return checkFilesNote(acceptance);
 }
 
 /** Stops a session's run going on, and unless asked to keep them, what is queued in it. */

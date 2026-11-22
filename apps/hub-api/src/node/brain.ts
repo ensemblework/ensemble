@@ -29,7 +29,7 @@ import { nodeTools, postAsNode, type Lineage } from "./tools.js";
 import { codeBuiltLog, nodeInstructions, packetSections, packetText, type NodeInstructions } from "./instructions.js";
 import { recordMetric } from "../lib/metrics.js";
 import { helperFolders, helperGrant } from "./helpers.js";
-import { RuntimeError } from "../lib/runtime-error.js";
+import { AGENT_EXIT, RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, allowSteering, closeSteering, CUT_OFF_NOTE, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers, type CutOff, type DispatchOutcome } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
@@ -90,20 +90,21 @@ export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessi
 export const NODE_CORE_TOOLS = ["hub_list_pages", "hub_read_page", "hub_create_page", "hub_update_page"] as const;
 
 
-/** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
+/** retry: the model's rate limit, or the owner's agent exiting before anything acted, cut the turn off before anything was posted; queue.ts runs it again later. */
 /** coalesced: a newer message from the owner came before this turn acted; the next turn answers both. */
 /** parked: the turn waits for its owner's answer on a card; it ended without a reply, and the answer wakes the node. */
 /** cancelled: its owner stopped it (Stop, a pause, a plan's Stop) while it ran. */
 /**
- * `interrupted`: the computer running the owner's agent was cut off (subscriptions/relay.ts `TurnCutOff`) after the turn
- * started acting; node/queue.ts resumes it with `resume`. `requeue`: cut off before it did anything; it runs again as it was.
+ * `interrupted`: the computer running the owner's agent was cut off (subscriptions/relay.ts `TurnCutOff`), or the agent
+ * exited (`AGENT_EXIT`), after the turn started acting; node/queue.ts resumes it with `resume`. `requeue`: cut off before it did anything; it runs again as it was.
  */
 export type TurnOutcome = {
   status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked" | "cancelled" | "interrupted" | "requeue";
   model?: string;
   credits?: number | null;
   error?: string;
-  resume?: { cut: CutOff; mayHaveRun: Array<{ tool: string; label: string | null }>; ownCalls: OpenOwnCall[] };
+  /** `attempt`: the resumed turn's, when it counts as a try again (an agent that exited is tried once more). */
+  resume?: { cut: CutOff; mayHaveRun: Array<{ tool: string; label: string | null }>; ownCalls: OpenOwnCall[]; attempt?: number };
 };
 export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<DispatchOutcome | void>; signal?: AbortSignal };
 
@@ -476,6 +477,8 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   let result: AssistantTurnResult;
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
+  /** The owner's agent's own calls this try that can change something, by id: what ran, and whether each said it ended. */
+  const ownActing = new Map<string, OpenOwnCall & { ended: boolean }>();
   const ownerOnly = (drafting || !fromNonOwner) && (Boolean(privateTo) || people.every((id) => id === owner));
   // The owner's own words in this turn: what its skills, tool tiers and answer check go by. A turn that
   // carries on work (an answered card, a run that ended) has none: web_task goes by their last words here.
@@ -720,9 +723,14 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
                       onOwnTool(event: OwnToolEvent) {
                         // From the first own call that can change something, the turn is not run again from the start.
                         if (event.phase === "start") {
-                          if (event.acts) void markActed(app, turn.id).catch(() => undefined);
+                          if (event.acts) {
+                            ownActing.set(event.id, { name: event.name, summary: event.summary, acts: true, ended: false });
+                            void markActed(app, turn.id).catch(() => undefined);
+                          }
                           return;
                         }
+                        const acting = ownActing.get(event.id);
+                        if (acting) acting.ended = true;
                         toolsRan += 1;
                         trace.loop.calls.push(ownCallTrace(event));
                         const state = event.ok === false ? "failed" : "ok";
@@ -868,6 +876,23 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   if (failure) {
     const error = failure;
     const aborted = deps.signal?.aborted || (error instanceof Error && error.name === "AbortError");
+    if (!aborted && error instanceof RuntimeError && error.kind === AGENT_EXIT && turn.attempt === 0) {
+      // The owner's agent exited with nothing said, or crashed: tried again once. Without a call that may have run (the
+      // tool journal's, the agent's own that act) or a plan it made, it starts again and the journal answers its settled
+      // calls; else it resumes told what ran and to check first (node/queue.ts `resumeTurn`).
+      const mayHaveRun = await uncertainCallsOf(app, turn.id);
+      const own = [...ownActing.values()];
+      if (!mayHaveRun.length && !own.length && !(await madePlan(prisma, node.id, turn.id))) {
+        await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
+        return { status: "retry", error: error.message };
+      }
+      trace.error = error.message;
+      await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "error", content: `(Cut off here: ${error.message})` } });
+      await prisma.assistantConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+      await saveCursor(readUpTo);
+      const open = own.filter((call) => !call.ended).map((call) => ({ name: call.name, summary: call.summary, acts: call.acts }));
+      return { status: "interrupted", error: error.message, resume: { cut: { by: `when its agent stopped (${error.message.replace(/[.\s]+$/, "")})`, error: error.message }, mayHaveRun, ownCalls: open, attempt: turn.attempt + 1 } };
+    }
     if (!aborted && !toolsRan && error instanceof RuntimeError && error.kind === "rate_limit" && mayRetry(turn) && !(await madePlan(prisma, node.id, turn.id))) {
       // Tried again later in full: this try leaves no trace in the room or the conversation.
       await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);

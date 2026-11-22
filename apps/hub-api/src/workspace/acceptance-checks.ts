@@ -28,8 +28,8 @@ export const MAX_ACCEPTANCE_CHECKS = 12;
 const SAID_AFTER = /^\s*(?:(?:should|must|will|shall|has to|have to|needs? to)\s+)?(?:pass(?:es|ing)?|succeed(?:s|ing)?|exits?\s+(?:with\s+)?(?:code\s+|status\s+)?0|returns?\s+0)\b/i;
 /** What the criterion says right before a command: run it, execute it. */
 const SAID_BEFORE = /\b(?:run|execute)\s*:?\s*$/i;
-/** Words that turn "run `X`" around: never run, do not run, avoid, without. */
-const NEGATED = /\b(?:never|not|nor|avoid(?:ing)?|without|skip(?:ping)?|stop(?:ping)?|don'?t|doesn'?t|won'?t|shouldn'?t|mustn'?t|can'?t|cannot)\b/i;
+/** Words that turn "run `X`" (or "change X") around: never run, do not run, avoid, without. */
+export const NEGATED = /\b(?:never|not|nor|avoid(?:ing)?|without|skip(?:ping)?|stop(?:ping)?|don'?t|doesn'?t|won'?t|shouldn'?t|mustn'?t|can'?t|cannot)\b/i;
 /** Other spans the same words cover: "`A`, `B` and `C` pass". */
 const LISTED = /^(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s+)`[^`\n]+`)+/i;
 /** A folder the criterion names: "in the export folder", "in `packages/web/`". */
@@ -223,6 +223,13 @@ function fileWords(command: string): { at: number[]; tests: boolean } {
   if (program === "pytest" || program === "py.test") return after(1, PYTEST);
   if (program === "mocha") return after(1, MOCHA);
   return { at: [], tests: false };
+}
+
+/** The files and test folders a check command runs, as it names them (pytest's without a test's name); empty when it names none. */
+export function checkFiles(command: string): string[] {
+  const words = command.split(" ");
+  const { at, tests } = fileWords(command);
+  return at.map((index) => (tests ? words[index]!.split("::")[0]! : words[index]!));
 }
 
 /**

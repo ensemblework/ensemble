@@ -26,8 +26,27 @@ function failedLines(failed: ReplyCall[]): string[] {
 }
 
 /**
+ * The text without the sentences that match `claim`, lines and paragraphs kept; of such a sentence, what
+ * comes before its first claiming clause (", and", ", but" or ";") stays. Empty when nothing else is left.
+ */
+function withoutClaims(text: string, claim: RegExp): string {
+  const lines = text.split("\n").map((line) => {
+    if (!claim.test(line)) return line;
+    const sentences = line.split(/(?<=[.!?])\s+/).flatMap((sentence) => {
+      if (!claim.test(sentence)) return [sentence];
+      const clauses = sentence.split(/,\s+(?:and|but)\s+|;\s+/);
+      const before = clauses.slice(0, Math.max(0, clauses.findIndex((clause) => claim.test(clause))));
+      return before.length ? [`${before.join("; ").replace(/[\s.!?,;:]+$/, "")}.`] : [];
+    });
+    return sentences.join(" ").trim();
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
  * Drop a boast that work was added or proposed when the tool rows say otherwise,
- * and append the validation errors the model skipped.
+ * and append the validation errors the model skipped. A write held for the owner keeps the
+ * model's answer, without what claims it made, above the held-write line.
  */
 export function reflectProposals(text: string, calls: ReplyCall[]): string {
   const writes = calls.filter((call) => call.isWrite);
@@ -51,7 +70,10 @@ export function reflectProposals(text: string, calls: ReplyCall[]): string {
     (claimsAdded && done.length === 0) ||
     (claimsProposed && pending.length === 0 && done.length === 0) ||
     (failed.length > 0 && (claimsAdded || claimsProposed) && !failureNoted);
-  if (overclaims) return facts.join("\n");
+  if (overclaims) {
+    const answer = !pending.length ? "" : done.length ? body : withoutClaims(body, ADDED);
+    return answer ? `${answer}\n\n${facts.join("\n")}` : facts.join("\n");
+  }
   const missing = facts.filter((line) => {
     const detail = line.replace(/^(Proposed, not applied yet: |Done: |Not added: |Not done: )/, "").replace(/ \(\d+ times\)$/, "");
     return detail.length > 0 && !body.includes(detail.slice(0, Math.min(24, detail.length)));

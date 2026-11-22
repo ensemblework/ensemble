@@ -499,7 +499,7 @@ test("an agent screen that cannot start says why, and nothing moves to the owner
   assert.equal(owner.helper.health().state, "stopped", "the owner's screen was not touched");
 });
 
-test("a call works on the screen it names, its look's, its recording's or the last one used, else the agent screen", { timeout: 30_000 }, async () => {
+test("a call works on the screen it names, its look's, its recording's or the last one used, else the agent screen; an app it opens, on the agent screen where that can start", { timeout: 30_000 }, async () => {
   const owner = harness();
   const agent = harness({ agent: "up" });
   const screens = new Desktops(owner.service, () => agent.service);
@@ -512,6 +512,8 @@ test("a call works on the screen it names, its look's, its recording's or the la
   const ownerLook = await screens.service("owner").observe(a, {});
   screens.remember(a.key, "owner");
   assert.equal(screens.pick(a.key, {}), "owner", "where it last worked");
+  assert.equal(await screens.opening(a.key, async () => true), "agent", "an app it opens goes on the agent screen where that can start");
+  assert.equal(await screens.opening(a.key, async () => false), "owner");
   assert.equal(screens.pick(a.key, { screen: "agent" }), "agent");
   const agentLook = await screens.service("agent").observe(a, {});
   screens.remember(a.key, "agent");

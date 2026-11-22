@@ -12,10 +12,12 @@ const coordinate = z.number().min(-100).max(20_000);
 const display = z.union([z.string().max(40), z.number().int().min(0).max(1_000_000)]).optional().describe("A monitor, by its name (DP-2) or number from desktop_status. Default: the main one.");
 
 export const SCREENS = ["agent", "owner"] as const;
+/** What the owner is asked about before a node uses their own pointer and keyboard. */
+export const OWNER_SCREEN_TARGET = "screen:owner";
 const screen = z
   .enum(SCREENS)
   .optional()
-  .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent. A Mac has no agent screen: there it is always owner.");
+  .describe("agent: your own private screen, which nobody sees unless they watch it. owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Your own screen is the default for any work that does not need your owner's open windows, \"on my computer\" too. Without it, an app you open goes on agent; other calls stay where you last worked, else agent. A Mac has no agent screen: there it is always owner.");
 
 const share = z.boolean().optional().describe("true: also send this picture to your owner in this chat, held for them to preview first. Use it whenever they want to see the screen.");
 
