@@ -217,6 +217,24 @@ test("notes from meeting tools read with decisions and action items and stay rea
   assert.equal((await db.meetingNote.findUniqueOrThrow({ where: { id: imported.id } })).deletedAt, null);
 });
 
+test("a search narrowed to meetings that finds none names the page titled as asked, with its id", async () => {
+  const mira = await harness.asUser();
+  const page = await db.taskPage.create({ data: { userId: mira.id, title: "Product sync", searchText: "Product sync\nAction items: ship the export, draft the summary." } });
+  await db.taskPage.create({ data: { userId: mira.id, title: "Notes", searchText: "Notes\nThe product sync came up." } });
+  const t = tool("hub_search_work");
+  const search = async (input: Record<string, unknown>) => {
+    const result = await t.run(ctx(mira.id), t.input.parse(input));
+    return { summary: result.summary, ...(result.data as { hits: unknown[]; otherKinds?: Array<{ kind: string; id: string; ref: string | null }> }) };
+  };
+  const meetings = await search({ query: "Product sync", kinds: ["meeting"] });
+  assert.equal(meetings.hits.length, 0);
+  assert.equal(meetings.summary, `No meeting matched “Product sync”. A page is titled “Product sync” (page id ${page.id}).`);
+  assert.deepEqual(meetings.otherKinds?.map((hit) => [hit.kind, hit.id, hit.ref]), [["page", page.id, `ensemble://page/${page.id}`]], "a page that only mentions the words is not named");
+  const everything = await search({ query: "Product sync" });
+  assert.equal(everything.otherKinds, undefined, "a search over every kind has its hits");
+  assert.equal((await search({ query: "Quarterly planning", kinds: ["meeting"] })).summary, "Nothing matched “Quarterly planning”.");
+});
+
 test("hub_weekly_recap returns the week's done, slipped, upcoming and meetings", async () => {
   const mira = await harness.asUser();
   await db.preference.create({ data: { userId: mira.id, key: "hub.settings", value: { timezone: TZ }, source: "me" } });

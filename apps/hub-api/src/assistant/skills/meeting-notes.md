@@ -10,6 +10,7 @@ Meeting notes live at `/meetings`. Some are written in Ensemble; others come in 
 
 Find and read
 - hub_list_meeting_notes with query (title or person) and/or from/to dates; then hub_read_meeting_note with meetingId for the full notes, attendees, decisions and action items (in parts if long). Notes from meeting tools say where they came from and are read-only.
+- Notes the person wrote as a page named after the meeting are a page, not a meeting note: when hub_list_meeting_notes finds nothing, hub_search_work without kinds finds it (one narrowed to meetings names a record of another kind with that title).
 - "What did we decide with Mira last week?" → hub_list_meeting_notes (query "Mira", from/to last week) → read each → answer with the decisions and who owns what.
 - "What happened last time?" / prepare for a recurring meeting → hub_item_context with the meeting's handle: its summary, decisions, the tasks made from it with their status, and the earlier meetings of its series (rel "earlier").
 - Meeting tools connected in this space are in the Connected apps list, each with what reaches it. One connected through MCP (Granola, Fireflies, Fathom, Krisp, Jamie, Otter and others) can be searched and read live with its own mcp_<app>_… tools; if they are not in your tool list, call hub_how_to with name "apps". Answer from what they return; nothing is saved in Ensemble unless they ask.
