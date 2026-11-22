@@ -10,6 +10,8 @@
  * share one question. sudo is sent to computer_sudo's card. The person's own MCP tools meet the same
  * floor and folders where their input names a command or files, and any other tool asks once a run;
  * a `cd` holds for the shell's next command. How each call was answered reaches the call the agent reported, for the turn's trace.
+ * An answer for this run is kept for its plan or conversation only, until Ensemble stops answering from it; one
+ * from now on has no end.
  */
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -48,19 +50,34 @@ const { acpCalls } = await import("../workspace/engines/acp.js");
 type Input = Parameters<typeof nodeOwnJudge>[0];
 type Ask = Parameters<NonNullable<Input["ask"]>>[0];
 type Answer = Awaited<ReturnType<NonNullable<Input["ask"]>>>;
-type Rule = { userId: string; source: string; toolName: string; pattern: string; decision: string; sessionId: string | null };
+type Rule = { id: string; userId: string; source: string; toolName: string; pattern: string; decision: string; sessionId: string | null; createdAt: Date; expiresAt: Date | null };
 
-/** This computer's saved answers (`decision_rules`), in memory. */
-function rules(initial: Rule[] = []) {
-  const rows = [...initial];
-  const fits = (row: Rule, where: Record<string, unknown>) => Object.entries(where).every(([key, value]) => row[key as keyof Rule] === value);
+/** This computer's saved answers (`decision_rules`), in memory: equal fields, `{ in: [...] }`, newest first when asked. */
+function rules(initial: Array<Omit<Rule, "id" | "createdAt" | "expiresAt"> & Partial<Pick<Rule, "createdAt" | "expiresAt">>> = []) {
+  let made = 0;
+  const row = (data: Omit<Rule, "id" | "createdAt" | "expiresAt"> & Partial<Rule>): Rule => ({ id: data.id ?? `rule-${++made}`, createdAt: data.createdAt ?? new Date(), expiresAt: data.expiresAt ?? null, ...data });
+  const rows: Rule[] = initial.map(row);
+  const fits = (rule: Rule, where: Record<string, unknown>) =>
+    Object.entries(where).every(([key, value]) => {
+      const field = rule[key as keyof Rule];
+      return value && typeof value === "object" && "in" in value ? (value as { in: unknown[] }).in.includes(field) : field === value;
+    });
   const db = {
     decisionRule: {
-      findMany: async ({ where }: { where: Record<string, unknown> }) => rows.filter((row) => fits(row, where)),
-      findFirst: async ({ where }: { where: Record<string, unknown> }) => rows.find((row) => fits(row, where)) ?? null,
-      create: async ({ data }: { data: Rule }) => {
-        rows.push(data);
-        return data;
+      findMany: async ({ where, orderBy }: { where: Record<string, unknown>; orderBy?: unknown }) => {
+        const found = rows.filter((rule) => fits(rule, where));
+        return orderBy ? [...found].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) : found;
+      },
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => rows.find((rule) => fits(rule, where)) ?? null,
+      create: async ({ data }: { data: Omit<Rule, "id" | "createdAt" | "expiresAt"> & Partial<Rule> }) => {
+        const made = row(data);
+        rows.push(made);
+        return made;
+      },
+      deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
+        const gone = rows.filter((rule) => fits(rule, where));
+        for (const rule of gone) rows.splice(rows.indexOf(rule), 1);
+        return { count: gone.length };
       },
     },
   };
@@ -68,9 +85,10 @@ function rules(initial: Rule[] = []) {
 }
 
 const MISSION = "conversation:room-1:shared";
-const rule = (toolName: string, pattern: string, sessionId: string | null = null): Rule => ({ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName, pattern, decision: "allow", sessionId });
+const DAY = 86_400_000;
+const rule = (toolName: string, pattern: string, sessionId: string | null = null, at: { createdAt?: Date; expiresAt?: Date | null } = {}) => ({ userId: "owner", source: NODE_TOOL_RULE_SOURCE, toolName, pattern, decision: "allow", sessionId, ...at });
 
-function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Rule[]; folders?: string[]; mission?: string; store?: ReturnType<typeof rules>; slowAsk?: boolean; servers?: Input["mcpServers"]; onVerdict?: Input["onVerdict"] } = {}) {
+function judgeWith(options: { attended?: boolean; sudo?: boolean; answers?: Answer[]; saved?: Parameters<typeof rules>[0]; folders?: string[]; mission?: string; store?: ReturnType<typeof rules>; slowAsk?: boolean; servers?: Input["mcpServers"]; onVerdict?: Input["onVerdict"] } = {}) {
   const asked: Ask[] = [];
   const answers = [...(options.answers ?? [])];
   const store = options.store ?? rules(options.saved);
@@ -437,4 +455,48 @@ test("a cd holds for the shell's next command: the folder it went to is judged t
   assert.match((await judge(bash("cat .ssh/id_rsa"))).message!, /keys|sign-ins/, "the floor, where the shell may be");
   assert.equal((await judge([{ tool: "Bash", input: { command: "touch report.md", cwd: turnFolder } }])).decision, "allow", "a command that says where it runs is judged there");
   assert.equal(asked.length, 1);
+});
+
+test("an answer for this run is kept for its plan or conversation only, until Ensemble stops answering from it; one from now on has no end", async () => {
+  const until = new Date(Date.now() + 30 * DAY);
+  const store = rules();
+  const dm = judgeWith({ store, answers: [{ decision: "allow", grant: { id: "decision-9", scope: "mission", target: site, until: until.toISOString() } }] });
+  assert.equal((await dm.judge(write(join(site, "src", "app.ts")))).decision, "allow");
+  assert.deepEqual(
+    store.rows.map((row) => [row.toolName, row.pattern, row.sessionId, row.expiresAt?.toISOString()]),
+    [[OWN_RULES.write, site, MISSION, until.toISOString()]],
+    "kept with its conversation and the time Ensemble stops answering from it",
+  );
+  assert.equal((await judgeWith({ store }).judge(write(join(site, "b.md")))).decision, "allow", "the same conversation, later: not asked again");
+  for (const mission of ["conversation:room-2:shared", "conversation:room-1:private", "plan-7"]) {
+    const other = judgeWith({ store, mission });
+    assert.equal((await other.judge(write(join(site, "b.md")))).decision, "deny", mission);
+    assert.equal(other.asked.length, 1, `${mission}: another conversation or a plan asks`);
+  }
+
+  // An answer that lapsed asks again, and leaves this computer's rules.
+  const lapsed = rules([rule(OWN_RULES.write, site, MISSION, { expiresAt: new Date(Date.now() - 1000) })]);
+  const after = judgeWith({ store: lapsed });
+  assert.equal((await after.judge(write(join(site, "b.md")))).decision, "deny");
+  assert.equal(after.asked.length, 1);
+  assert.deepEqual(lapsed.rows, [], "gone from this computer's rules");
+
+  // Kept by an Ensemble from before answers carried their end: for this run lapses 30 days after it was kept; from now on stays.
+  const old = rules([
+    rule(OWN_RULES.write, site, MISSION, { createdAt: new Date(Date.now() - 31 * DAY) }),
+    rule(OWN_RULES.write, notes, MISSION, { createdAt: new Date(Date.now() - 29 * DAY) }),
+    rule(OWN_RULES.origin, "http://192.168.1.20:8080", null, { createdAt: new Date(Date.now() - 400 * DAY) }),
+  ]);
+  const before = judgeWith({ store: old });
+  assert.equal((await before.judge(write(join(site, "b.md")))).decision, "deny", "for this run, kept 31 days ago: lapsed");
+  assert.equal((await before.judge(write(join(notes, "today.md")))).decision, "allow", "kept 29 days ago: still counts");
+  assert.equal((await before.judge([{ tool: "WebFetch", input: { url: "http://192.168.1.20:8080/status" } }])).decision, "allow", "from now on, a year on: no surprise");
+  assert.equal(before.asked.length, 1);
+
+  // A newer answer for this run replaces the older one; one Ensemble on the web sends without its end counts 30 days from now.
+  const again = judgeWith({ store: old, answers: [{ decision: "allow", grant: { id: "decision-10", scope: "mission", target: site } }] });
+  assert.equal((await again.judge(write(join(site, "c.md")))).decision, "allow");
+  const kept = old.rows.filter((row) => row.pattern === site);
+  assert.equal(kept.length, 1);
+  assert.ok(Math.abs(kept[0]!.expiresAt!.getTime() - (Date.now() + 30 * DAY)) < 60_000, "30 days from now");
 });

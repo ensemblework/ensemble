@@ -2385,6 +2385,8 @@ model DecisionRule {
   decision  String
   sessionId String?  @map("session_id")
   createdAt DateTime @default(now()) @map("created_at")
+  /// When the rule stops counting: a node's answer for this run (its plan or conversation in sessionId) lapses with Ensemble's; null: no end.
+  expiresAt DateTime? @map("expires_at")
 
   @@index([userId, source, toolName])
   @@map("decision_rules")

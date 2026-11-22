@@ -263,6 +263,42 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
   }
 });
 
+test("an answer no call has used yet goes only with a call it covers: Once and This mission with one of the same conversation or plan, Always with any, one about the agent's own calls never", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira);
+  const { node, room } = await createNode(mira);
+  const target = "/home/mira/projects/app";
+  const here = `conversation:${room.id}:shared`;
+  // Answers on cards whose turns parked, before the calls they wake have used them.
+  const answered = async (reason: string, mission: string, own?: { what: string; kind: string }) =>
+    (
+      await h.prisma.agentDecision.create({
+        data: {
+          userId: mira.id, source: "ensemble", event: "question", toolName: "Computer tools", title: "@assistant wants to read git in app on Mira's laptop", status: "decided", decision: "allow", reason, decidedAt: new Date(),
+          expiresAt: new Date(Date.now() + 86_400_000),
+          detail: { options: own ? ["Allow changes and commands", "Allow changes and commands for this run"] : ["Once", "This mission", "Always for this folder"], nodeTool: { nodeId: node.id, nodeSlug: node.slug, roomId: room.id, private: false, planId: null, planStep: null, mission, deviceId: laptop.id, deviceName: "Mira's laptop", capability: "git", target, label: "app", scope: "folder", ...(own ? { own } : {}), parked: [], delivered: false, announced: false } },
+        },
+      })
+    ).id;
+  const elsewhere = "conversation:another-room:private";
+  await answered("Once", elsewhere);
+  await answered("This mission", "plan-7");
+  const always = await answered("Always for this folder", elsewhere);
+  const mission = await answered("This mission", here);
+  await answered("Allow changes and commands for this run", here, { what: "change src/app.ts", kind: "write" });
+  await answered("Allow changes and commands", here, { what: "change src/app.ts", kind: "write" });
+  const device = computer(laptop.id, key, () => ({ status: 200, body: { exitCode: 0, output: "## main\n" } }));
+  try {
+    script = (turn) => (turn.transcript.includes("what changed") ? gitStatus : { text: "ok" });
+    await say(mira, room.id, "what changed in app?");
+    assert.equal(device.heard.length, 1);
+    const sent = (device.heard[0]!.grants as Array<{ id: string; scope: string }>).map((grant) => [grant.id, grant.scope]);
+    assert.deepEqual(sent.sort(), [[always, "always"], [mission, "mission"]].sort(), "another conversation's or a plan's Once and This mission stay for their calls; the agent's own answers go back by its own asks");
+  } finally {
+    device.stop();
+  }
+});
+
 test("an app on the node's own agent screen is asked about as its own screen, not the owner's", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira, "ask", { nodeTools: 1, desktop: 1 });

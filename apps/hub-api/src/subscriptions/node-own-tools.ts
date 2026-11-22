@@ -15,8 +15,8 @@
  *   temporary folders, in a folder an answer covers, and in an unattended run.
  * - Anything else asks its owner, once per folder: Ensemble on the web posts a card in the node's chat and
  *   holds the call up to 90 seconds (node/own-tool-asks.ts). An answer allows changes and commands in that
- *   folder from then on or for this run (this conversation or plan). Not answered in time: the call is
- *   refused with a note to stop here, every later call of the turn too, and the turn parks.
+ *   folder from then on or for this run (this conversation or plan, for 30 days at most). Not answered in
+ *   time: the call is refused with a note to stop here, every later call of the turn too, and the turn parks.
  * - Always asked, unattended too: a program that changes the system (crontab, launchctl, osascript…),
  *   answered at most for the run, and a read or change that names no path the floor could check, answered
  *   for that call only.
@@ -30,7 +30,9 @@
  *   it was given are not its own, so their first change or command asks.
  *
  * The answers are this computer's own rules (`OWN_RULES`), apart from the node's computer tools' (which
- * run in the OS sandbox). Calls asking about the same thing at once share one question.
+ * run in the OS sandbox): one from then on with no end, one for this run only in the turns of its plan or
+ * conversation and until Ensemble stops answering from it (`ruleLapses`). Calls asking about the same thing
+ * at once share one question.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
@@ -50,7 +52,7 @@ import { globRoot, HARMLESS, judgeFloor, pathsOf, type EngineAnswer, type Engine
 import { parseShell } from "../workspace/shell-parse.js";
 import { gitReadSafeAt, outsideArgs, realOutside, segmentReadsOnly } from "../workspace/tools.js";
 import type { AgentMcpServer } from "./agent-mcp.js";
-import type { OwnAnswer, OwnAsk, OwnAskKind, OwnJudge, OwnVerdict } from "./bridge.js";
+import { OWN_ANSWER_DAYS, type OwnAnswer, type OwnAsk, type OwnAskKind, type OwnJudge, type OwnVerdict } from "./bridge.js";
 import { logRefused } from "./own-tools.js";
 
 /**
@@ -70,6 +72,17 @@ export type NodeTurnPolicy = { id: string; slug: string; mission: string; attend
 export const OWN_RULES = { write: "own:write", origin: "own:origin", program: "own:program", tool: "own:tool" } as const;
 /** What an answer covers at most for the run, never from then on. */
 const RUN_ONLY: ReadonlySet<OwnAskKind> = new Set(["program", "tool"]);
+const DAY_MS = 86_400_000;
+
+/**
+ * When one of this computer's answers about the agent's own calls stops counting, in milliseconds: one for
+ * this run (`sessionId`, its plan or conversation) at its `expiresAt`, when Ensemble on the web stops answering
+ * from it; kept before rules carried that, `OWN_ANSWER_DAYS` after it was kept. One from then on: never.
+ */
+export function ruleLapses(rule: { sessionId: string | null; createdAt: Date; expiresAt: Date | null }): number {
+  if (rule.expiresAt) return rule.expiresAt.getTime();
+  return rule.sessionId === null ? Number.POSITIVE_INFINITY : rule.createdAt.getTime() + OWN_ANSWER_DAYS * DAY_MS;
+}
 
 type Db = Pick<PrismaClient, "decisionRule">;
 
@@ -273,9 +286,23 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     return deny(`You work only in ${named}, the folders your node gave you, and your own folder. Report what needs another folder.`);
   };
 
-  /** This computer's answers about the agent's own calls (never the node's computer tools'); none it cannot read, so the owner is asked. */
-  const kept = async () =>
-    (await db.decisionRule.findMany({ where: { userId, source: NODE_TOOL_RULE_SOURCE, decision: "allow" }, select: { toolName: true, pattern: true, sessionId: true }, take: 1000 }).catch(() => [])).filter((rule) => rule.toolName.startsWith("own:"));
+  /**
+   * This computer's answers about the agent's own calls that still count (never the node's computer tools'); none it
+   * cannot read, so the owner is asked. Those that lapsed leave this computer's rules.
+   */
+  let pruned = false;
+  const kept = async () => {
+    const rules = await db.decisionRule
+      .findMany({ where: { userId, source: NODE_TOOL_RULE_SOURCE, decision: "allow", toolName: { in: Object.values(OWN_RULES) } }, select: { id: true, toolName: true, pattern: true, sessionId: true, createdAt: true, expiresAt: true }, orderBy: { createdAt: "desc" }, take: 1000 })
+      .catch(() => []);
+    const now = Date.now();
+    const lapsed = rules.filter((rule) => ruleLapses(rule) <= now).map((rule) => rule.id);
+    if (lapsed.length && !pruned) {
+      pruned = true;
+      await db.decisionRule.deleteMany({ where: { id: { in: lapsed } } }).catch(() => undefined);
+    }
+    return rules.filter((rule) => ruleLapses(rule) > now);
+  };
 
   /** An answer covers this: one of its own kind, for this run or (but a program's or a tool's) from then on, for its target or a folder holding it. */
   const covered = async (need: Need): Promise<boolean> => {
@@ -289,15 +316,26 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
     );
   };
 
-  /** The owner's answer, kept as this computer's rule for what it was given for: a program's or a tool's for this run at most, a once answer not at all. */
+  /**
+   * The owner's answer, kept as this computer's rule for what it was given for: from then on with no end; for this run
+   * (a program's or a tool's at most) with the turn's plan or conversation, until the time the grant says it lapses (from
+   * an Ensemble that sends none, `OWN_ANSWER_DAYS` from now), in place of an older answer for the same; once, not at all.
+   */
   const keep = async (need: Need, grant: Grant): Promise<void> => {
     if (need.kind === "unnamed" || grant.scope === "once") return;
     if (grant.target !== need.target && !(need.folder && isAbsolute(grant.target) && within(grant.target, need.target))) return;
-    const sessionId = grant.scope === "always" && !RUN_ONLY.has(need.kind) ? null : node.mission;
-    const rule = { userId, source: NODE_TOOL_RULE_SOURCE, toolName: OWN_RULES[need.kind], pattern: grant.target, decision: "allow", sessionId };
+    const always = grant.scope === "always" && !RUN_ONLY.has(need.kind);
+    const rule = { userId, source: NODE_TOOL_RULE_SOURCE, toolName: OWN_RULES[need.kind], pattern: grant.target, decision: "allow", sessionId: always ? null : node.mission };
+    const until = grant.until ? Date.parse(grant.until) : Number.NaN;
+    const expiresAt = new Date(Number.isFinite(until) ? until : Date.now() + OWN_ANSWER_DAYS * DAY_MS);
     // The answer stands for this call either way; a rule that cannot be kept means the next call asks again.
     await (async () => {
-      if (!(await db.decisionRule.findFirst({ where: rule }))) await db.decisionRule.create({ data: rule });
+      if (always) {
+        if (!(await db.decisionRule.findFirst({ where: rule }))) await db.decisionRule.create({ data: rule });
+        return;
+      }
+      await db.decisionRule.deleteMany({ where: rule });
+      if (expiresAt.getTime() > Date.now()) await db.decisionRule.create({ data: { ...rule, expiresAt } });
     })().catch(() => undefined);
   };
 

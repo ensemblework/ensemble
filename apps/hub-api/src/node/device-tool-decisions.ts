@@ -345,8 +345,12 @@ export async function closeComputerQuestion(app: Pick<FastifyInstance, "prisma">
   if (closed.count) decisionBus.emit(data.decisionId);
 }
 
-/** The owner's answers for this node on this computer that the computer has not used yet. */
-export async function pendingGrants(prisma: Pick<PrismaClient, "agentDecision">, owner: string, nodeId: string, deviceId: string): Promise<NodeToolGrant[]> {
+/**
+ * The owner's answers about the node's computer tools on this computer that it has not used yet, for a call in
+ * `mission`: Once and This mission only from that conversation or plan, Always from any. An answer about the
+ * agent's own calls goes back by its own ask (own-tool-asks.ts), never with a computer tool's call.
+ */
+export async function pendingGrants(prisma: Pick<PrismaClient, "agentDecision">, owner: string, nodeId: string, deviceId: string, mission: string): Promise<NodeToolGrant[]> {
   const rows = await prisma.agentDecision.findMany({
     where: { userId: owner, toolName: NODE_TOOL_DECISION, status: "decided", decision: "allow", decidedAt: { gte: new Date(Date.now() - WAIT_DAYS * 86_400_000) } },
     orderBy: { decidedAt: "asc" },
@@ -356,7 +360,9 @@ export async function pendingGrants(prisma: Pick<PrismaClient, "agentDecision">,
   for (const row of rows) {
     const card = detailOf(row).nodeTool;
     const scope = grantScope(row);
-    if (!card || !scope || card.delivered || card.nodeId !== nodeId || card.deviceId !== deviceId) continue;
+    if (!card || !scope || card.own || card.delivered || card.nodeId !== nodeId || card.deviceId !== deviceId) continue;
+    // Once and This mission are the answer for that conversation's or plan's calls, never another's.
+    if (scope !== "always" && card.mission !== mission) continue;
     grants.push({ id: row.id, scope, target: card.target });
   }
   return grants.slice(-20);
