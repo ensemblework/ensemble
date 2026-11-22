@@ -682,14 +682,14 @@ test("a re-plan turn that waits for its owner's answer goes on in the turn the a
     return { text: "(no reply)" };
   };
   assert.equal((await kofi.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "@manager find the sources" } })).statusCode, 201);
-  let replan: { id: string; planId: string | null } | null = null;
-  for (let i = 0; i < 300 && !replan; i += 1) {
-    replan = await h.prisma.nodeTurn.findFirst({ where: { nodeId: ids[0], reason: "plan", planStep: null, status: "running" }, select: { id: true, planId: true } });
-    if (!replan) await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.ok(replan?.planId, "the lead's re-plan turn runs");
-  assert.ok(requestPark(replan.id, "Waiting for Kofi to answer the card in this chat."));
+  // Its row says running before the queue registers the turn where requestPark finds it; its model call comes after that.
+  for (let i = 0; i < 500 && !seen.some((turn) => turn.slug === "manager" && turn.transcript.includes("one re-plan turn")); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  const replan = await h.prisma.nodeTurn.findFirst({ where: { nodeId: ids[0], reason: "plan", planStep: null, status: "running" }, select: { id: true, planId: true } });
+  const parked = Boolean(replan) && requestPark(replan!.id, "Waiting for Kofi to answer the card in this chat.");
+  // Let go before any check: a turn still held would keep every later settleTurns waiting.
   ask();
+  assert.ok(replan?.planId, "the lead's re-plan turn runs");
+  assert.ok(parked, "the re-plan turn is running in this process");
   await settleTurns();
   assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: replan.id } })).outcome, "parked");
   assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: replan.planId } })).status, "replanning", "a parked re-plan turn has not ended the re-plan");

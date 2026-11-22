@@ -9,7 +9,7 @@ import { ASSISTANT_RELAY_API, ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, A
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
-import { RuntimeError } from "../lib/runtime-error.js";
+import { AGENT_EXIT, RuntimeError } from "../lib/runtime-error.js";
 import { loadSettings as computerSettings } from "../remote/store.js";
 import { currentScope, keysFor } from "../sharing/context.js";
 import { AgentTurnError, OWN_WEB_AGENTS, PARK_STOP, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
@@ -334,7 +334,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     return { ...result, computer: computer.name, ...(computerId ? { computerId } : {}), ownTools, resumable: Boolean(turn.session) && (computer.local || computer.turns >= ASSISTANT_TURN_FOLLOW_UPS) };
   } catch (error) {
     logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
-    if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);
+    if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" || error.problem === "exited" ? 502 : 409, false, error.problem === "exited" ? AGENT_EXIT : null);
     throw error;
   }
 }

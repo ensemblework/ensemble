@@ -42,6 +42,7 @@ import { askSudo } from "./sudo.js";
 import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
 import { liveTools } from "./live-views.js";
 import { desktopTools } from "../desktop/control/node-tools.js";
+import { OWNER_SCREEN_TARGET } from "../desktop/control/tool-specs.js";
 import type { NodeScope } from "./tools.js";
 import { postMessage } from "./store.js";
 
@@ -251,13 +252,21 @@ async function askAndWait(ctx: ToolContext, scope: NodeScope, device: Device, as
   );
   const where = placeOf(tool);
   if (answered?.status === "decided" && answered.decision === "allow") return null;
-  if (answered?.status === "decided") return toolOk(`Your owner chose not to allow this call (${options.describe}) ${where}. Continue without it, or say what cannot be done without it.`, { allowed: false });
-  if (answered) return toolOk(`Your owner did not answer the card about ${options.describe} ${where}, and it closed. Continue without it, or ask again later if it is still needed.`, { allowed: false });
+  const ownScreen = ownScreenInstead(device, ask);
+  if (answered?.status === "decided") return toolOk(`Your owner chose not to allow this call (${options.describe}) ${where}. ${ownScreen ?? "Continue without it, or say what cannot be done without it."}`, { allowed: false });
+  if (answered) return toolOk(`Your owner did not answer the card about ${options.describe} ${where}, and it closed. ${ownScreen ?? "Continue without it, or ask again later if it is still needed."}`, { allowed: false });
   // Not answered yet: the answer wakes this conversation or step later, with this call to make again.
   watchDecision(ctx.app, asked.row.id);
   const waits = `Waiting for ${await ownerName(prisma, node.userId)} to answer the card about ${options.describe} (${where}).`;
   requestPark(scope.turnId, waits);
   return toolOk(`${waits} End your turn now without a reply: you continue when they answer.`, { waitingForOwner: true, card: card.id });
+}
+
+/** Where the owner's own screen was not allowed: the node's own screen, when it is ready on that computer, does the work without them. */
+function ownScreenInstead(device: Pick<Device, "capabilities">, ask: NodeToolAsk): string | null {
+  if (ask.capability !== "desktop" || ask.target !== OWNER_SCREEN_TARGET) return null;
+  const caps = (device.capabilities ?? {}) as { desktopReadiness?: { agentScreen?: { ready?: unknown } } | null };
+  return caps.desktopReadiness?.agentScreen?.ready === true ? 'Your own screen is ready: use screen "agent" for this.' : null;
 }
 
 function safeOrigin(url: string): string | null {

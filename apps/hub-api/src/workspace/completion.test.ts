@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
@@ -7,6 +8,7 @@ import type { StepReport } from "../node/report.js";
 import { acceptanceChecksFor, acceptanceCommands } from "./acceptance-checks.js";
 import { acceptanceOf } from "./turn-packet.js";
 import { agentCommandEnv, completionOf, isTestRunner, rerunChecks, rerunVerdict, taskStatusAfter, testCounts, verifiedReport, type CheckRun } from "./completion.js";
+import { asksToChange, checkBaseline, checkChanges, checkFilesNote, checkKey } from "./check-files.js";
 import type { JobContext } from "./tools.js";
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-completion-")));
@@ -18,6 +20,7 @@ const folder = (name: string) => {
 const fieldnote = folder("fieldnote");
 mkdirSync(join(fieldnote, "web"));
 writeFileSync(join(fieldnote, "accept.js"), "");
+writeFileSync(join(fieldnote, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", test: "node --test" } }));
 
 const ctx = (over: Partial<JobContext> = {}) =>
   ({ root: fieldnote, userId: "u1", sandboxed: false, network: false, accessMode: "read-write", secretEnv: {}, job: { id: "job-1" }, ...over }) as unknown as JobContext;
@@ -383,7 +386,7 @@ test("before it runs them, Ensemble checks the criteria's commands again and ask
   assert.equal(allowed.asked.length, 1, "one card for all of them");
   assert.equal(allowed.asked[0]!.toolName, "run checks", "the card reads \"wants to run checks\"");
   assert.match(allowed.asked[0]!.title, /npm test · node accept\.js/);
-  assert.deepEqual(allowed.ran, ["npm run lint", "npm test", "node accept.js"]);
+  assert.deepEqual(allowed.ran, ["npm run lint", "npm test", `node '${join(fieldnote, "accept.js")}'`], "a criterion's file runs at the real path checked");
   assert.deepEqual(allowed.judged, ["npm run lint read-write", "npm test auto", "node accept.js auto"], "once allowed, the task's commands are not asked about one by one");
   assert.deepEqual(allowed.runs.map((row) => [row.id, row.verdict]), [[null, "pass"], ["AC-1", "pass"], ["AC-2", "not_run"], ["AC-3", "not_run"], ["AC-4", "pass"]]);
   assert.match(allowed.runs[2]!.reason ?? "", /test, lint, build or typecheck/);
@@ -395,7 +398,7 @@ test("before it runs them, Ensemble checks the criteria's commands again and ask
 
   const unattended = await pass("deny", { job: { id: "job-2", unattended: true } } as Partial<JobContext>);
   assert.equal(unattended.asked.length, 0, "an unattended run asks nobody");
-  assert.deepEqual(unattended.ran, ["npm run lint", "npm test", "node accept.js"]);
+  assert.deepEqual(unattended.ran, ["npm run lint", "npm test", `node '${join(fieldnote, "accept.js")}'`]);
   assert.deepEqual(unattended.judged, ["npm run lint read-write", "npm test read-write", "node accept.js read-write"]);
 
   // A read-only run stays read-only after the card.
@@ -433,11 +436,91 @@ test("a criterion's file runs only when it is in the run's folder when the check
       return result(0, "");
     },
   });
-  assert.deepEqual(ran, ["node accept.js", "pytest tests/test_api.py::test_ok"]);
+  assert.deepEqual(ran, [`node '${join(linked, "accept.js")}'`, `pytest '${join(linked, "tests", "test_api.py")}::test_ok'`]);
   assert.deepEqual(asked, ["node accept.js\npytest tests/test_api.py::test_ok"], "the card names only what can run");
   assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"], ["AC-2", "not_run"], ["AC-3", "pass"], ["AC-4", "pass"], ["AC-5", "not_run"]]);
   assert.match(runs[0]!.reason ?? "", /check\.js is not in the run's folder/);
   assert.match(runs[1]!.reason ?? "", /check_output\.py is not in the run's folder/);
+});
+
+test("a criterion's file is checked again right before it runs, and runs at the real path checked: a link an earlier check put in its place is not followed", async () => {
+  const ops = folder("ops");
+  writeFileSync(join(ops, "deploy.js"), "");
+  // A quote and a space in the folder's real path: the path the command runs is quoted for the shell.
+  const root = folder("mira's build");
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { build: "node build.js" } }));
+  writeFileSync(join(root, "test_out.js"), "");
+  writeFileSync(join(root, "accept.js"), "");
+  const acceptance = [
+    { id: "AC-1", text: "`npm run build` passes", command: "npm run build", folder: null },
+    { id: "AC-2", text: "`node test_out.js` passes", command: "node test_out.js", folder: null },
+    { id: "AC-3", text: "`node accept.js` passes", command: "node accept.js", folder: null },
+  ];
+  const ran: string[] = [];
+  const asked: string[] = [];
+  const runs = await rerunChecks(ctx({ root }), null, {
+    signal,
+    judge: allow,
+    ask: async (_ctx, input) => {
+      asked.push(input.command ?? "");
+      return { decision: "allow", answer: null };
+    },
+    acceptance,
+    run: async (options) => {
+      const command = options.argv.at(-1)!;
+      ran.push(command);
+      // The build puts a link out of the folder where the next check's file was.
+      if (command === "npm run build") {
+        rmSync(join(root, "test_out.js"));
+        symlinkSync(join(ops, "deploy.js"), join(root, "test_out.js"));
+      }
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(asked, ["npm run build\nnode test_out.js\nnode accept.js"], "each was in place when the card was shown");
+  const pinned = `node '${join(root, "accept.js").replace(/'/g, `'\\''`)}'`;
+  assert.deepEqual(ran, ["npm run build", pinned], "the link is never run");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict, row.command]), [["AC-1", "pass", "npm run build"], ["AC-2", "not_run", "node test_out.js"], ["AC-3", "pass", "node accept.js"]]);
+  assert.match(runs[1]!.reason ?? "", /test_out\.js is not in the run's folder/);
+  assert.equal(execFileSync("sh", ["-c", pinned.replace(/^node /, "printf %s ")], { encoding: "utf8" }), join(root, "accept.js"), "the shell reads the quoted path back whole");
+});
+
+test("a package manager runs a criterion's script only when the package.json where it runs has it: yarn and bun would run an installed program of that name", async () => {
+  const hooks = folder("hooks");
+  writeFileSync(join(hooks, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", "test:unit": "node --test" }, devDependencies: { husky: "9", "lint-staged": "15" } }));
+  mkdirSync(join(hooks, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(hooks, "node_modules", ".bin", "lint-staged"), "#!/bin/sh\n");
+  mkdirSync(join(hooks, "web"));
+  const acceptance = [
+    { id: "AC-1", text: "`yarn run lint-staged` passes", command: "yarn run lint-staged", folder: null },
+    { id: "AC-2", text: "`bun run lint-staged` passes", command: "bun run lint-staged", folder: null },
+    { id: "AC-3", text: "`yarn test` passes", command: "yarn test", folder: null },
+    { id: "AC-4", text: "`yarn run lint` passes", command: "yarn run lint", folder: null },
+    { id: "AC-5", text: "`pnpm run test:unit` passes", command: "pnpm run test:unit", folder: null },
+    { id: "AC-6", text: "`npm run lint` passes in the web folder", command: "npm run lint", folder: "web" },
+    { id: "AC-7", text: "`bun test` passes", command: "bun test", folder: null },
+  ];
+  const ran: string[] = [];
+  const asked: string[] = [];
+  const runs = await rerunChecks(ctx({ root: hooks }), null, {
+    signal,
+    judge: allow,
+    ask: async (_ctx, input) => {
+      asked.push(input.command ?? "");
+      return { decision: "allow", answer: null };
+    },
+    acceptance,
+    run: async (options) => {
+      ran.push(options.argv.at(-1)!);
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(ran, ["yarn run lint", "pnpm run test:unit", "bun test"], "bun test is bun's own test runner");
+  assert.deepEqual(asked, ["yarn run lint\npnpm run test:unit\nbun test"], "the card names only what can run");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"], ["AC-2", "not_run"], ["AC-3", "not_run"], ["AC-4", "pass"], ["AC-5", "pass"], ["AC-6", "not_run"], ["AC-7", "pass"]]);
+  assert.match(runs[0]!.reason ?? "", /"lint-staged" is not a script in the package\.json where it runs/);
+  assert.match(runs[2]!.reason ?? "", /"test" is not a script/);
+  assert.match(runs[5]!.reason ?? "", /"lint" is not a script/, "a folder without a package.json has no scripts");
 });
 
 test("the criteria come from what the task says: never the brief's information sections, quotes or embedded sources", async () => {
@@ -483,6 +566,76 @@ test("a task is done only when the checks Ensemble ran again passed; failed is n
   assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: null }), { status: "done", verified: null, question: null });
   assert.equal(taskStatusAfter({ outcome: "cancelled", markDone: true, checks: null }).status, "todo");
   assert.equal(taskStatusAfter({ outcome: "failed", markDone: true, checks: null }).status, "blocked");
+});
+
+test("a check the run changed is not verified, never done, and names what changed; a run that changed only its work is checked as usual", async () => {
+  const exportFolder = folder("export-guard");
+  mkdirSync(join(exportFolder, "export"));
+  const acceptJs = join(exportFolder, "export", "accept.js");
+  const source = join(exportFolder, "export", "export.js");
+  writeFileSync(acceptJs, "if (!require('fs').existsSync('out.csv')) process.exit(1);\n");
+  writeFileSync(source, "// writes out.csv\n");
+  const acceptance = [{ id: "AC-1", text: "AC-1 `node accept.js` passes in the export folder.", command: "node accept.js", folder: "export" }];
+  const report: StepReport = { outcome: "done", summary: "Exported.", checks: [{ id: "AC-1", name: "acceptance", verdict: "pass", rerun: { command: "node accept.js", cwd: "export", expects: "exit_0" } }] };
+  const where = [{ check: acceptance[0]!, cwd: join(exportFolder, "export") }];
+  const taskText = "Write out.csv from data.json in the export folder.\n\nAcceptance: AC-1 `node accept.js` passes in the export folder.";
+  const verify = async (edit: () => void) => {
+    const baseline = await checkBaseline(exportFolder, where, taskText, null);
+    edit();
+    const { changed } = await checkChanges(baseline);
+    const ran: string[] = [];
+    const runs = await rerunChecks(ctx({ root: exportFolder }), report, { signal, judge: allow, ask: allowCard, acceptance, changed, run: async (options) => (ran.push(options.argv.at(-1)!), result(0, "")) });
+    return { ran, runs, ended: taskStatusAfter({ outcome: "success", markDone: true, checks: completionOf({ outcome: "success", files: [], report, runs, pr: { state: "none", url: null, source: null } }).checks }) };
+  };
+
+  const cheated = await verify(() => writeFileSync(acceptJs, "process.exit(0);\n"));
+  assert.deepEqual(cheated.ran, [], "the changed check is not run, as the agent reported it nor as the task names it");
+  assert.deepEqual(cheated.runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"]]);
+  assert.equal(cheated.runs[0]!.reason, "Not verified: the check itself was changed by the run (export/accept.js). A changed check proves nothing, so Ensemble did not run it.");
+  assert.deepEqual([cheated.ended.status, cheated.ended.verified], ["waiting_approval", "not_verified"], "never done");
+
+  writeFileSync(acceptJs, "if (!require('fs').existsSync('out.csv')) process.exit(1);\n");
+  const honest = await verify(() => writeFileSync(source, "// writes out.csv, fixed\n"));
+  assert.deepEqual(honest.ran, ["node accept.js"]);
+  assert.deepEqual([honest.ended.status, honest.ended.verified], ["done", "passed"]);
+});
+
+test("a check's baseline: the package script it runs and that script's files, a change an earlier run of the task made, and a change the task asks for", async () => {
+  const root = folder("script-guard");
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { test: "node check.js", build: "tsc" } }));
+  writeFileSync(join(root, "check.js"), "process.exit(1);\n");
+  const where = [{ check: { command: "npm test" }, cwd: root }];
+  const key = checkKey(root, "npm test");
+  const first = await checkBaseline(root, where, "Make `npm test` pass.", null);
+  assert.deepEqual(first.entries.map((row) => row.label), ['the "test" script in package.json', "check.js"]);
+
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { test: "true", build: "tsc" } }));
+  const changedScript = await checkChanges(first);
+  assert.deepEqual(changedScript.changed.get(key), ['the "test" script in package.json']);
+
+  // The next run of the same task starts from the earlier run's baseline: the earlier change still counts.
+  const next = await checkBaseline(root, where, "Make `npm test` pass.", { baseline: first, end: changedScript.end });
+  assert.deepEqual((await checkChanges(next)).changed.get(key), ['the "test" script in package.json']);
+  // Changed between the runs (by the owner, say): the next run starts from what is there now.
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { test: "node check.js --strict", build: "tsc" } }));
+  const fresh = await checkBaseline(root, where, "Make `npm test` pass.", { baseline: first, end: changedScript.end });
+  assert.equal((await checkChanges(fresh)).changed.size, 0);
+
+  // The task's own words may ask to change the check; "do not change" does not.
+  assert.equal(asksToChange("Fix check.js: it rejects a valid file.", { key: `file:${join(root, "check.js")}`, name: "check.js" }), true);
+  assert.equal(asksToChange("Do not change check.js. Fix the export.", { key: `file:${join(root, "check.js")}`, name: "check.js" }), false);
+  assert.equal(asksToChange("Update the test script to run the new suite.", { key: `script:${join(root, "package.json")}#test`, name: "test" }), true);
+  const asked = await checkBaseline(root, where, "Fix check.js: it rejects a valid file.", null);
+  writeFileSync(join(root, "check.js"), "process.exit(0);\n");
+  assert.equal((await checkChanges(asked)).changed.size, 0, "the task asked for it");
+
+  // A file the check names that was not there yet is the run's to write.
+  const later = await checkBaseline(root, [{ check: { command: "node test_new.js" }, cwd: root }], "", null);
+  writeFileSync(join(root, "test_new.js"), "");
+  assert.equal((await checkChanges(later)).changed.size, 0);
+
+  assert.equal(checkFilesNote([{ command: "node accept.js" }]), "Do not edit accept.js or reset what the check keeps between runs: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
+  assert.equal(checkFilesNote([{ command: "git status" }]), null);
 });
 
 test("a plan step's report carries Ensemble's own runs of its checks, not the worker's word", () => {

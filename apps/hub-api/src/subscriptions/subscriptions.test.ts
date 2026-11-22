@@ -10,7 +10,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
-import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
+import { agentProblem, answerCodexTurn, exitProblem, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
 import { appPresence, copilotProgram, cursorAgentProgram, cursorAppPaths, installedProgram, isCursorAgent, opencodeAppCopy, opencodeProgram, type Where } from "./agent-apps.js";
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
@@ -645,6 +645,14 @@ test("an agent's failure is read for sign-in and plan limits", () => {
   assert.equal(agentProblem("codex", "You've hit your usage limit. Try again later.").problem, "limit");
   assert.equal(agentProblem("cursor-agent", "boom").problem, "failed");
   assert.match(agentProblem("cursor-agent", "boom").message, /^Cursor stopped: boom/);
+});
+
+test("an agent that exits with nothing said, or is killed, has exited; one that says why, or is signed out or at its limit, has not", () => {
+  assert.deepEqual([exitProblem("copilot-cli", "", 1).problem, exitProblem("copilot-cli", "", 1).message], ["exited", "GitHub Copilot stopped: exit 1"]);
+  assert.equal(exitProblem("copilot-cli", "Segmentation fault", 139, "SIGSEGV").problem, "exited");
+  assert.equal(exitProblem("copilot-cli", "Error: unknown model gpt-x", 1).problem, "failed");
+  assert.equal(exitProblem("copilot-cli", "Not logged in. Run copilot login.", 1, "SIGTERM").problem, "signed_out");
+  assert.equal(exitProblem("claude-code", "Rate limit reached", 1).problem, "limit");
 });
 
 test("each sign-in is the vendor's own login command", () => {

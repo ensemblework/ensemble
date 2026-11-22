@@ -36,7 +36,7 @@ import { boxToRegion, imageToLogical, MAX_LONG_EDGE, type Region } from "./mappi
 import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type HitTest, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
 import { GATE_WORDS, sensitiveApp, type GateCategory } from "./sensitive.js";
 import { sandboxedText } from "./text.js";
-import { typingMs, type DesktopStep, type StepAction } from "./tool-specs.js";
+import { OWNER_SCREEN_TARGET, typingMs, type DesktopStep, type StepAction } from "./tool-specs.js";
 
 export type DesktopCode =
   | "busy"
@@ -125,7 +125,7 @@ export type ScreenName = "owner" | "agent";
 export type GateApp = { id: string; name: string; category: GateCategory };
 
 /** What a batch in the foreground of the owner's screen asks for: their pointer and keyboard, once per mission. */
-export const OWNER_SCREEN_GATE: GateApp = { id: "screen:owner", name: "the pointer and keyboard", category: "screen" };
+export const OWNER_SCREEN_GATE: GateApp = { id: OWNER_SCREEN_TARGET, name: "the pointer and keyboard", category: "screen" };
 
 export const NEEDS_SCREEN = "Needs the screen: ask to use the owner's screen (foreground: true asks them once) or use the agent screen.";
 /** macOS and Windows have no agent screen. */

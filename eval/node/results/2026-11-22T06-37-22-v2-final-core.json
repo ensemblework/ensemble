@@ -1,0 +1,1037 @@
+{
+ "label": "v2-final-core",
+ "stamp": "2026-11-22T06-37-22",
+ "commit": "1ea3823d",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "fact-with-source",
+  "todo-and-memory",
+  "lookup-then-write",
+  "multi-part-tasks",
+  "meeting-to-tasks",
+  "plan-my-day",
+  "computer-largest-files",
+  "coding-fix-tests",
+  "web-screenshot",
+  "research-with-sources",
+  "announce-vs-act"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-22T06:37:22.046Z",
+ "finishedAt": "2026-11-22T06:48:19.263Z",
+ "results": [
+  {
+   "task": "fact-with-source",
+   "suite": "core",
+   "category": "qa",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "names the LTS line",
+     "pass": true,
+     "kind": "truth",
+     "note": "expected 26"
+    },
+    {
+     "name": "latest version",
+     "pass": true,
+     "kind": "truth",
+     "note": "expected 26.13.1"
+    },
+    {
+     "name": "end of support date",
+     "pass": true,
+     "kind": "truth",
+     "note": "expected 2029-04-30"
+    },
+    {
+     "name": "cites a link",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "looked it up on the web",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 43857,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 6,
+    "tokensIn": 157699,
+    "tokensOut": 709,
+    "credits": 0.5207515,
+    "ensembleCalls": 1,
+    "ensembleTools": 6,
+    "agentTools": 6,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_web_search",
+    "hub_read_web_page"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_web_search",
+    "ensemble-hub_read_web_page"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "886d6cf5-f2c6-452c-9d9b-e1080af88cab"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/fact-with-source--1.jsonl",
+   "startedAt": "2026-11-22T06:37:39.328Z"
+  },
+  {
+   "task": "todo-and-memory",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the todo exists",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the preference is a memory",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "recalls the preference",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "recalls the todo",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 49574,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 4,
+    "tokensIn": 96383,
+    "tokensOut": 442,
+    "credits": 0.681769,
+    "ensembleCalls": 2,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_tasks",
+    "node_remember",
+    "hub_create_tasks"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_tasks",
+    "ensemble-node_remember",
+    "ensemble-hub_create_tasks"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "31b077ca-10b6-40a3-a8f6-d3ea71e50d3b"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/todo-and-memory--1.jsonl",
+   "startedAt": "2026-11-22T06:38:23.919Z"
+  },
+  {
+   "task": "lookup-then-write",
+   "suite": "core",
+   "category": "research",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the todo's notes carry the date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2025-10-07"
+    },
+    {
+     "name": "looked it up on the web",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "asked nothing",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "no second todo",
+     "pass": true,
+     "kind": "state"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 42209,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 6,
+    "tokensIn": 164899,
+    "tokensOut": 1500,
+    "credits": 0.5748205,
+    "ensembleCalls": 1,
+    "ensembleTools": 7,
+    "agentTools": 7,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_tasks",
+    "hub_web_search",
+    "hub_read_task_page",
+    "hub_read_web_page",
+    "hub_update_task"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_web_search",
+    "ensemble-hub_list_tasks",
+    "ensemble-hub_read_web_page",
+    "ensemble-hub_read_task_page",
+    "ensemble-hub_update_task"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "1cd29f4d-7e68-4c70-8613-40fcdbfb4f57"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/lookup-then-write--1.jsonl",
+   "startedAt": "2026-11-22T06:39:14.201Z"
+  },
+  {
+   "task": "multi-part-tasks",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "three tasks",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "venue due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-11-29"
+    },
+    {
+     "name": "invitations due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-12-02"
+    },
+    {
+     "name": "catering due date",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "expected 2026-12-06"
+    },
+    {
+     "name": "the Launch checklist page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the page lists the three with dates",
+     "pass": true,
+     "kind": "state",
+     "note": "3 of 3 dates"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 31185,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 77258,
+    "tokensOut": 731,
+    "credits": 0.411211,
+    "ensembleCalls": 1,
+    "ensembleTools": 2,
+    "agentTools": 2,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_create_tasks",
+    "hub_create_page"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_create_tasks",
+    "ensemble-hub_create_page"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "9ed2ee31-d4d3-4e42-a047-04b8a348f47e"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/multi-part-tasks--1.jsonl",
+   "startedAt": "2026-11-22T06:39:57.065Z"
+  },
+  {
+   "task": "meeting-to-tasks",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a task for the pricing page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "a task for the CSV export bug",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "a task for the onboarding email",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "no more than the action items",
+     "pass": true,
+     "kind": "state",
+     "note": "3 tasks"
+    },
+    {
+     "name": "a summary page",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the summary has the decisions",
+     "pass": true,
+     "kind": "state"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 64618,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 6,
+    "tokensIn": 182009,
+    "tokensOut": 3728,
+    "credits": 0.754051,
+    "ensembleCalls": 1,
+    "ensembleTools": 9,
+    "agentTools": 9,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "hub_list_meeting_notes",
+    "hub_search_work",
+    "hub_read_page",
+    "hub_list_people",
+    "hub_create_page",
+    "hub_create_tasks"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-hub_list_meeting_notes",
+    "ensemble-hub_search_work",
+    "ensemble-hub_read_page",
+    "ensemble-hub_list_people",
+    "ensemble-hub_create_page",
+    "ensemble-hub_create_tasks"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "47e468ee-4ba9-4db8-baa2-22d12993c64e"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/meeting-to-tasks--1.jsonl",
+   "startedAt": "2026-11-22T06:40:28.923Z"
+  },
+  {
+   "task": "plan-my-day",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "names the overdue task",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's task",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "names today's meetings",
+     "pass": true,
+     "kind": "reply",
+     "note": "3 of 3"
+    },
+    {
+     "name": "read the board and the calendar",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "judge ≥ 0.6",
+     "pass": true,
+     "kind": "judge",
+     "note": "1: It gives a time-ordered plan for today, schedules all three meetings, puts the overdue domain renewal early and labels it overdue, includes the Q4 budget review due today, and invents no meetings or tasks."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 47331,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 45420,
+    "tokensOut": 867,
+    "credits": 0.3566365,
+    "ensembleCalls": 1,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_due",
+    "hub_list_reminders",
+    "hub_list_events"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_due",
+    "ensemble-hub_list_events",
+    "ensemble-hub_list_reminders"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "9a0b0d1a-6cf3-40c8-a20e-dbb3548a8e17"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/plan-my-day--1.jsonl",
+   "startedAt": "2026-11-22T06:41:34.179Z"
+  },
+  {
+   "task": "computer-largest-files",
+   "suite": "core",
+   "category": "computer",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the report file is in that folder",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "data/largest-files.md"
+    },
+    {
+     "name": "it names the 3 largest in order",
+     "pass": true,
+     "kind": "state"
+    },
+    {
+     "name": "it gives their sizes",
+     "pass": true,
+     "kind": "state"
+    },
+    {
+     "name": "a file reached the chat",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the shared file is the report",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "no approval or password chatter",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 41762,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 4,
+    "tokensIn": 122358,
+    "tokensOut": 1163,
+    "credits": 0.5211635,
+    "ensembleCalls": 1,
+    "ensembleTools": 3,
+    "agentTools": 3,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "computer_run",
+    "computer_files_write",
+    "node_share_file"
+   ],
+   "agentToolNames": [
+    "ensemble-computer_run",
+    "ensemble-computer_files_write",
+    "ensemble-node_share_file"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "55490078-fb0d-40bc-8319-567dbbc430dd",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T06:42:44.140Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "6787eb0d-8e1f-4eef-aabe-64a150901c6c"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/computer-largest-files--1.jsonl",
+   "startedAt": "2026-11-22T06:42:22.211Z"
+  },
+  {
+   "task": "coding-fix-tests",
+   "suite": "core",
+   "category": "coding",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "its tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ a numbered item continues with the next number (0.973715ms)\n✔ a bullet continues with the same bullet (0.236207ms)\n✔ plain text is not a list (0.141223ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 75.601983\n"
+    },
+    {
+     "name": "the hidden tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ numbers past 9 (1.033967ms)\n✔ the same bullet (0.200879ms)\n✔ indentation kept (0.143174ms)\n✔ an empty item ends the list (0.86672ms)\n✔ plain text (0.173194ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 71.66869\n"
+    },
+    {
+     "name": "the tests are unchanged",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "says what was wrong",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 132522,
+    "turns": 3,
+    "failedTurns": 0,
+    "modelCalls": 16,
+    "tokensIn": 392284,
+    "tokensOut": 5016,
+    "credits": 1.8056484999999998,
+    "ensembleCalls": 3,
+    "ensembleTools": 5,
+    "agentTools": 19,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_sessions",
+    "hub_list_agent_options",
+    "node_session_start",
+    "node_show"
+   ],
+   "agentToolNames": [
+    "glob",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result",
+    "skill",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_sessions",
+    "ensemble-node_session_start",
+    "ensemble-node_show"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "d061806c-f9f2-49bb-aa89-0651da46f6f4",
+     "type": "run_permission",
+     "answer": "allow for this run",
+     "answered": true,
+     "at": "2026-11-22T06:44:02.219Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "6d844719-783e-490c-9cf8-45bc6114dc55",
+    "01f6d583-ce44-43ad-adaa-6e94aa05d0e9"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/coding-fix-tests--1.jsonl",
+   "startedAt": "2026-11-22T06:43:04.674Z"
+  },
+  {
+   "task": "web-screenshot",
+   "suite": "core",
+   "category": "browse",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a picture reached the chat",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "it is a real screenshot",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "png 1280x800"
+    },
+    {
+     "name": "used the computer's browser",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "says what the page shows",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 40304,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 72181,
+    "tokensOut": 249,
+    "credits": 0.452462,
+    "ensembleCalls": 2,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "browser_view"
+   ],
+   "agentToolNames": [
+    "ensemble-browser_view"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "8407743b-4396-4fca-a34d-2da0f8e1bd70",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T06:45:32.855Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "ced8f62b-89f6-4343-8052-2f48432bc3e0"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/web-screenshot--1.jsonl",
+   "startedAt": "2026-11-22T06:45:18.489Z"
+  },
+  {
+   "task": "research-with-sources",
+   "suite": "core",
+   "category": "research",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "4 to 6 bullets",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "two sources from different sites",
+     "pass": true,
+     "kind": "reply",
+     "note": "www3.sqlite.org, postgresql.org"
+    },
+    {
+     "name": "the links open",
+     "pass": true,
+     "kind": "truth",
+     "evidence": true,
+     "note": "200 https://www3.sqlite.org/about.html · 200 https://www3.sqlite.org/whentouse.html · 200 https://www.postgresql.org/docs/current/mvcc.html · 200 https://www.postgresql.org/docs/current/intro-whatis.html"
+    },
+    {
+     "name": "looked it up on the web",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "judge ≥ 0.6",
+     "pass": true,
+     "kind": "judge",
+     "note": "0.84: It gives five useful, mostly accurate comparison bullets, a sensible recommendation, and multiple relevant links, but omits SQLite’s one-writer-at-a-time limitation and PostgreSQL’s roles and extensions."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 112760,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 7,
+    "tokensIn": 204331,
+    "tokensOut": 1519,
+    "credits": 0.526756,
+    "ensembleCalls": 1,
+    "ensembleTools": 9,
+    "agentTools": 9,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_web_search",
+    "hub_read_web_page"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_web_search",
+    "ensemble-hub_read_web_page"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "3b418a57-85d8-48c0-ad59-548435f49eba"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/research-with-sources--1.jsonl",
+   "startedAt": "2026-11-22T06:45:59.434Z"
+  },
+  {
+   "task": "announce-vs-act",
+   "suite": "core",
+   "category": "board",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "something real was scheduled",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "for tomorrow at 9:00",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "reminder 2026-11-23 09:00 Asia/Calcutta"
+    },
+    {
+     "name": "about calling the bank",
+     "pass": true,
+     "kind": "state"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 25673,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 43655,
+    "tokensOut": 196,
+    "credits": 0.1891335,
+    "ensembleCalls": 1,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_create_reminder"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_create_reminder"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "9d9bbcf0-2df3-41f9-9469-5e0960169f7a"
+   ],
+   "trace": "eval/node/results/traces/v2-final-core/announce-vs-act--1.jsonl",
+   "startedAt": "2026-11-22T06:47:52.875Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "886d6cf5-f2c6-452c-9d9b-e1080af88cab",
+   "kind": "node-turn",
+   "task": "fact-with-source",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "31b077ca-10b6-40a3-a8f6-d3ea71e50d3b",
+   "kind": "node-turn",
+   "task": "todo-and-memory",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "1cd29f4d-7e68-4c70-8613-40fcdbfb4f57",
+   "kind": "node-turn",
+   "task": "lookup-then-write",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "9ed2ee31-d4d3-4e42-a047-04b8a348f47e",
+   "kind": "node-turn",
+   "task": "multi-part-tasks",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "47e468ee-4ba9-4db8-baa2-22d12993c64e",
+   "kind": "node-turn",
+   "task": "meeting-to-tasks",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "25dac95e-5505-4018-a57b-49cf9fa825d8",
+   "kind": "judge",
+   "task": "plan-my-day",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "9a0b0d1a-6cf3-40c8-a20e-dbb3548a8e17",
+   "kind": "node-turn",
+   "task": "plan-my-day",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "6787eb0d-8e1f-4eef-aabe-64a150901c6c",
+   "kind": "node-turn",
+   "task": "computer-largest-files",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "6d844719-783e-490c-9cf8-45bc6114dc55",
+   "kind": "coding",
+   "task": "coding-fix-tests",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "01f6d583-ce44-43ad-adaa-6e94aa05d0e9",
+   "kind": "node-turn",
+   "task": "coding-fix-tests",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "ced8f62b-89f6-4343-8052-2f48432bc3e0",
+   "kind": "node-turn",
+   "task": "web-screenshot",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "8c92a438-2c6a-42bf-a78f-2bf2088713f8",
+   "kind": "judge",
+   "task": "research-with-sources",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "3b418a57-85d8-48c0-ad59-548435f49eba",
+   "kind": "node-turn",
+   "task": "research-with-sources",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "9d9bbcf0-2df3-41f9-9469-5e0960169f7a",
+   "kind": "node-turn",
+   "task": "announce-vs-act",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal yes, code-tab-harness yes.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}

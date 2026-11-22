@@ -2,8 +2,9 @@
  * The two screens desktop control works on (docs/25 §11): the owner's real screen and the agent screen,
  * a private headless desktop of the agent's own that nobody sees unless they watch it. Each has its own
  * service and helper. A call names its screen, or works where its capture id was taken (or where its
- * recording is), or where its controller last worked, else on the agent screen; it never moves to the
- * other screen by itself. Asking about the agent screen never starts it, nor the owner's screen's helper
+ * recording is), or where its controller last worked, else on the agent screen; an app opened without a
+ * screen named goes on the agent screen wherever that can start. A call never moves to the other screen
+ * by itself. Asking about the agent screen never starts it, nor the owner's screen's helper
  * where that screen cannot work (no desktop session, missing libraries). Where there is no agent screen
  * (macOS, Windows), calls work on the owner's screen unless they name the agent screen, which then answers why not.
  */
@@ -50,6 +51,12 @@ export class Desktops {
       if (this.agentService?.hasRecording(key)) return "agent";
     }
     return this.last.get(key) ?? this.fallback;
+  }
+
+  /** Where an app opened without a screen named goes: the agent screen wherever it can start (`agentReady`), else as `pick`. */
+  async opening(key: string, agentReady: () => Promise<boolean>): Promise<ScreenName> {
+    const picked = this.pick(key);
+    return picked === "owner" && (await agentReady().catch(() => false)) ? "agent" : picked;
   }
 
   remember(key: string, screen: ScreenName): void {

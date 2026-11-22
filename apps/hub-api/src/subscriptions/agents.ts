@@ -142,7 +142,8 @@ export type AgentTurnIO = {
   onOwnTool?: (event: OwnToolEvent) => void;
 };
 
-export type AgentTurnProblem = "not_installed" | "signed_out" | "limit" | "failed";
+/** `exited`: the agent's process ended with nothing said, or was killed (a crash): a node's turn tries again once (node/brain.ts). */
+export type AgentTurnProblem = "not_installed" | "signed_out" | "limit" | "failed" | "exited";
 
 export class AgentTurnError extends Error {
   constructor(
@@ -220,6 +221,13 @@ export function agentProblem(agent: SubscriptionProvider, detail: string): Agent
     return new AgentTurnError("limit", `${label} says your plan's limit is reached${text ? `: ${text}` : "."}`);
   }
   return new AgentTurnError("failed", `${label} stopped${text ? `: ${text}` : "."}`);
+}
+
+/** Why an agent's process ended without its reply: what it said, else `exited` (nothing said, or killed by a signal). */
+export function exitProblem(agent: SubscriptionProvider, stderr: string, code: number, signal: NodeJS.Signals | null = null): AgentTurnError {
+  const said = stderr.trim().split("\n").slice(-6).join(" ");
+  const problem = agentProblem(agent, said || (signal ? `killed by ${signal}` : `exit ${code}`));
+  return problem.problem === "failed" && (!said || signal) ? new AgentTurnError("exited", problem.message) : problem;
 }
 
 /**
@@ -374,7 +382,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
     if (session?.resume && /no conversation found|session.{0,40}not found/i.test(said)) throw new SessionGone(said.trim());
     if (session && /unknown option.{0,20}(--session-id|--resume)/i.test(said)) throw new SessionUnsupported(said.trim());
     if (failure) throw agentProblem(spec.agent, failure);
-    if (code !== 0 || !finished) throw agentProblem(spec.agent, stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
+    if (code !== 0 || !finished) throw exitProblem(spec.agent, stderr, code);
     // A new chat session is listed in the Claude app's Code tab too (app-sessions.ts).
     if (session && !session.resume) await addClaudeDesktopSession({ cliSessionId: session.id, cwd: folder, title, model: result.model });
     return { ...result, session: session?.id ?? null };
@@ -900,10 +908,16 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
     stderr = (stderr + chunk.toString("utf8")).slice(-4000);
   });
   try {
-    const code = await new Promise<number>((done) => child.once("close", (value) => done(value ?? 1)));
+    let killed: NodeJS.Signals | null = null;
+    const code = await new Promise<number>((done) =>
+      child.once("close", (value, signal) => {
+        killed = signal;
+        done(value ?? 1);
+      }),
+    );
     if (io.signal.aborted) throw aborted();
     if (code !== 0 && session && /unknown option.{0,20}--session-id/i.test(stderr)) throw new SessionUnsupported(stderr.trim());
-    if (code !== 0) throw agentProblem("copilot-cli", stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
+    if (code !== 0) throw exitProblem("copilot-cli", stderr, code, killed);
     const read = usageFile ? output.usageFile(await readFile(usageFile, "utf8").catch(() => null)) : null;
     const done = output.finish();
     // Copilot's usage file holds the whole session's tokens: this turn's are what it added since the last one.

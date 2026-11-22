@@ -65,7 +65,8 @@ import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
-import { saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
+import { checkFolder, saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
+import { BASELINE_EVENT, checkBaseline, checkChanges, earlierBaseline, END_EVENT, type CheckBaseline } from "./check-files.js";
 import { acceptanceChecksFor, acceptanceInContext, type AcceptanceCheck } from "./acceptance-checks.js";
 import { parseReport } from "../node/report.js";
 import { jobOrigin } from "../remote/origin.js";
@@ -902,6 +903,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let engineTotals: { model: string | null; costUsd: number | null } | null = null;
   /** Files the run changed, with lines added and removed (no contents): the run's evidence. */
   let changedFiles: ChangedFile[] = [];
+  /** An assigned run's acceptance checks' own files and scripts as it started (check-files.ts). */
+  let checkStart: CheckBaseline | null = null;
   /** An engine run's trace (Claude Code, Codex, Cursor). */
   let engineTrace: EngineTrace | null = null;
   /** A Code tab turn's packet and session start, kept on the run once the agent has it. */
@@ -990,6 +993,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       });
       await prisma.workspaceJob.update({ where: { id: job.id }, data: { repoPath: ctx.root, branch } });
       await ctx.event("prepared", { root: ctx.root, branch, git, sandboxed: ctx.sandboxed });
+      if (!chat) checkStart = await baselineChecks(prisma, ctx, job, chain).catch((failure: unknown) => (harnessWarn(failure, "could not note the run's check files"), null));
       publish();
     }
 
@@ -1575,9 +1579,12 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // Ensemble runs the checks the agent reported again, and an assigned run's acceptance commands, and keeps each state of the run apart (completion.ts).
   const assigned = job.kind === "code" && !chat;
   const acceptance: AcceptanceCheck[] = assigned ? await runAcceptance(prisma, job).catch(() => []) : [];
+  // What the run changed of its checks' own files, before they run again; kept for the task's next run.
+  const checksChanged = checkStart ? await checkChanges(checkStart).catch(() => null) : null;
+  if (checksChanged) await ctx.event(END_EVENT, { end: checksChanged.end }).catch(() => undefined);
   let completion: Completion | null = null;
   if ((codeAgent || assigned) && job.kind === "code" && ctx.root && outcome !== "interrupted") {
-    completion = await verifyRun({ ...ctx, signal: control.signal }, { outcome, files: changedFiles, acceptance }).catch((failure: unknown) => {
+    completion = await verifyRun({ ...ctx, signal: control.signal }, { outcome, files: changedFiles, acceptance }, { changed: checksChanged?.changed }).catch((failure: unknown) => {
       app.log.warn({ err: failure }, "could not check the run's work");
       return null;
     });
@@ -1674,6 +1681,25 @@ async function runAcceptance(prisma: FastifyInstance["prisma"], job: { id: strin
   return sent ?? acceptanceChecksFor(prisma, { userId: job.userId, jobId: job.id, parts: [job.task.description, job.task.notes] });
 }
 
+/**
+ * The files and package scripts an assigned run's acceptance commands run, hashed before its agent works
+ * (check-files.ts), from the earlier run of the same task it continues where that run changed one;
+ * kept as the run's event. Null when its checks run none.
+ */
+async function baselineChecks(prisma: FastifyInstance["prisma"], ctx: JobContext, job: Parameters<typeof runAcceptance>[1], chain: readonly string[]): Promise<CheckBaseline | null> {
+  const acceptance = await runAcceptance(prisma, job);
+  const checks: Array<{ check: AcceptanceCheck; cwd: string }> = [];
+  for (const check of acceptance) {
+    const cwd = await checkFolder(ctx, check);
+    if (cwd) checks.push({ check, cwd });
+  }
+  if (!checks.length) return null;
+  const earlier = await earlierBaseline(prisma, chain.slice(1), ctx.taskId).catch(() => null);
+  const baseline = await checkBaseline(ctx.root, checks, [job.task.description, job.task.notes].join("\n\n"), earlier);
+  if (!baseline.entries.length) return null;
+  await ctx.event(BASELINE_EVENT, baseline);
+  return baseline;
+}
 
 function truncateArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, typeof value === "string" && value.length > 400 ? `${value.slice(0, 400)}…` : value]));

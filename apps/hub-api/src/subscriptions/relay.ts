@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { redactArgs } from "../lib/redact.js";
-import { RuntimeError } from "../lib/runtime-error.js";
+import { AGENT_EXIT, RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, runInScope } from "../sharing/context.js";
 import type { AgentTurnResult, AgentTurnSpec } from "./agents.js";
 import type { OwnAnswer, OwnAsk, OwnToolEvent, ToolAnswer } from "./bridge.js";
@@ -190,6 +190,7 @@ export function errorFromComputer(problem: string | undefined, message: string |
   const text = (message ?? "").trim().slice(0, 600) || "The agent on your computer stopped without saying why.";
   if (problem === "limit") return new RuntimeError(text, 429);
   if (problem === "signed_out" || problem === "not_installed") return new RuntimeError(text, 409);
+  if (problem === "exited") return new RuntimeError(text, 502, false, AGENT_EXIT);
   return new RuntimeError(text, 502);
 }
 

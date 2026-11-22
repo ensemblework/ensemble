@@ -106,6 +106,7 @@ test("the web marks a task done only when the checks its computer ran again pass
   assert.match(note, /finished, but its checks failed when Ensemble ran them again/);
   assert.match(note, /failed AC-1 node accept\.js \(It exited 1\.\)/);
   assert.match(note, /The task was not marked done/);
+  assert.match(note, /fix the work or say what is next: never change the check, its files or what it keeps between runs/);
 
   const unconfirmed = await nodeRun(env, "Export the yearly numbers");
   await finish(env, unconfirmed, { completion: completionWith("not_run", "A program it needs was not found here (exit 127).") });

@@ -97,6 +97,8 @@ class Slot {
  * `steerable`: the turn takes what its owner adds while it works, between its steps (node/steering.ts); `offers`
  * holds those additions until it takes them.
  * `interruptible`: an owner's interrupt or replacement may stop it (a conversation turn bound to no bookkeeping).
+ * `claimed`: its row says running. A turn is in `live` from just before its row is marked running, so a stop, an
+ * interrupt or a merge finds it while that write is on its way; until then its row may still say queued.
  */
 type LiveTurn = {
   app: FastifyInstance;
@@ -115,8 +117,14 @@ type LiveTurn = {
   steerable: boolean;
   offers: SteerOffer[];
   interruptible: boolean;
+  claimed: boolean;
 };
 const live = new Map<string, LiveTurn>();
+
+/** What `live` keeps of a turn's row. */
+function liveFields(turn: NodeTurn): Pick<LiveTurn, "nodeId" | "roomId" | "planId" | "planStep" | "lane" | "acted" | "mergeable" | "interruptible"> {
+  return { nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane: turn.lane ?? laneFor(turn), acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn), interruptible: interruptible(turn) };
+}
 
 /** An owner's message offered to a running turn as an amendment, with its steering record. */
 export type SteerOffer = { steerId: string; messageId: string };
@@ -229,6 +237,9 @@ export async function queueTurn(app: FastifyInstance, request: TurnRequest): Pro
   // turn bound to something keeps its own row: nothing merges into it and it merges into nothing, so its
   // operation, its reason (a disclosure only drafts) and its request stay its own.
   const conversation = !request.planId;
+  // A turn in `live` is starting or running, even while its row still says queued: nothing joins it. A new turn
+  // answers instead, which `coalesce` may hand what it was doing.
+  const starting = [...live.values()].filter((entry) => entry.nodeId === request.nodeId).map((entry) => entry.turnId);
   const queued =
     conversation && boundRequest(request)
       ? null
@@ -240,6 +251,7 @@ export async function queueTurn(app: FastifyInstance, request: TurnRequest): Pro
             private: isPrivate,
             planId: request.planId ?? null,
             planStep: request.planStep ?? null,
+            ...(starting.length ? { id: { notIn: starting } } : {}),
             ...(conversation ? { operationId: null, originTurnId: null, peerRequestId: null, reason: { notIn: [...BOUND_REASONS] } } : {}),
           },
         });
@@ -250,8 +262,9 @@ export async function queueTurn(app: FastifyInstance, request: TurnRequest): Pro
       [queued.triggerMessageId, request.triggerMessageId].map((id) => (id ? prisma.nodeMessage.findUnique({ where: { id }, select: { userId: true, data: true } }) : null)),
     );
     const keep = tainted(held ?? null, node.userId) && !tainted(incoming ?? null, node.userId);
-    await prisma.nodeTurn.update({
-      where: { id: queued.id },
+    // Only while it is still queued: one that started meanwhile gets a new turn after it.
+    const joined = await prisma.nodeTurn.updateMany({
+      where: { id: queued.id, status: "queued" },
       data: {
         note: mergedNote(queued.note, request.note),
         ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }),
@@ -259,8 +272,10 @@ export async function queueTurn(app: FastifyInstance, request: TurnRequest): Pro
         ...(request.originTurnId && !queued.originTurnId && !queued.operationId ? { originTurnId: request.originTurnId } : {}),
       },
     });
-    await coalesce(app, request, lane, node.userId);
-    return queued.id;
+    if (joined.count) {
+      await coalesce(app, request, lane, node.userId, queued.id);
+      return queued.id;
+    }
   }
   const turn = await prisma.nodeTurn.create({
     data: {
@@ -335,10 +350,11 @@ async function carryNote(prisma: PrismaClient, turn: NodeTurn): Promise<void> {
  * reads it between two steps. A turn waiting for its owner's answer on a card stops waiting when its owner
  * writes in its lane, acted or not: it parks, and the new message is answered next.
  */
-async function coalesce(app: FastifyInstance, request: TurnRequest, lane: string, owner: string): Promise<void> {
+async function coalesce(app: FastifyInstance, request: TurnRequest, lane: string, owner: string, joined: string | null = null): Promise<void> {
   if (isWorkLane(lane) || !request.triggerMessageId || !PERSON_REASONS.has(request.reason)) return;
-  // A turn already stopped (an interrupt, a replacement, a stop) is ending: nothing joins it.
-  const entries = [...live.values()].filter((entry) => entry.nodeId === request.nodeId && entry.lane === lane && !entry.controller.signal.aborted);
+  // A turn already stopped (an interrupt, a replacement, a stop) is ending: nothing joins it. The turn the message
+  // just joined answers it (it was registered while its row still said queued).
+  const entries = [...live.values()].filter((entry) => entry.nodeId === request.nodeId && entry.lane === lane && !entry.controller.signal.aborted && entry.turnId !== joined);
   if (!entries.length) return;
   const message = await app.prisma.nodeMessage.findUnique({ where: { id: request.triggerMessageId }, select: { userId: true, authorKind: true, data: true } });
   const fromOwner = Boolean(message && message.authorKind === "human" && !tainted(message, owner));
@@ -523,16 +539,21 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
   let continues = false;
   let again: NodeTurn | null = null;
   try {
-    const claimed = await prisma.nodeTurn.updateMany({ where: { id: turnId, status: "queued" }, data: { status: "running", outcome: "running" } });
-    if (claimed.count !== 1) return;
-    const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
+    // In `live` before its row says running, so a stop, an interrupt or a merge never misses it in between; a turn
+    // whose row is no longer queued (stopped, dropped, or already taken) leaves again without running.
+    const row = live.has(turnId) ? null : await prisma.nodeTurn.findUnique({ where: { id: turnId } });
+    if (row?.status !== "queued" || live.has(turnId)) return;
     const controller = new AbortController();
-    const lane = turn.lane ?? laneFor(turn);
-    live.set(turnId, { app, controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn), slot, waiting: null, park: [], steerable: false, offers: [], interruptible: interruptible(turn) });
+    const entry: LiveTurn = { app, controller, turnId, ...liveFields(row), slot, waiting: null, park: [], steerable: false, offers: [], claimed: false };
+    live.set(turnId, entry);
     try {
+      const [turn] = await prisma.nodeTurn.updateManyAndReturn({ where: { id: turnId, status: "queued" }, data: { status: "running", outcome: "running" } });
+      if (!turn) return;
+      if (claimHook) await claimHook(turnId);
+      Object.assign(entry, liveFields(turn), { claimed: true });
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
-        // The model's rate limit: the same turn again a little later, without a message in the room.
+        // The model's rate limit, or the owner's agent exiting before anything acted: the same turn again a little later, without a message in the room.
         await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "failed", outcome: "retry", error: truncateText(outcome.error ?? "Rate limited.", 500), finishedAt: new Date() } });
         await retryLater(app, turn);
         return;
@@ -555,7 +576,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
           where: { id: turnId },
           data: { status: "failed", outcome: "interrupted", model: outcome.model ?? null, credits: outcome.credits ?? null, error: truncateText(outcome.error ?? "Interrupted.", 500), finishedAt: new Date() },
         });
-        continues = await resumeTurn(app, turn, outcome.resume.cut, outcome.resume.mayHaveRun, outcome.resume.ownCalls);
+        continues = await resumeTurn(app, turn, outcome.resume.cut, outcome.resume.mayHaveRun, outcome.resume.ownCalls, outcome.resume.attempt);
         return;
       }
       await prisma.nodeTurn.update({
@@ -600,6 +621,13 @@ let retryDelays: readonly number[] = RETRY_MS;
 
 export function setTurnRetryDelaysForTests(delays: readonly number[] | null): void {
   retryDelays = delays ?? RETRY_MS;
+}
+
+let claimHook: ((turnId: string) => Promise<void>) | null = null;
+
+/** Tests: runs after a turn's row is marked running and before the turn goes on, to hold that moment open. */
+export function setClaimHookForTests(hook: ((turnId: string) => Promise<void>) | null): void {
+  claimHook = hook;
 }
 
 /** Runs a queued turn once its time comes (a retry's `runAfter`); counted as background work. */
@@ -656,36 +684,40 @@ export function mayRetry(turn: Pick<NodeTurn, "attempt">): boolean {
   return turn.attempt < RETRIES;
 }
 
-/** Stops the running and queued turns of these nodes in a room (null: in every room). */
+/** Stops the running and queued turns of these nodes in a room (null: in every room). Each turn counts once. */
 export async function stopTurns(app: FastifyInstance, nodeIds: readonly string[], roomId: string | null): Promise<number> {
-  let stopped = 0;
+  const stopped = new Set<string>();
+  const where = { ...(roomId === null ? {} : { roomId }), nodeId: { in: [...nodeIds] }, status: "queued" };
+  // Queued rows first, then `live`: a turn being started meanwhile is either dropped here (its claim then finds
+  // nothing) or already in `live`. Only the rows dropped here end their plan's part.
+  const dropped = await app.prisma.nodeTurn.updateManyAndReturn({ where, data: { status: "failed", outcome: "cancelled", error: "Stopped.", finishedAt: new Date() }, select: { id: true, planId: true, planStep: true } });
   for (const entry of live.values()) {
     if ((roomId === null || entry.roomId === roomId) && nodeIds.includes(entry.nodeId)) {
       entry.controller.abort();
-      stopped += 1;
+      stopped.add(entry.turnId);
     }
   }
-  const where = { ...(roomId === null ? {} : { roomId }), nodeId: { in: [...nodeIds] }, status: "queued" };
-  const planTurns = await app.prisma.nodeTurn.findMany({ where: { ...where, planId: { not: null } }, select: { id: true, planId: true, planStep: true } });
-  const dropped = await app.prisma.nodeTurn.updateMany({ where, data: { status: "failed", outcome: "cancelled", error: "Stopped.", finishedAt: new Date() } });
-  for (const turn of planTurns) await planTurnEnded(app, turn, "Stopped before it started.");
-  return stopped + dropped.count;
+  for (const turn of dropped) {
+    stopped.add(turn.id);
+    if (turn.planId) await planTurnEnded(app, turn, "Stopped before it started.");
+  }
+  return stopped.size;
 }
 
-/** A plan's turns (one step's or several, or all of them) stop: running ones are aborted, queued ones dropped. */
+/** A plan's turns (one step's or several, or all of them) stop: queued ones are dropped, then running ones aborted (see `stopTurns`). */
 export async function stopPlanTurns(app: FastifyInstance, planId: string, steps: readonly string[] | null): Promise<void> {
-  for (const entry of live.values()) {
-    if (entry.planId === planId && (!steps || (entry.planStep && steps.includes(entry.planStep)))) entry.controller.abort();
-  }
   await app.prisma.nodeTurn.updateMany({
     where: { planId, status: "queued", ...(steps ? { planStep: { in: [...steps] } } : {}) },
     data: { status: "failed", outcome: "cancelled", error: "Stopped.", finishedAt: new Date() },
   });
+  for (const entry of live.values()) {
+    if (entry.planId === planId && (!steps || (entry.planStep && steps.includes(entry.planStep)))) entry.controller.abort();
+  }
 }
 
-/** Shutdown: running turns stop where they are; queued rows run after the restart. */
+/** Shutdown: running turns stop where they are; queued rows run after the restart, as does a turn whose claim is still on its way. */
 export function abortAllTurns(): void {
-  for (const entry of live.values()) entry.controller.abort();
+  for (const entry of live.values()) if (entry.claimed) entry.controller.abort();
   for (const [timer, done] of delayed) {
     clearTimeout(timer);
     done();
@@ -712,6 +744,7 @@ export async function resumeTurn(
   cut: CutOff,
   mayHaveRun: ReadonlyArray<{ tool: string; label: string | null }>,
   ownCalls: ReadonlyArray<{ name: string; summary: string }> = [],
+  attempt?: number,
 ): Promise<boolean> {
   const receipts = (Array.isArray(turn.receipts) ? (turn.receipts as Array<{ name?: string; state?: string; summary?: string | null }>) : [])
     .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
@@ -744,6 +777,7 @@ export async function resumeTurn(
         spaceId: turn.spaceId,
         snapshotSeq: turn.snapshotSeq,
         deadlineAt: turn.deadlineAt,
+        ...(attempt ? { attempt } : {}),
       })
     : false;
   if (!resumed) await planTurnEnded(app, turn, cut.error).catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
@@ -761,7 +795,8 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
   const now = Date.now();
   const uncertain = await uncertainCalls(app);
   await recoverSteers(app);
-  const running = await prisma.nodeTurn.findMany({ where: { status: "running" } });
+  // A turn in `live` runs in this process (it is there before its row says running): not one cut off by a restart.
+  const running = (await prisma.nodeTurn.findMany({ where: { status: "running" } })).filter((turn) => !live.has(turn.id));
   for (const turn of running) {
     const mayHaveRun = uncertain.get(turn.id) ?? [];
     if (!turn.sideEffectsAt && !mayHaveRun.length && !(await actedCalls(app, turn.id))) {
