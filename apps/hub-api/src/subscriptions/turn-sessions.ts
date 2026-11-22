@@ -16,6 +16,11 @@
  * name only while no session of the chat began there (`chatFolder`). Sessions unused for 30 days (a
  * node's: 7, `keepDays`) are dropped with their folders and the agent's own history of them, and a
  * session another one replaced is dropped at once.
+ *
+ * Grok Build, Kimi Code and Mistral Vibe keep a session in their home folder, and a turn someone other than the
+ * person can steer runs them in Ensemble's home for them (`othersHome`): a session goes on only in the home it
+ * was made in (`home` on the entry). A turn in the other home starts a new session there, and the earlier one is
+ * kept with the chat's retired sessions, to be deleted with the chat from whichever home holds it.
  */
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -45,8 +50,10 @@ export const ROTATE_MESSAGES = 80;
  * on, subscriptions/outside.ts); they are no longer resumed, and are deleted with the chat. `id` is empty when
  * only those remain, or when the chat has a folder and no session yet.
  */
-type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string };
+type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string; home?: SessionHome };
 export type SessionUsage = { in: number; out: number };
+/** The home a session was made in, for an agent that keeps sessions there: the person's own, or Ensemble's for turns others can steer. */
+export type SessionHome = "own" | "others";
 type Store = Record<string, Entry>;
 
 const file = () => join(stateDir(), "assistant-sessions.json");
@@ -83,8 +90,11 @@ async function write(store: Store): Promise<void> {
   await rename(temporary, path);
 }
 
-/** What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's). */
-export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number };
+/**
+ * What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's).
+ * `home`: where it was made, when the store knows (an entry from before homes were kept has none).
+ */
+export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number; home?: SessionHome };
 
 /**
  * The session to resume for this chat: the same agent, the chat not past where it left it, and not
@@ -99,20 +109,25 @@ export async function findSession(key: string, agent: SubscriptionProvider, inst
 
 /**
  * Why the chat's session of this agent is not resumed (workspace/engines/session-restart.ts): unused for its
- * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), or
- * an older entry's instructions changed (`instructions`). A session ahead of the chat is resumed: it took an
- * exchange the chat keeps as failed (the agent answered, and the turn failed after), so it misses nothing.
+ * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), an
+ * older entry's instructions changed (`instructions`), or it was made in the other home (`audience`: the turn
+ * is one someone else can steer and the session the person's own, or the other way round). A session ahead of
+ * the chat is resumed: it took an exchange the chat keeps as failed (the agent answered, and the turn failed
+ * after), so it misses nothing.
  */
-export type Declined = "expired" | "moved" | "rotated" | "instructions";
+export type Declined = "expired" | "moved" | "rotated" | "instructions" | "audience";
 
 /**
  * `findSession`, and why the chat's session of this agent is not resumed when it has one. `followUp`: another
  * message of the turn at `position` (`resume: "only"`), which only the session that took that turn may take.
+ * `home`: the home the turn runs the agent in, for an agent that keeps sessions there; a session made in the
+ * other is not resumed, and is named (`retire`) to keep with the chat's retired sessions.
  */
-export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number, followUp = false): Promise<{ found: Found | null; declined?: Declined }> {
+export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number, followUp = false, home?: SessionHome): Promise<{ found: Found | null; declined?: Declined; retire?: string }> {
   return serial(async () => {
     const entry = (await read())[key];
     if (!entry || !entry.id || entry.agent !== agent) return { found: null };
+    if (home && entry.home && entry.home !== home) return { found: null, declined: "audience", retire: entry.id };
     if (Date.now() - entry.at >= keepMs(entry)) return { found: null, declined: "expired" };
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
     if (position !== undefined && entry.next !== undefined && position > entry.next) return { found: null, declined: "moved" };
@@ -120,7 +135,7 @@ export function lookSession(key: string, agent: SubscriptionProvider, instructio
     if (followUp && position !== undefined && entry.next !== position + 2) return { found: null, declined: "moved" };
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return { found: null, declined: "rotated" };
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return { found: null, declined: "instructions" };
-    return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) } };
+    return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}), ...(entry.home ? { home: entry.home } : {}) } };
   });
 }
 
@@ -153,10 +168,10 @@ export function instructionsUpdate(before: string, now: string): string | null {
 }
 
 /**
- * `retire`: the session this one replaces was used outside Ensemble: kept, unresumed, until the chat is deleted.
- * `dir`: the chat's own folder the turn ran in (`chatFolder`).
+ * `retire`: the session this one replaces is kept, unresumed, until the chat is deleted (one made in the other home).
+ * `dir`: the chat's own folder the turn ran in (`chatFolder`). `home`: the home the session was made in.
  */
-export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null; prompts?: number | null; retire?: string; dir?: string };
+export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null; prompts?: number | null; retire?: string; dir?: string; home?: SessionHome };
 
 /**
  * Remembers the chat's session after a turn, and drops sessions unused for their keeping days, and the
@@ -202,6 +217,7 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
       ...(typeof opts.prompts === "number" ? { prompts: opts.prompts } : {}),
       ...(retired.length ? { retired } : {}),
       ...(dir && dir !== key ? { dir } : {}),
+      ...(opts.home ? { home: opts.home } : {}),
     };
     await write(store);
     return old;

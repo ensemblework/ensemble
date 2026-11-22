@@ -663,6 +663,122 @@ test("an ACP agent's chat session leads with the chat's title, works in the chat
   }
 });
 
+// A stand-in Grok Build that keeps its sessions in its home (`GROK_HOME`, else the home folder's `.grok`), as the real one
+// does: it reopens only a session of the home it runs in, and says "Session not found" for any other.
+const HOMED_GROK = String.raw`#!/usr/bin/env node
+const { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("grok 1.0.20"); process.exit(0); }
+if (args[0] === "models") { console.log("You are logged in as mira@example.com\nAvailable models:\n  - grok-code-fast (default)"); process.exit(0); }
+const home = process.env.GROK_HOME || join(process.env.HOME, ".grok");
+const sessions = join(home, "sessions");
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+const log = (value) => appendFileSync(process.env.STANDIN_ACP, JSON.stringify({ ...value, home }) + "\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [{ id: "cached_token", name: "Cached" }] } });
+  if (message.method === "session/new") {
+    mkdirSync(sessions, { recursive: true });
+    const id = "grok-" + Math.random().toString(16).slice(2, 10);
+    writeFileSync(join(sessions, id), "");
+    log({ method: "session/new", session: id });
+    return send({ id: message.id, result: { sessionId: id } });
+  }
+  if (message.method === "session/load") {
+    const found = existsSync(join(sessions, message.params.sessionId));
+    log({ method: "session/load", session: message.params.sessionId, found });
+    return found ? send({ id: message.id, result: {} }) : send({ id: message.id, error: { code: -32002, message: "Session not found" } });
+  }
+  if (message.method === "session/prompt") {
+    log({ method: "session/prompt", session: message.params.sessionId });
+    send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
+    return send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+  send({ id: message.id, result: {} });
+});
+`;
+
+test("a chat that goes between its owner and others keeps each session in the home it was made in, and deletes both, with the chat or after its keeping days", async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  const { dropSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-two-homes-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "grok"), HOMED_GROK);
+  chmodSync(join(bin, "grok"), 0o755);
+  const log = join(root, "acp.jsonl");
+  const state = join(root, "state");
+  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "GROK_HOME", "GROK_AUTH_PATH"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH ?? ""}`, HOME: join(root, "home"), ENSEMBLE_DESKTOP: "1", STANDIN_ACP: log, ENSEMBLE_REMOTE_STATE_DIR: state });
+  // The turn's MCP config names this computer's local API; the stand-in never calls it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const dropped: string[] = [];
+  setNativeDropForTests(async (_agent, id) => void dropped.push(id));
+  const own = join(root, "home", ".grok");
+  const ensembles = join(state, "agents", "grok-cli", "home", ".grok");
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (key: string, prompt: string, position: number, others: boolean) =>
+    runAgentTurn({ agent: "grok-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, others, session: { key, history: "", position, title: "Launch plan" } }, io);
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; session: string; home: string; found?: boolean });
+  const store = () => JSON.parse(readFileSync(join(state, "assistant-sessions.json"), "utf8")) as Record<string, { id: string; home?: string; retired?: string[]; at: number }>;
+  const chat = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  try {
+    // Mira's own message, then Ben's in the room, then Mira's again: each home keeps its own session, and a session of
+    // one is never reopened in the other.
+    assert.equal((await turn(chat, "Mira asks", 0, false)).resumed, false);
+    const ben = await turn(chat, "Ben asks", 2, true);
+    assert.deepEqual([ben.resumed, ben.restart?.reason], [false, "audience"]);
+    const back = await turn(chat, "Mira again", 4, false);
+    assert.deepEqual([back.resumed, back.restart?.reason], [false, "audience"]);
+    assert.equal((await turn(chat, "Mira once more", 6, false)).resumed, true, "the same home goes on in its session");
+    const ran = calls();
+    const made = ran.filter((call) => call.method === "session/new");
+    assert.deepEqual(made.map((call) => call.home), [own, ensembles, own]);
+    assert.deepEqual(ran.filter((call) => call.method === "session/load").map((call) => [call.session, call.home, call.found]), [[made[2]!.session, own, true]]);
+    assert.deepEqual([store()[chat]!.id, store()[chat]!.home, store()[chat]!.retired], [made[2]!.session, "own", [made[0]!.session, made[1]!.session]], "both earlier sessions kept to be deleted");
+    // Deleting the chat deletes every session of it, whichever home holds it.
+    assert.equal(await dropSession(chat), true);
+    assert.deepEqual(dropped.sort(), made.map((call) => call.session).sort());
+
+    // A chat unused for its keeping days goes with its sessions in both homes.
+    const idle = "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e";
+    await turn(idle, "Ben asks", 0, true);
+    await turn(idle, "Mira asks", 2, false);
+    const sessions = [store()[idle]!.id, ...(store()[idle]!.retired ?? [])];
+    assert.equal(sessions.length, 2);
+    const aged = store();
+    aged[idle]!.at = Date.now() - 31 * 86_400_000;
+    writeFileSync(join(state, "assistant-sessions.json"), JSON.stringify(aged));
+    dropped.length = 0;
+    await turn("3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "Another chat", 0, false);
+    assert.deepEqual(dropped.sort(), sessions.sort());
+    assert.equal(store()[idle], undefined);
+
+    // A session the store does not know the home of, which the agent does not have in this one, is kept to be deleted,
+    // not taken as gone.
+    const legacy = "4d5e6f7a-8b9c-4d0e-8f1a-2b3c4d5e6f7a";
+    const before = store();
+    before[legacy] = { agent: "grok-cli", id: "grok-made-for-ben", instructions: "", text: "Instructions.", at: Date.now(), next: 2 } as never;
+    writeFileSync(join(state, "assistant-sessions.json"), JSON.stringify(before));
+    const fresh = await turn(legacy, "Mira asks", 2, false);
+    assert.deepEqual([fresh.resumed, fresh.restart?.reason], [false, "gone"]);
+    assert.deepEqual(store()[legacy]!.retired, ["grok-made-for-ben"]);
+  } finally {
+    setNativeDropForTests(null);
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    forgetExecutablesForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Codex chat is one thread, and every turn, a resumed one too, runs without Codex's own shell and file tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-codex-turns-"));
   const bin = join(root, "bin");

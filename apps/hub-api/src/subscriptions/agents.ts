@@ -52,7 +52,7 @@ import { sessionPrompts } from "./session-touch.js";
 import { acpPrompts, acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside, type OutsideTurn } from "./outside.js";
 import { promptsOf, withPrompts } from "../workspace/outside-runs.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
-import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, notePrompts, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
+import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, notePrompts, saveSession, SESSION_KEY, sessionFolder, type SessionHome, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
 import { addClaudeResult, claudeFromSubAgent, otherCodexThread, type ClaudeSpend } from "../workspace/engines/sub-agents.js";
 
@@ -613,6 +613,13 @@ async function reopen(rpc: RpcConnection, method: "session/load" | "session/resu
  */
 export const OWN_WEB_AGENTS: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "codex", "copilot-cli"]);
 
+/**
+ * The agents that keep their sessions in the home folder a turn someone else can steer moves to Ensemble's (acp.ts
+ * `othersHome`): a chat's session goes on only in the home it was made in (turn-sessions.ts `home`). OpenCode keeps
+ * its sessions with the person's data folder in both, and the other agents' homes do not move.
+ */
+const SESSIONS_IN_HOME: ReadonlySet<SubscriptionProvider> = new Set(["grok-cli", "kimi-code", "mistral-vibe"]);
+
 /** Cursor's own requests during an assistant turn: only the tools of Ensemble's server, by its name in the turn (`server`), may run. */
 export function answerCursorTurn(method: string, params: Record<string, unknown>, server = "ensemble"): unknown {
   if (method === "session/request_permission") {
@@ -1139,8 +1146,12 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     const position = spec.session?.position;
     // Another message of a turn goes on in the session that took that turn, or is not sent: never in a new one.
     const only = spec.session?.resume === "only";
-    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position, only) : null;
+    // The home the agent keeps this turn's session in, where a turn someone else can steer moves it (acp.ts `othersHome`).
+    const home: SessionHome | undefined = SESSIONS_IN_HOME.has(spec.agent) ? (spec.others ? "others" : "own") : undefined;
+    const look = key ? await lookSession(key, spec.agent, spec.system, perTurn, position, only, home) : null;
     const kept = look?.found ?? null;
+    // The chat's session in the other home: kept with its retired sessions, to be deleted with the chat.
+    const retire = look?.retire;
     // Why the chat's earlier session, when it has one, does not go on: recorded with the turn (session-restart.ts).
     let restart: Restart | null = look?.declined ? restartOf(look.declined) : null;
     // What the person added in the agent's own app since Ensemble's last turn is brought into the chat before this
@@ -1168,6 +1179,8 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         ...(group ? { folder: group } : {}),
         ...(named ? { dir: named.dir } : {}),
         ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
+        ...(home ? { home } : {}),
+        ...(retire ? { retire } : {}),
         perTurn,
         usage: session?.resume ? (found?.usage ?? null) : null,
         prompts: given ? await sessionPrompts(spec.agent, native, folder).catch(() => null) : (promptsOf(error)?.prompts ?? null),
@@ -1212,8 +1225,9 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
         // What the person added there before it could not be reopened still comes in.
         outside ??= error.outside;
-        // Kept to be deleted with the chat, unless the agent said it no longer has it.
-        await forgetSession(key, { gone: error instanceof SessionGone && error.proven });
+        // Kept to be deleted with the chat, unless the agent said it no longer has it: never on its word in a home the
+        // session may not have been made in (an entry from before homes were kept).
+        await forgetSession(key, { gone: error instanceof SessionGone && error.proven && (!home || found?.home === home) });
         resumed = false;
         result = await run({ id: randomUUID(), resume: false });
       } else if (error instanceof SessionUnsupported) {
@@ -1228,6 +1242,8 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         ...(group ? { folder: group } : {}),
         ...(named ? { dir: named.dir } : {}),
         ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
+        ...(home ? { home } : {}),
+        ...(retire ? { retire } : {}),
         perTurn,
         usage: result.totals ?? null,
         // How many prompts the session holds now, to read only what comes after next time (outside.ts).
