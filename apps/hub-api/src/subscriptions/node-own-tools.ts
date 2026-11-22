@@ -420,7 +420,7 @@ export function nodeOwnJudge(input: NodeJudgeInput): OwnJudge {
       // The same test as a coding run's (workspace/tools.ts `segmentReadsOnly`, git-read.ts): nothing set in front, an allowlisted
       // git read, and a repository whose own config starts no program.
       const git = programOf(segment.argv[0]!) === "git";
-      const writes = !segmentReadsOnly(segment) || (git && !(await gitReadSafeAt(segment.argv, segment.cwd)));
+      const writes = !(await segmentReadsOnly(segment)) || (git && !(await gitReadSafeAt(segment.argv, segment.cwd)));
       if (writes) add(await folderNeed(segment.cwd, "run", operation, () => what, `command:${command.trim().slice(0, 1000)}`));
       // A git config write to --global, --system or --file writes that file wherever the command runs.
       for (const path of git ? gitWrites(segment.argv, segment.cwd) : []) {

@@ -227,3 +227,35 @@ test("a populated submodule makes a read unsafe: git status and diff run git sta
   writeFileSync(join(listed, "lib", ".git"), "gitdir: ../.git/modules/lib\n");
   assert.equal(await gitReadSafeAt(["git", "status"], listed), false);
 });
+
+test("a .git file is followed as git follows it: a linked worktree or submodule reads its git folder's settings; one git would not follow is not safe", async () => {
+  const main = join(base, "wt-main");
+  mkdirSync(main);
+  git(main, "init", "-q");
+  writeFileSync(join(main, "a.txt"), "a\n");
+  git(main, "add", "a.txt");
+  git(main, "-c", "user.name=Mira", "-c", "user.email=mira@example.com", "commit", "-qm", "a");
+  const linked = join(base, "wt-linked");
+  git(main, "worktree", "add", "-q", linked);
+  assert.equal(await gitReadSafeAt(["git", "status"], linked), true, "a linked worktree of a plain repository");
+  assert.equal(await gitReadSafeAt(["git", `--git-dir=${join(linked, ".git")}`, "log"], base), true, "--git-dir naming the .git file");
+  git(main, "config", "core.pager", "./run.sh");
+  assert.equal(await gitReadSafeAt(["git", "status"], linked), false, "the main repository's settings count");
+  assert.equal(await gitReadSafeAt(["git", `--git-dir=${join(linked, ".git")}`, "log"], base), false);
+  // One git would not follow (git stops there): not safe.
+  for (const [name, text] of [["no-space", "gitdir:../wt-main/.git\n"], ["missing", "gitdir: ../nowhere\n"], ["not-git", "gitdir: ..\n"], ["other", "not a gitfile\n"]]) {
+    const odd = join(base, `odd-${name}`);
+    mkdirSync(odd);
+    writeFileSync(join(odd, ".git"), text);
+    assert.equal(await gitReadSafeAt(["git", "status"], odd), false, name);
+  }
+  // A submodule's checkout: its .git file names a folder in the superproject's, whose core.worktree names the checkout.
+  const superproject = repo("superproject", "[core]\n\tbare = false\n");
+  const module = gitFolder(join(superproject, ".git", "modules", "lib"));
+  writeFileSync(join(module, "config"), "[core]\n\tworktree = ../../../lib\n");
+  mkdirSync(join(superproject, "lib"));
+  writeFileSync(join(superproject, "lib", ".git"), "gitdir: ../.git/modules/lib\n");
+  assert.equal(await gitReadSafeAt(["git", "status"], join(superproject, "lib")), true);
+  writeFileSync(join(module, "config"), "[core]\n\tworktree = ../../../lib\n\tfsmonitor = ./watch.sh\n");
+  assert.equal(await gitReadSafeAt(["git", "status"], join(superproject, "lib")), false);
+});

@@ -189,7 +189,8 @@ const NESTED: Readonly<Record<string, Readonly<Record<string, Spec>>>> = {
 const GLOBAL_FLAGS = new Set(["--no-pager", "-P", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-replace-objects"]);
 const GLOBAL_VALUES = new Set(["-C", "--git-dir", "--work-tree", "--namespace"]);
 
-export type GitGlobals = { dirs: string[]; gitDir: string | null; workTree: string | null; sub: string; rest: string[] } | null;
+/** `at`: the subcommand's index in the argv. */
+export type GitGlobals = { dirs: string[]; gitDir: string | null; workTree: string | null; sub: string; at: number; rest: string[] } | null;
 
 /** The global options of a git argv, the subcommand and its arguments; null when a global option is not one that only says where git looks. */
 export function gitParts(argv: readonly string[]): GitGlobals {
@@ -211,7 +212,7 @@ export function gitParts(argv: readonly string[]): GitGlobals {
     if (name === "--work-tree") workTree = value;
   }
   const sub = args[index];
-  return sub ? { dirs, gitDir, workTree, sub, rest: args.slice(index + 1) } : null;
+  return sub ? { dirs, gitDir, workTree, sub, at: index + 1, rest: args.slice(index + 1) } : null;
 }
 
 /** The option a long option names, by git's unique-prefix rule; null when unknown, ambiguous or unsafe. `--no-<option>` turns a known one off. */

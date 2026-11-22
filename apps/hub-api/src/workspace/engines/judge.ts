@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, harmlessPath, holdsProtected, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
-import { allowOrRefuse, askPerson, attachedValues, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, realOutside, segmentReadsOnly, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, attachedValues, cloneForAgent, floorRefusal, granted, outsideArgs, outsidePath, plainArgs, quietArgs, realOutside, segmentReadsOnly, WRITE_TOOL, type JobContext } from "../tools.js";
 import { gitWrites } from "../git-read.js";
 import type { ShellSegment } from "../shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
@@ -107,9 +107,10 @@ export function shellSegments(command: string): string[][] {
 export async function quietCommand(root: string, parsed: ShellSegment[], sandboxed: boolean): Promise<boolean> {
   if (!parsed.some((segment) => segment.argv.length)) return false;
   for (const segment of parsed) {
-    if (segment.assigned || segment.fed || segment.optionGlob || !within(root, segment.cwd)) return false;
+    if (segment.assigned || segment.fed || !within(root, segment.cwd)) return false;
     if (segment.redirects.some((redirect) => redirect.write && !harmlessPath(resolve(segment.cwd, expandHome(redirect.path))))) return false;
     if (!segment.argv.length) continue;
+    if (!(await segmentReadsOnly(segment))) return false;
     if (!sandboxed && segment.argv[0]!.split(/[\\/]/).pop()!.replace(/\.exe$/i, "") === "git") return false;
     if (!(await quietArgs(root, segment.argv, segment.cwd))) return false;
   }
@@ -182,7 +183,7 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   const writesIn: string[] = [];
   const roots = skillRootsHere();
   for (const segment of parsed) {
-    const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
+    const writes = segment.argv.length > 0 && !(await segmentReadsOnly(segment));
     // A git config write to --global, --system or --file writes that file, wherever the command runs (git-read.ts).
     for (const path of gitWrites(segment.argv, segment.cwd)) {
       mark(path, true);
@@ -212,11 +213,10 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   // each is held to the hard floor. The mode was already asked about that folder itself.
   for (const segment of parsed) {
     if (!segment.argv.length || within(ctx.root, segment.cwd)) continue;
-    const writes = !segmentReadsOnly(segment);
+    const writes = !(await segmentReadsOnly(segment));
     for (const arg of [...plainArgs(segment.argv), ...attachedValues(segment.argv)]) {
-      const real = await realOutside(resolve(segment.cwd, arg));
-      const floor = within(ctx.root, real) || harmlessPath(real) ? null : outsideRefusal(real, writes);
-      if (floor) return { decision: "deny", message: `${real}: ${floor}` };
+      const message = await floorRefusal(resolve(segment.cwd, arg), writes, ctx.root);
+      if (message) return { decision: "deny", message };
     }
   }
   const noted = async (answer: EngineAnswer) => {
@@ -281,10 +281,8 @@ async function questions(ctx: JobContext, input: Record<string, unknown>, withdr
 export async function judgeFloor(root: string, call: EngineCall, options: { neverPrograms?: boolean } = {}): Promise<EngineAnswer> {
   const input = call.input ?? {};
   const guarded = async (path: string, write: boolean): Promise<EngineAnswer | null> => {
-    const real = await realOutside(resolve(root, expandHome(path)));
-    if (within(root, real) || harmlessPath(real)) return null;
-    const floor = outsideRefusal(real, write);
-    return floor ? { decision: "deny", message: `${real}: ${floor}` } : null;
+    const message = await floorRefusal(resolve(root, expandHome(path)), write, root);
+    return message ? { decision: "deny", message } : null;
   };
   if (SHELLS.has(call.tool)) {
     const command = str(input.command);
@@ -298,7 +296,7 @@ export async function judgeFloor(root: string, call: EngineCall, options: { neve
       if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
     }
     for (const segment of parsed) {
-      const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
+      const writes = segment.argv.length > 0 && !(await segmentReadsOnly(segment));
       // Every path a program names (its plain arguments too, in whatever folder it runs) and every redirect.
       const named = segment.argv.length
         ? [...outsideArgs(root, segment.argv, segment.cwd), ...[...plainArgs(segment.argv), ...attachedValues(segment.argv)].map((arg) => resolve(segment.cwd, expandHome(arg)))]

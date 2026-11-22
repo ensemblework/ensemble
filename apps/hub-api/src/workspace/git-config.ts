@@ -5,8 +5,9 @@
  * would one with a populated submodule (git runs `git status` inside it, with that repository's own settings).
  *
  * The repository is found as git finds it (setup.c): the real folder, walking up past a `.git` that is not a git
- * folder, `commondir` followed. Wherever git's rules leave a doubt, or a file cannot be read plainly (not a regular
- * file, too big), the answer is "not safe": the judge then asks.
+ * folder, a `.git` file (`gitdir: …`, a linked worktree's or a submodule's) and `commondir` followed. Wherever git's
+ * rules leave a doubt, or a file cannot be read plainly (not a regular file, too big), the answer is "not safe": the
+ * judge then asks.
  */
 import { constants } from "node:fs";
 import { access, lstat, open, readdir, readlink, realpath, stat } from "node:fs/promises";
@@ -147,9 +148,9 @@ function readValue(text: string, start: number): { value: string; end: number; l
 const PROGRAM_NAMES = new Set([
   "core.pager", "core.sshcommand", "core.hookspath", "core.alternaterefscommand", "core.editor", "core.askpass", "core.gitproxy", "sequence.editor",
   "uploadpack.packobjectshook", "interactive.difffilter", "web.browser", "diff.external", "gpg.program", "credential.helper",
-  // Not programs, but they move the work tree (whose submodules this check would not see), print a line of any file
-  // (`fatal: invalid object name: <the file's first line>`), or fetch missing objects from a remote during a read.
-  "core.worktree", "blame.ignorerevsfile", "extensions.partialclone",
+  // Not programs, but they print a line of any file (`fatal: invalid object name: <the file's first line>`), or fetch
+  // missing objects from a remote during a read.
+  "blame.ignorerevsfile", "extensions.partialclone",
 ]);
 
 /** Settings that are safe only with one of these values, written plainly (no quotes or escapes): anything else may start a program. */
@@ -287,14 +288,36 @@ export async function isGitDir(folder: string): Promise<boolean> {
   return (await gitDirState(folder)) === "git";
 }
 
+/**
+ * The git folder a `.git` file names (`gitdir: <path>`, relative to the file's folder), read as git's read_gitfile reads
+ * it: a regular file of at most 1 MB that starts with `gitdir: `, line ends trimmed, links followed. null when git would
+ * not follow it, or it names nothing there.
+ */
+async function gitFileTarget(file: string): Promise<string | null> {
+  const bytes = await readPlain(file);
+  if (!bytes) return null;
+  const text = bytes.toString("utf8");
+  if (!text.startsWith("gitdir: ") || text.includes("\0") || text.includes("\ufffd")) return null;
+  const path = text.slice(8).replace(/[\r\n]+$/, "");
+  if (!path) return null;
+  return realpath(isAbsolute(path) ? path : `${dirname(file)}/${path}`).catch(() => null);
+}
+
+/** The git folder `--git-dir` names: a `.git` file there is followed to the folder it names, as git follows it; null when it cannot be. */
+export async function gitDirNamed(path: string): Promise<string | null> {
+  const info = await stat(path).catch(() => null);
+  return info?.isFile() ? gitFileTarget(path) : path;
+}
+
 /** A repository a git command uses: its git folder, and its work tree (none for a bare one). */
 export type Repository = { gitDir: string; workTree: string | null };
 
 /**
  * The repository git uses for a command run in `start`, found as setup.c finds it without `GIT_DIR`: from the real
- * folder upward, a `.git` folder that is a git folder, else the folder itself when it is one (bare); a `.git` that is
- * not one is passed, as git passes it. null: none (git reads no repository's settings). "unsure": a `.git` file (a
- * linked worktree or submodule, not followed here), a folder git's rules leave unclear, or the walk left `inside`.
+ * folder upward, a `.git` folder that is a git folder or a `.git` file naming one (a linked worktree's, a submodule's),
+ * else the folder itself when it is one (bare); a `.git` folder that is not one is passed, as git passes it. null: none
+ * (git reads no repository's settings). "unsure": a `.git` file git would not follow (git stops there), a folder git's
+ * rules leave unclear, or the walk left `inside`.
  */
 export async function discoverRepository(start: string, inside: (dir: string) => boolean = () => true): Promise<Repository | null | "unsure"> {
   let dir = await realpath(start).catch(() => null);
@@ -303,7 +326,10 @@ export async function discoverRepository(start: string, inside: (dir: string) =>
     if (!inside(dir)) return "unsure";
     const dotGit = join(dir, ".git");
     const info = await stat(dotGit).catch(() => null);
-    if (info?.isFile()) return "unsure";
+    if (info?.isFile()) {
+      const target = await gitFileTarget(dotGit);
+      return target !== null && (await gitDirState(target)) === "git" ? { gitDir: target, workTree: dir } : "unsure";
+    }
     if (info) {
       const state = await gitDirState(dotGit);
       if (state === "git") return { gitDir: dotGit, workTree: dir };
@@ -449,7 +475,16 @@ export async function repositorySafe(gitDir: string, workTree: string | null): P
     }
     if (await hasHooks(join(folder, "hooks"))) return false;
   }
-  return workTree === null || submodulesSafe(workTree, gitDir, hashSize(settings));
+  // core.worktree (a submodule's git folder names its checkout so) moves the work tree, relative to the git folder.
+  const trees = workTree === null ? [] : [workTree];
+  for (const setting of settings.filter((one) => one.name === "core.worktree")) {
+    if (!setting.literal || !setting.value) return false;
+    const tree = await realpath(isAbsolute(setting.value) ? setting.value : `${gitDir}/${setting.value}`).catch(() => null);
+    if (tree === null) return false;
+    trees.push(tree);
+  }
+  for (const tree of new Set(trees)) if (!(await submodulesSafe(tree, gitDir, hashSize(settings)))) return false;
+  return true;
 }
 
 /** `repositorySafe` for a git folder with no work tree to look in (a bare repository, or one named by `--git-dir` alone). */

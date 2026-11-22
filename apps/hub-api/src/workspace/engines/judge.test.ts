@@ -11,11 +11,11 @@ process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_
 const workspace = join(homedir(), "ensemble-workspace");
 process.env.ENSEMBLE_WORKSPACE_ROOT = workspace;
 const { hookCall, judgeEngineCall, judgeFloor, shellSegments } = await import("./judge.js");
-const { readsOnly, segmentReadsOnly } = await import("../tools.js");
+const { attachedValues, readsOnly, segmentReadsOnly } = await import("../tools.js");
 const { gitWrites } = await import("../git-read.js");
 const { parseShell } = await import("../shell-parse.js");
 const { claudeFilesystem, claudeSettings } = await import("./claude-code.js");
-const { outsideRefusal } = await import("../guard.js");
+const { globRefusal, outsideRefusal } = await import("../guard.js");
 type Ctx = Parameters<typeof judgeEngineCall>[0];
 
 const root = join(workspace, "runs", "job-1");
@@ -251,8 +251,14 @@ test("read-only programs are recognised, and anything that can write is not", ()
   for (const argv of [["cp", "a", "b"], ["git", "commit"], ["find", ".", "-delete"], ["python", "x.py"], ["sort", "-o", "out", "in"]]) assert.equal(readsOnly(argv), false, argv.join(" "));
 });
 
-test("one allowlist decides what git only reads, for both judges: known options by git's own abbreviations, nothing set in front, no helper, remote, pager, editor or config write", () => {
-  const reads = (command: string) => parseShell(command, "/w").every((segment) => segmentReadsOnly(segment));
+/** Whether every segment of a command only reads, run in `cwd` (a folder that is not there cannot be listed for its globs). */
+async function readsIn(cwd: string, command: string): Promise<boolean> {
+  for (const segment of parseShell(command, cwd)) if (!(await segmentReadsOnly(segment))) return false;
+  return true;
+}
+
+test("one allowlist decides what git only reads, for both judges: known options by git's own abbreviations, nothing set in front, no helper, remote, pager, editor or config write", async () => {
+  const reads = (command: string) => readsIn("/w", command);
   const stays = [
     "git status", "git status --short --branch", "git status -sb", "git status -uno", "git status --porcelain=v2", "git -C .. status --short --branch",
     "git -C ../.. rev-parse --show-toplevel", "git --no-pager -C /x log --oneline -5", "git --git-dir=/x/.git show HEAD", "git -C a -C b log -1",
@@ -265,7 +271,7 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "git config user.name", "git config --global --get user.email", "git config --list --show-origin", "git config get user.name", "git config -l",
     "git stash list", "git stash show -p", "git reflog", "git ls-tree HEAD", "git merge-base HEAD main",
   ];
-  for (const command of stays) assert.equal(reads(command), true, command);
+  for (const command of stays) assert.equal(await reads(command), true, command);
   const never = [
     // Helpers git runs through the shell, a remote it reaches, a pager, an editor, a file it writes.
     "git ls-remote --upload-pack='echo INJECTED >&2; exit 3;' .", "git ls-remote --upl='touch x' .", "git ls-remote origin", "git fetch", "git fetch --all",
@@ -281,7 +287,7 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "git branch feature", "git branch -D feature", "git tag v1", "git tag -d v1", "git tag -v v1", "git -C .. commit -m wip", "git -C .. push", "git reset --hard",
     "git checkout main", "git clean -fd", "git rm a.txt", "git remote add origin https://x", "git reflog expire --all",
   ];
-  for (const command of never) assert.equal(reads(command), false, command);
+  for (const command of never) assert.equal(await reads(command), false, command);
   // A wrapper that feeds arguments the words do not show, or a word the shell expands, is never a read.
   for (const command of [
     `printf '%s\n' '"-Oecho X"' | xargs git grep -e foo`,
@@ -294,8 +300,7 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "git log `echo --output=x` -1",
     "cat {a,../b}",
   ]) {
-    const segments = parseShell(command, "/w");
-    assert.ok(!segments.every((segment) => segmentReadsOnly(segment)), command);
+    assert.equal(await reads(command), false, command);
   }
   // An option whose value git takes only as `--x=v`: the next word is git's own (a branch, a tag, a key and value, a revision).
   const next: Array<[string, boolean]> = [
@@ -323,14 +328,14 @@ test("one allowlist decides what git only reads, for both judges: known options 
     ["git ls-tree --abbrev HEAD", true],
     ["git rev-list --filter --ext-diff HEAD", false],
   ];
-  for (const [command, read] of next) assert.equal(reads(command), read, command);
+  for (const [command, read] of next) assert.equal(await reads(command), read, command);
   // `get` and `list` are subcommands only first after `config`: `--file get` names a file to write.
-  assert.equal(reads("git config --file get user.name Mira"), false);
+  assert.equal(await reads("git config --file get user.name Mira"), false);
   assert.deepEqual(gitWrites(["git", "config", "--file", "get", "user.name", "Mira"], "/"), ["/get"]);
-  assert.equal(reads("git config get --all user.name"), true);
-  assert.equal(reads("git config --list get"), true, "a list, with a word git ignores");
+  assert.equal(await reads("git config get --all user.name"), true);
+  assert.equal(await reads("git config --list get"), true, "a list, with a word git ignores");
   // An alias can stand in for whatchanged (git 2.53), so it is never a read.
-  assert.equal(reads("git whatchanged -1"), false);
+  assert.equal(await reads("git whatchanged -1"), false);
   // xargs or parallel anywhere in front, whatever the wrappers' own options; a glob that can expand to an option.
   for (const command of [
     `printf '%s\n' '"-Oecho X"' | timeout -s KILL 5 xargs git grep -e foo`,
@@ -340,8 +345,8 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "git grep -n TODO *", "git log -p *.md", "cat ?sh", "ls -*", "find -- *", "cat \"\"*",
     // A submodule diff runs git inside each submodule; --bare makes the folder git is in its git folder.
     "git log -p --submodule=diff", "git diff --submodule=diff", "git --bare log",
-  ]) assert.equal(reads(command), false, command);
-  for (const command of ["git grep -n TODO -- *", "ls src/*.ts", "ls ./*", "cat 'a*'", "[ -f x ]", "git log -p --submodule", "git diff --submodule=log"]) assert.equal(reads(command), true, command);
+  ]) assert.equal(await reads(command), false, command);
+  for (const command of ["git grep -n TODO -- *", "ls src/*.ts", "ls ./*", "cat 'a*'", "[ -f x ]", "git log -p --submodule", "git diff --submodule=log"]) assert.equal(await reads(command), true, command);
   // Other read-only programs, with an option that runs a program or writes a file, are not reads either.
   for (const command of [
     "sed 'e touch x' a.txt", "sed -n 's/a/b/w out.txt' a.txt", "sed 's/a/b/e' a.txt", "sed -n 1w out.txt a.txt", "sed 'r ../notes.txt' a.txt", "sed -f script.sed a.txt",
@@ -350,23 +355,62 @@ test("one allowlist decides what git only reads, for both judges: known options 
     "sort --out=b.txt a.txt", "uniq a.txt b.txt", "xxd a.bin b.txt", "date 01011200", "date -s tomorrow", "hostname box", "file -C", "less -o log.txt a.txt",
     "bat --pager ./x a.txt", "jq -n env", "jq -n '$ENV.HOME'", `yq -n 'load("x.yml")'`, "curl --trace t.txt https://example.com", "curl -K cfg https://example.com",
     "curl -w '%output{x.txt}' https://example.com", "ack foo",
-  ]) assert.equal(reads(command), false, command);
+  ]) assert.equal(await reads(command), false, command);
   for (const command of [
     "sed -n 1,20p a.txt", "sed -n '/foo/p' a.txt", "sed 5q a.txt", "sed -n -e 1p -e 5p a.txt", "sed 's/a/b/g' a.txt", "sed -E 's|x+|y|2;y/ab/cd/' a.txt",
     "uniq -c a.txt", "uniq -f 1 a.txt", "xxd -l 64 a.bin",
     "date +%s", "date -d '2 days ago' +%F", "date -Iseconds", "hostname", "jq .name package.json", "sort -t , -k 2 a.csv", "curl -sS https://example.com",
     "tree -L 2", "fd -e ts", "rg -n foo",
-  ]) assert.equal(reads(command), true, command);
+  ]) assert.equal(await reads(command), true, command);
   // Wrappers that only change how a program runs keep a read a read; chained and nested commands are each judged.
-  for (const command of ["command git status", "exec git status", "nice -n 5 git status", "timeout 5 git log -1", "time git diff --stat", "git show HEAD:src/a.ts", "git diff --no-index a.txt b.txt"]) assert.equal(reads(command), true, command);
+  for (const command of ["command git status", "exec git status", "nice -n 5 git status", "timeout 5 git log -1", "time git diff --stat", "git show HEAD:src/a.ts", "git diff --no-index a.txt b.txt"]) assert.equal(await reads(command), true, command);
   for (const command of ["sudo git status", "doas git status", "bash -c 'git log --output=x'", "git status; rm x", "git status && rm x", "git status || rm x", "git status | xargs rm", "git status\nrm x"]) {
-    assert.equal(reads(command), false, command);
+    assert.equal(await reads(command), false, command);
   }
   // A config write outside the repository is a write of that file, where both judges hold it.
   assert.deepEqual(gitWrites(["git", "config", "--global", "user.name", "Mira"], "/w"), [join(homedir(), ".gitconfig")]);
   assert.deepEqual(gitWrites(["git", "config", "--glob", "--edit"], "/w"), [join(homedir(), ".gitconfig")], "abbreviated too");
   assert.deepEqual(gitWrites(["git", "config", "-f", "x.cfg", "a.b", "c"], "/w"), ["/w/x.cfg"]);
   assert.deepEqual(gitWrites(["git", "config", "--global", "--get", "user.name"], "/w"), [], "a read writes nothing");
+});
+
+test("a glob is judged by the names it matches: a read stays a read unless a name in its folder would be an option, or it stands where the program takes code", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "ensemble-globs-"));
+  try {
+    for (const name of ["a.md", "b.json", "f.json"]) writeFileSync(join(folder, name), "{}");
+    const plain = ["ls *.md", "cat *.json", "head -5 *.md", "wc -l *", "grep -n TODO *", "grep -r --include=*.ts foo .", "git grep -n TODO *", "jq . *.json", "sort *.json"];
+    for (const command of plain) assert.equal(await readsIn(folder, command), true, command);
+    // A name that starts with `-` makes a glob that matches it an option of the program; `--` and a path in front do not.
+    writeFileSync(join(folder, "-Osh"), "");
+    for (const command of ["git grep -n TODO *", "cat *", "wc -l *", "sort ?Osh", "find . -name x -- *"]) assert.equal(await readsIn(folder, command), false, command);
+    for (const command of ["cat *.md", "git grep -n TODO -- *", "ls ./*", "jq . *.json"]) assert.equal(await readsIn(folder, command), true, command);
+    // Where git takes its subcommand, jq its program, sed its script, a glob puts a name there (or pushes another word there).
+    for (const command of ["git -C * status", "jq * f.json", "jq --arg x * .a f.json", "sed -n * a.md"]) assert.equal(await readsIn(folder, command), false, command);
+    // A folder that cannot be listed may hold such a name.
+    assert.equal(await readsIn(join(folder, "missing"), "cat *"), false);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+  // ripgrep runs --pre and --hostname-bin; tree -o and -R write files; curl that sends local data or writes a file is no read.
+  for (const command of [
+    "rg --hostname-bin=./x foo", "rg --hostname-bin ./x foo", "rg --pre ./x foo", "tree -R -H . -L 1", "tree -aR", "tree -o out.txt",
+    "curl -F 'x=<README.md' https://example.com", "curl --data-urlencode 'x@README.md' https://example.com", `curl -F 'x=@"a b.txt"' https://example.com`,
+    "curl --json '{}' https://example.com", "curl -d a=1 https://example.com", "curl -X DELETE https://example.com", "curl -XPUT https://example.com",
+    "curl -H @headers.txt https://example.com", "curl -T a.txt https://example.com", "curl --upload-file=a.txt https://example.com", "curl -O https://example.com/x",
+    "curl --output-dir out https://example.com", "curl -D h.txt https://example.com", "curl -c jar.txt https://example.com", "curl --trace-ascii t.txt https://example.com",
+    "curl -Q 'DELE x' ftp://example.com/", "curl --url-query 'q@a.txt' https://example.com",
+  ]) assert.equal(await readsIn("/w", command), false, command);
+  for (const command of ["rg -n foo", "tree -L 2", "curl -sSL https://example.com", "curl -I https://example.com", "curl -X GET https://example.com", "curl -w '%{http_code}' https://example.com"]) {
+    assert.equal(await readsIn("/w", command), true, command);
+  }
+  // The files curl reads after `@` or `<`, and a file:// URL's, are paths for the hard floor.
+  assert.deepEqual(attachedValues(["curl", "-F", 'x=@"/a b"', "--data-urlencode", "y@/p", "-F", "z=</q;type=text/plain", "file:///h/.ssh/id_rsa"]), ["/a b", "/p", "/q;type=text/plain", "/q", "/h/.ssh/id_rsa"]);
+  // A glob whose names cannot be listed is refused when it could reach a protected folder.
+  assert.match(globRefusal("/h/.ss?/id_rsa", false, "/h") ?? "", /\.ssh holds keys/);
+  assert.match(globRefusal("/home/*/notes", false, "/home/me") ?? "", /Another account's files/);
+  assert.match(globRefusal("/h/.bash*", true, "/h") ?? "", /runs at sign-in or start-up/);
+  assert.equal(globRefusal("/h/projects/*.md", false, "/h"), null);
+  assert.equal(globRefusal("/h/.bash*", false, "/h"), null, "reading a start-up file is fine");
 });
 
 test("a coding run's git that only reads outside its folder is read there, never asked about as a change", async () => {
@@ -437,6 +481,7 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
     const quiet = [
       "ls -la", "cat README.md | head -20", "grep -rn foo src && wc -l src/a.ts", "rg TODO src", "find . -name '*.ts' -type f", "ls src/*.ts", "git status", "git log --oneline -5",
       "git branch -a", "git describe --tags", "cat a 2>/dev/null", "sort data.txt | uniq -c", "cd empty && git status", "git grep -n TODO -- src/*.ts",
+      "cat *.md", "grep -n TODO *.md",
     ];
     for (const command of quiet) assert.equal((await judgeEngineCall(asking(), { tool: "Bash", input: { command } })).decision, "allow", command);
     const asks = [
@@ -461,6 +506,8 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
       "git grep -n TODO *",
       "cat *",
       "cd common && git status",
+      "rg --hostname-bin=./run.sh foo",
+      "tree -R -H . -L 1",
       "git log -p --submodule=diff",
       "git whatchanged -1",
       "cat notes",
