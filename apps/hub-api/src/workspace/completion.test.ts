@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
@@ -383,7 +384,7 @@ test("before it runs them, Ensemble checks the criteria's commands again and ask
   assert.equal(allowed.asked.length, 1, "one card for all of them");
   assert.equal(allowed.asked[0]!.toolName, "run checks", "the card reads \"wants to run checks\"");
   assert.match(allowed.asked[0]!.title, /npm test · node accept\.js/);
-  assert.deepEqual(allowed.ran, ["npm run lint", "npm test", "node accept.js"]);
+  assert.deepEqual(allowed.ran, ["npm run lint", "npm test", `node '${join(fieldnote, "accept.js")}'`], "a criterion's file runs at the real path checked");
   assert.deepEqual(allowed.judged, ["npm run lint read-write", "npm test auto", "node accept.js auto"], "once allowed, the task's commands are not asked about one by one");
   assert.deepEqual(allowed.runs.map((row) => [row.id, row.verdict]), [[null, "pass"], ["AC-1", "pass"], ["AC-2", "not_run"], ["AC-3", "not_run"], ["AC-4", "pass"]]);
   assert.match(allowed.runs[2]!.reason ?? "", /test, lint, build or typecheck/);
@@ -395,7 +396,7 @@ test("before it runs them, Ensemble checks the criteria's commands again and ask
 
   const unattended = await pass("deny", { job: { id: "job-2", unattended: true } } as Partial<JobContext>);
   assert.equal(unattended.asked.length, 0, "an unattended run asks nobody");
-  assert.deepEqual(unattended.ran, ["npm run lint", "npm test", "node accept.js"]);
+  assert.deepEqual(unattended.ran, ["npm run lint", "npm test", `node '${join(fieldnote, "accept.js")}'`]);
   assert.deepEqual(unattended.judged, ["npm run lint read-write", "npm test read-write", "node accept.js read-write"]);
 
   // A read-only run stays read-only after the card.
@@ -433,11 +434,53 @@ test("a criterion's file runs only when it is in the run's folder when the check
       return result(0, "");
     },
   });
-  assert.deepEqual(ran, ["node accept.js", "pytest tests/test_api.py::test_ok"]);
+  assert.deepEqual(ran, [`node '${join(linked, "accept.js")}'`, `pytest '${join(linked, "tests", "test_api.py")}::test_ok'`]);
   assert.deepEqual(asked, ["node accept.js\npytest tests/test_api.py::test_ok"], "the card names only what can run");
   assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"], ["AC-2", "not_run"], ["AC-3", "pass"], ["AC-4", "pass"], ["AC-5", "not_run"]]);
   assert.match(runs[0]!.reason ?? "", /check\.js is not in the run's folder/);
   assert.match(runs[1]!.reason ?? "", /check_output\.py is not in the run's folder/);
+});
+
+test("a criterion's file is checked again right before it runs, and runs at the real path checked: a link an earlier check put in its place is not followed", async () => {
+  const ops = folder("ops");
+  writeFileSync(join(ops, "deploy.js"), "");
+  // A quote and a space in the folder's real path: the path the command runs is quoted for the shell.
+  const root = folder("mira's build");
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { build: "node build.js" } }));
+  writeFileSync(join(root, "test_out.js"), "");
+  writeFileSync(join(root, "accept.js"), "");
+  const acceptance = [
+    { id: "AC-1", text: "`npm run build` passes", command: "npm run build", folder: null },
+    { id: "AC-2", text: "`node test_out.js` passes", command: "node test_out.js", folder: null },
+    { id: "AC-3", text: "`node accept.js` passes", command: "node accept.js", folder: null },
+  ];
+  const ran: string[] = [];
+  const asked: string[] = [];
+  const runs = await rerunChecks(ctx({ root }), null, {
+    signal,
+    judge: allow,
+    ask: async (_ctx, input) => {
+      asked.push(input.command ?? "");
+      return { decision: "allow", answer: null };
+    },
+    acceptance,
+    run: async (options) => {
+      const command = options.argv.at(-1)!;
+      ran.push(command);
+      // The build puts a link out of the folder where the next check's file was.
+      if (command === "npm run build") {
+        rmSync(join(root, "test_out.js"));
+        symlinkSync(join(ops, "deploy.js"), join(root, "test_out.js"));
+      }
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(asked, ["npm run build\nnode test_out.js\nnode accept.js"], "each was in place when the card was shown");
+  const pinned = `node '${join(root, "accept.js").replace(/'/g, `'\\''`)}'`;
+  assert.deepEqual(ran, ["npm run build", pinned], "the link is never run");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict, row.command]), [["AC-1", "pass", "npm run build"], ["AC-2", "not_run", "node test_out.js"], ["AC-3", "pass", "node accept.js"]]);
+  assert.match(runs[1]!.reason ?? "", /test_out\.js is not in the run's folder/);
+  assert.equal(execFileSync("sh", ["-c", pinned.replace(/^node /, "printf %s ")], { encoding: "utf8" }), join(root, "accept.js"), "the shell reads the quoted path back whole");
 });
 
 test("the criteria come from what the task says: never the brief's information sections, quotes or embedded sources", async () => {

@@ -15,7 +15,7 @@ import { z } from "zod";
 import { parseReport, REPORT_OUTCOMES, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
 import { agentEnv } from "../subscriptions/detect.js";
-import { acceptanceFolder, checkFilesProblem, isCheckCommand, type AcceptanceCheck } from "./acceptance-checks.js";
+import { acceptanceFolder, checkCommandAt, checkFilesProblem, isCheckCommand, type AcceptanceCheck } from "./acceptance-checks.js";
 import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
 import { judgeEngineCall } from "./engines/judge.js";
 import { runCommand, type RunResult } from "./runner.js";
@@ -289,7 +289,8 @@ function keep(output: string, secrets: readonly string[]): string {
  * first (refused by the hard floor, asked about where the mode asks), then in the run's folder or one it
  * was let into (`rerunFolder`), with the agent's PATH and HOME and a time limit each. Then the commands
  * the task's or plan step's acceptance criteria name (`acceptance`), each once: one the agent's own
- * check already ran in the same folder is not run twice. Checks without a rerun are listed as the
+ * check already ran in the same folder is not run twice, and each is held to `checkCommandAt` when the
+ * checks are planned and again right before it runs. Checks without a rerun are listed as the
  * agent's claims only; after a discard (`stopped`) no more are run.
  */
 export async function rerunChecks(ctx: JobContext, report: StepReport | null, options: RerunOptions): Promise<CheckRun[]> {
@@ -312,11 +313,19 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
     await options.progress?.(`Checking: ${base.name}`.slice(0, 200));
     const answer = await judge(judgeCtx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: base.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
     if (answer.decision !== "allow") return { ...base, verdict: "not_run", reason: answer.message ?? "The run's rules did not let it run." };
+    // A criterion's command is checked again right before it runs: the owner's card and earlier checks (which may change
+    // the folder) came after the plan. Its files run at the real paths checked.
+    let command = base.command;
+    if (base.from === "acceptance") {
+      const checked = await checkCommandAt(ctx.root, where.cwd, base.command);
+      if ("problem" in checked) return { ...base, verdict: "not_run", reason: checked.problem };
+      command = checked.command;
+    }
     let result: RunResult;
     try {
       result = await run({
         userId: ctx.userId,
-        argv: shellArgv(base.command),
+        argv: shellArgv(command),
         cwd: where.cwd,
         root: ctx.root,
         sandboxed: ctx.sandboxed,
@@ -347,7 +356,8 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
     const where = await rerunFolder(ctx, cwd);
     if (!("refused" in where) && ran.has(`${where.cwd}\0${check.command.replace(/\s+/g, " ").trim()}`)) continue;
     const claimed = report?.checks?.find((row) => row.id === check.id)?.verdict ?? "skipped";
-    // Text anyone could have written: held to the check forms again here, and a file it runs must be in the run's folder now.
+    // Text anyone could have written: held to the check forms again here, and a file it runs must be in the run's folder, so
+    // the owner's card names only what can run.
     const problem = !isCheckCommand(check.command) ? NOT_A_CHECK : "refused" in where ? null : await checkFilesProblem(ctx.root, where.cwd, check.command);
     planned.push({ base: { name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" }, problem });
   }

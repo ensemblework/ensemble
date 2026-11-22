@@ -109,9 +109,9 @@ type Args = {
   files?: boolean;
 };
 
-/** The words after the flags (the paths), or null when an argument is not allowed. */
-function positionals(args: readonly string[], spec: Args): string[] | null {
-  const found: string[] = [];
+/** The words after the flags (the paths), as their places in `args`, or null when an argument is not allowed. */
+function positionalsAt(args: readonly string[], spec: Args): number[] | null {
+  const found: number[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === "--" && spec.rest) return args.slice(index + 1).every((word) => spec.rest!.test(word)) ? found : null;
@@ -127,12 +127,12 @@ function positionals(args: readonly string[], spec: Args): string[] | null {
       continue;
     }
     if (!spec.paths?.test(arg) || !staysInside(arg) || (spec.files && !checkFile(arg))) return null;
-    found.push(arg);
+    found.push(index);
   }
   return found;
 }
 
-const argsAllowed = (args: readonly string[], spec: Args) => positionals(args, spec) !== null;
+const argsAllowed = (args: readonly string[], spec: Args) => positionalsAt(args, spec) !== null;
 
 const TEST_PATHS = /^[\w./-]+(?:::[\w.-]+)*$/;
 const PYTEST: Args = {
@@ -208,27 +208,52 @@ export function isCheckCommand(command: string): boolean {
   }
 }
 
-/** The files and test folders a check command runs, as it names them (node's or python's file, pytest's and mocha's paths); empty when it names none. */
-export function checkFiles(command: string): string[] {
-  if (!isCheckCommand(command)) return [];
-  const [program = "", sub = "", ...rest] = command.split(" ");
-  const strip = (path: string) => path.split("::")[0]!;
-  if (program === "node") return [sub];
-  if (program === "python" || program === "python3") return sub === "-m" ? (positionals(rest.slice(1), PYTEST) ?? []).map(strip) : [sub];
-  if (program === "pytest" || program === "py.test") return (positionals([sub, ...rest].filter(Boolean), PYTEST) ?? []).map(strip);
-  if (program === "mocha") return positionals([sub, ...rest].filter(Boolean), MOCHA) ?? [];
-  return [];
+/**
+ * Where in a check command's words the files and test folders it runs are (node's or python's file, pytest's and
+ * mocha's paths), and whether a word may end in `::` and a test's name (pytest's). None when it names none.
+ */
+function fileWords(command: string): { at: number[]; tests: boolean } {
+  if (!isCheckCommand(command)) return { at: [], tests: false };
+  const words = command.split(" ");
+  const [program = "", sub = ""] = words;
+  const after = (offset: number, spec: Args) => ({ at: (positionalsAt(words.slice(offset), spec) ?? []).map((index) => index + offset), tests: spec === PYTEST });
+  if (program === "node") return { at: [1], tests: false };
+  if (program === "python" || program === "python3") return sub === "-m" ? after(3, PYTEST) : { at: [1], tests: false };
+  if (program === "pytest" || program === "py.test") return after(1, PYTEST);
+  if (program === "mocha") return after(1, MOCHA);
+  return { at: [], tests: false };
 }
 
-/** Why a check command's files cannot run where it runs (`cwd`): one is missing, or lies outside the run's folder through a link; null when each is there. */
-export async function checkFilesProblem(root: string, cwd: string, command: string): Promise<string | null> {
+/** A word for the shell completion.ts runs checks in (sh, PowerShell on Windows), taken as it is. */
+function shellWord(text: string): string {
+  return process.platform === "win32" ? `'${text.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'` : `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * A check command as it may run where it runs (`cwd`), checked just before: each file and test folder it runs must be in
+ * the run's folder (not missing, nor a link out of it), and goes in the command as the real path checked, absolute and
+ * quoted, so a link put in its place after the check is not followed. Else why it cannot run.
+ */
+export async function checkCommandAt(root: string, cwd: string, command: string): Promise<{ command: string } | { problem: string }> {
   const real = await realpath(root).catch(() => null);
-  if (!real) return "The run's folder is gone.";
-  for (const file of checkFiles(command)) {
+  if (!real) return { problem: "The run's folder is gone." };
+  const words = command.split(" ");
+  const { at, tests } = fileWords(command);
+  for (const index of at) {
+    const word = words[index]!;
+    const cut = tests ? word.indexOf("::") : -1;
+    const file = cut >= 0 ? word.slice(0, cut) : word;
     const found = await realpath(resolve(cwd, file)).catch(() => null);
-    if (!found || !within(real, found)) return `${file} is not in the run's folder.`;
+    if (!found || !within(real, found)) return { problem: `${file} is not in the run's folder.` };
+    words[index] = shellWord(cut >= 0 ? `${found}${word.slice(cut)}` : found);
   }
-  return null;
+  return { command: words.join(" ") };
+}
+
+/** Why a check command cannot run where it runs (`checkCommandAt`); null when it can. */
+export async function checkFilesProblem(root: string, cwd: string, command: string): Promise<string | null> {
+  const checked = await checkCommandAt(root, cwd, command);
+  return "problem" in checked ? checked.problem : null;
 }
 
 function folderOf(text: string): string | null {
