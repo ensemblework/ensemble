@@ -101,7 +101,7 @@ Two runs of one Ensemble Node mission (`context.mission.id`) take the first choi
 
 Waiting is not offered when the other run is waiting for a folder this one holds. A job assigned to a held folder, or one inside or around it, waits in the queue ([05](05_MODULE_TASK_ORCHESTRATOR.md)). Reading never takes a folder, and a read-only run holds nothing.
 
-Codex changes the folders its sandbox opens without asking, so folders other runs hold are left out of its writable roots when it starts (changing one goes through its approval, then the above), and each folder it changed on its own (`item/completed` file changes and writing commands) is held for it from then on.
+Codex changes the folders its sandbox opens without asking, so folders other runs hold are left out of its writable roots when it starts (changing one goes through its approval, then the above), and each folder it changed on its own (`item/completed` file changes, and commands that write as the judges read them: `writtenOutside` with `segmentReadsOnly`, git's config files included) is held for it from then on.
 
 Changing one another run took after Codex started is a clash: noted on both runs' logs and sent to the person as a notification.
 

@@ -21,8 +21,9 @@ import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
 import { expandHome, harmlessPath, inTemp, knownWorkspace, within } from "./guard.js";
 import { runTrustedGit } from "./git-gate.js";
 import { OCCUPIED } from "./queue-policy.js";
+import { gitWrites } from "./git-read.js";
 import { parseShell } from "./shell-parse.js";
-import { askPerson, DANGEROUS_GIT_CONFIG, grantFolder, grantFolderToRun, outsideArgs, readsOnly, realOutside, type Held, type JobContext } from "./tools.js";
+import { askPerson, DANGEROUS_GIT_CONFIG, grantFolder, grantFolderToRun, outsideArgs, realOutside, segmentReadsOnly, type Held, type JobContext } from "./tools.js";
 import { addWorktree } from "./worktrees.js";
 
 /** How often a waiting run looks again. */
@@ -368,15 +369,21 @@ async function settle(ctx: JobContext, want: Want, holder: FolderHolder, options
   return { ...(await waitUntilFree(ctx, want, holder, options.withdrawn)), ...said };
 }
 
-/** Paths a shell command writes outside `root`: what each writing program names, the folder it runs in, and redirects. */
+/**
+ * Paths a shell command writes outside `root`: what each writing program names, the folder it runs in, redirects,
+ * and the git config files it writes. A segment is a read only as the judges see one (workspace/tools.ts
+ * `segmentReadsOnly`, git-read.ts): what xargs feeds, a variable set in front or a word the shell expands makes it a change.
+ */
 export function writtenOutside(root: string, command: string, cwd = root): string[] {
   const paths = new Set<string>();
   for (const segment of parseShell(command, cwd)) {
-    const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+    const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
     if (writes) {
       for (const path of outsideArgs(root, segment.argv, segment.cwd)) paths.add(resolve(segment.cwd, expandHome(path)));
       if (!within(root, segment.cwd)) paths.add(segment.cwd);
     }
+    // A git config write to --global, --system or --file writes that file, wherever the command runs.
+    for (const path of gitWrites(segment.argv, segment.cwd)) if (!within(root, path)) paths.add(path);
     for (const redirect of segment.redirects) {
       const full = resolve(segment.cwd, expandHome(redirect.path));
       if (redirect.write && !within(root, full)) paths.add(full);

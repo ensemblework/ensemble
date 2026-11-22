@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import type { WorkspaceJob } from "@prisma/client";
@@ -258,6 +259,16 @@ test("Codex's own changes outside its folder hold it from then on; one another r
   assert.ok((await kinds(a.job.id)).includes("folder_clash"));
   assert.ok(await h.prisma.notification.findFirst({ where: { userId: user.id, title: "Two tasks are changing lib/ at once" } }));
   await Promise.all([a.finish(), codex.finish()]);
+});
+
+test("a write is never taken for a read: what xargs feeds, a variable set in front, git's own config files", () => {
+  const root = "/srv/ws/run";
+  const lib = "/srv/ws/lib";
+  assert.deepEqual(writtenOutside(root, `printf -- '--output=notes.txt\\n' | xargs git -C ${lib} log -1`), [lib], "xargs can add --output");
+  assert.deepEqual(writtenOutside(root, `GIT_DIR=${lib}/.git git -C ${lib} log`), [lib], "a variable set in front makes any program a change");
+  assert.deepEqual(writtenOutside(root, "git config --global user.name Mira"), [join(homedir(), ".gitconfig")]);
+  assert.deepEqual(writtenOutside(root, `git config --file ${lib}/cfg get k v`), [`${lib}/cfg`]);
+  assert.deepEqual(writtenOutside(root, `git -C ${lib} log --oneline`), [], "a read stays a read");
 });
 
 test("two runs of one Ensemble Node mission take turns without a card, even in Ask; another mission's run is asked as before", async () => {
