@@ -10,7 +10,9 @@
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
  * titled "Ensemble", and closes Notepad without saving (alt+F4, then "Don't save" by its element). Every action
  * cua-driver is asked for is logged with its answer (and any call slower than 3 s), and a failed check lets the
- * rest run, so one run shows every step that fails; the run fails at the end.
+ * rest run, so one run shows every step that fails; the run fails at the end. With `--foreground-may-be-held`, when
+ * a window that is no app's keeps the foreground (Windows' first sign-in screen on the arm64 runner), the checks that
+ * need the owner's screen are reported as not checked (a warning), and Notepad closes through its File menu.
  *
  *   tsx scripts/desktop-windows-smoke.ts --out <dir>
  */
