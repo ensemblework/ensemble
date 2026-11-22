@@ -740,3 +740,17 @@ test("a coding run's shared screenshot is the run's evidence, held for the perso
   const blind = await runRunDesktopTool(ctx as never, "desktop_observe", { screen: "agent", share: true, screenshot: false, app: "Calculator" }, screens);
   assert.equal(blind.ok, false);
 });
+
+test("a snap app is refused on the agent screen before the owner is asked, and the app list says where it opens", { timeout: 30_000 }, async () => {
+  const { appsText } = await import("./text.js");
+  const agent = harness({ agent: "up" });
+  await agent.set({ catalog: [{ id: "org.example.Vault", name: "Vault", exec: "vault", sandbox: "snap" }, { id: "org.gnome.Ptyxis", name: "Terminal", exec: "ptyxis" }] });
+  const asked: string[] = [];
+  const gated = caller("node:n1:m1", { gate: async (app) => (asked.push(app.id), { allow: true }) });
+  await assert.rejects(agent.service.open(gated, { app: "Vault" }), (error: InstanceType<typeof DesktopError>) => error.code === "unsupported" && /snap app/.test(error.message) && /owner's screen/.test(error.message));
+  assert.deepEqual(asked, [], "no card for an app that cannot open there");
+  assert.equal((await methods(agent, "apps.launch")).length, 0);
+  assert.match(appsText([await agent.service.apps({}, 10_000)]), /- Vault: org\.example\.Vault \(a snap app: your owner's screen only\)\n- Terminal: org\.gnome\.Ptyxis$/);
+  await agent.service.open(gated, { app: "Terminal" });
+  assert.deepEqual(asked, ["org.gnome.Ptyxis"], "a sensitive app there is still asked about");
+});

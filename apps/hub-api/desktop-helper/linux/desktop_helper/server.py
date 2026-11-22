@@ -879,6 +879,13 @@ class Helper:
         app_id = appmod.desktop_id(info.get_id() or ref)
         exec_name = info.get_executable()
         path_ = info.get_filename()
+        name = clean(info.get_display_name() or app_id, 60)
+        text = appmod.read_entry(path_) if path_ else ""
+        entry = appmod.desktop_entry(text)
+        if self.agent is not None:
+            sandbox = appmod.sandbox_of(path_ or "", entry)
+            if sandbox:
+                raise error("unsupported_here", f"{name} is a {sandbox} app: its sandbox reaches only your owner's display, so it cannot open on the agent screen. Use it on your owner's screen (screen owner), which asks them first.", ran="no")
         stages = {"accepted": False, "process": False, "window": False, "inspectable": False, "focused": False}
         started = time.monotonic()
         already = self._running_for(app_id, exec_name)
@@ -886,16 +893,27 @@ class Helper:
             stages.update(accepted=True, process=True, window=True)
         else:
             self.check(deadline, request_id, "no")
-            if self.agent is not None:
-                from .agent_screen import UNIT_PREFIX, app_launch_prefix, unit_of
-
-                command = appmod.launch_command(path_, app_id, prefix=app_launch_prefix(self.agent.paths["runtime"]), unit_prefix=UNIT_PREFIX)
-                self.agent.track(unit_of(command))
+            launch_file = path_
+            if appmod.dbus_activatable(entry):
+                launch_file = appmod.exec_entry(text, os.path.basename(path_ or ""), os.path.join(self.state_dir, "launchers")) if path_ else None
+            if launch_file is None:
+                if self.bus is None:
+                    raise error("launch_failed", f"{name} starts only by D-Bus, and there is no session bus here.", ran="no")
+                try:
+                    appmod.activate(self.bus, app_id, int(min(25.0, max(1.0, deadline.remaining() - 1.0)) * 1000))
+                except GLib.Error as failure:
+                    raise error("launch_failed", f"{name} could not be started ({clean(failure.message, 120)}).", ran="maybe")
             else:
-                command = appmod.launch_command(path_, app_id)
-            code = appmod.start(command, self.env, timeout_s=min(15.0, max(1.0, deadline.remaining() - 1.0)))
-            if code is None or code != 0:
-                raise error("launch_failed", f"{clean(info.get_display_name() or app_id, 60)} could not be started.", ran="maybe")
+                if self.agent is not None:
+                    from .agent_screen import UNIT_PREFIX, app_launch_prefix, unit_of
+
+                    command = appmod.launch_command(launch_file, app_id, prefix=app_launch_prefix(self.agent.paths["runtime"]), unit_prefix=UNIT_PREFIX)
+                    self.agent.track(unit_of(command))
+                else:
+                    command = appmod.launch_command(launch_file, app_id)
+                code = appmod.start(command, self.env, timeout_s=min(15.0, max(1.0, deadline.remaining() - 1.0)))
+                if code is None or code != 0:
+                    raise error("launch_failed", f"{name} could not be started.", ran="maybe")
             stages["accepted"] = True
         wait_s = min(float(param(params, "wait_ms", (int, float), 8000)) / 1000.0, max(0.5, deadline.remaining() - 1.0))
         found: dict[str, Any] | None = None
