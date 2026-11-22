@@ -119,6 +119,8 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       ...(codeTurn && packet ? { codePacket: packet } : {}),
       ...(codeTurn && spec.profileInstructions?.trim() ? { profileInstructions: spec.profileInstructions.trim().slice(0, 4000) } : {}),
       ...(fork ? { fork: { from: resolved.assign.continueFromJobId } } : {}),
+      // The commands the task's or plan step's acceptance criteria name, run again here when the agent says it is done.
+      ...(Array.isArray(spec.acceptance) ? { acceptance: spec.acceptance } : {}),
     } as Prisma.InputJsonValue;
     const choiceConfig = parseConfig(spec.sessionChoice);
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, {

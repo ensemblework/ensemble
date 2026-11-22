@@ -66,6 +66,17 @@ export function deviceForksCodeThreads(capabilities: unknown): boolean {
   return typeof value === "number" && value >= 2;
 }
 
+/**
+ * Whether a computer's runtime runs an assigned run's checks again when its agent says it is done, and
+ * sends what they showed with the run's end (`capabilities.runVerification` 1 or more): only then does
+ * the web hold the run's task back from done until they pass.
+ */
+export function deviceVerifiesRuns(capabilities: unknown): boolean {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return false;
+  const value = (capabilities as { runVerification?: unknown }).runVerification;
+  return typeof value === "number" && value >= 1;
+}
+
 export function rejectPathLabels(capabilities: unknown): string | null {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
   const record = capabilities as { folders?: unknown; folderLabels?: unknown };

@@ -17,7 +17,7 @@ import { createHttpHarness } from "../test/http.js";
 const h = await createHttpHarness();
 const db = h.prisma;
 const { keepCodeTurn, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
-const { completionOf, markAccepted, parseCompletion, saveCompletion, verifyCodeTurn } = await import("./completion.js");
+const { completionOf, markAccepted, parseCompletion, saveCompletion, verifyRun } = await import("./completion.js");
 const { steerPrompt } = await import("./engine-watch.js");
 const { HANDOFF_CHARS, renderHandoff, parseHandoff } = await import("./handoff-record.js");
 const { withMentionedContent } = await import("./mentioned.js");
@@ -27,7 +27,7 @@ const { runLimits } = await import("@ensemble/shared-types");
 const { Assign, createJob } = await import("./assign.js");
 const { webContext } = await import("../remote/origin.js");
 type Ctx = Parameters<typeof prepareCodeTurn>[0];
-type JobContext = Parameters<typeof verifyCodeTurn>[0];
+type JobContext = Parameters<typeof verifyRun>[0];
 
 const scratch = mkdtempSync(join(tmpdir(), "ensemble-code-turn-"));
 after(async () => {
@@ -276,7 +276,7 @@ test("an accept or discard while Ensemble runs the checks again stays on the run
   const jobCtx = (over: Record<string, unknown> = {}) =>
     ({ prisma: db, job, userId: user.id, root, runId: job.runId, signal: new AbortController().signal, secretEnv: {}, accessMode: "read-write", sandboxed: false, network: false, progress: async () => undefined, event: async () => undefined, ...over }) as unknown as JobContext;
   const ran: string[] = [];
-  const completion = await verifyCodeTurn(jobCtx(), { outcome: "success", files: [{ added: 2, removed: 1 }] }, {
+  const completion = await verifyRun(jobCtx(), { outcome: "success", files: [{ added: 2, removed: 1 }] }, {
     judge: async () => ({ decision: "allow" }),
     run: async (options) => {
       ran.push(options.argv.at(-1)!);

@@ -33,6 +33,7 @@ import { refreshRunCard, settingsLine, storedSettings } from "./settings.js";
 import { startWatchdog, stopWatchdog } from "./watchdog.js";
 import { closeRunDecisions } from "./run-decisions.js";
 import { sessionDeletionOf } from "../workspace/sessions.js";
+import { parseCompletion, verifiedOf, verifiedReport, type Completion, type Verified } from "../workspace/completion.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 /** How often run states are mirrored: a run's end reaches its node within this time. */
@@ -43,13 +44,14 @@ let polling = false;
 
 type JobView = {
   id: string;
+  runId: string | null;
   status: string;
   progress: string | null;
   summary: string | null;
   error: string | null;
   report: Prisma.JsonValue | null;
   context: Prisma.JsonValue;
-  task: { title: string } | null;
+  task: { title: string; status: string } | null;
   device: { name: string } | null;
 };
 
@@ -62,7 +64,7 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
     if (!runs.length) return;
     const jobs = await prisma.workspaceJob.findMany({
       where: { id: { in: runs.map((row) => row.jobId) } },
-      select: { id: true, status: true, progress: true, summary: true, error: true, report: true, context: true, task: { select: { title: true } }, device: { select: { name: true } } },
+      select: { id: true, runId: true, status: true, progress: true, summary: true, error: true, report: true, context: true, task: { select: { title: true, status: true } }, device: { select: { name: true } } },
     });
     const byId = new Map(jobs.map((row) => [row.id, row as JobView]));
     const cardIds = runs.map((row) => row.messageId).filter((id): id is string => Boolean(id));
@@ -77,13 +79,32 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
   }
 }
 
+const RAN: Record<string, string> = { pass: "passed", fail: "failed", not_run: "not run", uncertain: "uncertain" };
+
+/** What Ensemble's runs of a run's checks showed, for its node, and why its task was not marked done when it was not. */
+function checksNote(completion: Completion | null, verified: Verified | null, taskStatus: string | null): string {
+  if (!verified || !completion) return "";
+  const runs = completion.checks.runs.slice(0, 8).map((run) => `${RAN[run.verdict]} ${run.id ? `${run.id} ` : ""}${truncateText(run.command, 200)}${run.verdict !== "pass" && run.reason ? ` (${truncateText(run.reason, 300)})` : ""}`);
+  // The owner's own done stands (workspace/completion.ts settleTask): say what the checks showed without contradicting it.
+  const ownersDone = taskStatus === "done" && verified !== "passed";
+  return [
+    `Ensemble ran its checks again: ${runs.join("; ")}.`,
+    ownersDone ? `Its owner marked the task done; it stays done, though its checks ${verified === "failed" ? "failed" : "could not be confirmed"}. Say so${verified === "failed" ? ", with the failure" : ""}.` : "",
+    !ownersDone && verified === "failed" ? "The task was not marked done: its checks failed. Say so, with the failure, and fix it or say what is next." : "",
+    !ownersDone && verified === "not_verified" ? "The task was not marked done: it is finished, not verified, until its checks are confirmed. Say so; never call it done." : "",
+  ].filter(Boolean).join("\n");
+}
+
 async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null, card: Awaited<ReturnType<FastifyInstance["prisma"]["nodeMessage"]["findUnique"]>>): Promise<void> {
   const prisma = app.prisma;
   const status = job?.status ?? "cancelled";
   const shown = (card?.data ?? {}) as Record<string, unknown>;
   const progress = job?.progress ?? null;
   const report = parseReport(job?.report ?? null);
-  if (card && (shown.status !== status || shown.progress !== progress || (RUN_ENDED.has(status) && (shown.summary !== (job?.summary ?? null) || (report && !shown.report))))) {
+  // What Ensemble's runs of its checks showed (workspace/completion.ts): its card and its node say the same.
+  const completion = RUN_ENDED.has(status) && job?.runId ? parseCompletion((await prisma.run.findUnique({ where: { id: job.runId }, select: { completion: true } }))?.completion) : null;
+  const verified = status === "succeeded" ? verifiedOf(completion?.checks) : null;
+  if (card && (shown.status !== status || shown.progress !== progress || (RUN_ENDED.has(status) && (shown.summary !== (job?.summary ?? null) || (report && !shown.report) || (verified && shown.verified !== verified))))) {
     // Read again just before writing, with the evidence rows, so an upload meanwhile is never dropped.
     const fresh = (await prisma.nodeMessage.findUnique({ where: { id: card.id } })) ?? card;
     await updateMessageData(prisma, fresh, {
@@ -94,6 +115,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
       error: job?.error ? truncateText(job.error, 500) : null,
       computer: job?.device?.name ?? (shown.computer as string | null) ?? null,
       ...(report ? { report } : {}),
+      ...(verified ? { verified } : {}),
     });
   }
   const ended = RUN_ENDED.has(status);
@@ -121,7 +143,9 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   }
   const step = run.planId && run.planStep ? { planId: run.planId, planStep: run.planStep } : null;
   const observed = report ? await provenanceOf(prisma, run, job) : null;
-  const reported: StepReport | null = report && observed ? { ...report, provenance: { ...report.provenance, ...observed } } : report;
+  const worker: StepReport | null = report && observed ? { ...report, provenance: { ...report.provenance, ...observed } } : report;
+  // A step ends with Ensemble's own runs of its checks, not the worker's word.
+  const reported = worker ? verifiedReport(worker, completion) : null;
 
   // The worker reported its result: the step ends with it, unless the run's session still has queued work.
   if (step && reported && reported.outcome !== "blocked" && status === "succeeded") {
@@ -146,7 +170,20 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   const planStep = plan?.data.steps.find((row) => row.id === step?.planStep);
 
   const title = job?.task?.title ?? card?.body ?? "the task";
-  const words = status === "succeeded" ? "finished" : status === "failed" ? "failed" : status === "interrupted" ? "was interrupted" : "was cancelled";
+  const words =
+    status === "succeeded"
+      ? verified === "passed"
+        ? "finished, and its checks passed when Ensemble ran them again"
+        : verified === "failed"
+          ? "finished, but its checks failed when Ensemble ran them again"
+          : verified === "not_verified"
+            ? "finished, not verified: Ensemble could not confirm its checks"
+            : "finished"
+      : status === "failed"
+        ? "failed"
+        : status === "interrupted"
+          ? "was interrupted"
+          : "was cancelled";
   const queued = run.sessionId
     ? await prisma.nodeRun.findMany({ where: { sessionId: run.sessionId, nodeId: run.nodeId, reportedAt: null, id: { not: run.id } }, orderBy: { createdAt: "asc" }, select: { jobId: true } })
     : [];
@@ -168,6 +205,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
         ? `Its agent's earlier conversation ${restart === "gone" ? "no longer existed in the agent (deleted or expired there)" : restart === "busy" ? "was held open in the agent's own app (the ChatGPT app) the whole time it waited" : "had been deleted"}, so it worked in a new conversation from the task's brief and the earlier task's summary: it did not remember what was said before. Say so if it matters.`
         : "",
       report ? `The agent reported: ${report.outcome}. ${truncateText(report.summary, 1500)}${report.checks?.length ? `\nChecks: ${report.checks.map((check) => `${check.verdict} ${check.name}`).join("; ")}` : ""}` : "",
+      checksNote(completion, verified, job?.task?.status ?? null),
       job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
       await evidenceLine(prisma, run),
       job?.error ? `Error: ${truncateText(job.error, 800)}` : "",

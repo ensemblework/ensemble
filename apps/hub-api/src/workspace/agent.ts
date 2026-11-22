@@ -65,7 +65,10 @@ import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
-import { saveCompletion, verifyCodeTurn, type Completion } from "./completion.js";
+import { saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
+import { acceptanceChecksFor, acceptanceInContext, type AcceptanceCheck } from "./acceptance-checks.js";
+import { parseReport } from "../node/report.js";
+import { jobOrigin } from "../remote/origin.js";
 import { LOCAL_ACCOUNT_NAME } from "../lib/desktop-user.js";
 import { purposeOf } from "../lib/skill-purpose.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -1569,14 +1572,18 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
 
   // A Code tab turn the agent got: its packet is kept even when the turn then failed, as its session has it now.
   if (codeTurn && !codeTurnKept && (await engineSessionOf(prisma, job.id).catch(() => null))) await keepCodeTurn(prisma, run.id, codeTurn).catch((failure: unknown) => app.log.warn({ err: failure }, "could not keep the turn's packet"));
-  // Ensemble runs the checks the agent reported again and keeps each state of the turn apart (completion.ts).
+  // Ensemble runs the checks the agent reported again, and an assigned run's acceptance commands, and keeps each state of the run apart (completion.ts).
+  const assigned = job.kind === "code" && !chat;
+  const acceptance: AcceptanceCheck[] = assigned ? await runAcceptance(prisma, job).catch(() => []) : [];
   let completion: Completion | null = null;
-  if (codeAgent && job.kind === "code" && ctx.root && outcome !== "interrupted") {
-    completion = await verifyCodeTurn({ ...ctx, signal: control.signal }, { outcome, files: changedFiles }).catch((failure: unknown) => {
-      app.log.warn({ err: failure }, "could not check the turn's work");
+  if ((codeAgent || assigned) && job.kind === "code" && ctx.root && outcome !== "interrupted") {
+    completion = await verifyRun({ ...ctx, signal: control.signal }, { outcome, files: changedFiles, acceptance }).catch((failure: unknown) => {
+      app.log.warn({ err: failure }, "could not check the run's work");
       return null;
     });
   }
+  const reported = parseReport((await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { report: true } }).catch(() => null))?.report);
+  const ended = taskStatusAfter({ outcome, markDone: job.markDone, checks: assigned ? (completion?.checks ?? null) : null, hasChecks: assigned && (acceptance.length > 0 || Boolean(reported?.checks?.some((check) => check.rerun))) });
 
   try {
     if (outcome === "success" || finalText) {
@@ -1595,29 +1602,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     app.log.warn({ err: failure }, "could not write agent output to the page");
   }
 
-  const taskStatus = chat
-    ? "in_progress"
-    : outcome === "success"
-      ? job.markDone
-        ? "done"
-        : "waiting_approval"
-      : outcome === "cancelled"
-        ? "todo"
-        : "blocked";
-  const fresh = await prisma.task.findUnique({ where: { id: job.taskId }, select: { status: true, owner: true } });
-  if (fresh && fresh.owner === "agent" && fresh.status !== taskStatus) {
-    await prisma.task.update({
-      where: { id: job.taskId },
-      data: {
-        status: taskStatus,
-        completedAt: taskStatus === "done" ? new Date() : null,
-        blockedQuestion: taskStatus === "blocked" ? ({ question: error ?? "The agent stopped.", options: [] } as never) : undefined,
-      },
-    });
-    await prisma.taskTransition.create({
-      data: { userId, taskId: job.taskId, fromStatus: fresh.status, toStatus: taskStatus, fromOwner: "agent", toOwner: "agent", actor: "agent", reason: error ?? "Agent finished", runId: run.id },
-    });
-  }
+  const taskStatus = chat ? "in_progress" : ended.status;
+  // The run started the task in progress: its end moves it only from there, so a status set meanwhile stands.
+  const moved = await settleTask(prisma, { userId, taskId: job.taskId, jobId: job.id, runId: run.id, expected: "in_progress", status: taskStatus, question: ended.question ?? error, reason: error ?? verifiedReason(ended.verified), verified: ended.verified });
   await prisma.run.update({
     where: { id: run.id },
     data: {
@@ -1663,13 +1650,13 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // A Code tab thread's turn notifies only while the person is away from the Code tab, and opens the thread.
   if (codeTurnOf(job.context) && !nodeRun) {
     if (outcome !== "cancelled") await noticeCodeTurn(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, failed: outcome === "success" ? null : (error ?? summary) }).catch(() => undefined);
-  } else if (outcome === "success" && !chat && !job.markDone && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
-  if (outcome !== "success" && outcome !== "cancelled" && !nodeRun && !codeTurnOf(job.context)) await prisma.notification.create({
+  } else if (outcome === "success" && !chat && moved && taskStatus === "waiting_approval" && !nodeRun) await noticeReadyForReview(prisma, { userId, taskId: job.taskId, title: job.task.title, summary, runId: run.id }).catch(() => undefined);
+  if ((outcome !== "success" || ended.verified === "failed") && outcome !== "cancelled" && !nodeRun && !codeTurnOf(job.context)) await prisma.notification.create({
     data: {
       userId,
       kind: "agent",
       title: outcome === "interrupted" ? `Agent interrupted: ${job.task.title}` : `Agent needs you: ${job.task.title}`,
-      body: (error ?? summary).slice(0, 300),
+      body: (error ?? ended.question ?? summary).slice(0, 300),
       url: `/tasks/${job.taskId}`,
       subject: `task:${job.taskId}`,
     },
@@ -1677,6 +1664,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   publish();
   sseHub.publish(userId, { event: "page", data: { taskId: job.taskId } });
 }
+
+/**
+ * The commands an assigned run's acceptance criteria name: those its claim from the web carried (the
+ * web has the task and its node's plan), else those of this computer's task and plan step.
+ */
+async function runAcceptance(prisma: FastifyInstance["prisma"], job: { id: string; userId: string; context: unknown; task: { description: string; notes: string } }): Promise<AcceptanceCheck[]> {
+  const sent = jobOrigin(job.context) === "web" ? acceptanceInContext(job.context) : null;
+  return sent ?? acceptanceChecksFor(prisma, { userId: job.userId, jobId: job.id, parts: [job.task.description, job.task.notes] });
+}
+
 
 function truncateArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, typeof value === "string" && value.length > 400 ? `${value.slice(0, 400)}…` : value]));

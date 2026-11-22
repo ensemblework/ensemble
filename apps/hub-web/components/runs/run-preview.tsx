@@ -49,6 +49,7 @@ import { duration, modelsSeen, readableTraceValue, sameModel, toolStats, traceEn
 
 export { RUN_OUTCOME } from "@/lib/run-status";
 import { runPresentation } from "@/lib/run-status";
+import { TurnStates } from "@/components/code/turn-states";
 
 const LIVE = new Set(["queued", "claimed", "running", "stopping", "waiting_approval"]);
 
@@ -113,7 +114,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
 function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDetail; job: RunJob | null; onClose: () => void; fullscreen: boolean; onFullscreen: React.MouseEventHandler<HTMLButtonElement> }) {
   const [tab, setTab] = useState<Tab>("result");
   const live = runIsLive(run, job);
-  const outcome = runPresentation({ outcome: run.outcome, endedAt: run.endedAt, jobStatus: job?.status });
+  const outcome = runPresentation({ outcome: run.outcome, endedAt: run.endedAt, jobStatus: job?.status, verified: run.verified });
   // A run an older server never closed ends when its job did.
   const endedAt = run.endedAt ?? (live ? null : (job?.finishedAt ?? null));
   const entries = useMemo(() => traceEntries(run.steps, run.startedAt, endedAt), [run.steps, run.startedAt, endedAt]);
@@ -142,6 +143,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
           </div>
           {run.sourceRunId && <Link className="mt-2 block text-[12px] text-accent hover:underline" href={`/runs?run=${run.sourceRunId}`}>From feedback on an earlier run</Link>}
           <h2 className="mt-1.5 text-[17px] font-semibold leading-6">{run.task.title}</h2>
+          {run.completion && !live ? <div className="mt-1.5"><TurnStates completion={run.completion} /></div> : null}
         </div>
         <button type="button" className="icon-btn shrink-0" aria-label={fullscreen ? "Exit full screen" : "Full screen"} onClick={onFullscreen}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
         <Link href={`/tasks/${taskId}`} className="btn shrink-0 gap-1.5 py-1 text-[12.5px]" title="Open the task page">
