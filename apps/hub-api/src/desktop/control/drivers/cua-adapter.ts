@@ -826,17 +826,28 @@ export abstract class CuaAdapter extends EventEmitter {
       if (error instanceof HelperError && error.kind === "target_not_found") throw new HelperError("launch_failed", `${ref} could not be opened: ${error.message}`, "no");
       throw error;
     });
-    const pid = num(data.pid);
+    let pid = num(data.pid);
+    let name = found?.name ?? str(data.name) ?? ref;
     const state = obj(data.launch_state);
     let wins = arr(data.windows)
       .map(winOf)
       .filter((win): win is Win => win !== null && win.layer === 0);
     const waitMs = Math.min(20_000, Math.max(0, num(params.wait_ms) ?? 8_000));
-    while (pid !== null && !wins.length && this.now() - started < waitMs && ctx.until - this.now() > 2_000) {
+    const names = new Set([str(data.bundle_id), found?.bundle, found?.name, ref].filter((item): item is string => !!item).map((item) => item.toLowerCase()));
+    for (let tries = 1; pid !== null && !wins.length && this.now() - started < waitMs && ctx.until - this.now() > 2_000; tries += 1) {
       await this.sleep(300);
-      wins = (await this.windows(ctx, pid)).filter((win) => win.pid === pid && win.layer === 0);
+      const current: number = pid;
+      wins = (await this.windows(ctx, current)).filter((win) => win.pid === current && win.layer === 0);
+      if (wins.length || tries % 5 !== 0 || !this.reuseRunning()) continue;
+      // The window can belong to another process of the same app: one that ran already, or a packaged app's host.
+      for (const other of (await this.apps(ctx)).filter((item) => item.pid > 0 && item.pid !== current && (names.has(item.name.toLowerCase()) || (item.bundle !== null && names.has(item.bundle.toLowerCase()))))) {
+        const own = (await this.windows(ctx, other.pid)).filter((win) => win.pid === other.pid && win.layer === 0);
+        if (!own.length) continue;
+        [pid, name, wins] = [other.pid, other.name, own];
+        break;
+      }
     }
-    const app: RunningApp | null = pid !== null ? { pid, name: str(data.name) ?? found?.name ?? ref, bundle: str(data.bundle_id) ?? found?.bundle ?? null, active: false, launchPath: found?.launchPath ?? null } : null;
+    const app: RunningApp | null = pid !== null ? { pid, name, bundle: str(data.bundle_id) ?? found?.bundle ?? null, active: false, launchPath: found?.launchPath ?? null } : null;
     return {
       app: { id: app?.bundle ?? found?.bundle ?? ref, name: app?.name ?? found?.name ?? ref, running: app ? this.helperApp(app, wins) : null },
       stages: { accepted: true, started: pid !== null && state.process_running !== false, window: wins.length > 0 || state.window_ready === true, focused: false },

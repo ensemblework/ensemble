@@ -1,9 +1,9 @@
 /**
  * Desktop control on a real Windows desktop (.github/workflows/desktop-windows-smoke.yml): DesktopService on the
  * Windows driver with the pinned cua-driver.exe (in ENSEMBLE_CUA_DRIVER_DIR) and the session probe, on the
- * runner's interactive desktop. It checks readiness, opens Notepad behind the other windows, then brings it to the
- * front (the owner's screen is asked for once), types "Ensemble 0.9.1 on Windows" in chunks and reads it back
- * through UI Automation, takes a
+ * runner's interactive desktop. It checks readiness, opens Notepad behind the other windows, adds text to it there
+ * through UI Automation, then brings it to the front (the owner's screen is asked for once), clicks into its text and goes to its end,
+ * types "Ensemble 0.9.1 on Windows" in chunks and reads it back through UI Automation, takes a
  * screenshot (not blank, the main display's size) and keeps it in `--out`, presses keys, records a few seconds
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
  * titled "Ensemble", and closes Notepad without saving through its elements, in the background.
@@ -29,8 +29,10 @@ const { desktopReadiness } = await import("../src/desktop/control/readiness.js")
 const { DesktopService } = await import("../src/desktop/control/service.js");
 type Caller = import("../src/desktop/control/service.js").Caller;
 type Observation = import("../src/desktop/control/service.js").Observation;
+type HelperApp = import("../src/desktop/control/protocol.js").HelperApp;
 
 const TEXT = "Ensemble 0.9.1 on Windows";
+const BEHIND = "Typed behind the other windows. ";
 const started = Date.now();
 const step = (what: string) => console.log(`[${((Date.now() - started) / 1000).toFixed(1)} s] ${what}`);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,14 +74,32 @@ try {
   step("open Notepad behind the other windows");
   const opened = await service.open(caller, { app: "Notepad", waitSec: 20 });
   console.log(`  ${JSON.stringify(opened)}`);
+  if (!opened.stages.window) console.log(`  the windows here: ${JSON.stringify((await listed()).map((app) => `${app.pid} ${app.name} (${app.app_id}): ${app.windows.map((window) => JSON.stringify(window.title)).join(", ")}`))}`);
   assert.ok(opened.stages.window, "Notepad has a window");
   assert.equal(opened.focused, false, "it opened without taking the front");
+
+  step("add text in the background, through UI Automation");
+  const behind = await service.act(caller, { steps: [{ action: "type", element: (await editor()).id, text: BEHIND }], observe: false });
+  console.log(`  ${JSON.stringify(behind)}`);
+  assert.equal(behind.mode, "background");
+  assert.equal(behind.steps[0]!.ran, "yes");
+  const added = await notepadText();
+  console.log(`  ${JSON.stringify(added)}`);
+  assert.ok(added.includes(BEHIND), `Notepad holds ${JSON.stringify(added)}`);
 
   step("bring it to the front (asks for the owner's screen once)");
   const front = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
   console.log(`  ${JSON.stringify(front.steps)}`);
   assert.equal(front.steps[0]!.verdict, "confirmed");
   await frontApp("Notepad");
+
+  step("click into its text, by its place on a screenshot, and go to its end");
+  const at = await editorPoint();
+  const aim = await service.observe(caller, { elements: false });
+  assert.ok(aim.display && aim.scale, "a screenshot to aim at");
+  const click = await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale), y: Math.round(at.y / aim.scale), captureId: aim.captureId }, { action: "key", keys: "ctrl+End" }], observe: false });
+  console.log(`  at ${at.x},${at.y}, then ctrl+End: ${JSON.stringify(click.steps)}`);
+  assert.ok(click.steps.every((done) => done.ran === "yes"));
 
   step(`type "${TEXT}" in chunks`);
   const typed = await service.act(caller, { foreground: true, steps: [{ action: "type", text: TEXT }], observe: false });
@@ -187,6 +207,28 @@ async function notepadText(): Promise<string> {
   const look = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
   const editors = (look.tree?.elements ?? []).filter((element) => element.states.includes("editable") && typeof element.value === "string");
   return editors.map((element) => String(element.value)).join("\n");
+}
+
+/** Notepad's text area, in its latest look. */
+async function editor(): Promise<import("../src/desktop/control/protocol.js").HelperElement> {
+  const look = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
+  const editors = (look.tree?.elements ?? []).filter((element) => element.states.includes("editable"));
+  const found = editors.find((element) => element.role === "document" || element.role === "text") ?? editors[0];
+  assert.ok(found, `no text area among ${JSON.stringify(look.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`))}`);
+  return found;
+}
+
+/** The middle of Notepad's text area on the screen, in screen pixels: its window's place plus its place in the window. */
+async function editorPoint(): Promise<{ x: number; y: number }> {
+  const area = await editor();
+  const window = (await listed()).find((app) => /notepad/i.test(`${app.name} ${app.app_id ?? ""}`))?.windows.find((item) => item.showing && item.box);
+  assert.ok(area.box && window?.box, `where Notepad's text is: ${JSON.stringify({ box: area.box, window })}`);
+  return { x: Math.round(window.box[0] + area.box[0] + area.box[2] / 2), y: Math.round(window.box[1] + area.box[1] + Math.min(area.box[3] / 2, 40)) };
+}
+
+/** The driver's running apps with their windows (boxes in screen pixels). */
+async function listed(): Promise<HelperApp[]> {
+  return (await driver.call<{ apps: HelperApp[] }>("a11y.apps", {}, { timeoutMs: 30_000 })).apps;
 }
 
 async function running(name: string): Promise<boolean> {
