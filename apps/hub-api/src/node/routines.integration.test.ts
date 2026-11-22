@@ -328,3 +328,33 @@ test("a routine's card waits 30 minutes for its owner, then expires and its step
   // Work its owner started in a chat has no such timer: only routines' cards expire.
   assert.equal(await expireBackgroundCards(h.app, Date.now() + 86_400_000), 0);
 });
+
+test("a routine's computer card from the lead's own turn expires too: its question closes and the lead hears it", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "researcher");
+  const made = await routine(mira, { title: "Nightly sweep", nodeId: node.id, instruction: "Sweep the logs.", cron: "0 3 * * *" });
+  script = () => ({ text: "(no reply)" });
+  await mira.inject({ method: "POST", url: `/api/node/routines/${made.routine.id}/run` });
+  await settleTurns();
+  const run = await h.prisma.nodeRoutineRun.findFirstOrThrow({ where: { routineId: made.routine.id } });
+  await h.prisma.nodeMission.update({ where: { id: run.missionId! }, data: { status: "running", endedAt: null, reportedAt: null } });
+  const lane = { roomId: room.id, private: false, planId: run.missionId!, planStep: null, retry: null };
+  const question = await h.prisma.agentDecision.create({
+    data: {
+      userId: mira.id, source: "ensemble", event: "question", toolName: "Computer tools", title: "@researcher wants to read logs on Mira's laptop", status: "pending",
+      expiresAt: new Date(Date.now() + 86_400_000),
+      detail: { options: ["Once", "This mission"], nodeTool: { nodeId: node.id, nodeSlug: node.slug, roomId: room.id, private: false, planId: run.missionId, planStep: null, mission: run.missionId, deviceId: "device-1", deviceName: "Mira's laptop", capability: "read", target: "/home/mira/logs", label: "logs", scope: "folder", parked: [lane], delivered: false, announced: false } },
+    },
+  });
+  const card = await h.prisma.nodeMessage.create({
+    data: { roomId: room.id, seq: 9_100, userId: mira.id, authorKind: "node", authorNodeId: node.id, kind: "approval", body: "Read the logs?", data: { type: "computer", status: "pending", decisionId: question.id, private: false, plan: { id: run.missionId, step: null } }, visibleTo: [mira.id], createdAt: new Date(Date.now() - 31 * 60_000) },
+  });
+  seen.length = 0;
+  assert.equal(await expireBackgroundCards(h.app), 1);
+  await settleTurns();
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).data as { status: string }).status, "expired");
+  assert.equal((await h.prisma.agentDecision.findUniqueOrThrow({ where: { id: question.id } })).status, "expired", "the question closes, so asking again makes a new card");
+  const woke = await h.prisma.nodeTurn.findFirst({ where: { nodeId: node.id, reason: "approval", planId: run.missionId, planStep: null } });
+  assert.ok(woke, "the lead's own turn on the plan is woken");
+  assert.ok(seen.some((turn) => turn.transcript.includes("did not answer within 30 minutes") && turn.transcript.includes("Go on without it")), "the lead hears it and goes on");
+});
