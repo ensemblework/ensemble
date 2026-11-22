@@ -42,10 +42,11 @@ export type Drive = {
   cleanups: Array<() => Promise<void> | void>;
 };
 
-type State = { handled: Set<string>; fenced: Set<string>; seen: Map<string, string>; isCodeEngine: (value: string) => boolean; holding: boolean };
+type State = { handled: Set<string>; fenced: Set<string>; seen: Map<string, string>; isCodeEngine: (value: string) => boolean; holding: boolean; answer: boolean };
 const states = new WeakMap<Drive, State>();
 
-export async function startDrive(input: { world: World; owner: Owner; task: Task; repeat: number; dir: string; deviceId: string; trace: Trace; ledger: SessionLedger; log: (line: string) => void; timeoutMs: number }): Promise<Drive> {
+/** `answer: false` leaves every owner card to a person (serve mode): the drive still fences, records sessions and traces. */
+export async function startDrive(input: { world: World; owner: Owner; task: Task; repeat: number; dir: string; deviceId: string; trace: Trace; ledger: SessionLedger; log: (line: string) => void; timeoutMs: number; answer?: boolean }): Promise<Drive> {
   const { world, owner, trace } = input;
   const { isCodeEngine } = await import("../../../packages/shared-types/src/index.js");
   const cleanups: Array<() => Promise<void> | void> = [];
@@ -128,7 +129,7 @@ export async function startDrive(input: { world: World; owner: Owner; task: Task
     },
   };
   const drive: Drive = { ctx, world, owner, trace, ledger: input.ledger, started: Date.now(), deadline: Date.now() + input.timeoutMs, cards: [], errors: [], notes: [], cleanups };
-  states.set(drive, { handled: new Set(), fenced: new Set(), seen: new Map(), isCodeEngine: (value) => isCodeEngine(value), holding: false });
+  states.set(drive, { handled: new Set(), fenced: new Set(), seen: new Map(), isCodeEngine: (value) => isCodeEngine(value), holding: false, answer: input.answer ?? true });
   return drive;
 }
 
@@ -272,9 +273,10 @@ async function traceChanges(drive: Drive): Promise<void> {
   }
 }
 
-/** One look: cards answered, the fence applied, sessions recorded, changes traced. Never throws. */
+/** One look: cards answered (unless a person answers them), the fence applied, sessions recorded, changes traced. Never throws. */
 export async function tick(drive: Drive): Promise<void> {
-  for (const step of [answerCards, fence, noteSessions, traceChanges] as Array<(drive: Drive) => Promise<void>>) {
+  const steps = states.get(drive)!.answer ? [answerCards, fence, noteSessions, traceChanges] : [fence, noteSessions, traceChanges];
+  for (const step of steps as Array<(drive: Drive) => Promise<void>>) {
     try {
       await step(drive);
     } catch (error) {

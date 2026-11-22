@@ -229,6 +229,7 @@ async function askAndWait(ctx: ToolContext, scope: NodeScope, device: Device, as
     target: ask.target,
     label: ask.label,
     scope: ask.scope,
+    ...(ask.screen ? { screen: ask.screen } : {}),
   };
   const asked = await askOwner(ctx.app, node.userId, tool, options.describe, ask.weak);
   const card = await computerCard(ctx.app, asked.row, {

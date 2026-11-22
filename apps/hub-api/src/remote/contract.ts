@@ -1307,5 +1307,7 @@ export const NodeToolAsk = z.object({
   scope: z.enum(["folder", "origin", "app"]),
   /** The sandbox here is weak: "Always" is not offered for commands, and asks once per mission instead. */
   weak: z.boolean().default(false),
+  /** `app`: the screen the app is on, the node's own agent screen or the owner's; an older computer leaves it out and the card says the owner's. */
+  screen: z.enum(["agent", "owner"]).optional(),
 });
 export type NodeToolAsk = z.infer<typeof NodeToolAsk>;

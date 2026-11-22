@@ -100,6 +100,8 @@ export type NodeToolCard = {
   target: string;
   label: string;
   scope: NodeToolAsk["scope"];
+  /** An app's screen: the node's own agent screen, or the owner's (absent: the owner's, as an older computer asks). */
+  screen?: NodeToolAsk["screen"];
   /** A question about one of the agent's own calls (its shell, files, web): what it wants to do, in a few words, and what an answer covers. */
   own?: { what: string; kind?: OwnAskKind };
   /** The conversations and steps whose turn parked waiting on this question: its answer wakes each (absent on older questions: the one that asked). */
@@ -140,8 +142,8 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
 const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files", desktop: "use" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
-function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName" | "target" | "own">): string {
-  if (card.scope === "app") return `@${card.nodeSlug} wants to use ${card.label} on your screen on ${card.deviceName}`;
+function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "screen" | "deviceName" | "target" | "own">): string {
+  if (card.scope === "app") return `@${card.nodeSlug} wants to use ${card.label} on ${card.screen === "agent" ? "its own screen" : "your screen"} on ${card.deviceName}`;
   if (card.target.startsWith("program:")) return `@${card.nodeSlug} wants to run ${card.label} on ${card.deviceName}`;
   if (card.target.startsWith("tool:")) return `@${card.nodeSlug} wants to use ${card.label} on ${card.deviceName}`;
   if (card.target.startsWith("unnamed:")) return `@${card.nodeSlug} wants to ${card.capability === "read" ? "read" : "change"} files it does not name on ${card.deviceName}`;
@@ -277,6 +279,7 @@ async function postCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision
       capability: tool?.capability ?? null,
       label: tool?.label ?? null,
       scope: tool?.scope ?? null,
+      ...(tool?.screen ? { screen: tool.screen } : {}),
       deviceName: tool?.deviceName ?? null,
       call: input.call.slice(0, 500),
       options,

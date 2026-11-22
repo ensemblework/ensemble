@@ -31,9 +31,9 @@ export type DesktopRequest = Extract<NodeToolRequest, { tool: "desktop" }>;
 type App = Pick<FastifyInstance, "prisma">;
 export type DesktopDone = { status: number; body: Record<string, unknown>; grantsUsed: string[] };
 
-/** The ask a sensitive app raises: once per app and mission, on the node's card. */
-export function appAsk(app: GateApp): NodeToolAsk {
-  return { capability: "desktop", target: app.id, label: app.name, scope: "app", weak: false };
+/** The ask a sensitive app raises, naming the screen it is on: once per app and mission, on the node's card. */
+export function appAsk(app: GateApp, screen: ScreenName): NodeToolAsk {
+  return { capability: "desktop", target: app.id, label: app.name, scope: "app", weak: false, screen };
 }
 
 function image(observation: Observation | null | undefined): NodeDesktopAnswer["image"] {
@@ -129,7 +129,7 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
       }
       case "desktop_act": {
         const acted = await service.act(caller, input as { captureId?: string; steps: DesktopStep[]; observe?: boolean; foreground?: boolean });
-        if (acted.needsOwner && acted.ran === 0) return answer(428, { ask: appAsk(acted.needsOwner) });
+        if (acted.needsOwner && acted.ran === 0) return answer(428, { ask: appAsk(acted.needsOwner, service.screenName) });
         screens.remember(caller.key, service.screenName);
         for (const step of acted.steps) {
           if (step.rule) await appendLedger({ userId, actor: "agent", action: "node.tool.refused", payload: { nodeId: request.nodeId, tool: "desktop", rule: step.rule } }).catch(() => undefined);
@@ -167,7 +167,7 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
   } catch (error) {
     if (error instanceof DesktopError) {
       // A sensitive app before anything ran: the owner's card, then the same call again.
-      if (error.code === "needs_owner" && error.extra.app) return answer(428, { ask: appAsk(error.extra.app as GateApp) });
+      if (error.code === "needs_owner" && error.extra.app) return answer(428, { ask: appAsk(error.extra.app as GateApp, service.screenName) });
       if (error.code === "refused" && error.extra.rule) {
         await appendLedger({ userId, actor: "agent", action: "node.tool.refused", payload: { nodeId: request.nodeId, tool: "desktop", rule: String(error.extra.rule) } }).catch(() => undefined);
       }
