@@ -12,6 +12,14 @@ test("a reply does not claim tasks were added when the batch rejected them", () 
   assert.match(text, /Not added: No project named “Launch”/);
 });
 
+test("a write held for the owner keeps the answer, without what claims it made, above the held-write line", () => {
+  const held = { name: "fieldnote_crm__add_note", state: "awaiting_approval", summary: 'Fieldnote CRM: add_note with { customerId: "cus_1042", note: "Call about the renewal" }', isWrite: true };
+  const line = `Proposed, not applied yet: ${held.summary}`;
+  assert.equal(reflectProposals("Acme's renewal date is 15 March 2027. I've added the note “Call about the renewal” to Acme.", [held]), `Acme's renewal date is 15 March 2027.\n\n${line}`);
+  assert.equal(reflectProposals("Acme renews on 15 March 2027, and I added the note to their record.", [held]), `Acme renews on 15 March 2027.\n\n${line}`);
+  assert.equal(reflectProposals("I added the note.", [held]), line, "nothing else to keep");
+});
+
 test("a truthful proposal keeps the model text and adds the missing fact", () => {
   const text = reflectProposals("I can set that up once you apply.", [
     { name: "hub_create_tasks", state: "awaiting_approval", summary: "Add 2 task(s)", isWrite: true },
