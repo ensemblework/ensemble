@@ -259,8 +259,10 @@ try {
     expect(clicked.verdict === "refused" && clicked.rule === "ensemble_window", "a click on Ensemble's untitled popup over Notepad is refused");
   }
 
-  step("a window cloaked as on another virtual desktop");
-  launch(coverExe, ["cover", ...rect(main)]);
+  step("a window cloaked as on another virtual desktop, over Ensemble's popup");
+  // Both are always on top, the cover above: Windows shows the popup there, and a list of windows puts the cover first.
+  const covered = { x: popup.x - 20, y: popup.y - 20, width: popup.width + 40, height: popup.height + 40 };
+  launch(coverExe, ["cover", ...rect(covered)]);
   const coverWindow = async () => (await listed()).flatMap((app) => app.windows).find((window) => window.title === "Cover");
   for (let tries = 0; tries < 40 && !(await coverWindow()); tries += 1) await sleep(500);
   // It cloaks itself once it shows.
@@ -269,10 +271,11 @@ try {
   const rawCover = ((await raw("list_windows", {})).structuredContent?.windows as Array<Record<string, unknown>> | undefined)?.find((window) => window.title === "Cover");
   console.log(`  cua-driver lists it with is_on_screen ${String(rawCover?.is_on_screen)}; desktop control: ${JSON.stringify(cover)}`);
   expect(cover && cover.showing === false, "a cloaked window does not show");
-  if (onScreen(() => true, "a click on Ensemble's window under the cloaked one is judged by the window Windows finds there")) {
-    const hit = await hitAt(center(main));
-    const clicked = await clickAt(center(main));
+  if (onScreen(() => true, "a click on Ensemble's popup under the cloaked window is judged by the window Windows finds there")) {
+    const hit = await hitAt(center(popup));
+    const clicked = await clickAt(center(popup));
     console.log(`  Windows finds ${hit} under the cloaked window; the click: ${JSON.stringify(clicked)}`);
+    expect(!/notepad/i.test(hit), `the popup or the cover is at that point (${hit})`);
     expect(/ensemble/i.test(hit) ? clicked.verdict === "refused" && clicked.rule === "ensemble_window" : clicked.ran === "yes", `the click is judged by ${hit}`);
   }
   stopApp(coverExe);
