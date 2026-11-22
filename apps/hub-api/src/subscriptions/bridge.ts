@@ -52,9 +52,24 @@ export function ownAskKind(ask: Pick<OwnAsk, "target" | "scope">): OwnAskKind {
   return ask.scope === "origin" ? "origin" : "write";
 }
 
-/** The owner's answer: allowed, with the grant this computer keeps as a rule; or not, and why (`waiting`: the turn parks). */
+/**
+ * How long the owner's answer about the agent's own calls counts: Ensemble on the web answers the same question
+ * from it for this many days (node/own-tool-asks.ts), and a computer keeps an answer for this run as its rule that
+ * long (node-own-tools.ts). An answer from now on stays on the computer with no end.
+ */
+export const OWN_ANSWER_DAYS = 30;
+
+/**
+ * The owner's answer: allowed, with the grant this computer keeps as a rule; or not, and why (`waiting`: the turn parks).
+ * A grant for this run (`mission`) carries `until`, when it lapses (the answer's time plus `OWN_ANSWER_DAYS`); a computer
+ * keeps it for the turn's plan or conversation until then. An Ensemble before it sends none: the computer counts from
+ * the answer reaching it.
+ */
 export const OwnAnswerShape = z.discriminatedUnion("decision", [
-  z.object({ decision: z.literal("allow"), grant: z.object({ id: z.string().min(1).max(100), scope: z.enum(["once", "mission", "always"]), target: z.string().min(1).max(4096) }) }),
+  z.object({
+    decision: z.literal("allow"),
+    grant: z.object({ id: z.string().min(1).max(100), scope: z.enum(["once", "mission", "always"]), target: z.string().min(1).max(4096), until: z.string().max(40).optional() }),
+  }),
   z.object({ decision: z.literal("deny"), message: z.string().max(2000), waiting: z.boolean().optional() }),
 ]);
 export type OwnAnswer = z.infer<typeof OwnAnswerShape>;

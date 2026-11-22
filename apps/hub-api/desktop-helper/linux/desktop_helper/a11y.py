@@ -48,6 +48,8 @@ BROWSER_IDS = {
 URL_ATTRIBUTES = ("DocURL", "URI", "URL")
 PAGE_WINDOW_ROLES = {"frame", "window"}
 PRESS_ACTIONS = ("press", "click", "activate", "jump", "toggle", "open", "select")
+# Actions that only move the focus (Qt's `SetFocus`): never a press.
+FOCUS_ACTIONS = ("setfocus", "focus", "grabfocus")
 SELECT_ACTIONS = ("select", "activate", "click", "press")
 TOGGLE_ACTIONS = ("toggle", "click", "press", "activate")
 # A bus that could not be reached is looked for again after this long.
@@ -206,9 +208,16 @@ class A11y:
 
     def _apps(self):
         desk = self.desktop()
-        count = desk.get_child_count()
+        try:
+            count = desk.get_child_count()
+        except GLib.Error as failure:
+            raise error("a11y_unavailable", f"The accessibility bus did not list the apps ({clean(failure.message, 120) or 'no answer'}).")
         for index in range(min(count, 200)):
-            app = desk.get_child_at_index(index)
+            try:
+                app = desk.get_child_at_index(index)
+            except GLib.Error:
+                # An app that went away while the apps were listed.
+                continue
             if app is not None:
                 yield app
 
@@ -588,29 +597,39 @@ class A11y:
         """One action on an element. `allow_focus` false (the background on the owner's screen): nothing that
         moves the focus, so a press on an element without an action is refused rather than focusing it."""
         node = self._node_of(tree_id, element)
-        role = node.get_role_name()
+        try:
+            role = node.get_role_name()
+        except GLib.Error:
+            raise error("element_gone", f"Element {element} is gone from the app: look again.")
         _, before = _states(node)
+        owner = (self._trees.get(tree_id, {}).get("app") or {}).get("name") or "The app"
         if action in ("press", "action"):
             names = _actions(node) if _iface(node, "action") is not None else []
-            if not names:
+            if name and names:
+                index = names.index(name) if name in names else None
+                if index is None:
+                    raise error("input_failed", f"Element {element} has no action {clean(name, 40)}; it has {', '.join(names[:6])}.")
+            else:
+                # A toolkit's own widget actions (GTK 4's `clipboard.copy`, `menu.popup`) are never a press.
+                lowered = [label.lower() for label in names]
+                index = next((lowered.index(label) for label in PRESS_ACTIONS if label in lowered), next((at for at, label in enumerate(lowered) if label and "." not in label and label.replace(" ", "") not in FOCUS_ACTIONS), None))
+            if index is None:
                 if not allow_focus:
                     raise error("needs_screen", f"Element {element} ({role}) has no action to press: only moving the focus to it would do something, and the background never moves the owner's focus. Use the agent screen, or foreground true.")
-                if _iface(node, "component") is not None and Atspi.Component.grab_focus(node):
+                kept = self._take_keyboard(node, element, before, owner)
+                if kept is None:
                     return {"done": True, "via": "atspi:focus", "detail": "It has no action; it was focused instead.", "states_before": before, "states_after": _states(node)[1]}
-                raise error("input_failed", f"Element {element} ({role}) has no action to press.")
-            order = [name] if name else list(PRESS_ACTIONS)
-            index = next((names.index(label) for label in order if label in names), 0 if not name else None)
-            if index is None:
-                raise error("input_failed", f"Element {element} has no action {clean(name, 40)}; it has {', '.join(names[:6])}.")
+                raise error("input_failed", f"Element {element} ({role}) has no action to press, and {kept[0].lower()}{kept[1:]}. Click it by its position on the screenshot (x and y with its captureId) instead.")
             try:
                 done = Atspi.Action.do_action(node, index)
             except GLib.Error as failure:
                 raise error("input_failed", f"The app refused the action ({clean(failure.message, 200)}).", ran="maybe")
             return {"done": bool(done), "via": f"atspi:{names[index]}", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
         if action == "focus":
-            if _iface(node, "component") is None:
-                raise error("input_failed", f"Element {element} cannot take the focus.")
-            return {"done": bool(Atspi.Component.grab_focus(node)), "via": "atspi:focus", "states_before": before, "states_after": _states(node)[1]}
+            kept = self._take_keyboard(node, element, before, owner)
+            if kept is None:
+                return {"done": True, "via": "atspi:focus", "states_before": before, "states_after": _states(node)[1] if _alive(node) else before}
+            return {"done": False, "via": "atspi:focus", "refused": kept, "states_before": before, "states_after": _states(node)[1] if _alive(node) else before}
         if action in ("set_text", "insert_text"):
             if _iface(node, "editable_text") is None:
                 raise error("input_failed", f"Element {element} ({role}) is not editable text.")
@@ -654,6 +673,22 @@ class A11y:
                 raise error("input_failed", f"The app refused to scroll ({clean(failure.message, 200)}).", ran="maybe")
             return {"done": bool(done), "via": "atspi:scroll_to", "states_before": before, "states_after": _states(node)[1] if _alive(node) else []}
         raise error("invalid_params", f"Unknown element action {clean(action, 40)}.")
+
+    @staticmethod
+    def _take_keyboard(node, element: str, before: list[str], owner: str) -> str | None:
+        """Gives the element the keyboard: None once it has it (already, or now), else why it does not.
+        GTK 4 refuses to move its keyboard through accessibility, with an error that says nothing."""
+        if "focused" in before:
+            return None
+        if _iface(node, "component") is None:
+            return f"Element {element} cannot take the keyboard"
+        try:
+            if Atspi.Component.grab_focus(node):
+                return None
+        except GLib.Error as failure:
+            said = clean(failure.message, 120)
+            return f"{owner} does not let accessibility move its keyboard to {element}{f' ({said})' if said else ''}"
+        return f"{owner} did not move its keyboard to {element}"
 
     def _named_action(self, node, element: str, role: str, before: list[str], order: tuple[str, ...], what: str) -> dict[str, Any]:
         names = _actions(node) if _iface(node, "action") is not None else []

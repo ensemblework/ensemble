@@ -768,3 +768,32 @@ test("a snap app is refused on the agent screen before the owner is asked, and t
   await agent.service.open(gated, { app: "Terminal" });
   assert.deepEqual(asked, ["org.gnome.Ptyxis"], "a sensitive app there is still asked about");
 });
+
+test("typing into an element its app keeps the keyboard from goes in through accessibility when it is text, else says what to do", { timeout: 30_000 }, async () => {
+  const h = harness({ agent: "up" });
+  const keeps = "gnome-calculator does not let accessibility move its keyboard to this element.";
+  await h.set({ keepsKeyboard: keeps, focus: { app: { name: "Calculator", toolkit: "GTK", pid: 501, app_id: "org.gnome.Calculator" }, window: { index: 0, title: "Calculator", role: "frame" }, shell: false, prompt: null, focused: { role: "push button", name: "7", editable: false }, documents: [] } });
+  const a = caller();
+  await h.service.observe(a, {});
+  const typed = await h.service.act(a, { steps: [{ action: "type", element: "e2", text: "12+30" }], observe: false });
+  assert.equal(typed.steps[0]!.verdict, "confirmed", JSON.stringify(typed.steps[0]));
+  assert.match(typed.steps[0]!.detail ?? "", /accessibility/);
+  const inserted = (await methods(h, "a11y.do")).filter((row) => row.params.action === "insert_text");
+  assert.deepEqual(inserted.map((row) => row.params.text), ["12+30"]);
+  assert.equal((await methods(h, "input.text")).length, 0, "no keys went to the button that has the keyboard");
+
+  await h.set({ focus: { app: { name: "Calculator", toolkit: "GTK", pid: 501, app_id: "org.gnome.Calculator" }, window: { index: 0, title: "Calculator", role: "frame" }, shell: false, prompt: null, focused: { role: "text", name: "Result", editable: true, text: "" }, documents: [] } });
+  await h.service.observe(a, {});
+  const keyed = await h.service.act(a, { steps: [{ action: "key", element: "e1", keys: "Return" }], observe: false });
+  assert.equal(keyed.steps[0]!.verdict, "refused");
+  assert.match(keyed.steps[0]!.detail ?? "", /does not let accessibility move its keyboard/);
+  assert.match(keyed.steps[0]!.detail ?? "", /by its position/);
+  assert.equal((await methods(h, "input.keys")).length, 0);
+});
+
+test("a key whose effect the screen's picture misses is confirmed by the text it changed", { timeout: 30_000 }, async () => {
+  const h = harness({ agent: "up" });
+  await h.set({ noEffect: true, keysText: "42", focus: { app: { name: "Calculator", toolkit: "GTK", pid: 501, app_id: "org.gnome.Calculator" }, window: { index: 0, title: "Calculator", role: "frame" }, shell: false, prompt: null, focused: { role: "text", name: "", editable: true, text: "12+30" }, documents: [] } });
+  const acted = await h.service.act(caller(), { steps: [{ action: "key", keys: "Return" }], observe: false });
+  assert.deepEqual([acted.steps[0]!.verdict, acted.steps[0]!.ran], ["confirmed", "yes"], JSON.stringify(acted.steps[0]));
+});

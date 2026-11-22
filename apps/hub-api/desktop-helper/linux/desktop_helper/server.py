@@ -43,6 +43,15 @@ DEFAULT_DEADLINE_MS = 30_000
 INPUT_METHODS = {"input.pointer", "input.drag", "input.scroll", "input.keys", "input.text", "a11y.do", "apps.launch", "apps.focus"}
 
 
+def unexpected(failure: Exception) -> str:
+    """What a failure nothing handled says: an app's or the desktop's own refusal (a GLib error, whose
+    class is just `Error`, often with no message) is named as one, with what to do."""
+    if isinstance(failure, GLib.Error):
+        said = clean(failure.message, 160)
+        return f"An app or the desktop refused this ({said or f'{failure.domain} {failure.code}'}). Look again; if it is refused again, do it another way, such as by its position on the screenshot."
+    return f"The helper failed: {type(failure).__name__}."
+
+
 class Writer:
     def __init__(self, stream):
         self._stream = stream
@@ -203,7 +212,7 @@ class Helper:
         except Exception as failure:
             log(f"{request.method} failed: {type(failure).__name__}")
             ran = "maybe" if request.method in INPUT_METHODS else "no"
-            return error_response(request.id, error("internal", f"The helper failed: {type(failure).__name__}.", ran=ran))
+            return error_response(request.id, error("internal", unexpected(failure), ran=ran))
 
     def check(self, deadline: Deadline, request_id: Any, ran: str) -> None:
         if request_id in self.cancelled:

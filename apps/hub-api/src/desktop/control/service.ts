@@ -1192,12 +1192,15 @@ export class DesktopService {
     const node = (session.screens.find((screen) => screen.primary) ?? session.screens[0]!).node;
     let text: string | null = null;
     let secretName: string | null = null;
+    // Why the element's app kept its keyboard from it (GTK 4 does not let accessibility move it).
+    let kept: string | null = null;
     if (step.element) {
       // Typing into an element: it takes the focus first, and the keyboard goes only where it went.
       const { element, tree } = this.element(caller, step.element);
       const focusNow = await this.call<FocusInfo>("a11y.focus", { text: false, documents: true }, deadline, { maxMs: 8_000 });
       this.refuse(elementFloor({ name: tree.app.name, app_id: tree.app.id, toolkit: tree.app.toolkit }, tree.window, focusNow, this.options.env));
-      await this.call("a11y.do", { tree_id: tree.id, element: element.id, action: "focus" }, deadline, { effects: true, maxMs: 5_000 });
+      const moved = await this.call<{ done?: boolean; refused?: string } | null>("a11y.do", { tree_id: tree.id, element: element.id, action: "focus" }, deadline, { effects: true, maxMs: 5_000 });
+      if (moved && moved.done === false) kept = (moved.refused ?? `${tree.app.name} did not move its keyboard to ${step.element}`).replace(/[.\s]+$/, "");
     }
     const focus = await this.call<FocusInfo>("a11y.focus", { text: true, documents: true }, deadline, { maxMs: 8_000 });
     this.refuse(keyboardFloor(focus, this.options.env));
@@ -1205,7 +1208,14 @@ export class DesktopService {
       const { element, tree } = this.element(caller, step.element);
       const same = focus.app && (focus.app.pid === tree.app.pid || focus.app.name === tree.app.name);
       if (!same || !focus.focused || (focus.focused.role !== element.role && focus.focused.name !== element.name)) {
-        throw new DesktopError("refused", `${step.element} did not take the keyboard (its window may not be in front), so nothing was typed. Click it first, or use set_text.`, "no");
+        const why = kept ?? `${step.element} did not take the keyboard (its window may not be in front)`;
+        // Text still goes into an editable element, at its caret, through accessibility: no keyboard needed.
+        if (step.action === "type" && element.states.includes("editable")) {
+          const outcome = await this.elementStep(caller, step, deadline, context);
+          return { ...outcome, detail: [outcome.detail, `It went in through accessibility at the caret, not by keys: ${why}.`].filter(Boolean).join(" ") };
+        }
+        const verb = step.action === "key" ? "pressed" : "typed";
+        throw new DesktopError("refused", `${why}, so nothing was ${verb}. Click it by its position on the screenshot (x and y with its captureId), then ${step.action === "key" ? "send the keys" : "type"} without an element.`, "no");
       }
     }
     await this.gate(caller, focus.app ? this.gateApp(focus.app) : null, context.allowed);
@@ -1272,6 +1282,11 @@ export class DesktopService {
         return { verdict: "partial", ran: "yes", detail: "The field's text changed, but it does not hold all of what was typed." };
       }
     }
+    // A key's effect on the text that has the keyboard (Calculator's result after Return), which a picture of the screen can miss.
+    if (step.action === "key" && typeof beforeText === "string") {
+      const now = await this.call<FocusInfo>("a11y.focus", { text: true, documents: false }, deadline, { maxMs: 5_000 }).catch(() => null);
+      if (typeof now?.focused?.text === "string" && now.focused.text !== beforeText) return { verdict: "confirmed", ran: "yes" };
+    }
     const verdict = this.screenVerdict(before, after);
     return { verdict, ran: "yes", ...(verdict === "no_effect" ? { detail: "Sent, and nothing on the screen changed." } : verdict === "unknown" ? { detail: "Sent; its effect was not seen." } : {}) };
   }
@@ -1306,7 +1321,7 @@ export class DesktopService {
     const node = capture.screen.node;
     const before = screen ? await this.frameState(node, deadline, 400).catch(() => null) : null;
     const action = step.action === "key" ? "key" : step.action === "set_text" || (typing && secret) ? "set_text" : typing ? "insert_text" : step.action === "focus" ? "focus" : step.action === "select" ? "select" : step.action === "toggle" ? "toggle" : step.action === "scroll" ? "scroll_to" : "press";
-    let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[]; effect?: unknown };
+    let done: { done: boolean; via: string; verified?: boolean | null; states_before?: string[]; states_after?: string[]; effect?: unknown; refused?: string };
     try {
       done = await this.call(
         "a11y.do",
@@ -1331,6 +1346,7 @@ export class DesktopService {
     }
     const told = effectOutcome(done.effect);
     if (told) return told;
+    if (!done.done && done.refused) return { verdict: "no_effect", ran: "yes", detail: `${done.refused.replace(/[.\s]+$/, "")}. Click it by its position on the screenshot (x and y with its captureId) to give it the keyboard.` };
     if (!done.done) return { verdict: "no_effect", ran: "yes", detail: `The app did not take the ${action.replace("_", " ")}.` };
     if (action === "set_text" || action === "insert_text") {
       if (done.verified === true) return { verdict: "confirmed", ran: "yes" };
