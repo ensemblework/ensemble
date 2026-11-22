@@ -240,14 +240,15 @@ const handoff: Task = {
   timeoutMs: CODE_MS,
   requires: ["code-tab-harness"],
   setup: async (ctx) => {
-    await repo(ctx, "deploy", { "README.md": "# deploy\n\nDeploy helpers.\n", "package.json": PACKAGE });
+    await repo(ctx, "release", { "README.md": "# release\n\nRelease helpers.\n", "package.json": PACKAGE });
   },
   steps: [
     {
       act: {
         what: "turn 1: the owner gives a code to keep for later",
         run: async (ctx) => {
-          const message = "For later in this thread: the deploy code is 4417. Don't write it into any file yet. For now, just create hello.js that prints hello.";
+          // A plain fact, nothing secret: a code or key would test how the agent treats credentials instead.
+          const message = "For later in this thread: the release codename is maple-4417. Don't write it into any file yet. For now, just create hello.js that prints hello.";
           ctx.data.thread = await newThread(ctx, message);
           ctx.data.first = await send(ctx, ctx.data.thread as string, message);
           return `run ${(ctx.data.first as string).slice(0, 8)}`;
@@ -262,7 +263,7 @@ const handoff: Task = {
         run: async (ctx) => {
           const made = await ctx.api<{ thread: { id: string }; jobId: string }>("POST", `/api/agent/threads/${ctx.data.thread as string}/fork`, {
             jobId: ctx.data.first as string,
-            turn: assignment(ctx, "Write the deploy code I gave you earlier into DEPLOY.txt (just the number), and tell me where you got it from."),
+            turn: assignment(ctx, "Write the release codename I gave you earlier into RELEASE.txt (just the codename), and tell me where you got it from."),
           });
           ctx.data.fork = made.thread.id;
           ctx.data.second = made.jobId;
@@ -282,7 +283,7 @@ const handoff: Task = {
     return {
       handoff: turns[0]?.handoff ?? null,
       records,
-      deploy: readText(join(root, "DEPLOY.txt")),
+      release: readText(join(root, "RELEASE.txt")),
       sessions: [await sessionOf(ctx, ctx.data.first as string), await sessionOf(ctx, ctx.data.second as string)],
       summary: job?.summary ?? "",
       status: job?.status ?? null,
@@ -297,9 +298,9 @@ const handoff: Task = {
     return [
       check("a handoff record went with the new session", Boolean(ev.extra.handoff) || records.length > 0, "state", { evidence: true, note: ev.extra.handoff ? `reason ${String(handoffRow.reason ?? "?")}` : records ? "a record file" : "none" }),
       check("a new agent session took over", Boolean(first && second && first !== second), "trace", { evidence: true }),
-      check("the record carried the owner's words with the code", /4417/.test(records), "state", { evidence: true }),
+      check("the record carried the owner's words with the codename", /maple-4417/i.test(records), "state", { evidence: true }),
       check("the record says what it does not carry", /(not a full history|not carried|notCarried|lossy)/i.test(records), "state", { evidence: true }),
-      check("the new session used it", /4417/.test(String(ev.extra.deploy ?? "")), "state", { evidence: true, note: norm(String(ev.extra.deploy ?? "none")).slice(0, 40) }),
+      check("the new session used it", /maple-4417/i.test(String(ev.extra.release ?? "")), "state", { evidence: true, note: norm(String(ev.extra.release ?? "none")).slice(0, 40) }),
       check("nobody called it lossless or a full history", !lossless, "reply", { note: norm(summary).slice(0, 160) }),
     ];
   },

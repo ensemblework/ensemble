@@ -637,14 +637,15 @@ const connectionLost: Task = {
   suite: "orch",
   category: "orchestration",
   title: "The computer's line drops while Ensemble adds a todo for it: one todo, and the owner is not told it failed",
-  timeoutMs: ORCH_MS,
+  timeoutMs: 16 * 60_000,
   relay: true,
   setup: async (ctx) => {
     await assistant(ctx);
     // The answer of the write the computer's agent asked for never reaches it; the line stays down 8 s.
     ctx.computer.loseAnswer({ url: /\/assistant-turns\/[^/?]+\/tool(\?|$)/, answer: /(added|created|made)[^\n]{0,80}venue/i }, 8000);
   },
-  steps: [{ say: "Add a todo to my board: 'Call the venue about chairs'. Just that one, nothing else.", quietMs: 10 * 60_000 }],
+  // Longer than the relay's own limit for a silent turn (10 minutes), so the turn ends as Ensemble ends it, not by the harness.
+  steps: [{ say: "Add a todo to my board: 'Call the venue about chairs'. Just that one, nothing else.", quietMs: 12 * 60_000 }],
   collect: async (ctx) => ({ faults: ctx.computer.faults(), live: await liveTurns(ctx) }),
   checks: ({ ev }) => {
     const faults = ev.extra.faults as { lost: Array<{ at: string }> };

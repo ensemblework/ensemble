@@ -188,8 +188,9 @@ async function runTask(world: World, task: Task, repeat: number, context: { labe
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const tracePath = join(RESULTS, "traces", context.label, `${task.id}--${repeat + 1}.jsonl`);
-  // The computer Ensemble runs on is named after this machine.
-  const redact = redactor({ [world.dirs.root]: "<work>", [REPO]: "<repo>", [hostname()]: "<computer>" });
+  // The computer Ensemble runs on is named after this machine. A --work-dir of one's own is named too: an agent may list it.
+  const workDir = dirname(world.dirs.root);
+  const redact = redactor({ [world.dirs.root]: "<work>", ...(workDir !== tmpdir() ? { [workDir]: "<work-dir>" } : {}), [REPO]: "<repo>", [hostname()]: "<computer>" });
   const trace = traceFile(tracePath, redact);
   const owner = await world.newOwner("Mira Chen");
   const device = await world.pair(owner, { viaLink: task.link === true || task.relay === true });
