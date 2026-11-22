@@ -552,6 +552,22 @@ test("a node runs its owner's own coding agent in a session, off the board, and 
   assert.match(seen.find((row) => row.transcript.includes("session run for"))!.transcript, /“Fix the login redirect” finished\. \(Its session.s id, for your tools only: /);
 });
 
+test("a message sending a session back to a task with an acceptance check tells the agent not to edit the check's files", async () => {
+  const mira = await person("Mira");
+  await laptopFor(mira, "Mira's laptop");
+  const { room } = await createNode(mira, "assistant");
+  const task = await h.prisma.task.create({ data: { userId: mira.id, title: "Export the Q3 numbers", notes: "Write out.csv.\n\nAcceptance: AC-1 `node accept.js` passes in the export folder.", createdBy: "me" } });
+  script = () => ({ calls: [{ name: "node_session_start", arguments: { title: "Export Q3", prompt: "Write out.csv, then run node accept.js.", folder: "ensemble", taskId: task.id } }], then: "Started." });
+  await say(mira, room.id, "do the export task");
+  const first = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id } });
+  await h.prisma.workspaceJob.update({ where: { id: first.id }, data: { status: "succeeded", startedAt: new Date(), finishedAt: new Date() } });
+
+  script = () => ({ calls: [{ name: "node_session_send", arguments: { session: first.id, prompt: "Ensemble's rerun of node accept.js failed. Fix what is needed so it passes on rerun.", delivery: "queue", title: "Fix the rerun", taskId: task.id } }], then: "Sent back." });
+  await say(mira, room.id, "it failed on rerun, fix it");
+  const repair = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, id: { not: first.id } } });
+  assert.match(repair.instructions, /^Ensemble's rerun of node accept\.js failed\. Fix what is needed so it passes on rerun\.\n\nDo not edit accept\.js: `node accept\.js` is this task's acceptance check, and a check the work changed does not count\. Fix the work, not the check\.$/);
+});
+
 test("a node queues, steers, replaces and stops work in its own session, and the computer gets only the change when steered", async () => {
   const mira = await person("Mira");
   const { key } = await laptopFor(mira, "Mira's desktop");

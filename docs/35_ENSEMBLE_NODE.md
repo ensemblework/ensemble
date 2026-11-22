@@ -1208,6 +1208,8 @@ Continuing a session needs Ensemble 0.4.18 or later on its computer (`capabiliti
 
 `node_session_send` takes the same run settings as `node_session_start`: `model`, `effort`, `context` and `fast`. Each one left out is kept from the session (§8.10).
 
+A message sent to a session whose task's acceptance criteria (or, off the board, whose own words) run a file or a package script ends with a line not to edit them (`checkFilesNote` in `workspace/check-files.ts`, from `deliver` in `node/sessions.ts`): *Do not edit accept.js: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.* A check the run changed anyway is not run, not verified ([16 §9](16_CODE_TAB.md#9-the-agent-implementation-reference)).
+
 Each delivery is written first as a steering (§5.9, `node_steers` with target `session`): `queue` a follow-up, `amend` an amendment (with its version; one that cannot be written is not sent), `steer` an interrupt, `replace` a replacement listing the runs it stops; `node_session_stop` a stop listing the runs stopped and kept. An amendment is `accepted` once placed and `rejected` when it could not be.
 
 The order is the session's queue (§8.9), not when runs were made. A new message starts from the end of the chain (`lastJobId`, `workspace/sessions.ts`); when it is claimed it continues the run that actually ran before it.
