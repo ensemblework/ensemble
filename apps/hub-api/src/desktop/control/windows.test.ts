@@ -207,7 +207,10 @@ test("observe: a PNG of the main display in its own pixels at 150%, and UI Autom
   assert.match(String(status.facts.dpi!.detail), /2880×1800 pixels at 150% \(144 dpi\)/);
   assert.equal(status.facts.session!.state, "working");
   assert.equal(status.facts.uia!.state, "working");
-  assert.match(String(status.facts.driver!.detail), /Medium integrity/);
+  assert.match(String(status.facts.driver!.detail), /^Cua Driver 0\.56\.6 \(cua-driver\.exe\), started by Ensemble\.$/);
+  assert.ok(!h.calls().some((call) => call.tool === "check_permissions"), "nothing that starts PowerShell for each status");
+  const admin = pc({ probe: { elevated: true } });
+  assert.match(String((await admin.service.status()).facts.driver!.detail), /Ensemble runs as administrator here, and so does the driver/);
   assert.equal(status.facts.agent_screen!.state, "failed");
 });
 
@@ -237,9 +240,19 @@ test("background: elements through UI Automation without the owner's pointer or 
   assert.deepEqual([opened.focused, opened.via], [false, "background"]);
   assert.deepEqual(asked, [], "opening behind the owner's windows asks nothing");
   assert.ok(h.calls().some((call) => call.tool === "launch_app" && call.args.aumid === "Microsoft.Paint_8wekyb3d8bbwe!App"), "a packaged app by its AppUserModelID");
-  await h.service.open(quiet, { app: "Notepad", waitSec: 1 });
-  assert.ok(h.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "C:\\Windows\\System32\\notepad.exe"), "a desktop app by its launch path");
-  assert.ok(!h.calls().some((call) => call.tool === "bring_to_front"));
+  assert.ok(!h.calls().some((call) => call.tool === "bring_to_front"), "nothing came to the front");
+  // Notepad runs with a window: opening it again uses it (Windows would start a second copy), in front when asked.
+  const launches = () => h.calls().filter((call) => call.tool === "launch_app").length;
+  const before = launches();
+  const reopened = await h.service.open(quiet, { app: "Notepad", waitSec: 1 });
+  assert.deepEqual([reopened.stages.window, launches()], [true, before]);
+  const front = await h.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
+  assert.equal(front.steps[0]!.verdict, "confirmed");
+  assert.equal(launches(), before);
+  assert.ok(h.calls().some((call) => call.tool === "bring_to_front" && call.args.pid === 201));
+  const closed = pc({ world: { apps: PC.apps.map((app) => (app.pid === 201 ? { ...app, running: false } : app)), windows: PC.windows.filter((win) => win.pid !== 201) } });
+  await closed.service.open(caller(), { app: "Notepad", waitSec: 1 });
+  assert.ok(closed.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "C:\\Windows\\System32\\notepad.exe"), "a desktop app that is not running, by its launch path");
 });
 
 test("the floor: Ensemble's own windows, browsers (minimised too), pages that show Ensemble and Windows' prompts are refused; other web views are not", async () => {

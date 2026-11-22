@@ -236,6 +236,11 @@ export abstract class CuaAdapter extends EventEmitter {
   /** Before apps are listed (macOS reads which apps open web links). */
   protected async beforeApps(): Promise<void> {}
 
+  /** Whether opening an app that runs with a window uses it rather than launching it again. */
+  protected reuseRunning(): boolean {
+    return false;
+  }
+
   /** A missing grant: the agent's words and the fix (macOS). */
   protected consentError(code: string | null, text: string, ran: Ran): HelperError {
     return new HelperError("consent_needed", text.slice(0, 300), ran, false, code ? { code } : {});
@@ -813,6 +818,10 @@ export abstract class CuaAdapter extends EventEmitter {
     const lower = ref.toLowerCase();
     const found = apps.find((app) => app.bundle?.toLowerCase() === lower) ?? apps.find((app) => app.name.toLowerCase() === lower) ?? apps.find((app) => app.launchPath === ref) ?? null;
     const started = this.now();
+    if (found && found.pid > 0 && found.item.running === true && this.reuseRunning()) {
+      const shown = (await this.windows(ctx, found.pid)).filter((win) => win.pid === found.pid && win.layer === 0);
+      if (shown.length) return { app: { id: found.bundle ?? ref, name: found.name, running: this.helperApp(found, shown) }, stages: { accepted: true, started: true, window: true, focused: false }, waited_ms: 0, running: true };
+    }
     const { data } = await this.tool("launch_app", this.launchArgs(found, ref), ctx, true).catch((error: unknown) => {
       if (error instanceof HelperError && error.kind === "target_not_found") throw new HelperError("launch_failed", `${ref} could not be opened: ${error.message}`, "no");
       throw error;

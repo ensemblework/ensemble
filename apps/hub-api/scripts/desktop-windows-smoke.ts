@@ -1,8 +1,9 @@
 /**
  * Desktop control on a real Windows desktop (.github/workflows/desktop-windows-smoke.yml): DesktopService on the
  * Windows driver with the pinned cua-driver.exe (in ENSEMBLE_CUA_DRIVER_DIR) and the session probe, on the
- * runner's interactive desktop. It checks readiness, opens Notepad in the foreground (the owner's screen is asked
- * for once), types "Ensemble 0.9.1 on Windows" in chunks and reads it back through UI Automation, takes a
+ * runner's interactive desktop. It checks readiness, opens Notepad behind the other windows, then brings it to the
+ * front (the owner's screen is asked for once), types "Ensemble 0.9.1 on Windows" in chunks and reads it back
+ * through UI Automation, takes a
  * screenshot (not blank, the main display's size) and keeps it in `--out`, presses keys, records a few seconds
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
  * titled "Ensemble", and closes Notepad without saving through its elements, in the background.
@@ -68,10 +69,16 @@ try {
   assert.equal(status.facts.uia?.state, "working");
   assert.equal(status.facts.dpi?.state, "working");
 
-  step("open Notepad in the foreground (asks for the owner's screen once)");
-  const opened = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
-  console.log(`  ${JSON.stringify(opened.steps)}`);
-  assert.equal(opened.steps[0]!.verdict, "confirmed", "Notepad has a window");
+  step("open Notepad behind the other windows");
+  const opened = await service.open(caller, { app: "Notepad", waitSec: 20 });
+  console.log(`  ${JSON.stringify(opened)}`);
+  assert.ok(opened.stages.window, "Notepad has a window");
+  assert.equal(opened.focused, false, "it opened without taking the front");
+
+  step("bring it to the front (asks for the owner's screen once)");
+  const front = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
+  console.log(`  ${JSON.stringify(front.steps)}`);
+  assert.equal(front.steps[0]!.verdict, "confirmed");
   await frontApp("Notepad");
 
   step(`type "${TEXT}" in chunks`);
@@ -149,8 +156,9 @@ try {
   }
   for (let tries = 0; tries < 20 && (await running("Notepad")); tries += 1) {
     await sleep(500);
-    const prompt = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 }).catch(() => null);
-    const dontSave = prompt?.tree?.elements.find((element) => /^don.?t save$/i.test(element.name.replace(/&/g, "")));
+    const prompt = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 }).catch((error: unknown) => (console.log(`  ${error instanceof Error ? error.message : String(error)}`), null));
+    const dontSave = prompt?.tree?.elements.find((element) => /^don.?t save$/i.test(element.name.replace(/&/g, "").trim()));
+    if (tries === 0 || tries === 10) console.log(`  Notepad's window “${prompt?.tree?.window ?? "?"}”: ${JSON.stringify(prompt?.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`).slice(0, 40))}`);
     if (dontSave) console.log(`  ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: dontSave.id }], observe: false })).steps)}`);
   }
   assert.equal(await running("Notepad"), false, "Notepad is closed");

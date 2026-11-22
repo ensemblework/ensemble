@@ -34,6 +34,8 @@ export type WindowsProbe = {
 export type ProbeIdle = { idle_ms: number | null; input_desktop: string | null; locked: boolean; uac: boolean; lock_screen?: boolean };
 export type ProbeState = ProbeIdle & {
   session: { id: number; service: boolean; connect: string | null; visible: boolean };
+  /** This process, so the runtime and the driver it starts, runs as administrator. */
+  elevated?: boolean;
   uia: boolean;
   uia_error?: string;
   dpi: number;
@@ -175,9 +177,11 @@ export class WindowsCuaDriver extends CuaAdapter {
     }
   }
 
-  private async probeState(): Promise<{ state: ProbeState | null; error: string | null }> {
+  /** The probe's `state`, within the request's time when there is one. */
+  private async probeState(ctx?: Ctx): Promise<{ state: ProbeState | null; error: string | null }> {
+    const timeoutMs = ctx ? Math.max(1_000, Math.min(20_000, ctx.until - this.now() - 1_000)) : 20_000;
     try {
-      return { state: await this.options.probe.call<ProbeState>("state", {}, { timeoutMs: 20_000 }), error: null };
+      return { state: await this.options.probe.call<ProbeState>("state", {}, { timeoutMs }), error: null };
     } catch (error) {
       return { state: null, error: error instanceof Error ? error.message.slice(0, 300) : "The Windows session probe did not answer." };
     }
@@ -190,16 +194,15 @@ export class WindowsCuaDriver extends CuaAdapter {
   // ── status and the session ───────────────────────────────────────────────
 
   protected async status(ctx: Ctx): Promise<StatusResult> {
-    const { state, error } = await this.probeState();
-    const rights = await this.tool("check_permissions", {}, ctx).then(({ data }) => data, () => ({}) as Record<string, unknown>);
-    const level = str(rights.integrity_level);
+    // The driver proves it answers with a cheap call while the probe reads the session.
+    const [{ state, error }, driver] = await Promise.all([this.probeState(ctx), this.tool("get_screen_size", {}, ctx).then(() => null, (failure: unknown) => (failure instanceof Error ? failure.message : "it did not answer"))]);
     const problem = sessionProblem(state, false);
     const primary = state?.monitors.find((monitor) => monitor.primary) ?? state?.monitors[0] ?? null;
     const scale = primary ? Math.round((primary.dpi / 96) * 100) : null;
     const idle = state ? { locked: state.locked, idle_ms: state.idle_ms, uac: state.uac } : { locked: null, idle_ms: null, uac: false };
     const ffmpeg = this.ffmpeg();
     const facts: Record<string, Fact> = {
-      driver: { state: "working", detail: `${DRIVER} ${this.mcp.health().version ?? this.base.version} (cua-driver.exe), started by Ensemble${level ? `, ${level} integrity` : ""}${rights.elevated === true ? ": it runs as administrator, like the Ensemble that started it" : ""}.` },
+      driver: driver ? { state: "failed", detail: `${DRIVER} (cua-driver.exe) did not answer: ${driver.slice(0, 200)}` } : { state: "working", detail: `${DRIVER} ${this.mcp.health().version ?? this.base.version} (cua-driver.exe), started by Ensemble${state?.elevated ? "; Ensemble runs as administrator here, and so does the driver" : ""}.`, ...(state ? { elevated: state.elevated === true } : {}) },
       session: !state ? { state: "untested", detail: `The Windows session probe did not answer (${error ?? "no answer"}), so idle time, the lock and User Account Control prompts cannot be read.`, fix: "Your owner checks that Windows PowerShell 5.1 can run here (an organisation's policy may block it)." } : problem ? { state: "failed", detail: problem, session: state.session } : { state: "working", detail: `Session ${state.session.id}, interactive.`, session: state.session },
       uia: !state ? { state: "untested" } : state.uia ? { state: "working", detail: "UI Automation answers." } : { state: "failed", detail: `UI Automation did not answer${state.uia_error ? ` (${state.uia_error.slice(0, 160)})` : ""}.` },
       dpi: primary ? { state: "working", detail: `${state!.monitors.length} monitor(s); the main one ${primary.width}×${primary.height} pixels at ${scale}% (${primary.dpi} dpi). Screenshots and clicks are in its pixels; windows on other monitors are reached through their elements.`, scale: primary.dpi / 96, monitors: state!.monitors } : { state: "untested" },
@@ -215,7 +218,7 @@ export class WindowsCuaDriver extends CuaAdapter {
   /** Screen control starts in an interactive, unlocked session once a real screenshot that is not blank proves it. */
   protected async sessionStart(ctx: Ctx): Promise<SessionInfo> {
     if (this.session) return { state: "on", epoch: this.session.epoch, streams: [this.session.stream] };
-    const { state } = await this.probeState();
+    const { state } = await this.probeState(ctx);
     const problem = sessionProblem(state);
     if (problem) throw new HelperError("no_session", problem, "no");
     try {
@@ -233,9 +236,9 @@ export class WindowsCuaDriver extends CuaAdapter {
   }
 
   /** UI Automation works in the owner's interactive session; a service's session has no screen. */
-  protected async needAccessibility(): Promise<void> {
+  protected async needAccessibility(ctx: Ctx): Promise<void> {
     if (this.sessionOk && this.mcp.running) return;
-    const { state } = await this.probeState();
+    const { state } = await this.probeState(ctx);
     const problem = sessionProblem(state, false);
     if (problem) throw new HelperError("no_session", problem, "no");
     this.sessionOk = true;
@@ -320,6 +323,11 @@ export class WindowsCuaDriver extends CuaAdapter {
 
   protected recordingUnavailable(): string | null {
     return this.ffmpeg() ? null : NO_FFMPEG;
+  }
+
+  /** A desktop program opened again starts a second copy on Windows: an app that runs with a window is used as it is. */
+  protected override reuseRunning(): boolean {
+    return true;
   }
 
   protected launchArgs(found: RunningApp | null, ref: string): Record<string, unknown> {

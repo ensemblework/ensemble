@@ -4,7 +4,7 @@
 #   idle    idle_ms (GetLastInputInfo), the input desktop's name, locked (it is not "Default": the lock screen,
 #           the secure desktop of User Account Control, a screen saver) and uac (consent.exe runs)
 #   state   the same, plus the session (its id, 0 for a service's; its connect state; whether its window station
-#           shows), UI Automation, and the monitors with their DPI
+#           shows), whether this process (so Ensemble) runs as administrator, UI Automation, and the monitors with their DPI
 #   notify  a notice on the owner's screen (a toast)
 # It reads and shows only: it never sends input, takes no screenshot and opens no port.
 $ErrorActionPreference = 'Stop'
@@ -145,6 +145,7 @@ function State {
     connect = $(if ($connect -ge 0 -and $connect -lt $ConnectStates.Count) { $ConnectStates[$connect] } else { $null })
     visible = [EnsembleProbe]::VisibleStation()
   }
+  $now['elevated'] = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
   $now['uia'] = $uia
   if ($uiaError) { $now['uia_error'] = $uiaError }
   $now['dpi'] = [EnsembleProbe]::SystemDpi()

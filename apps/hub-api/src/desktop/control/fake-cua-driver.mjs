@@ -112,6 +112,7 @@ const ACTION = { session: { type: "string" }, delivery_mode: { type: "string", e
 const SCHEMAS = {
   check_permissions: { prompt: {}, probe_direct_capture: {} },
   get_desktop_state: { session: {}, max_image_dimension: {}, screenshot_out_file: {} },
+  get_screen_size: { session: {} },
   list_apps: {},
   list_windows: { pid: {}, on_screen_only: {} },
   get_window_state: { session: {}, pid: {}, window_id: {}, query: {}, include_accessibility_tree: {}, include_screenshot: {}, screenshot_out_file: {}, max_elements: {}, max_depth: {}, timeout_ms: {}, tree_format: {}, since: {} },
@@ -170,6 +171,7 @@ const tools = {
     }
     return { content: [{ type: "image", data: picture.toString("base64"), mimeType: "image/png" }], structuredContent: facts };
   },
+  get_screen_size: () => ok({ width: world.screen.width, height: world.screen.height, scale_factor: world.screen.scale }),
   list_apps: () => ok({ apps: world.apps.map(({ pid, name, bundle_id, running, active, launch_path }) => ({ pid: running ? pid : 0, name, ...(bundle_id ? { bundle_id } : {}), running: Boolean(running), active: Boolean(active), ...(launch_path ? { launch_path } : {}), kind: "desktop" })) }),
   list_windows: (args) => ok({ windows: world.windows.filter((win) => args.pid === undefined || win.pid === args.pid).filter((win) => !args.on_screen_only || win.is_on_screen) }),
   get_window_state: (args) => {

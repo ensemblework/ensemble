@@ -46,7 +46,7 @@ lines.on("line", (line) => {
   if (live.fail?.[message.method]) return send({ id: message.id, error: { code: -32603, message: live.fail[message.method], data: { kind: "internal", ran: "no" } } });
   if (message.method === "hello") send({ id: message.id, result: { protocol: 1, version: "1", platform: "win32", methods: ["hello", "idle", "state", "notify"], session: "windows" } });
   else if (message.method === "idle") send({ id: message.id, result: idle() });
-  else if (message.method === "state") send({ id: message.id, result: { ...idle(), session: live.session, uia: live.uia, ...(live.uia ? {} : { uia_error: "UI Automation is not available" }), dpi: live.dpi, monitors: live.monitors, os: "10.0.20348.0" } });
+  else if (message.method === "state") send({ id: message.id, result: { ...idle(), session: live.session, elevated: live.elevated === true, uia: live.uia, ...(live.uia ? {} : { uia_error: "UI Automation is not available" }), dpi: live.dpi, monitors: live.monitors, os: "10.0.20348.0" } });
   else if (message.method === "notify") send({ id: message.id, result: { shown: true } });
   else send({ id: message.id, error: { code: -32601, message: `no method ${message.method}`, data: { kind: "method_not_found", ran: "no" } } });
 });
