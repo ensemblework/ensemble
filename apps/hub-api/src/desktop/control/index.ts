@@ -11,9 +11,14 @@
  *   macOS asks about Accessibility and Screen Recording for Cua Driver, so Ensemble itself never needs them
  *   and nothing else it starts (agent commands, coding agents, MCP servers) can inherit them. It gets a
  *   minimal environment with telemetry and update checks off. There is no agent screen on macOS.
- * - Windows and other systems answer that desktop control is not there.
+ * - Windows: Cua Driver (drivers/windows-cua.ts), the signed `cua-driver.exe` at `<sidecar>/bin` (the Ensemble app's
+ *   and the `ensemble` command line's), at the version pinned in desktop-helper/windows/cua-driver.json, as
+ *   `cua-driver.exe mcp --direct --no-overlay` on this runtime's pipes, with Windows' own variables, its folder and
+ *   telemetry and update checks off; Windows asks for no grant. Beside it the session probe
+ *   (desktop-helper/windows/probe.ps1) under Windows PowerShell 5.1. There is no agent screen on Windows.
+ * - Other systems answer that desktop control is not there.
  */
-import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +26,7 @@ import { ensembleDataHome } from "../../browser/paths.js";
 import { evidenceRoot } from "../../evidence/files.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
 import { MacosCuaDriver } from "./drivers/macos-cua.js";
+import { findFfmpeg, WindowsCuaDriver } from "./drivers/windows-cua.js";
 import { HelperProcess, type HelperCommand } from "./helper-process.js";
 import { Desktops } from "./screens.js";
 import { DesktopService, RECORDING_SAVE_MS, sweepRecordingParts, type HelperLike } from "./service.js";
@@ -38,16 +44,17 @@ export function desktopDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(ensembleDataHome(env), "desktop");
 }
 
-export const UNSUPPORTED_HERE = "Desktop control works on Linux (desktops with the desktop portal: GNOME, KDE and others) and on macOS 13 or later with the Ensemble app installed.";
-export const WINDOWS_UNSUPPORTED = "Desktop control is not available on Windows in this version: it works on Linux and on macOS.";
+export const UNSUPPORTED_HERE = "Desktop control works on Linux (desktops with the desktop portal: GNOME, KDE and others), on macOS 13 or later with the Ensemble app installed, and on Windows 10 or 11.";
 export const NO_AGENT_SCREEN_MAC = "macOS has no private agent screen in this version: desktop work happens on your owner's screen, in the background where it can (apps open behind their windows, and elements are read and pressed through accessibility).";
+export const NO_AGENT_SCREEN_WINDOWS = "Windows has no private agent screen in this version: desktop work happens on your owner's screen, in the background where it can (apps open behind their windows, and elements are read and pressed through UI Automation).";
 export const NO_CUA_DRIVER = "Desktop control on a Mac needs the Ensemble app, which carries Cua Driver, the desktop driver it starts: install or update the Ensemble app.";
+export const NO_CUA_DRIVER_WINDOWS = "This Ensemble was installed without Cua Driver (cua-driver.exe), the desktop driver desktop control starts on Windows: install or update the Ensemble app or the `ensemble` command line.";
 /** Where the Ensemble app keeps Cua Driver, for a runtime the `ensemble` command line started. */
 const APP_DRIVER_DIR = "Ensemble.app/Contents/Resources/sidecar/bin";
 
-/** Whether desktop control works on this system at all (Linux and macOS). */
+/** Whether desktop control works on this system at all (Linux, macOS and Windows). */
 export function desktopSystem(platform: string = process.platform): boolean {
-  return platform === "linux" || platform === "darwin";
+  return platform === "linux" || platform === "darwin" || platform === "win32";
 }
 
 /** The cua-driver this Ensemble is built for: desktop-helper/macos/cua-driver.json, which the macOS build fetches by its checksum. */
@@ -166,9 +173,104 @@ export function agentScreenIdleMs(env: NodeJS.ProcessEnv = process.env): number 
   return Number.isFinite(minutes) && minutes > 0 ? Math.min(24 * 60, minutes) * 60_000 : 10 * 60_000;
 }
 
+// ── Windows ────────────────────────────────────────────────────────────────
+
+/** The cua-driver this Ensemble is built for on Windows: desktop-helper/windows/cua-driver.json, fetched by its checksum. */
+export type WindowsCuaDriverPin = { version: string; tag: string; sourceCommit: string; publisher: string; assets: Record<"x64" | "arm64", { asset: string; url: string; sha256: string; bytes: number; member: string; exeSha256: string; exeBytes: number }> };
+let windowsPinned: WindowsCuaDriverPin | null = null;
+export function windowsCuaDriverPin(): WindowsCuaDriverPin {
+  windowsPinned ??= JSON.parse(readFileSync(resolve(HERE, "../../../desktop-helper/windows/cua-driver.json"), "utf8")) as WindowsCuaDriverPin;
+  return windowsPinned;
+}
+
+/** The session probe's script: `desktop-helper/windows/probe.ps1` of this package. */
+export function windowsProbeScript(): string | null {
+  const script = resolve(HERE, "../../../desktop-helper/windows/probe.ps1");
+  return existsSync(script) ? script : null;
+}
+
+/** `cua-driver.exe`: in `ENSEMBLE_CUA_DRIVER_DIR`, else beside the sidecar's Node (`<sidecar>/bin`). */
+export function findWindowsCuaDriver(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath): string | null {
+  const dirs = [windowsVar(env, "ENSEMBLE_CUA_DRIVER_DIR"), join(dirname(execPath), "bin"), join(dirname(execPath), "..", "bin")].filter((value): value is string => Boolean(value?.trim()));
+  for (const dir of dirs) {
+    const exe = join(resolve(dir), "cua-driver.exe");
+    if (existsSync(exe)) return exe;
+  }
+  return null;
+}
+
+/** An environment variable by its name in any case (Windows' names are not case-sensitive). */
+function windowsVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const wanted = name.toUpperCase();
+  return Object.entries(env).find(([key, value]) => key.toUpperCase() === wanted && value !== undefined)?.[1];
+}
+
+/** What a Windows program needs to run in the owner's session: where Windows and the user's folders are. Never this runtime's secrets. */
+const WINDOWS_PASS = ["SystemRoot", "windir", "SystemDrive", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ALLUSERSPROFILE", "PUBLIC", "OS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "NUMBER_OF_PROCESSORS"];
+
+export function windowsEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const name of WINDOWS_PASS) {
+    const value = windowsVar(env, name);
+    if (value !== undefined) out[name] = value;
+  }
+  const root = out.SystemRoot ?? "C:\\Windows";
+  out.PATH = windowsVar(env, "PATH") ?? `${root}\\System32;${root};${root}\\System32\\WindowsPowerShell\\v1.0`;
+  return out;
+}
+
+/** Where ffmpeg is on this computer (Cua Driver records video through it), or null. */
+export function windowsFfmpeg(env: NodeJS.ProcessEnv = process.env): string | null {
+  return findFfmpeg(env, (path) => existsSync(path), (dir) => {
+    try {
+      return readdirSync(dir);
+    } catch {
+      return [];
+    }
+  });
+}
+
+/** Cua Driver's environment on Windows: Windows' own variables, the PATH (with ffmpeg's folder), its folder, telemetry and update checks off. */
+export function windowsCuaDriverEnv(env: NodeJS.ProcessEnv, home: string, ffmpeg: string | null = null): NodeJS.ProcessEnv {
+  const out = windowsEnv(env);
+  const ffmpegDir = ffmpeg ? ffmpeg.replace(/[\\/][^\\/]+$/, "") : null;
+  if (ffmpegDir && !out.PATH!.toLowerCase().split(";").includes(ffmpegDir.toLowerCase())) out.PATH = `${out.PATH};${ffmpegDir}`;
+  return {
+    ...out,
+    CUA_DRIVER_RS_HOME: home,
+    CUA_DRIVER_PERMISSION_MODE: "standard",
+    CUA_DRIVER_DISABLE_RUN_SCRIPT: "1",
+    DO_NOT_TRACK: "1",
+    CUA_DRIVER_RS_TELEMETRY_ENABLED: "0",
+    CUA_TELEMETRY_ENABLED: "0",
+    CUA_DRIVER_RS_UPDATE_CHECK: "0",
+  };
+}
+
+/**
+ * `cua-driver.exe mcp --direct --no-overlay`: the driver's runtime in its own process on this runtime's pipes (no
+ * daemon, named pipe or port), drawing no cursor of its own on the owner's screen.
+ */
+export function windowsCuaDriverCommand(env: NodeJS.ProcessEnv = process.env, execPath: string = process.execPath, ffmpeg: string | null = windowsFfmpeg(env)): HelperCommand | { unavailable: string } {
+  const exe = findWindowsCuaDriver(env, execPath);
+  if (!exe) return { unavailable: NO_CUA_DRIVER_WINDOWS };
+  const home = cuaDriverHome(env);
+  return { command: exe, args: ["mcp", "--direct", "--no-overlay"], env: windowsCuaDriverEnv(env, home, ffmpeg), cwd: home };
+}
+
+/** Windows PowerShell 5.1 (every Windows 10 and 11 has it) running the session probe, with Windows' own variables only. */
+export function windowsProbeCommand(env: NodeJS.ProcessEnv = process.env): HelperCommand | { unavailable: string } {
+  const script = windowsProbeScript();
+  if (!script) return { unavailable: "This Ensemble was installed without its Windows session probe. Install it again, or update." };
+  const root = windowsVar(env, "SystemRoot") ?? "C:\\Windows";
+  const state = desktopDataDir(env);
+  mkdirSync(state, { recursive: true, mode: 0o700 });
+  return { command: `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], env: windowsEnv(env), cwd: state };
+}
+
 export function helperCommand(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform, screen: "owner" | "agent" = "owner"): HelperCommand | { unavailable: string } {
   if (platform === "darwin") return screen === "agent" ? { unavailable: NO_AGENT_SCREEN_MAC } : cuaDriverCommand(env);
-  if (platform === "win32") return { unavailable: WINDOWS_UNSUPPORTED };
+  if (platform === "win32") return screen === "agent" ? { unavailable: NO_AGENT_SCREEN_WINDOWS } : windowsCuaDriverCommand(env);
   if (platform !== "linux") return { unavailable: UNSUPPORTED_HERE };
   const script = helperScript();
   if (!script) return { unavailable: "This Ensemble was installed without its desktop helper. Install it again, or update." };
@@ -198,10 +300,13 @@ export function desktops(): Desktops {
     })
     .catch(() => undefined);
   const mac = process.platform === "darwin";
+  const windows = process.platform === "win32";
   const helper: HelperLike = mac
     ? new MacosCuaDriver({ spawn: () => helperCommand(), version: cuaDriverPin().version, workDir: join(desktopDataDir(), "cua"), appPath: findCuaDriver()?.app ?? null, macosMajor: macosMajor(), log: settings.log })
-    : new HelperProcess({ spawn: () => helperCommand(), log: settings.log });
-  const owner = new DesktopService({ helper, captureDir: join(desktopDataDir(), "captures"), log: settings.log, secretValues: settings.secretValues, platform: mac ? "darwin" : "linux" });
+    : windows
+      ? new WindowsCuaDriver({ spawn: () => helperCommand(), version: windowsCuaDriverPin().version, workDir: join(desktopDataDir(), "cua"), probe: new HelperProcess({ spawn: () => windowsProbeCommand(), log: settings.log, helloTimeoutMs: 30_000 }), ffmpeg: () => windowsFfmpeg(), log: settings.log })
+      : new HelperProcess({ spawn: () => helperCommand(), log: settings.log });
+  const owner = new DesktopService({ helper, captureDir: join(desktopDataDir(), "captures"), log: settings.log, secretValues: settings.secretValues, platform: mac ? "darwin" : windows ? "win32" : "linux" });
   const idle = agentScreenIdleMs();
   shared = new Desktops(
     owner,
@@ -217,8 +322,8 @@ export function desktops(): Desktops {
         helperIdleMs: idle,
         sessionIdleMs: idle,
       }),
-    // macOS has no agent screen: work goes to the owner's unless a call names the agent screen.
-    mac ? "owner" : "agent",
+    // macOS and Windows have no agent screen: work goes to the owner's unless a call names the agent screen.
+    mac || windows ? "owner" : "agent",
   );
   return shared;
 }

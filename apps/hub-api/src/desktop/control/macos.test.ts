@@ -14,7 +14,7 @@ const { decodePng } = await import("./drivers/png.js");
 const { DesktopError, DesktopService } = await import("./service.js");
 const { HelperProcess } = await import("./helper-process.js");
 const { Desktops } = await import("./screens.js");
-const { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, helperCommand, macosMajor, NO_AGENT_SCREEN_MAC, WINDOWS_UNSUPPORTED } = await import("./index.js");
+const { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, helperCommand, macosMajor, NO_AGENT_SCREEN_MAC } = await import("./index.js");
 const { macReadiness, probeHost, probeMac, socketAnswers } = await import("./readiness.js");
 const { DESKTOP_TRANSPORT_MS, desktopTimeoutMs, typingMs } = await import("./tool-specs.js");
 const { ensembleWindow } = await import("./floor.js");
@@ -69,7 +69,7 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
   const log = join(dir, "calls.log");
   writeFileSync(state, JSON.stringify({ ...structuredClone(MAC), ...options.world }));
   const set = (patch: Record<string, unknown>) => writeFileSync(state, JSON.stringify({ ...JSON.parse(readFileSync(state, "utf8")), ...patch }));
-  const calls = (): Array<{ tool: string; args: Record<string, unknown> }> =>
+  const calls = (): Array<{ tool: string; args: Record<string, unknown>; screen?: { x: number; y: number } }> =>
     existsSync(log)
       ? readFileSync(log, "utf8")
           .split("\n")
@@ -160,7 +160,6 @@ test("darwin: Cua Driver runs through the disclaim launcher, as its own process 
   assert.deepEqual(helperCommand(env, "darwin", "agent"), { unavailable: NO_AGENT_SCREEN_MAC });
   assert.match((helperCommand({ ...env, ENSEMBLE_CUA_DRIVER_DIR: join(root, "missing") }, "darwin") as { unavailable: string }).unavailable, /install or update the Ensemble app/);
   assert.match((cuaDriverCommand(env, process.execPath, "21.6.0") as { unavailable: string }).unavailable, /macOS 13 or later; this Mac runs macOS 12/);
-  assert.deepEqual(helperCommand(env, "win32"), { unavailable: WINDOWS_UNSUPPORTED });
   assert.deepEqual([macosMajor("22.6.0"), macosMajor("24.1.0"), macosMajor("25.0.0"), macosMajor("6.8.0-45-generic")], [13, 15, 26, null]);
   const pin = cuaDriverPin();
   assert.equal(pin.version, "0.56.6");
@@ -339,6 +338,17 @@ test("background: the owner's pointer and keyboard are refused without their scr
   assert.match(String(hotkey.args.element_token), /:2$/);
 });
 
+test("darwin: bringing an app to the front presses no key, so the owner's input just before stays theirs", async () => {
+  const h = mac();
+  const opened = await h.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Reminders" }], observe: false });
+  assert.equal(opened.steps[0]!.ran, "yes");
+  assert.ok(h.calls().some((call) => call.tool === "bring_to_front"));
+  h.idle.ms = 1_000;
+  const typed = await h.service.act(caller(), { foreground: true, steps: [{ action: "type", text: "x" }], observe: false });
+  assert.deepEqual([typed.steps[0]!.verdict, typed.steps[0]!.code], ["refused", "owner_has_control"], typed.steps[0]!.detail);
+  assert.ok(!h.calls().some((call) => call.tool === "type_text"));
+});
+
 test("foreground: the owner's pointer and keyboard go to screen pixels, a click judged by the window under it", async () => {
   const h = mac();
   const look = await h.service.observe(caller(), { app: "Reminders" });
@@ -348,8 +358,9 @@ test("foreground: the owner's pointer and keyboard go to screen pixels, a click 
   const click = h.calls().find((call) => call.tool === "click")!;
   assert.deepEqual([click.args.scope, click.args.delivery_mode, click.args.button, click.args.count], ["desktop", "foreground", "left", 1]);
   const moved = h.calls().find((call) => call.tool === "move_cursor")!;
-  assert.deepEqual([moved.args.scope, moved.args.delivery_mode, moved.args.x], ["desktop", "foreground", click.args.x], "the pointer goes there first");
-  assert.ok(Math.abs(Number(click.args.x) - (300.5 * 2560) / 1568) < 0.01 && Math.abs(Number(click.args.y) - (300.5 * 1600) / 980) < 0.01, "native screen pixels");
+  assert.deepEqual([moved.args.scope, moved.args.delivery_mode], ["desktop", "foreground"]);
+  assert.ok(Math.abs(moved.screen!.x - click.screen!.x) < 0.001 && Math.abs(moved.screen!.y - click.screen!.y) < 0.001, "the pointer goes there first");
+  assert.ok(Math.abs(click.screen!.x - (300.5 * 2560) / 1568) < 0.01 && Math.abs(click.screen!.y - (300.5 * 1600) / 980) < 0.01, "native screen pixels");
   const second = await h.service.observe(caller(), {});
   const own = await h.service.act(caller(), { captureId: second.captureId, foreground: true, steps: [{ action: "click", x: 1300, y: 400 }] });
   assert.deepEqual([own.steps[0]!.verdict, own.steps[0]!.rule], ["refused", "ensemble_window"]);

@@ -6,7 +6,7 @@
  * screen named goes on the agent screen wherever that can start. A call never moves to the other screen
  * by itself. Asking about the agent screen never starts it, nor the owner's screen's helper
  * where that screen cannot work (no desktop session, missing libraries). Where there is no agent screen
- * (macOS), calls work on the owner's screen unless they name the agent screen, which then answers why not.
+ * (macOS, Windows), calls work on the owner's screen unless they name the agent screen, which then answers why not.
  */
 import type { AgentScreenReadiness, DesktopReadiness } from "./readiness.js";
 import type { AppsResult, DesktopService, DesktopStatus, ScreenName } from "./service.js";
@@ -39,7 +39,7 @@ export class Desktops {
     return screen === "owner" ? this.owner : this.agent();
   }
 
-  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen (the owner's on macOS). */
+  /** Where a call works: the screen it names, its capture id's, its recording's, the one its controller last used, else the agent screen (the owner's on macOS and Windows). */
   pick(key: string, hints: { screen?: ScreenName; captureId?: string; recording?: boolean } = {}): ScreenName {
     if (hints.screen) return hints.screen;
     if (hints.captureId) {

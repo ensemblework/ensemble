@@ -8,9 +8,12 @@
  * On Wayland no app may learn where other windows are, so a click by position cannot be told apart by
  * the window it lands in: while an Ensemble window or page shows on the screen (not minimised), clicks
  * and drags by position are refused; element actions and the keyboard are judged by the window they act in.
- * Where the desktop says where each window is and which is in front (macOS), a click is judged by the window
- * at its point instead. A browser window whose page or address cannot be read may be showing Ensemble, so
- * it counts as one.
+ * Where the desktop says where each window is and which is in front (macOS), a click is judged by the window at its
+ * point instead; on Windows by the window Windows itself finds at the point (the session probe's hit test, which sees
+ * windows that are hidden on another virtual desktop and untitled popups as they are), and as on Wayland when it
+ * cannot say. A browser window whose page or address cannot be read may be showing Ensemble, so it counts as one;
+ * one titled with a Hub page's title is one. Windows' own prompts (User Account Control, credentials: toolkit
+ * `Prompt`) are the owner's: nothing is clicked, pressed or typed in them.
  */
 import { ensembleAppOrigin } from "../../lib/ensemble-origins.js";
 import { redactKeys } from "../../lib/redact.js";
@@ -19,25 +22,44 @@ import type { FocusInfo, HelperApp } from "./protocol.js";
 export type FloorRule = "ensemble_window" | "ensemble_page" | "unknown_page" | "password_prompt" | "secret_text" | "secret_field";
 export type FloorHit = { rule: FloorRule; message: string };
 
-/** Ensemble's own apps as the accessibility bus and systemd name them. */
+/** Ensemble's own apps as the accessibility bus, systemd and their program files (`Ensemble.exe`) name them. */
 const ENSEMBLE_APPS = new Set(["ensemble", "ensemble-desktop", "ensemble desktop", "ensemble capture", "ensemble-capture", "quick-capture", "quick capture"]);
 /** Ensemble's own window titles: its apps' windows, and Hub pages ("Today · Ensemble") in an app that is not a browser. */
-const ENSEMBLE_TITLES = /^(?:ensemble|ensemble node|ensemble capture|quick capture|ensemble updates|.+ · ensemble(?: node)?)$/i;
-/** A terminal showing the Ensemble CLI (`ensemble needs` answers cards). */
-const CLI_TITLE = /^(?:\S*[/~]\S*\s*[:$#]?\s*)?ensemble(?:-test)?(?:\s|$)/i;
-const TERMINALS = /\b(?:ptyxis|terminal|console|kgx|konsole|xterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|iterm2?|hyper|tabby)\b/i;
+const ENSEMBLE_TITLE = "(?:ensemble|ensemble node|ensemble capture|quick capture|ensemble updates|.+ · ensemble(?: node)?)";
+const ENSEMBLE_TITLES = new RegExp(`^${ENSEMBLE_TITLE}$`, "i");
+/** A browser window showing a Hub page: its title, then the browser's name ("Today · Ensemble - Avast Secure Browser"). */
+const ENSEMBLE_PAGE_TITLES = new RegExp(`^${ENSEMBLE_TITLE}(?:\\s+[-–—]\\s+\\S.*)?$`, "i");
+/**
+ * A terminal showing the Ensemble CLI (`ensemble needs` answers cards): its command as the title, after a path or
+ * a prompt, or on Windows "Command Prompt - ensemble …" or the program's path (`C:\…\ensemble.exe`).
+ */
+const CLI_TITLE = /^(?:administrator:\s*)?(?:(?:select\s+)?command prompt\s+-\s+|"?[a-z]:\\(?:[^\\"]*\\)*|\S*[/~]\S*\s*[:$#>]?\s*)?ensemble(?:-test)?(?:\.exe|\.cmd)?"?(?:\s|$)/i;
+const TERMINALS = /\b(?:ptyxis|terminal|console|kgx|konsole|xterm|alacritty|kitty|wezterm|foot|tilix|terminator|ghostty|warp|iterm2?|hyper|tabby|powershell|pwsh|cmd|command prompt|conhost|openconsole|wt)\b|windowsterminal/i;
+/** Windows' own password and permission prompts, which the Windows driver names by this toolkit. */
+const PROMPT_TOOLKIT = /^prompt$/i;
 /** `web`: an app that opens https links (LaunchServices) and is not a browser Ensemble knows by name. */
 const BROWSER_TOOLKITS = /^(?:gecko|chromium|webkitgtk|webkit|web)$/i;
+
+/** Whether an app's toolkit is a browser's: its pages may show Ensemble. */
+export function isBrowserToolkit(toolkit: string): boolean {
+  return BROWSER_TOOLKITS.test(toolkit);
+}
 
 export const SECRET_REF = /^\$([A-Z][A-Z0-9_]{1,63})$/;
 
 const norm = (value: string | null | undefined) => (value ?? "").trim().toLowerCase();
+/** A program file's id (`C:\…\Ensemble.exe`) as its name: `ensemble`. */
+const program = (value: string) => value.split(/[\\/]/).pop()!.replace(/\.exe$/, "");
 
 type AppRef = { name: string; app_id: string | null; toolkit: string };
 
 function ensembleApp(app: AppRef): boolean {
   const id = norm(app.app_id);
-  return ENSEMBLE_APPS.has(norm(app.name)) || id.startsWith("com.ensemblework.") || ENSEMBLE_APPS.has(id);
+  return ENSEMBLE_APPS.has(norm(app.name)) || ENSEMBLE_APPS.has(program(norm(app.name))) || id.startsWith("com.ensemblework.") || ENSEMBLE_APPS.has(id) || ENSEMBLE_APPS.has(program(id));
+}
+
+function promptApp(app: AppRef): boolean {
+  return PROMPT_TOOLKIT.test(app.toolkit);
 }
 
 /** Why a window of `app` titled `title` is Ensemble's own, or null. */
@@ -49,6 +71,12 @@ export function ensembleWindow(app: AppRef | null, title: string | null | undefi
   if (TERMINALS.test(where)) return CLI_TITLE.test(shown) ? `the terminal “${shown}” runs Ensemble's command line` : null;
   if (ENSEMBLE_TITLES.test(shown) && !BROWSER_TOOLKITS.test(app.toolkit)) return `the window “${shown}” is Ensemble's own`;
   return null;
+}
+
+/** Why a browser's window titled `title` shows an Ensemble page by its title, or null. */
+function ensembleTitledPage(app: AppRef | null, title: string | null | undefined): string | null {
+  const shown = (title ?? "").trim();
+  return app && BROWSER_TOOLKITS.test(app.toolkit) && ENSEMBLE_PAGE_TITLES.test(shown) ? `“${shown}”` : null;
 }
 
 /** The Ensemble pages browsers show now (the tab in front of each window that is not minimised). */
@@ -75,13 +103,15 @@ export function keyboardFloor(focus: FocusInfo, env: NodeJS.ProcessEnv = process
   if (own) return { rule: "ensemble_window", message: `The window in front is Ensemble's own (${own}): you never type or click there.` };
   const page = ensemblePages(focus.documents, env).find((doc) => doc.active);
   if (page) return { rule: "ensemble_page", message: `The browser in front shows Ensemble (${page.origin}): you never type or click there. You act in Ensemble through your Ensemble tools.` };
+  const titled = ensembleTitledPage(focus.app, focus.window?.title);
+  if (titled) return { rule: "ensemble_page", message: `The browser in front shows an Ensemble page (${titled}): you never type or click there. You act in Ensemble through your Ensemble tools.` };
   const unknown = unknownPages(focus.documents).find((doc) => doc.active);
   if (unknown) return { rule: "unknown_page", message: `The page in front in ${unknown.app} (“${unknown.window}”) cannot be read: ${UNKNOWN_PAGE}, and you never type there. Use your browser tools for web pages.` };
   return null;
 }
 
 export type Point = { x: number; y: number };
-type ShownWindow = { app: HelperApp; window: HelperApp["windows"][number] };
+export type ShownWindow = { app: HelperApp; window: HelperApp["windows"][number] };
 
 /**
  * The window at `point` (screen pixels): the one furthest in front that shows and holds it; null when none
@@ -97,8 +127,11 @@ export function windowAt(apps: readonly HelperApp[], point: Point): ShownWindow 
   return hits.sort((a, b) => b.window.z! - a.window.z!)[0] ?? null;
 }
 
-/** A click on `window` of `app`: refused in Ensemble's own window and on a page that is or may be Ensemble. */
+const PROMPT_POINT = "Only your owner answers a security prompt of the system: hand it to them with desktop_handoff, saying what it is for, and wait.";
+
+/** A click on `window` of `app`: refused in Ensemble's own window, a prompt of the system and on a page that is or may be Ensemble. */
 function windowFloor(app: HelperApp, window: HelperApp["windows"][number], focus: FocusInfo, env: NodeJS.ProcessEnv): FloorHit | null {
+  if (promptApp(app)) return { rule: "password_prompt", message: `That point is in a security prompt of the system (“${window.title || app.name}”). ${PROMPT_POINT}` };
   const terminal = TERMINALS.test(`${norm(app.name)} ${norm(app.app_id)}`);
   if (ensembleApp(app) || (!terminal && ensembleWindow(app, window.title))) {
     return { rule: "ensemble_window", message: `That point is in Ensemble's own window (“${window.title || app.name}”): you never click there.` };
@@ -106,18 +139,21 @@ function windowFloor(app: HelperApp, window: HelperApp["windows"][number], focus
   const inWindow = (doc: { app: string; window: string }) => norm(doc.app) === norm(app.name) && norm(doc.window) === norm(window.title);
   const page = ensemblePages(focus.documents, env).find(inWindow);
   if (page) return { rule: "ensemble_page", message: `That point is in a browser window showing Ensemble (${page.origin}): you never click there. You act in Ensemble through your Ensemble tools.` };
+  const titled = ensembleTitledPage(app, window.title);
+  if (titled) return { rule: "ensemble_page", message: `That point is in a browser window showing an Ensemble page (${titled}): you never click there. You act in Ensemble through your Ensemble tools.` };
   if (unknownPages(focus.documents).some(inWindow)) return { rule: "unknown_page", message: `That point is in a ${app.name} window (“${window.title}”) whose page cannot be read: ${UNKNOWN_PAGE}. Use your browser tools for web pages.` };
   return null;
 }
 
 /**
- * Clicks and drags by position at `points`: judged by the window at each point where the desktop says
- * (macOS); elsewhere refused while an Ensemble window or page shows on the screen, since the desktop does not
- * say which window a point is in.
+ * Clicks and drags by position at `points`: judged by the window at each point where the desktop says, from the
+ * windows' places and order (macOS) or `at`, the windows the system itself finds at the points (Windows); elsewhere,
+ * and when the system could not say (`at` with an undefined), refused while an Ensemble window or page shows on the
+ * screen, since the desktop does not say which window a point is in.
  */
-export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: NodeJS.ProcessEnv = process.env, points: readonly Point[] = []): FloorHit | null {
+export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: NodeJS.ProcessEnv = process.env, points: readonly Point[] = [], at?: ReadonlyArray<ShownWindow | null | undefined>): FloorHit | null {
   const front = keyboardFloor(focus, env);
-  const hits = points.map((point) => windowAt(apps, point));
+  const hits = at ?? points.map((point) => windowAt(apps, point));
   if (hits.length && hits.every((hit) => hit !== undefined)) {
     for (const hit of hits) {
       // Outside every window (the menu bar): what is there belongs to the app in front.
@@ -132,6 +168,7 @@ export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: 
     const terminal = TERMINALS.test(`${norm(app.name)} ${norm(app.app_id)}`);
     for (const window of app.windows) {
       if (!window.showing || window.iconified) continue;
+      if (promptApp(app)) return { rule: "password_prompt", message: `A security prompt of the system (“${window.title || app.name}”) is open on the screen, and the desktop does not say where it is, so clicks by position are refused while it shows. ${PROMPT_POINT}` };
       if (ensembleApp(app) || (!terminal && ensembleWindow(app, window.title))) {
         return { rule: "ensemble_window", message: `Ensemble's own window (“${window.title || app.name}”) is open on the screen, and the desktop does not say where it is, so clicks by position are refused while it shows. Use element ids (press, set_text, focus), or ask your owner to minimise it.` };
       }
@@ -146,11 +183,14 @@ export function pointerFloor(focus: FocusInfo, apps: readonly HelperApp[], env: 
 
 /** An element action in `app`'s window titled `window`: refused in Ensemble's windows and on Ensemble pages. */
 export function elementFloor(app: AppRef, window: string, focus: FocusInfo, env: NodeJS.ProcessEnv = process.env): FloorHit | null {
+  if (promptApp(app)) return { rule: "password_prompt", message: `That element is in a security prompt of the system (“${window || app.name}”). ${PROMPT_POINT}` };
   const own = ensembleWindow(app, window);
   if (own) return { rule: "ensemble_window", message: `That element is in Ensemble's own window (${own}): you never act there.` };
   const inWindow = (doc: { app: string; window: string }) => norm(doc.window) === norm(window) && norm(doc.app) === norm(app.name);
   const page = ensemblePages(focus.documents, env).find(inWindow);
   if (page) return { rule: "ensemble_page", message: `That element is in a browser window showing Ensemble (${page.origin}): you never act there.` };
+  const titled = ensembleTitledPage(app, window);
+  if (titled) return { rule: "ensemble_page", message: `That element is in a browser window showing an Ensemble page (${titled}): you never act there.` };
   if (unknownPages(focus.documents).some(inWindow)) return { rule: "unknown_page", message: `That element is in a browser window whose page cannot be read: ${UNKNOWN_PAGE}. Use your browser tools for web pages.` };
   return null;
 }

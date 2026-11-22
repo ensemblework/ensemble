@@ -75,8 +75,9 @@ SOFTWARE.
 
 cua-driver (Cua Driver)
 Source: https://github.com/trycua/cua/tree/cua-driver-rs-v0.56.6/libs/cua-driver (release cua-driver-rs-v0.56.6, commit 53260e000221483c5ab3f49607aae5c66c23e883)
-Redistributed unmodified, in the Ensemble app for macOS only:
-- sidecar/bin/CuaDriver.app: the CuaDriver.app bundle of the release archive
+Redistributed unmodified, in the Ensemble app for macOS and in the Ensemble app and the ensemble command
+line for Windows:
+- sidecar/bin/CuaDriver.app (macOS): the CuaDriver.app bundle of the release archive
   cua-driver-rs-0.56.6-darwin-universal.tar.gz (SHA-256
   c800df96571a199042358433fc544eb5a1a250d48076e5979ae94d88d9fb72f9), signed and notarized by its
   publisher, with this licence beside it as CuaDriver.LICENSE and the archive's own notice file as
@@ -85,6 +86,15 @@ Redistributed unmodified, in the Ensemble app for macOS only:
 - run by apps/hub-api/src/desktop/control/drivers/macos-cua.ts as Ensemble's macOS desktop driver,
   started through sidecar/bin/ensemble-disclaim, which is Ensemble's own
   (apps/hub-api/desktop-helper/macos/disclaim.c) and not part of cua-driver
+- sidecar/bin/cua-driver.exe (Windows): the cua-driver.exe of the release archive
+  cua-driver-rs-0.56.6-windows-x86_64.zip (SHA-256
+  83728838f93149d673dd7bd0b968c3bea2300b816062aa0fd7fb076385a6c638) or
+  cua-driver-rs-0.56.6-windows-arm64.zip (SHA-256
+  040b79c1911622a08cc1dbfd346eb0006dcf58d3cbc887e64d72e2aecb102745), Authenticode-signed by its
+  publisher, with this licence beside it as CuaDriver.LICENSE and the archive's own notice file as
+  CuaDriver.THIRD_PARTY_NOTICES.md (scripts/fetch-cua-driver.mjs --windows,
+  apps/hub-api/desktop-helper/windows/cua-driver.json)
+- run by apps/hub-api/src/desktop/control/drivers/windows-cua.ts as Ensemble's Windows desktop driver
 
 cua-driver includes code derived from these MIT-licensed projects (libs/cua-driver/rust/THIRD_PARTY_NOTICES.md
 at that commit): trope-cua (Copyright (c) 2026 Victor Vannara), Interface-Agent (Copyright (c) 2024

@@ -45,6 +45,7 @@ Read these guides at [docs.ensemblework.com](https://docs.ensemblework.com). Sea
 | --- | --- |
 | [Desktop](DESKTOP.md) | Desktop app architecture, build, packaging, updater, OS support |
 | [Mac checklist](desktop/MAC_CHECKLIST.md) | Hand checks for macOS installers |
+| [Windows checklist](desktop/WINDOWS_CHECKLIST.md) | Hand checks for desktop control on a Windows PC |
 | [24 · Sandboxing](24_DESKTOP_SANDBOXING.md) | OS sandbox backends, trust, outside access, git |
 | [25 · Remote tasks](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | Pairing, leases, files, Code and terminal on a paired computer |
 | [26 · CLI](26_CLI.md) | Install, terminal UI, commands, runner, MCP, releases |

@@ -24,14 +24,14 @@ const computer = z.string().max(120).optional().describe("The computer's name, w
 
 /**
  * The computer must answer desktop calls (`capabilities.desktop`) and, but for desktop_status, have a screen
- * ready for them, or (macOS) be able to read and press elements in the background.
+ * ready for them, or (macOS, Windows) be able to read and press elements in the background.
  */
 export function requireDesktop(device: Pick<Device, "name" | "capabilities">, tool = "desktop_observe"): void {
   const caps = (device.capabilities ?? {}) as { desktop?: unknown; desktopReadiness?: { ready?: unknown; reason?: unknown; background?: unknown; agentScreen?: { ready?: unknown; reason?: unknown } } | null };
   if (!(typeof caps.desktop === "number" && caps.desktop >= DESKTOP_API)) {
-    // A system without desktop control in this version (Windows) says so in its readiness.
+    // A system without desktop control says so in its readiness.
     if (typeof caps.desktopReadiness?.reason === "string") throw new ToolBlockedError(`${device.name} cannot control its desktop: ${caps.desktopReadiness.reason}`, "Tell your owner in one line if they asked for it; use the browser tools and computer_run instead.");
-    throw new ToolBlockedError(`Update Ensemble on ${device.name} to control its desktop: it is too old for it, or not on Linux or macOS.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use the browser tools and computer_run.");
+    throw new ToolBlockedError(`Update Ensemble on ${device.name} to control its desktop: it is too old for it, or not on Linux, macOS or Windows.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use the browser tools and computer_run.");
   }
   const ready = caps.desktopReadiness;
   // Either screen will do: the agent screen works without the owner's session, the owner's without GNOME Shell's headless mode.

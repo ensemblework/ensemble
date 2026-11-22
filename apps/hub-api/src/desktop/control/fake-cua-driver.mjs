@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 // A stand-in for cua-driver 0.56.6 (`cua-driver mcp --direct`) in tests: MCP over stdin and stdout
-// (initialize, tools/list, tools/call) with the tool shapes of the macOS backend, and a Mac held in memory.
+// (initialize, tools/list, tools/call) with the tool shapes of the macOS backend, and a Mac held in memory; with
+// `platform: "windows"` those of the Windows backend (screen pixels, program files as app names, launch paths,
+// integrity levels, text typed through a token added to the element's value, typing into a `focused` element).
 // FAKE_CUA_STATE names a JSON file with the Mac (apps, windows, elements, screen, permissions); it is read at
 // start, and again on every call for what tests change on the fly (effects, refusals, slow tools, failures).
 // Like macOS, the permissions are read once per process: Cua Driver's own (`accessibility`, `screen_recording`),
 // or with `--embedded` the launching app's (`host_accessibility`, `host_screen_recording`). `noise` writes lines
 // that are not MCP messages before each answer. `frontAfterTypes` brings an app to the front (its windows on top
 // unless `raise` is false) after that many typed chunks; `failAfterTypes` makes one tool fail from then on.
-// FAKE_CUA_LOG gets one JSON line per tool call.
+// FAKE_CUA_LOG gets one JSON line per tool call. With `platform: "windows"` the windows and which app is in front are
+// also written to `<FAKE_CUA_STATE>.screen.json` whenever they change, for the stand-in session probe; a window with
+// `unlisted` (untitled) is not listed, one with `cloaked` is listed on the screen as cua-driver does.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -27,6 +31,12 @@ const world = {
   elements: {},
   ...read(),
 };
+const WINDOWS = world.platform === "windows";
+/** The windows and the app in front, for the stand-in session probe (fake-windows-probe.mjs). */
+function publish() {
+  if (WINDOWS && STATE) writeFileSync(`${STATE}.screen.json`, JSON.stringify({ windows: world.windows, apps: world.apps.map(({ pid, name, active, running }) => ({ pid, name, active, running })) }));
+}
+publish();
 const EMBEDDED = process.argv.includes("--embedded") || process.env.CUA_DRIVER_EMBEDDED === "1";
 const granted = EMBEDDED
   ? { accessibility: world.host_accessibility === true, screen_recording: world.host_screen_recording === true }
@@ -63,10 +73,10 @@ function chunk(type, body) {
   return Buffer.concat([head, body, tail]);
 }
 /** A picture of the screen: one colour from the seed, with a stripe so a crop differs from the whole. */
-function png(width, height, seed) {
+function png(width, height, seed, black = false) {
   const row = Buffer.alloc(1 + width * 3);
   const colour = [(seed * 37) % 256, (seed * 91) % 256, (seed * 53) % 256];
-  for (let x = 0; x < width; x += 1) row.set(x < width / 4 ? [255, 255, 255] : colour, 1 + x * 3);
+  if (!black) for (let x = 0; x < width; x += 1) row.set(x < width / 4 ? [255, 255, 255] : colour, 1 + x * 3);
   const raw = Buffer.alloc(height * row.length);
   for (let y = 0; y < height; y += 1) row.copy(raw, y * row.length);
   const header = Buffer.alloc(13);
@@ -109,6 +119,7 @@ const ACTION = { session: { type: "string" }, delivery_mode: { type: "string", e
 const SCHEMAS = {
   check_permissions: { prompt: {}, probe_direct_capture: {} },
   get_desktop_state: { session: {}, max_image_dimension: {}, screenshot_out_file: {} },
+  get_screen_size: { session: {} },
   list_apps: {},
   list_windows: { pid: {}, on_screen_only: {} },
   get_window_state: { session: {}, pid: {}, window_id: {}, query: {}, include_accessibility_tree: {}, include_screenshot: {}, screenshot_out_file: {}, max_elements: {}, max_depth: {}, timeout_ms: {}, tree_format: {}, since: {} },
@@ -120,7 +131,7 @@ const SCHEMAS = {
   scroll: { ...ACTION, pid: {}, window_id: {}, element_token: {}, direction: {}, amount: {}, by: {}, x: {}, y: {}, scope: {} },
   drag: { ...ACTION, pid: {}, window_id: {}, from_x: {}, from_y: {}, to_x: {}, to_y: {}, duration_ms: {}, steps: {}, modifier: {}, button: {}, scope: {} },
   move_cursor: { session: {}, x: {}, y: {}, scope: {}, cursor_id: {}, delivery_mode: {} },
-  launch_app: { bundle_id: {}, name: {}, urls: {}, creates_new_application_instance: {}, additional_arguments: {} },
+  launch_app: WINDOWS ? { bundle_id: {}, aumid: {}, name: {}, path: {}, launch_path: {}, urls: {}, additional_arguments: {}, start_minimized: {} } : { bundle_id: {}, name: {}, urls: {}, creates_new_application_instance: {}, additional_arguments: {} },
   bring_to_front: { pid: {}, window_id: {} },
   start_recording: { session: {}, output_dir: {}, record_video: {}, state_timeout_ms: {}, include_accessibility_tree: {}, redact_values: {} },
   stop_recording: {},
@@ -145,10 +156,10 @@ function refusal(tool, live) {
   return failed(`Refused: ${code}`, { code, effect: "refused" });
 }
 
-const screenPoints = () => ({ width: world.screen.width / world.screen.scale, height: world.screen.height / world.screen.scale });
+const screenPoints = () => (WINDOWS ? { width: world.screen.width, height: world.screen.height } : { width: world.screen.width / world.screen.scale, height: world.screen.height / world.screen.scale });
 
 const tools = {
-  check_permissions: () => ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: EMBEDDED, direct_runtime: !EMBEDDED } }),
+  check_permissions: () => (WINDOWS ? ok({ elevated: false, integrity_level: "Medium", integrity_level_rid: 8192, uia: true, post_message: true }) : ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: EMBEDDED, direct_runtime: !EMBEDDED } })),
   get_desktop_state: (args, live) => {
     if (!granted.screen_recording) return failed("Screen Recording permission is not granted for this process.");
     if (live.screenshotFails) return failed("capture failed: the display stream returned no frame");
@@ -158,17 +169,18 @@ const tools = {
     const scale = edge > 0 ? Math.min(1, edge / Math.max(native.width, native.height)) : 1;
     const width = Math.max(1, Math.round(native.width * scale));
     const height = Math.max(1, Math.round(native.height * scale));
-    const picture = png(width, height, world.seed);
+    const picture = png(width, height, world.seed, live.blackScreen === true);
     const points = screenPoints();
-    const facts = { platform: "macos", display: "primary", screenshot_width: width, screenshot_height: height, screen_width: points.width, screen_height: points.height, scale_factor: native.scale, screenshot_mime_type: "image/png", capture_id: `cap-${world.seed}`, ...(scale < 1 ? { screenshot_original_width: native.width, screenshot_original_height: native.height } : {}) };
+    const facts = { platform: WINDOWS ? "windows" : "macos", display: "primary", screenshot_width: width, screenshot_height: height, screen_width: points.width, screen_height: points.height, scale_factor: native.scale, screenshot_mime_type: "image/png", capture_id: `cap-${world.seed}`, ...(scale < 1 ? { screenshot_original_width: native.width, screenshot_original_height: native.height } : {}) };
     if (args.screenshot_out_file) {
       writeFileSync(args.screenshot_out_file, picture);
       return ok({ ...facts, screenshot_file_path: args.screenshot_out_file });
     }
     return { content: [{ type: "image", data: picture.toString("base64"), mimeType: "image/png" }], structuredContent: facts };
   },
+  get_screen_size: () => ok({ width: world.screen.width, height: world.screen.height, scale_factor: world.screen.scale }),
   list_apps: () => ok({ apps: world.apps.map(({ pid, name, bundle_id, running, active, launch_path }) => ({ pid: running ? pid : 0, name, ...(bundle_id ? { bundle_id } : {}), running: Boolean(running), active: Boolean(active), ...(launch_path ? { launch_path } : {}), kind: "desktop" })) }),
-  list_windows: (args) => ok({ windows: world.windows.filter((win) => args.pid === undefined || win.pid === args.pid).filter((win) => !args.on_screen_only || win.is_on_screen) }),
+  list_windows: (args) => ok({ windows: world.windows.filter((win) => !win.unlisted && (args.pid === undefined || win.pid === args.pid)).filter((win) => !args.on_screen_only || win.is_on_screen).map(({ unlisted, cloaked, program, ...win }) => win) }),
   get_window_state: (args) => {
     if (!granted.accessibility) return failed("Accessibility permission is not granted: AXIsProcessTrusted() is false.");
     const win = world.windows.find((item) => item.window_id === args.window_id && item.pid === args.pid);
@@ -204,16 +216,31 @@ const tools = {
     if (args.element_token && !element(args.element_token)) return failed("Refused: the element token is stale.", { status: "refused", refusal: { code: "stale_element_token", message: "stale" } });
     if (!args.element_token && args.scope !== "desktop") return failed("type_text needs a pid, an element_token or scope desktop.", { code: "invalid_arguments" });
     typed += 1;
+    if (WINDOWS) {
+      // A classic text box (`keysOnly`) of a window that never had the focus: the keys posted to it go nowhere.
+      if (args.element_token && element(args.element_token).item.keysOnly) {
+        return ok({ delivery: { mode: "background" }, effect: "unverifiable", escalation: { reason: "delivery_failed", target: "foreground" }, route: "synthetic_events" }, `📨 Sent ${args.text.length} char(s) via PostMessage, but the focused field's value did not contain the requested text after dispatch: delivery was incomplete or dropped. Retry with delivery_mode:"foreground".`);
+      }
+      // A token's text goes to the end of the element's value; without one, to the element that has the keyboard.
+      const focused = live.focused ?? world.focused;
+      const target = args.element_token ? element(args.element_token).item : focused ? (world.elements[String(focused.window)] ?? []).find((item) => item.element_index === focused.index) : null;
+      if (target) target.value = `${target.value ?? ""}${args.text}`;
+    }
     const front = live.frontAfterTypes;
     if (front && typed === front.count) {
       for (const app of world.apps) app.active = app.pid === front.pid;
       const top = Math.max(0, ...world.windows.map((win) => win.z_index ?? 0));
       if (front.raise !== false) for (const win of world.windows) if (win.pid === front.pid) win.z_index = top + 1;
+      publish();
     }
     return ok(action(live.effects?.type_text ?? "confirmed", { route: args.element_token ? "accessibility" : "synthetic_events" }));
   },
   press_key: (args, live) => ok(action(live.effects?.press_key ?? "unverifiable", { route: "synthetic_events" })),
-  hotkey: (args, live) => ok(action(live.effects?.hotkey ?? "unverifiable", { route: "synthetic_events" })),
+  hotkey: (args, live) => {
+    // Windows inserted the keys and the app did not read them within 2 s (alt+F4 closing its window does that).
+    if (live.keysStall) return failed("input_delivery_stalled: Windows did not confirm that the target read the key delivery input within 2000 ms. It was inserted and may still appear in the target. Nothing was retried; inspect the target before repeating it.", { code: "tool_invocation_failed", foreground_restored: false });
+    return ok(action(live.effects?.hotkey ?? "unverifiable", { route: "synthetic_events" }));
+  },
   scroll: (args, live) => ok(action(live.effects?.scroll ?? "unverifiable", { route: "synthetic_events" })),
   drag: () => {
     world.seed += 1;
@@ -221,18 +248,29 @@ const tools = {
   },
   move_cursor: () => ok(action("unverifiable", { route: "global_input", mode: "foreground" })),
   launch_app: (args) => {
-    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : item.name === args.name || item.launch_path === args.name));
+    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.aumid ? item.launch_path === `shell:appsFolder\\${args.aumid}` : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
     if (!app) return failed(`App not installed: ${args.bundle_id ?? args.name}`, { error: "APP_NOT_INSTALLED", suggestions: [] });
     app.running = true;
-    const windows = world.windows.filter((win) => win.pid === app.pid);
-    return ok({ pid: app.pid, bundle_id: app.bundle_id, name: app.name, windows, launch_state: { requested: true, process_running: true, window_ready: windows.length > 0 }, self_activation_suppressed: true });
+    publish();
+    // `launch_pid`: the process launch_app answers with is not the one whose window shows (a packaged app's host).
+    const pid = app.launch_pid ?? app.pid;
+    const windows = world.windows.filter((win) => win.pid === pid);
+    return ok({ pid, bundle_id: app.bundle_id, name: app.name, windows, launch_state: { requested: true, process_running: true, window_ready: windows.length > 0 }, self_activation_suppressed: true });
   },
-  bring_to_front: (args) => {
+  bring_to_front: (args, live) => {
+    if (WINDOWS) {
+      // Windows' foreground lock can keep another window in front: the window is raised but not activated.
+      const target = args.window_id ?? world.windows.find((win) => win.pid === args.pid)?.window_id ?? 0;
+      if (live.foregroundLocked) return failed(`bring_to_front: exact target hwnd 0x${target.toString(16)} was raised in z-order, but Windows kept foreground on hwnd 0x1; foreground activation failed.`, { code: "foreground_unavailable", effect: "refused", pid: args.pid, window_id: target, landed_on_target: false, raised: true });
+      for (const app of world.apps) app.active = app.pid === args.pid;
+      publish();
+      return ok({ previous_fg_hwnd: "0x1", now_fg_hwnd: `0x${target.toString(16)}`, target_hwnd: `0x${target.toString(16)}`, landed_on_target: true, raised: true, restored: false });
+    }
     for (const app of world.apps) app.active = app.pid === args.pid;
     return ok({ status: "activated", code: "bring_to_front_exact_window_verified", pid: args.pid, window_id: args.window_id ?? null, activated: true });
   },
   start_recording: (args, live) => {
-    if (live.recordingFails) return failed("video recording requires macOS 15.0 or later");
+    if (live.recordingFails) return failed(WINDOWS ? "ffmpeg not found on PATH" : "video recording requires macOS 15.0 or later");
     mkdirSync(join(args.output_dir, "turn-00001"), { recursive: true });
     writeFileSync(join(args.output_dir, "turn-00001", "action.json"), JSON.stringify({ tool: "click" }));
     recorder = { dir: args.output_dir, video: args.record_video === true, active: true };
@@ -250,14 +288,28 @@ const tools = {
 
 async function callTool(name, args) {
   const live = read();
-  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args })}\n`);
+  const screen = shrunkBack(args);
+  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args, at: Date.now(), ...(screen ? { screen } : {}) })}\n`);
   const schema = SCHEMAS[name];
   if (!schema || !tools[name]) return failed(`Unknown tool: ${name}`);
   const unknown = Object.keys(args).filter((key) => !(key in schema));
   if (unknown.length) return failed(`${name}: unknown argument ${unknown.join(", ")}`, { code: "invalid_arguments" });
   if (live.slow?.[name]) await sleep(live.slow[name]);
   if (live.failAfterTypes && typed >= live.failAfterTypes.count && name === live.failAfterTypes.tool) return failed(`${name} failed: WindowServer did not answer`, { code: "internal_error" });
-  return refusal(name, live) ?? tools[name](args, live);
+  const answer = refusal(name, live) ?? (await tools[name](args, live));
+  if (name === "get_desktop_state" && !answer.isError) {
+    const facts = answer.structuredContent ?? {};
+    shrunk = facts.screenshot_original_width ? { x: facts.screenshot_original_width / facts.screenshot_width, y: facts.screenshot_original_height / facts.screenshot_height } : null;
+  }
+  return answer;
+}
+
+// Like cua-driver's core: after a smaller `get_desktop_state` picture, a desktop action's x and y are read as that
+// picture's pixels and multiplied back to the screen's. The log line says where on the screen it lands.
+let shrunk = null;
+function shrunkBack(args) {
+  if (args.scope !== "desktop" || args.capture_id !== undefined || typeof args.x !== "number") return null;
+  return shrunk ? { x: args.x * shrunk.x, y: args.y * shrunk.y } : { x: args.x, y: args.y };
 }
 
 /** Output that is not an MCP message: JSON that is no object, a 10 MB line and bytes that are not UTF-8. */

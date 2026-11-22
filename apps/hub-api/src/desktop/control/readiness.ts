@@ -11,6 +11,10 @@
  * and press elements in the background. In the Ensemble app's own runtime a second, read-only check asks
  * whether the app itself holds Accessibility or Screen Recording: everything it starts would inherit those,
  * so desktop control is not ready until the owner turns them off for Ensemble.
+ *
+ * On Windows the session probe says whether this is the owner's interactive session (not a service's session 0),
+ * whether UI Automation answers and the monitors' DPI, and a short-lived Cua Driver takes a 32-pixel screenshot
+ * that must not be black (again after a minute while one fails, after ten minutes once all work).
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -20,15 +24,17 @@ import { DESKTOP_API } from "../../remote/contract.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
 import { accessibilityFix, hostGrantsFix, screenRecordingFix } from "./drivers/macos-cua.js";
 import { McpStdioClient } from "./drivers/mcp-stdio.js";
-import type { HelperCommand } from "./helper-process.js";
-import { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, desktopDataDir, desktopSystem, findCuaDriver, helperEnv, helperScript, macosMajor, NO_AGENT_SCREEN_MAC, runningDesktop, UNSUPPORTED_HERE, WINDOWS_UNSUPPORTED } from "./index.js";
+import { decodePng } from "./drivers/png.js";
+import { sessionProblem, type ProbeState } from "./drivers/windows-cua.js";
+import { HelperProcess, type HelperCommand } from "./helper-process.js";
+import { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, desktopDataDir, desktopSystem, findCuaDriver, helperEnv, helperScript, macosMajor, NO_AGENT_SCREEN_MAC, NO_AGENT_SCREEN_WINDOWS, runningDesktop, UNSUPPORTED_HERE, windowsCuaDriverCommand, windowsCuaDriverPin, windowsFfmpeg, windowsProbeCommand } from "./index.js";
 
 export type AgentScreenReadiness = { ready: boolean; version: string | null; reason?: string };
 
 export type DesktopReadiness = {
   /** Screen control of the owner's screen could start here (the owner may still be asked to allow it). */
   ready: boolean;
-  session: "wayland" | "x11" | "macos" | "none";
+  session: "wayland" | "x11" | "macos" | "windows" | "none";
   /** The owner allowed screen control before and it is remembered (it starts without asking). */
   consent: "remembered" | "ask";
   recorder: "mp4" | "webm" | null;
@@ -42,6 +48,8 @@ export type DesktopReadiness = {
   background?: boolean;
   /** macOS: something the owner should know that does not stop desktop control (Cua Driver's own daemon running). */
   note?: string;
+  /** Windows: what the checks proved: the owner's interactive session, UI Automation, a screenshot that is not black, the main monitor's scale. */
+  checks?: { interactive: boolean; uia: boolean; screenshot: boolean; scale: number | null };
 };
 
 export type MacProbe = { accessibility: boolean; screenRecording: boolean; screenshot: boolean; error: string | null };
@@ -50,7 +58,7 @@ export type HostGrants = { accessibility: boolean; screenRecording: boolean };
 
 /** One short-lived cua-driver: its permission check, then a tiny screenshot when Screen Recording is on. */
 export async function probeMac(command: HelperCommand, version: string, timeoutMs = 20_000): Promise<MacProbe> {
-  const client = new McpStdioClient({ spawn: () => command, version, helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
+  const client = new McpStdioClient({ spawn: () => command, version, label: "The macOS desktop driver", helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
   try {
     const check = await client.call("check_permissions", {}, { timeoutMs });
     const data = (check?.structuredContent ?? {}) as Record<string, unknown>;
@@ -78,7 +86,7 @@ export async function probeMac(command: HelperCommand, version: string, timeoutM
  * could not tell.
  */
 export async function probeHost(command: HelperCommand, version: string, timeoutMs = 20_000): Promise<HostGrants | null> {
-  const client = new McpStdioClient({ spawn: () => command, version, helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
+  const client = new McpStdioClient({ spawn: () => command, version, label: "The macOS desktop driver", helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
   try {
     const check = await client.call("check_permissions", {}, { timeoutMs });
     if (check?.isError) return null;
@@ -146,6 +154,69 @@ export function macReadiness(probe: MacProbe | null, unavailable: string | null,
   if (!probe.screenRecording) return { ...shared, ready: false, reason: `Screen Recording is off for Cua Driver (elements still work). Fix: ${screenRecordingFix(major, appPath)}` };
   if (!probe.screenshot) return { ...shared, ready: false, reason: `A test screenshot failed. Fix: ${screenRecordingFix(major, appPath)}` };
   return { ...shared, ready: true };
+}
+
+export type WindowsProbeResult = { state: ProbeState | null; probeError: string | null; screenshot: boolean; error: string | null };
+
+/** The session probe's `state`, and one short-lived Cua Driver's 32-pixel screenshot, which must not be black. */
+export async function probeWindows(driver: HelperCommand, probe: HelperCommand | { unavailable: string }, version: string, timeoutMs = 30_000): Promise<WindowsProbeResult> {
+  let state: ProbeState | null = null;
+  let probeError: string | null = null;
+  const session = new HelperProcess({ spawn: () => probe, helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
+  try {
+    state = await session.call<ProbeState>("state", {}, { timeoutMs });
+  } catch (failure) {
+    probeError = failure instanceof Error ? failure.message.slice(0, 300) : "The Windows session probe did not answer.";
+  } finally {
+    await session.stop().catch(() => undefined);
+  }
+  const problem = sessionProblem(state, false);
+  if (problem) return { state, probeError, screenshot: false, error: problem };
+  const client = new McpStdioClient({ spawn: () => driver, version, label: "The Windows desktop driver", helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
+  try {
+    const shot = await client.call("get_desktop_state", { max_image_dimension: 32 }, { timeoutMs });
+    const image = (shot.content ?? []).find((item) => item?.type === "image" && typeof item.data === "string");
+    if (shot.isError || !image) return { state, probeError, screenshot: false, error: (shot.content ?? []).find((item) => item?.type === "text")?.text?.slice(0, 200) ?? "The test screenshot came back empty." };
+    const pixels = decodePng(Buffer.from(image.data!, "base64"));
+    let lit = false;
+    for (let at = 0; at < pixels.data.length && !lit; at += 4) lit = pixels.data[at]! > 8 || pixels.data[at + 1]! > 8 || pixels.data[at + 2]! > 8;
+    return { state, probeError, screenshot: lit, error: lit ? null : "The test screenshot was black." };
+  } catch (failure) {
+    return { state, probeError, screenshot: false, error: failure instanceof Error ? failure.message.slice(0, 300) : "The Windows desktop driver did not start." };
+  } finally {
+    await client.stop().catch(() => undefined);
+  }
+}
+
+let windowsChecked: { at: number; value: WindowsProbeResult } | null = null;
+
+async function windowsProbe(driver: HelperCommand, probe: HelperCommand | { unavailable: string }): Promise<WindowsProbeResult> {
+  const good = windowsChecked?.value.screenshot && windowsChecked.value.state?.uia;
+  if (windowsChecked && Date.now() - windowsChecked.at < (good ? CHECK_MS : 60_000)) return windowsChecked.value;
+  const value = await probeWindows(driver, probe, windowsCuaDriverPin().version);
+  windowsChecked = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * Windows: ready when this is the owner's interactive session, UI Automation answers and a real screenshot is not
+ * black; `background` (elements without screenshots) when the session is interactive and UI Automation answers.
+ */
+export function windowsReadiness(result: WindowsProbeResult | null, unavailable: string | null, helper: string, ffmpeg: string | null): DesktopReadiness {
+  const agentScreen = { ready: false, version: null, reason: NO_AGENT_SCREEN_WINDOWS };
+  const base = { session: "windows" as const, consent: "remembered" as const, recorder: ffmpeg ? ("mp4" as const) : null, helper, agentScreen };
+  if (unavailable || !result) return { ...base, ready: false, background: false, reason: unavailable ?? "The Windows desktop driver was not checked." };
+  const { state } = result;
+  const problem = sessionProblem(state, false);
+  const primary = state?.monitors.find((monitor) => monitor.primary) ?? state?.monitors[0] ?? null;
+  const checks = { interactive: Boolean(state) && !problem, uia: state?.uia === true, screenshot: result.screenshot, scale: primary ? primary.dpi / 96 : null };
+  const shared = { ...base, checks };
+  if (problem) return { ...shared, ready: false, background: false, reason: problem };
+  // Without the probe the screenshot still proves the screen; desktop_status says what cannot be read then.
+  if (!state) return { ...shared, ready: result.screenshot, background: result.screenshot, ...(result.screenshot ? {} : { reason: `The Windows session probe did not answer (${result.probeError ?? "no answer"}), and the test screenshot failed${result.error ? ` (${result.error})` : ""}.` }) };
+  if (!state.uia) return { ...shared, ready: false, background: false, reason: `UI Automation does not answer in this session${state.uia_error ? ` (${state.uia_error.slice(0, 160)})` : ""}.` };
+  if (!result.screenshot) return { ...shared, ready: false, background: true, reason: state.uac ? "A User Account Control prompt is open: the screen cannot be seen until your owner answers it." : state.locked ? "The screen is locked: screenshots work once your owner unlocks it (elements still work)." : `A test screenshot failed${result.error ? ` (${result.error})` : ""}: elements still work.` };
+  return { ...shared, ready: true, background: true };
 }
 
 type AgentCheck = { gnome_shell: boolean; dbus_daemon: boolean; a11y_launcher: boolean; pipewire: boolean; headless: boolean; version: string | null };
@@ -222,10 +293,13 @@ export async function desktopReadiness(platform: string = process.platform, env:
     const socket = cuaDaemonSocket(env);
     return socket && (await socketAnswers(socket)) ? { ...readiness, note: CUA_DAEMON_NOTE } : readiness;
   }
-  if (platform !== "linux") {
-    const reason = platform === "win32" ? WINDOWS_UNSUPPORTED : UNSUPPORTED_HERE;
-    return { ready: false, session: "none", consent: "ask", recorder: null, helper, reason, agentScreen: { ready: false, version: null, reason } };
+  if (platform === "win32") {
+    const command = windowsCuaDriverCommand(env);
+    if ("unavailable" in command) return windowsReadiness(null, command.unavailable, helper, null);
+    const probe = windowsProbeCommand(env);
+    return windowsReadiness(await windowsProbe(command, probe), null, helper, windowsFfmpeg(env));
   }
+  if (platform !== "linux") return { ready: false, session: "none", consent: "ask", recorder: null, helper, reason: UNSUPPORTED_HERE, agentScreen: { ready: false, version: null, reason: UNSUPPORTED_HERE } };
   const session = sessionKind(env);
   const consent = existsSync(join(desktopDataDir(env), "portal-restore-token")) ? "remembered" : "ask";
   const libs = await libraries();
@@ -242,18 +316,15 @@ export async function desktopAvailability(): Promise<{ screenshot: boolean; vide
   const readiness = await desktopReadiness();
   if (!readiness.ready) return { screenshot: false, video: false, reason: readiness.reason };
   if (readiness.session === "macos") return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through Cua Driver with its Screen Recording permission.${readiness.recorder ? "" : " Video needs macOS 15 or later."}` };
+  if (readiness.session === "windows") return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through Cua Driver (Windows asks for no permission).${readiness.recorder ? "" : " Video needs ffmpeg (winget install Gyan.FFmpeg)."}` };
   const consent = readiness.consent === "remembered" ? "Allowed before: starts without asking." : "Asks the owner at the computer the first time.";
   return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through the desktop portal (${readiness.session}). ${consent}${readiness.recorder ? "" : " No video encoder works here."}` };
 }
 
 let lastKnown: DesktopReadiness | null = null;
 
-/**
- * `capabilities.desktop` and `capabilities.desktopReadiness`, for this computer's heartbeat, on Linux and
- * macOS; on Windows only the readiness, which says desktop control is not available there.
- */
+/** `capabilities.desktop` and `capabilities.desktopReadiness`, for this computer's heartbeat, on Linux, macOS and Windows. */
 export async function desktopCapabilities(timeoutMs = 5_000): Promise<Record<string, unknown>> {
-  if (process.platform === "win32") return { desktopReadiness: { ready: false, session: "none", reason: WINDOWS_UNSUPPORTED, agentScreen: { ready: false, version: null, reason: WINDOWS_UNSUPPORTED } } };
   if (!desktopSystem()) return {};
   const check = desktopReadiness().then((value) => (lastKnown = value)).catch(() => lastKnown);
   const readiness = await Promise.race([check, new Promise<DesktopReadiness | null>((resolve) => setTimeout(() => resolve(lastKnown), timeoutMs).unref())]);
@@ -269,6 +340,7 @@ export async function desktopCapabilities(timeoutMs = 5_000): Promise<Record<str
           ...(readiness.permissions ? { permissions: readiness.permissions } : {}),
           ...(readiness.background !== undefined ? { background: readiness.background } : {}),
           ...(readiness.note ? { note: readiness.note.slice(0, 300) } : {}),
+          ...(readiness.checks ? { checks: readiness.checks } : {}),
           agentScreen: { ready: readiness.agentScreen.ready, version: readiness.agentScreen.version, ...(readiness.agentScreen.reason ? { reason: readiness.agentScreen.reason.slice(0, 300) } : {}) },
         }
       : null,
