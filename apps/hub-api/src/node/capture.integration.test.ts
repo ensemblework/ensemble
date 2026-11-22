@@ -61,7 +61,8 @@ after(async () => {
 
 type Call = { name: string; arguments: Record<string, unknown> };
 type Seen = { transcript: string; tools: string[] };
-let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string } = () => ({ text: "ok" });
+/** `hold`: the turn waits there, after its tool calls and before its reply, until it settles. */
+let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string; hold?: Promise<void> } = () => ({ text: "ok" });
 const seen: Seen[] = [];
 
 setAskRuntimeStreamForTests(async (args) => {
@@ -72,6 +73,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { transcript, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
   const step = script(current);
+  if (second && step.hold) await step.hold;
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
@@ -285,17 +287,77 @@ test("a capture the computer holds waits for its owner's preview: previewed from
     const other = await person("Ravi");
     assert.equal((await other.inject({ method: "GET", url: `/api/node/evidence/${held.id}` })).statusCode, 404);
 
-    // Approving releases it: uploaded, usable, and the node hears it may show it now.
-    script = (turn) => (turn.transcript.includes("previewed and released") ? { calls: [{ name: "node_show", arguments: { evidence: [held.id] } }], then: "Here it is." } : { text: "ok" });
+    // Sending it releases it (uploaded, usable) and posts it: the turn that took it has ended, so it comes on
+    // its own, and no turn starts for it.
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    const asked = seen.length;
     const approved = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
     assert.equal(approved.statusCode, 200, approved.body);
     const released = await h.prisma.jobEvidence.findUniqueOrThrow({ where: { id: held.id } });
     assert.deepEqual([released.held, released.local, released.holdReason], [false, false, null]);
     assert.equal(computer.db.evidence.find((row) => row.id === held.id)!.held, false, "released on the computer too");
     assert.equal((await mira.inject({ method: "GET", url: `/api/node/evidence/${held.id}` })).headers["cache-control"], "private, no-cache");
-    await until(async () => (await messages(mira, room.id)).some((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id)), "the node to show the released capture");
+    await settleTurns();
+    const shown = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.deepEqual(shown.map((row) => [row.body, row.kind]), [["", "text"]], "posted once, by the release itself");
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns, "no turn for it");
+    assert.equal(seen.length, asked, "the model was not asked anything");
+    assert.ok(!(await messages(mira, room.id)).some((row) => row.body.includes("(no reply)")));
     const settled = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
     assert.equal(settled.data.status, "released");
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a held capture sent while the turn that took it still runs comes with that turn's reply, and nothing else runs", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    let finish!: () => void;
+    const hold = new Promise<void>((resolve) => (finish = resolve));
+    script = (turn) => (turn.transcript.includes("screenshot the page") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Here is the sign-up page.", hold } : { text: "ok" });
+    const sent = await mira.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "test the sign-up page: screenshot the page" } });
+    assert.equal(sent.statusCode, 201, sent.body);
+    let card: Row | undefined;
+    for (let tries = 0; tries < 400 && !card; tries += 1) {
+      card = (await messages(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "media_preview");
+      if (!card) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(card, "the preview card while the turn still runs");
+    const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
+    const approved = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+    assert.equal(approved.statusCode, 200, approved.body);
+    const showing = async () => (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.deepEqual(await showing(), [], "not on its own: the running turn shows it");
+    finish();
+    await settleTurns();
+    assert.deepEqual((await showing()).map((row) => row.body), ["Here is the sign-up page."], "with the turn's own reply, once");
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 0);
+    assert.ok(!seen.some((turn) => /released/.test(turn.transcript)), "no turn was told about it");
+    assert.ok(!(await messages(mira, room.id)).some((row) => row.body.includes("(no reply)")));
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a node's held capture released on its own is posted too, once its card settles", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    script = (turn) => (turn.transcript.includes("screenshot the page") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Taken." } : { text: "ok" });
+    await say(mira, room.id, "test the sign-up page: screenshot the page");
+    const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
+    const one = await mira.inject({ method: "POST", url: `/api/node/evidence/${held.id}/release`, payload: { decision: "approve" } });
+    assert.equal(one.statusCode, 200, one.body);
+    await settleTurns();
+    const shown = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.equal(shown.length, 1);
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 0);
   } finally {
     computer.stop();
   }

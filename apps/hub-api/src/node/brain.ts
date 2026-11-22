@@ -15,6 +15,7 @@ import { ownCallTrace, runAssistantTurn, type AssistantTurnResult, type ClaimSta
 import { getTool } from "../assistant/registry.js";
 import { pauseQuestion } from "../assistant/runaway.js";
 import { env } from "../config.js";
+import { takeReleasedForTurn } from "../evidence/held.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
 import { loadSettings } from "../lib/settings.js";
@@ -35,7 +36,7 @@ import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
-import { missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
+import { MAX_MEDIA, missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
 import { chooseTiers } from "./skills.js";
@@ -953,9 +954,13 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   if (ownerReads && turn.planId && !turn.planStep && leadPlan?.kind !== "replan" && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
-  const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
   // An answer the owner agreed to share reaches the room only as their draft (node/audience.ts).
   const drafted = text && text !== NO_REPLY && !opensPlan ? await draftDisclosure(app, { turn, node, room, text, lineage }) : false;
+  // Held captures of this turn its owner sent while it ran come with its reply (evidence/held.ts).
+  if (ownerReads && !drafted) {
+    for (const item of await takeReleasedForTurn(prisma, { ownerId: owner, nodeId: node.id, turnId: turn.id, roomId: room.id, limit: MAX_MEDIA - media.length })) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
+  }
+  const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
   if (mediaData.media && !drafted) trace.delivered(mediaData.media);
   if (text && text !== NO_REPLY && !opensPlan && !drafted) {
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only

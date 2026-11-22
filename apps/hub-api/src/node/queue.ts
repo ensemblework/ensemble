@@ -20,6 +20,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
+import { deliverAfterTurn } from "../evidence/held.js";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn, type TurnOutcome } from "./brain.js";
 import type { Mention } from "./mentions.js";
@@ -510,7 +511,7 @@ function schedule(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "
 
 async function execute(app: FastifyInstance, turnId: string): Promise<void> {
   const prisma = app.prisma;
-  const head = await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { lane: true, nodeId: true, planId: true, planStep: true, snapshotSeq: true, triggerMessageId: true } });
+  const head = await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { lane: true, nodeId: true, roomId: true, planId: true, planStep: true, snapshotSeq: true, triggerMessageId: true } });
   if (!head) return;
   const work = isWorkLane(head.lane) || Boolean(head.planStep);
   const pool = work ? workPool : talkPool;
@@ -566,6 +567,8 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
     slot.give();
+    // Held captures its owner sent while it ran, which its reply did not show (evidence/held.ts).
+    if (head.roomId) await deliverAfterTurn(app, { id: turnId, nodeId: head.nodeId, roomId: head.roomId }).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not show released captures"));
     // An independent answer: once the round has none left to run, its answers are brought together (node/groups.ts).
     if (head.snapshotSeq !== null) await roundTurnEnded(app, head).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not check an independent round"));
   }

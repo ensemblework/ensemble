@@ -7,7 +7,9 @@
  * - **Preview.** Only the owner opens it: the file comes from the computer on request (`evidence.request`,
  *   action `preview`) and is kept in Redis for five minutes, never in the database or the blob store.
  * - **Release.** The owner's approve: the computer uploads it as any other evidence (`release`); then
- *   `node_show` and a plan's report can show it.
+ *   `node_show` and a plan's report can show it. A node's own capture is shown without a turn of its
+ *   own: with the reply of the turn that took it while that turn still runs, else posted at once
+ *   (`deliverReleased`).
  * - **Discard.** The computer deletes it, and the web forgets it.
  *
  * Each held capture is announced by one owner-only approval card where its work is followed
@@ -20,7 +22,9 @@ import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { CodeAnswer } from "../remote/contract.js";
-import { postMessage, updateMessageData } from "../node/store.js";
+import { MAX_MEDIA, ownerMedia, type Media } from "../node/media.js";
+import { postMessage, roomPeople, updateMessageData, updateMessageDataIf } from "../node/store.js";
+import { postingTurn } from "../node/turn-context.js";
 import { dropPreview, grantUpload, PREVIEW_MAX_BYTES, previewOf } from "./grants.js";
 import { cardsOf, discardEvidence, refreshRunCard, type CardEvidence } from "./store.js";
 
@@ -126,7 +130,20 @@ export async function settleHeld(app: App, accountId: string, ids: readonly stri
 
 const CARD_TYPE = "media_preview";
 
-type PreviewCardData = { type: typeof CARD_TYPE; status: string; evidence: CardEvidence[]; jobId?: string | null; operation?: string | null; nodeCapture?: boolean };
+type PreviewCardData = {
+  type: typeof CARD_TYPE;
+  status: string;
+  evidence: CardEvidence[];
+  jobId?: string | null;
+  operation?: string | null;
+  nodeCapture?: boolean;
+  private?: boolean;
+  /** The node's turn that put the latest files on it. */
+  turnId?: string;
+  /** A node capture's released files: `pending` until they are shown in the conversation, then `posted`. */
+  delivery?: "pending" | "posted";
+  result?: { released?: string[]; discarded?: string[] };
+};
 
 /**
  * Pending preview cards that name these files. Each file's answer is kept on its card as it is given
@@ -157,8 +174,74 @@ async function settleCards(app: App, accountId: string, settled: Settled): Promi
     }
     const released = now.evidence.filter((item) => answers[item.id] === "released").map((item) => item.id);
     const discarded = now.evidence.filter((item) => answers[item.id] === "discarded").map((item) => item.id);
-    await updateMessageData(app.prisma, fresh, { status: released.length ? "released" : "discarded", result: { released, discarded } });
+    const deliver = released.length > 0 && now.nodeCapture === true;
+    const updated = await updateMessageData(app.prisma, fresh, { status: released.length ? "released" : "discarded", result: { released, discarded }, ...(deliver ? { delivery: "pending" } : {}) });
+    if (deliver) await deliverReleased(app, updated);
   }
+}
+
+const delivering = (turnId?: string) => ({
+  kind: "approval",
+  AND: [{ data: { path: ["type"], equals: CARD_TYPE } }, { data: { path: ["delivery"], equals: "pending" } }, ...(turnId ? [{ data: { path: ["turnId"], equals: turnId } }] : [])],
+});
+
+const releasedOf = (card: NodeMessage) => (card.data as PreviewCardData).result?.released ?? [];
+
+/** Takes a card's released files for one showing: null when they were taken already. */
+function claimDelivery(prisma: App["prisma"], card: NodeMessage): Promise<NodeMessage | null> {
+  return updateMessageDataIf(prisma, card, { data: { path: ["delivery"], equals: "pending" } }, { delivery: "posted" });
+}
+
+/** A card's released files, posted by its node on their own, where only the owner reads (as a node's reply shows files). */
+async function postReleased(prisma: App["prisma"], card: NodeMessage): Promise<void> {
+  const claimed = await claimDelivery(prisma, card);
+  if (!claimed) return;
+  const { media } = await ownerMedia(prisma, card.userId, releasedOf(claimed));
+  if (!media.length) return;
+  const others = (await roomPeople(prisma, card.roomId)).some((id) => id !== card.userId);
+  await postMessage(prisma, {
+    roomId: card.roomId,
+    userId: card.userId,
+    authorKind: "node",
+    authorNodeId: card.authorNodeId,
+    body: "",
+    data: { media },
+    visibleTo: others || (card.data as PreviewCardData).private ? [card.userId] : [],
+    rootMessageId: card.rootMessageId,
+  });
+}
+
+/**
+ * A node capture its owner released reaches the conversation without a turn of its own: the turn that
+ * took it, while it still runs, shows it with its reply (`takeReleasedForTurn`, and `deliverAfterTurn`
+ * once it ends); otherwise it is posted now. Whoever comes first shows it, once.
+ */
+export async function deliverReleased(app: Pick<App, "prisma">, card: NodeMessage): Promise<void> {
+  const data = card.data as PreviewCardData;
+  if (data.delivery !== "pending") return;
+  if (data.turnId) {
+    const turn = await app.prisma.nodeTurn.findUnique({ where: { id: data.turnId }, select: { status: true } });
+    if (turn && (turn.status === "queued" || turn.status === "running")) return;
+  }
+  await postReleased(app.prisma, card);
+}
+
+/** The released captures of this turn not shown yet, for its reply, up to `limit` files: each card is taken whole. Its cards are in its room. */
+export async function takeReleasedForTurn(prisma: App["prisma"], input: { ownerId: string; nodeId: string; turnId: string; roomId: string; limit?: number }): Promise<Media[]> {
+  const cards = await prisma.nodeMessage.findMany({ where: { roomId: input.roomId, userId: input.ownerId, authorNodeId: input.nodeId, ...delivering(input.turnId) }, orderBy: { seq: "asc" }, take: 20 });
+  const out: Media[] = [];
+  for (const card of cards) {
+    if (releasedOf(card).length > (input.limit ?? MAX_MEDIA) - out.length) continue;
+    if (!(await claimDelivery(prisma, card))) continue;
+    out.push(...(await ownerMedia(prisma, input.ownerId, releasedOf(card))).media);
+  }
+  return out;
+}
+
+/** After a turn ends: released captures of it that its reply did not take are posted on their own. */
+export async function deliverAfterTurn(app: Pick<App, "prisma">, turn: { id: string; nodeId: string; roomId: string }): Promise<void> {
+  const cards = await app.prisma.nodeMessage.findMany({ where: { roomId: turn.roomId, authorNodeId: turn.nodeId, ...delivering(turn.id) }, take: 20 });
+  for (const card of cards) await postReleased(app.prisma, card);
 }
 
 export type PreviewCardInput = {
@@ -196,7 +279,9 @@ export async function postPreviewCard(app: App, input: PreviewCardInput): Promis
   if (same) {
     const data = same.data as PreviewCardData;
     const evidence = [...data.evidence, ...cards.filter((item) => !data.evidence.some((known) => known.id === item.id))];
-    return updateMessageData(prisma, same, { evidence }, body(evidence));
+    // A new card names the turn posting it (node/store.ts); a later turn that adds files takes it over.
+    const turnId = postingTurn(input.nodeId)?.turnId;
+    return updateMessageData(prisma, same, { evidence, ...(turnId ? { turnId } : {}) }, body(evidence));
   }
   const { message } = await postMessage(prisma, {
     roomId: input.roomId,
