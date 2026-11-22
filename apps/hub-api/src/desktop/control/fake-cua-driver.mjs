@@ -230,7 +230,7 @@ const tools = {
   },
   move_cursor: () => ok(action("unverifiable", { route: "global_input", mode: "foreground" })),
   launch_app: (args) => {
-    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
+    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.aumid ? item.launch_path === `shell:appsFolder\\${args.aumid}` : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
     if (!app) return failed(`App not installed: ${args.bundle_id ?? args.name}`, { error: "APP_NOT_INSTALLED", suggestions: [] });
     app.running = true;
     const windows = world.windows.filter((win) => win.pid === app.pid);
@@ -259,7 +259,7 @@ const tools = {
 
 async function callTool(name, args) {
   const live = read();
-  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args })}\n`);
+  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args, at: Date.now() })}\n`);
   const schema = SCHEMAS[name];
   if (!schema || !tools[name]) return failed(`Unknown tool: ${name}`);
   const unknown = Object.keys(args).filter((key) => !(key in schema));

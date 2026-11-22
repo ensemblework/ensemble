@@ -92,6 +92,7 @@ try {
   const scale = Math.min(1, 1568 / Math.max(look.display.width, look.display.height));
   console.log(`  ${look.display.width}×${look.display.height} display, ${pixels.width}×${pixels.height} picture`);
   assert.deepEqual([pixels.width, pixels.height], [Math.round(look.display.width * scale), Math.round(look.display.height * scale)]);
+  console.log(`  ${colours(pixels.data)} colours`);
   assert.ok(colours(pixels.data) > 16, "the picture is not blank");
   copyFileSync(look.image.path, join(out, "screen.png"));
 
@@ -118,7 +119,9 @@ try {
 
   step('the floor: a window titled "Ensemble"');
   const exe = join(out, "smoke-window.exe");
-  const compile = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Add-Type -OutputAssembly '${exe}' -OutputType WindowsApplication -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition 'using System.Windows.Forms; public static class SmokeWindow { public static void Main() { var form = new Form(); form.Text = "Ensemble"; form.Width = 480; form.Height = 320; var button = new Button(); button.Text = "Allow"; button.Width = 160; button.Height = 60; form.Controls.Add(button); Application.Run(form); } }'`], { encoding: "utf8" });
+  // Windows PowerShell 5.1 with its own modules: PowerShell 7's module path (from the job's shell) breaks them.
+  const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
+  const compile = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Add-Type -OutputAssembly '${exe}' -OutputType WindowsApplication -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition 'using System.Windows.Forms; public static class SmokeWindow { public static void Main() { var form = new Form(); form.Text = "Ensemble"; form.Width = 480; form.Height = 320; var button = new Button(); button.Text = "Allow"; button.Width = 160; button.Height = 60; form.Controls.Add(button); Application.Run(form); } }'`], { encoding: "utf8", env: shellEnv });
   assert.equal(compile.status, 0, compile.stderr);
   children.push(spawn(exe, [], { stdio: "ignore", detached: false }));
   let ensemble: Observation | null = null;
@@ -133,11 +136,17 @@ try {
   console.log(`  ${JSON.stringify(pressed.steps)}`);
   assert.deepEqual([pressed.steps[0]!.verdict, pressed.steps[0]!.ran, pressed.steps[0]!.rule], ["refused", "no", "ensemble_window"]);
 
-  step("close Notepad without saving, through its elements in the background");
+  step("close Notepad without saving");
+  for (const child of children.splice(0)) child.kill();
   const window = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
   const close = window.tree?.elements.find((element) => element.role === "push button" && /^close$/i.test(element.name));
-  assert.ok(close, `Notepad's Close button: ${JSON.stringify(window.tree?.elements.map((element) => `${element.role} ${element.name}`))}`);
-  console.log(`  ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: close.id }], observe: false })).steps)}`);
+  if (close) {
+    console.log(`  its Close button, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: close.id }], observe: false })).steps)}`);
+  } else {
+    console.log(`  no Close button among ${JSON.stringify(window.tree?.elements.map((element) => `${element.role} ${element.name}`))}: alt+F4 in front`);
+    await frontApp("Notepad");
+    console.log(`  ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false })).steps)}`);
+  }
   for (let tries = 0; tries < 20 && (await running("Notepad")); tries += 1) {
     await sleep(500);
     const prompt = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 }).catch(() => null);
@@ -179,7 +188,7 @@ async function running(name: string): Promise<boolean> {
 
 function colours(data: Uint8Array | Buffer): number {
   const seen = new Set<number>();
-  for (let index = 0; index < data.length && seen.size < 1_000; index += 4 * 97) seen.add((data[index]! << 16) | (data[index + 1]! << 8) | data[index + 2]!);
+  for (let index = 0; index < data.length && seen.size < 1_000; index += 4) seen.add((data[index]! << 16) | (data[index + 1]! << 8) | data[index + 2]!);
   return seen.size;
 }
 

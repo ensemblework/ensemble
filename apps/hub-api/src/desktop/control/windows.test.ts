@@ -236,7 +236,9 @@ test("background: elements through UI Automation without the owner's pointer or 
   const opened = await h.service.open(quiet, { app: "Paint", waitSec: 1 });
   assert.deepEqual([opened.focused, opened.via], [false, "background"]);
   assert.deepEqual(asked, [], "opening behind the owner's windows asks nothing");
-  assert.ok(h.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "shell:appsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App"));
+  assert.ok(h.calls().some((call) => call.tool === "launch_app" && call.args.aumid === "Microsoft.Paint_8wekyb3d8bbwe!App"), "a packaged app by its AppUserModelID");
+  await h.service.open(quiet, { app: "Notepad", waitSec: 1 });
+  assert.ok(h.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "C:\\Windows\\System32\\notepad.exe"), "a desktop app by its launch path");
   assert.ok(!h.calls().some((call) => call.tool === "bring_to_front"));
 });
 
@@ -347,6 +349,14 @@ test("typing goes in chunks that stop when the window on top changes or the owne
   assert.equal(second.steps[0]!.verdict, "partial");
   assert.match(second.steps[0]!.detail!, /Typing stopped after 8 of 42 characters: your owner used the keyboard or mouse/);
   assert.equal(touched.service.lease.holder, "owner");
+
+  // Windows counts the driver's own keys as input: the app it typed into is read at once, not waited on as the owner's.
+  const own = pc({ probe: { typingIsInput: true } });
+  await own.service.act(caller(), { foreground: true, steps: [{ action: "type", text: "Ensemble" }] });
+  const started = Date.now();
+  const read = await own.service.observe(caller(), { app: "Notepad", screenshot: false });
+  assert.equal(read.tree!.elements.find((element) => element.id === "e1")!.value, "Ensemble");
+  assert.ok(Date.now() - started < 3_000, `read in ${Date.now() - started} ms`);
 
   // User Account Control taking the secure desktop between chunks stops it too.
   const uac = pc();

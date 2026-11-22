@@ -323,6 +323,9 @@ export class WindowsCuaDriver extends CuaAdapter {
   }
 
   protected launchArgs(found: RunningApp | null, ref: string): Record<string, unknown> {
+    // A packaged app starts through its AppUserModelID, so the answer names its own process (not a launcher's).
+    const aumid = /^shell:appsfolder\\(.+!.+)$/i.exec(found?.launchPath ?? "")?.[1];
+    if (aumid && this.mcp.takes("launch_app", "aumid")) return { aumid };
     if (found?.launchPath && this.mcp.takes("launch_app", "launch_path")) return { launch_path: found.launchPath };
     if (found?.bundle && found.bundle.includes("!")) return { bundle_id: found.bundle };
     const path = found?.launchPath ?? ref;

@@ -601,8 +601,10 @@ export class DesktopService {
     if (this.screenName === "agent") return false;
     const waitMs = Math.min(this.options.ownerWaitMs ?? 15_000, Math.max(0, deadline.remaining() - 8_000));
     let idle = idleMs;
+    // Input that is the agent's own (its typing, its clicks) is not the owner using the app.
+    const agentsOwn = (ms: number) => this.lease.lastAgentInputAt !== null && ms >= this.now() - this.lease.lastAgentInputAt - OWNER_INPUT_MARGIN_MS;
     for (let waited = 0; ; waited += 1_000) {
-      if (idle === null || idle >= LEASE_IDLE_MS) return waited > 0;
+      if (idle === null || idle >= LEASE_IDLE_MS || agentsOwn(idle)) return waited > 0;
       const focus = await this.call<FocusInfo>("a11y.focus", { text: false, documents: false }, deadline, { maxMs: 5_000 });
       const inFront = focus.app !== null && (focus.app.pid === app.pid || focus.app.name === app.name);
       if (!inFront) return waited > 0;
