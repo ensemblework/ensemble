@@ -552,7 +552,7 @@ test("a check's baseline: the package script it runs and that script's files, a 
   writeFileSync(join(root, "test_new.js"), "");
   assert.equal((await checkChanges(later)).changed.size, 0);
 
-  assert.equal(checkFilesNote([{ command: "node accept.js" }]), "Do not edit accept.js: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
+  assert.equal(checkFilesNote([{ command: "node accept.js" }]), "Do not edit accept.js or reset what the check keeps between runs: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
   assert.equal(checkFilesNote([{ command: "git status" }]), null);
 });
 

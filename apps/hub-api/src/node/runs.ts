@@ -90,7 +90,7 @@ function checksNote(completion: Completion | null, verified: Verified | null, ta
   return [
     `Ensemble ran its checks again: ${runs.join("; ")}.`,
     ownersDone ? `Its owner marked the task done; it stays done, though its checks ${verified === "failed" ? "failed" : "could not be confirmed"}. Say so${verified === "failed" ? ", with the failure" : ""}.` : "",
-    !ownersDone && verified === "failed" ? "The task was not marked done: its checks failed. Say so, with the failure, and fix it or say what is next." : "",
+    !ownersDone && verified === "failed" ? "The task was not marked done: its checks failed. Say so, with the failure, then fix the work or say what is next: never change the check, its files or what it keeps between runs (a marker or log it writes) to get a pass." : "",
     !ownersDone && verified === "not_verified" ? "The task was not marked done: it is finished, not verified, until its checks are confirmed. Say so; never call it done." : "",
   ].filter(Boolean).join("\n");
 }

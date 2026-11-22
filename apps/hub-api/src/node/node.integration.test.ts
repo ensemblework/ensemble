@@ -565,7 +565,7 @@ test("a message sending a session back to a task with an acceptance check tells 
   script = () => ({ calls: [{ name: "node_session_send", arguments: { session: first.id, prompt: "Ensemble's rerun of node accept.js failed. Fix what is needed so it passes on rerun.", delivery: "queue", title: "Fix the rerun", taskId: task.id } }], then: "Sent back." });
   await say(mira, room.id, "it failed on rerun, fix it");
   const repair = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, id: { not: first.id } } });
-  assert.match(repair.instructions, /^Ensemble's rerun of node accept\.js failed\. Fix what is needed so it passes on rerun\.\n\nDo not edit accept\.js: `node accept\.js` is this task's acceptance check, and a check the work changed does not count\. Fix the work, not the check\.$/);
+  assert.match(repair.instructions, /^Ensemble's rerun of node accept\.js failed\. Fix what is needed so it passes on rerun\.\n\nDo not edit accept\.js or reset what the check keeps between runs: `node accept\.js` is this task's acceptance check, and a check the work changed does not count\. Fix the work, not the check\.$/);
 });
 
 test("a node queues, steers, replaces and stops work in its own session, and the computer gets only the change when steered", async () => {

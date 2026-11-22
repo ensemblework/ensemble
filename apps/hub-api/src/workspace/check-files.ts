@@ -208,7 +208,8 @@ export async function earlierBaseline(db: Pick<PrismaClient, "workspaceJob" | "w
 
 /**
  * The line a message to a coding session gets when its task's acceptance checks run files or scripts:
- * not to edit them, since a check the work changed does not count. Null when they run none.
+ * not to edit them or reset what the checks keep between runs, since a check the work changed does not
+ * count. Null when they run none.
  */
 export function checkFilesNote(acceptance: readonly Pick<AcceptanceCheck, "command">[]): string | null {
   const names = new Set<string>();
@@ -225,5 +226,5 @@ export function checkFilesNote(acceptance: readonly Pick<AcceptanceCheck, "comma
   const list = [...names];
   const named = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} or ${list.at(-1)}`;
   const one = commands.length === 1;
-  return `Do not edit ${named}: ${commands.join(", ")} ${one ? "is this task's acceptance check" : "are this task's acceptance checks"}, and a check the work changed does not count. Fix the work, not the check.`;
+  return `Do not edit ${named} or reset what ${one ? "the check keeps" : "the checks keep"} between runs: ${commands.join(", ")} ${one ? "is this task's acceptance check" : "are this task's acceptance checks"}, and a check the work changed does not count. Fix the work, not the check.`;
 }
