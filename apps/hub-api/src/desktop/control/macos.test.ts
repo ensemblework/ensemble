@@ -69,7 +69,7 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
   const log = join(dir, "calls.log");
   writeFileSync(state, JSON.stringify({ ...structuredClone(MAC), ...options.world }));
   const set = (patch: Record<string, unknown>) => writeFileSync(state, JSON.stringify({ ...JSON.parse(readFileSync(state, "utf8")), ...patch }));
-  const calls = (): Array<{ tool: string; args: Record<string, unknown> }> =>
+  const calls = (): Array<{ tool: string; args: Record<string, unknown>; screen?: { x: number; y: number } }> =>
     existsSync(log)
       ? readFileSync(log, "utf8")
           .split("\n")
@@ -347,8 +347,9 @@ test("foreground: the owner's pointer and keyboard go to screen pixels, a click 
   const click = h.calls().find((call) => call.tool === "click")!;
   assert.deepEqual([click.args.scope, click.args.delivery_mode, click.args.button, click.args.count], ["desktop", "foreground", "left", 1]);
   const moved = h.calls().find((call) => call.tool === "move_cursor")!;
-  assert.deepEqual([moved.args.scope, moved.args.delivery_mode, moved.args.x], ["desktop", "foreground", click.args.x], "the pointer goes there first");
-  assert.ok(Math.abs(Number(click.args.x) - (300.5 * 2560) / 1568) < 0.01 && Math.abs(Number(click.args.y) - (300.5 * 1600) / 980) < 0.01, "native screen pixels");
+  assert.deepEqual([moved.args.scope, moved.args.delivery_mode], ["desktop", "foreground"]);
+  assert.ok(Math.abs(moved.screen!.x - click.screen!.x) < 0.001 && Math.abs(moved.screen!.y - click.screen!.y) < 0.001, "the pointer goes there first");
+  assert.ok(Math.abs(click.screen!.x - (300.5 * 2560) / 1568) < 0.01 && Math.abs(click.screen!.y - (300.5 * 1600) / 980) < 0.01, "native screen pixels");
   const second = await h.service.observe(caller(), {});
   const own = await h.service.act(caller(), { captureId: second.captureId, foreground: true, steps: [{ action: "click", x: 1300, y: 400 }] });
   assert.deepEqual([own.steps[0]!.verdict, own.steps[0]!.rule], ["refused", "ensemble_window"]);

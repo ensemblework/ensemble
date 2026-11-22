@@ -2,8 +2,9 @@
 // A stand-in for the Windows session probe (desktop-helper/windows/probe.ps1) in tests: the helper protocol over
 // stdin and stdout (hello, idle, state, notify). FAKE_PROBE_STATE names a JSON file with the session, read on every
 // call: `idle_ms`, `input_desktop`, `uac`, `session`, `uia`, `monitors`; `afterTypes` ({count, ms}) is input of the
-// owner's once FAKE_CUA_LOG holds that many type_text calls; with `typingIsInput` the driver's own typing counts as
-// input, as Windows counts SendInput (idle time from its last type_text). FAKE_PROBE_LOG gets one JSON line per call.
+// owner's once FAKE_CUA_LOG holds that many type_text calls; with `typingIsInput` the driver's own input counts as
+// input, as Windows counts SendInput (idle time from its last type_text, or bring_to_front with its no-name key).
+// FAKE_PROBE_LOG gets one JSON line per call.
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -20,7 +21,7 @@ const read = () => ({
   monitors: [{ x: 0, y: 0, width: 2880, height: 1800, primary: true, dpi: 144 }],
   ...(STATE && existsSync(STATE) ? JSON.parse(readFileSync(STATE, "utf8")) : {}),
 });
-const typing = () => (CUA_LOG && existsSync(CUA_LOG) ? readFileSync(CUA_LOG, "utf8").split("\n").filter((line) => line.includes('"tool":"type_text"')).map((line) => JSON.parse(line).at) : []);
+const typing = () => (CUA_LOG && existsSync(CUA_LOG) ? readFileSync(CUA_LOG, "utf8").split("\n").filter((line) => line.includes('"tool":"type_text"') || line.includes('"tool":"bring_to_front"')).map((line) => JSON.parse(line).at) : []);
 
 function idle() {
   const live = read();

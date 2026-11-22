@@ -210,6 +210,10 @@ const tools = {
     if (!args.element_token && args.scope !== "desktop") return failed("type_text needs a pid, an element_token or scope desktop.", { code: "invalid_arguments" });
     typed += 1;
     if (WINDOWS) {
+      // A classic text box (`keysOnly`) of a window that never had the focus: the keys posted to it go nowhere.
+      if (args.element_token && element(args.element_token).item.keysOnly) {
+        return ok({ delivery: { mode: "background" }, effect: "unverifiable", escalation: { reason: "delivery_failed", target: "foreground" }, route: "synthetic_events" }, `📨 Sent ${args.text.length} char(s) via PostMessage, but the focused field's value did not contain the requested text after dispatch: delivery was incomplete or dropped. Retry with delivery_mode:"foreground".`);
+      }
       // A token's text goes to the end of the element's value; without one, to the element that has the keyboard.
       const focused = live.focused ?? world.focused;
       const target = args.element_token ? element(args.element_token).item : focused ? (world.elements[String(focused.window)] ?? []).find((item) => item.element_index === focused.index) : null;
@@ -270,14 +274,28 @@ const tools = {
 
 async function callTool(name, args) {
   const live = read();
-  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args, at: Date.now() })}\n`);
+  const screen = shrunkBack(args);
+  if (LOG) appendFileSync(LOG, `${JSON.stringify({ tool: name, args, at: Date.now(), ...(screen ? { screen } : {}) })}\n`);
   const schema = SCHEMAS[name];
   if (!schema || !tools[name]) return failed(`Unknown tool: ${name}`);
   const unknown = Object.keys(args).filter((key) => !(key in schema));
   if (unknown.length) return failed(`${name}: unknown argument ${unknown.join(", ")}`, { code: "invalid_arguments" });
   if (live.slow?.[name]) await sleep(live.slow[name]);
   if (live.failAfterTypes && typed >= live.failAfterTypes.count && name === live.failAfterTypes.tool) return failed(`${name} failed: WindowServer did not answer`, { code: "internal_error" });
-  return refusal(name, live) ?? tools[name](args, live);
+  const answer = refusal(name, live) ?? (await tools[name](args, live));
+  if (name === "get_desktop_state" && !answer.isError) {
+    const facts = answer.structuredContent ?? {};
+    shrunk = facts.screenshot_original_width ? { x: facts.screenshot_original_width / facts.screenshot_width, y: facts.screenshot_original_height / facts.screenshot_height } : null;
+  }
+  return answer;
+}
+
+// Like cua-driver's core: after a smaller `get_desktop_state` picture, a desktop action's x and y are read as that
+// picture's pixels and multiplied back to the screen's. The log line says where on the screen it lands.
+let shrunk = null;
+function shrunkBack(args) {
+  if (args.scope !== "desktop" || args.capture_id !== undefined || typeof args.x !== "number") return null;
+  return shrunk ? { x: args.x * shrunk.x, y: args.y * shrunk.y } : { x: args.x, y: args.y };
 }
 
 /** Output that is not an MCP message: JSON that is no object, a 10 MB line and bytes that are not UTF-8. */

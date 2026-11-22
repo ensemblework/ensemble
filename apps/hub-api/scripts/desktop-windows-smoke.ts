@@ -1,12 +1,14 @@
 /**
  * Desktop control on a real Windows desktop (.github/workflows/desktop-windows-smoke.yml): DesktopService on the
  * Windows driver with the pinned cua-driver.exe (in ENSEMBLE_CUA_DRIVER_DIR) and the session probe, on the
- * runner's interactive desktop. It checks readiness, opens Notepad behind the other windows, adds text to it there
- * through UI Automation, then brings it to the front (the owner's screen is asked for once), clicks into its text and goes to its end,
+ * runner's interactive desktop. It checks readiness, opens Notepad behind the other windows, types into its text
+ * there through UI Automation (a packaged Notepad takes it; a classic one's text box drops it, and the step must say
+ * so), brings it to the front (the owner's screen is asked for once; Windows' foreground lock may keep it behind, and
+ * the step must say so), clicks into its text by its place on a screenshot and goes to its end,
  * types "Ensemble 0.9.1 on Windows" in chunks and reads it back through UI Automation, takes a
  * screenshot (not blank, the main display's size) and keeps it in `--out`, presses keys, records a few seconds
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
- * titled "Ensemble", and closes Notepad without saving through its elements, in the background. Every action
+ * titled "Ensemble", and closes Notepad without saving (alt+F4, then "Don't save" by its element). Every action
  * cua-driver is asked for is logged with its answer (and any call slower than 3 s), and a failed check lets the
  * rest run, so one run shows every step that fails; the run fails at the end.
  *
@@ -102,13 +104,22 @@ try {
   assert.equal(behind.steps[0]!.ran, "yes");
   const added = await notepadText();
   console.log(`  ${JSON.stringify(added)}`);
-  expect(added.includes(BEHIND), `typed in the background, Notepad holds ${JSON.stringify(added)} (${behind.steps[0]!.verdict}: ${behind.steps[0]!.detail ?? ""})`);
+  // A packaged Notepad takes it through UI Automation; a classic text box of a window that never had the focus drops
+  // keys sent to it, and the step says so instead of claiming it.
+  const honest = behind.steps[0]!.verdict === "confirmed" ? added.includes(BEHIND) : behind.steps[0]!.verdict === "no_effect" && !added.includes(BEHIND);
+  expect(honest, `typed in the background (${behind.steps[0]!.verdict}: ${behind.steps[0]!.detail ?? ""}), Notepad holds ${JSON.stringify(added)}`);
+  if (behind.steps[0]!.verdict !== "confirmed") {
+    const set = await service.act(caller, { steps: [{ action: "set_text", element: (await editor()).id, text: BEHIND }], observe: false });
+    console.log(`  set_text instead: ${JSON.stringify(set.steps)}; Notepad holds ${JSON.stringify(await notepadText())}`);
+  }
 
   step("bring it to the front (asks for the owner's screen once)");
   const front = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
   console.log(`  ${JSON.stringify(front.steps)}`);
   console.log(`  in front: ${await frontName()}`);
-  expect(front.steps[0]!.verdict === "confirmed", `the open step brought Notepad to the front (${front.steps[0]!.verdict}: ${front.steps[0]!.detail ?? ""})`);
+  // Windows' foreground lock can keep it behind (seen on the Windows 11 arm64 runner, whose foreground is the shell):
+  // then the step says so, and the click into its text below brings it forward.
+  expect(front.steps[0]!.verdict === "confirmed" || (front.steps[0]!.verdict === "partial" && /did not come to the front/.test(front.steps[0]!.detail ?? "")), `the open step brought Notepad to the front or said it did not (${front.steps[0]!.verdict}: ${front.steps[0]!.detail ?? ""})`);
 
   step("click into its text, by its place on a screenshot, and go to its end");
   const at = await editorPoint();
@@ -190,17 +201,15 @@ try {
   for (const child of children.splice(0)) child.kill();
 
   step("close Notepad without saving");
-  const window = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
-  const close = window.tree?.elements.find((element) => element.role === "push button" && /^close$/i.test(element.name));
-  if (close) {
-    console.log(`  its Close button, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: close.id }], observe: false })).steps)}`);
-  } else {
-    console.log(`  no Close button among ${JSON.stringify(window.tree?.elements.map((element) => `${element.role} ${element.name}`))}: alt+F4 in front`);
-    await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
-    console.log(`  ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false })).steps)}`);
+  // A title bar's Close button is not pressed through UI Automation in the background (cua-driver posts a click that
+  // the title bar ignores): alt+F4 goes to Notepad in front.
+  if (expect(await notepadInFront(), `Notepad is in front for alt+F4 (${await frontName()})`)) {
+    console.log(`  alt+F4: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false })).steps)}`);
   }
-  // Closed: no window of Notepad's twice in a row; a prompt to save is answered "Don't save".
+  // Closed: no window of Notepad's twice in a row; a prompt to save is answered "Don't save" by its button, else by
+  // its key in front.
   let gone = 0;
+  let presses = 0;
   for (let tries = 0; tries < 30 && gone < 2; tries += 1) {
     await sleep(500);
     if (!(await running("Notepad"))) {
@@ -211,7 +220,10 @@ try {
     const prompt = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 }).catch((error: unknown) => (console.log(`  ${error instanceof Error ? error.message : String(error)}`), null));
     const dontSave = prompt?.tree?.elements.find((element) => /^don.?t save$/i.test(element.name.replace(/&/g, "").trim()));
     if (tries % 10 === 0) console.log(`  Notepad's window “${prompt?.tree?.window ?? "?"}”: ${JSON.stringify(prompt?.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`).slice(0, 40))}`);
-    if (dontSave) console.log(`  ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: dontSave.id }], observe: false })).steps)}`);
+    if (!dontSave) continue;
+    presses += 1;
+    if (presses <= 2) console.log(`  Don't Save, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: dontSave.id }], observe: false })).steps)}`);
+    else if (presses === 3) console.log(`  Don't Save by its key (n), in front of ${await frontName()}: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "n" }], observe: false })).steps)}`);
   }
   expect(gone >= 2, "Notepad is closed");
   console.log(`  the owner was asked about: ${JSON.stringify(asked)}`);
@@ -250,6 +262,17 @@ function trace(target: object): Array<{ name: string; ms: number; error: boolean
     }
   };
   return seen;
+}
+
+/** Notepad in front: brought there by an open step, else by a click into its text. */
+async function notepadInFront(): Promise<boolean> {
+  if (/notepad/i.test(await frontName())) return true;
+  console.log(`  bring Notepad forward: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false })).steps)}`);
+  if (/notepad/i.test(await frontName())) return true;
+  const at = await editorPoint();
+  const aim = await service.observe(caller, { elements: false });
+  console.log(`  click into its text: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale!), y: Math.round(at.y / aim.scale!), captureId: aim.captureId }], observe: false })).steps)}`);
+  return /notepad/i.test(await frontName());
 }
 
 /** The app in front, as desktop control sees it. */

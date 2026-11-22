@@ -86,7 +86,8 @@ function pc(options: { world?: Record<string, unknown>; probe?: Record<string, u
           .filter(Boolean)
           .map((line) => JSON.parse(line))
       : [];
-  const calls = (): Array<{ tool: string; args: Record<string, unknown> }> => lines(log);
+  /** `screen`: where a desktop action lands on the screen once the driver scaled it as cua-driver's core does. */
+  const calls = (): Array<{ tool: string; args: Record<string, unknown>; screen?: { x: number; y: number } }> => lines(log);
   const env = { PATH: process.env.PATH ?? "", FAKE_CUA_STATE: state, FAKE_CUA_LOG: log, FAKE_PROBE_STATE: probeState, FAKE_PROBE_LOG: probeLog };
   const command = () => ({ command: process.execPath, args: [FAKE], env });
   const probeCommand = () => ({ command: process.execPath, args: [PROBE], env });
@@ -233,6 +234,14 @@ test("background: elements through UI Automation without the owner's pointer or 
   assert.deepEqual(calls.find((call) => call.tool === "hotkey")!.args.keys, ["ctrl", "a"]);
   const again = await h.service.observe(caller(), { app: "Notepad", screenshot: false });
   assert.equal(again.tree!.elements.find((element) => element.id === "e1")!.value, "Ensemble 0.9.1", "read back through UI Automation");
+  // A classic text box of a window that never had the focus drops keys sent in the background: said, not claimed.
+  const classic = structuredClone(PC.elements) as Record<string, Array<Record<string, unknown>>>;
+  classic["11"]![0]!.keysOnly = true;
+  const old = pc({ world: { elements: classic } });
+  await old.service.observe(caller(), { app: "Notepad", screenshot: false });
+  const dropped = await old.service.act(caller(), { steps: [{ action: "type", element: "e1", text: "Ensemble" }] });
+  assert.deepEqual([dropped.steps[0]!.verdict, dropped.steps[0]!.ran], ["no_effect", "yes"]);
+  assert.match(dropped.steps[0]!.detail!, /did not take the text .* Click it by its position/);
 
   const asked: GateApp[] = [];
   const quiet = caller("node:n1:m1", { gate: async (app) => (asked.push(app), { allow: false, ask: true }) });
@@ -250,12 +259,15 @@ test("background: elements through UI Automation without the owner's pointer or 
   assert.equal(front.steps[0]!.verdict, "confirmed");
   assert.equal(launches(), before);
   assert.ok(h.calls().some((call) => call.tool === "bring_to_front" && call.args.pid === 201));
-  // Windows' foreground lock keeps another window in front: the step says so instead of claiming it.
-  h.set({ foregroundLocked: true });
-  const behind = await h.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
+  // Windows' foreground lock keeps another window in front: the step says so instead of claiming it, and the no-name
+  // key bring_to_front pressed is not taken for the owner's input (a click into the window goes on).
+  const locked = pc({ world: { foregroundLocked: true }, probe: { typingIsInput: true } });
+  const behind = await locked.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
   assert.deepEqual([behind.steps[0]!.verdict, behind.steps[0]!.ran], ["partial", "yes"]);
   assert.match(behind.steps[0]!.detail!, /did not come to the front/);
-  h.set({ foregroundLocked: false });
+  const aim = await locked.service.observe(caller(), {});
+  const into = await locked.service.act(caller(), { captureId: aim.captureId, foreground: true, steps: [{ action: "click", x: 300, y: 300 }], observe: false });
+  assert.deepEqual([into.steps[0]!.ran, into.steps[0]!.code], ["yes", undefined], into.steps[0]!.detail);
   const closed = pc({ world: { apps: PC.apps.map((app) => (app.pid === 201 ? { ...app, running: false } : app)), windows: PC.windows.filter((win) => win.pid !== 201) } });
   await closed.service.open(caller(), { app: "Notepad", waitSec: 1 });
   assert.ok(closed.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "C:\\Windows\\System32\\notepad.exe"), "a desktop app that is not running, by its launch path");
@@ -340,7 +352,7 @@ test("the owner's pointer and keyboard are asked once per mission; keys and clic
   assert.equal(done.steps[0]!.verdict, "confirmed");
   const click = h.calls().find((call) => call.tool === "click")!;
   assert.deepEqual([click.args.scope, click.args.delivery_mode], ["desktop", "foreground"]);
-  assert.ok(Math.abs(Number(click.args.x) - (300.5 * 2880) / 1568) < 0.01, "the display's own pixels");
+  assert.ok(Math.abs(click.screen!.x - (300.5 * 2880) / 1568) < 0.01 && Math.abs(click.screen!.y - (300.5 * 1800) / 980) < 0.01, "the display's own pixels, after smaller pictures that cua-driver scales a desktop click from");
   h.set({ effects: { hotkey: "confirmed" } });
   const keys = await h.service.act(owner, { foreground: true, steps: [{ action: "key", keys: "cmd+s" }] });
   assert.equal(keys.steps[0]!.verdict, "confirmed");

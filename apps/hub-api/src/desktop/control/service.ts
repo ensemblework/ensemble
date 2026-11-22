@@ -1412,8 +1412,8 @@ export class DesktopService {
     let via: string | null = focused ? "launch" : front ? null : "background";
     if (front && !focused && launched.app.running && this.lease.holder === "agent") {
       const moved = await this.call<{ focused: boolean; via: string | null }>("apps.focus", { app: launched.app.running.pid ?? launched.app.name, allow_input: true, search: launched.app.name }, deadline, { effects: true, maxMs: 10_000 }).catch(() => null);
-      // Search types; cua-driver's bring_to_front on Windows passes the foreground lock with a synthetic key.
-      if (moved?.via === "search" || (this.cua && moved)) this.lease.agentInput();
+      // Search types; cua-driver's bring_to_front on Windows passes the foreground lock with a synthetic key, also when Windows refuses it.
+      if (moved?.via === "search" || this.cua) this.lease.agentInput();
       focused = Boolean(moved?.focused);
       via = moved?.via ?? null;
     }

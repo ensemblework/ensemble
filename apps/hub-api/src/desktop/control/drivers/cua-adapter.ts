@@ -143,6 +143,14 @@ function imageOf(result: McpResult | null | undefined): Buffer | null {
   return item ? Buffer.from(item.data!, "base64") : null;
 }
 
+/** How much smaller than the screen a `get_desktop_state` picture is, as cua-driver works it out; null for full size. */
+function shrinkOf(data: Record<string, unknown>): { x: number; y: number } | null {
+  const [width, height, fullWidth, fullHeight] = [num(data.screenshot_width), num(data.screenshot_height), num(data.screenshot_original_width), num(data.screenshot_original_height)];
+  if (!width || !height || !fullWidth || !fullHeight || width <= 0 || height <= 0 || fullWidth <= 0 || fullHeight <= 0) return null;
+  const shrunk = { x: fullWidth / width, y: fullHeight / height };
+  return shrunk.x === 1 && shrunk.y === 1 ? null : shrunk;
+}
+
 const NEEDS_SCREEN_CODES = new Set(["background_unavailable", "background_occluded", "select_menu_would_raise_window", "window_not_key", "target_focus_unconfirmed", "foreground_required"]);
 const GONE_CODES = new Set(["stale_element_token", "stale_bare_row", "window_target_not_found", "window_id_not_found", "window_owner_pid_mismatch", "element_not_found", "stale_snapshot"]);
 const CONSENT_CODES = new Set(["automation_consent_required", "permission_required", "accessibility_not_granted", "screen_recording_not_granted", "accessibility_permission_missing", "screen_recording_permission_missing"]);
@@ -175,6 +183,11 @@ export abstract class CuaAdapter extends EventEmitter {
   private stops = 0;
   /** Screenshots come back in the answer rather than through a file (after the driver refused the file once). */
   private inlineShots = false;
+  /**
+   * The full size over the size of the latest screenshot when it was made smaller (`max_image_dimension`): the
+   * driver multiplies a later desktop action's x and y by it, as if they were read off that picture.
+   */
+  private shrunk: { x: number; y: number } | null = null;
   protected recording: Recording | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   /** The page a window showed in its latest look, where its elements said (`pid:window`). */
@@ -284,6 +297,7 @@ export abstract class CuaAdapter extends EventEmitter {
 
   protected onExit(info: { code: number | null; signal: string | null; expected: boolean }): void {
     this.session = null;
+    this.shrunk = null;
     this.trees.clear();
     this.pages.clear();
     const recording = this.recording;
@@ -404,8 +418,9 @@ export abstract class CuaAdapter extends EventEmitter {
     if (this.ended(ctx)) throw this.cancelled(ctx);
     const left = ctx.until - this.now();
     if (left < 300) throw new HelperError("timeout", "Desktop control ran out of time for this request.", ctx.sent ? "yes" : "no", true);
-    const result = await this.mcp.call(name, args, { timeoutMs: left, effects });
+    const result = await this.mcp.call(name, this.screenPoints(args), { timeoutMs: left, effects });
     const data = obj(result?.structuredContent);
+    if (name === "get_desktop_state" && !result?.isError) this.shrunk = shrinkOf(data);
     const refused = data.effect === "refused" || data.status === "refused";
     if (!result?.isError && !refused) {
       if (effects) ctx.sent = true;
@@ -428,6 +443,16 @@ export abstract class CuaAdapter extends EventEmitter {
     }
     const hint = kind === "needs_screen" ? " It needs the owner's screen: run it in the foreground (foreground: true asks them once)." : kind === "element_gone" ? " Look again: the element changed or is gone." : "";
     return new HelperError(kind, `${text.slice(0, 300)}${hint}`, ran, false, code ? { code } : {});
+  }
+
+  /** A desktop action's x and y in the latest screenshot's pixels, so that the driver's scaling gives screen pixels. */
+  private screenPoints(args: Record<string, unknown>): Record<string, unknown> {
+    const shrunk = this.shrunk;
+    if (!shrunk || (args.scope !== "desktop" && args.coordinate_frame !== "desktop") || args.capture_id !== undefined) return args;
+    const out = { ...args };
+    for (const key of ["x", "from_x", "to_x"]) if (typeof out[key] === "number") out[key] = (out[key] as number) / shrunk.x;
+    for (const key of ["y", "from_y", "to_y"]) if (typeof out[key] === "number") out[key] = (out[key] as number) / shrunk.y;
+    return out;
   }
 
   /** The schema property this cua-driver uses for screen coordinates of the main display. */
@@ -765,9 +790,16 @@ export abstract class CuaAdapter extends EventEmitter {
       case "set_text":
         answer = await this.tool("set_value", { element_token: token, value: text }, ctx, true);
         break;
-      case "insert_text":
-        answer = await this.tool("type_text", { element_token: token, text }, ctx, true);
+      case "insert_text": {
+        const sent = await this.tool("type_text", { element_token: token, text }, ctx, true);
+        // Keys posted to a window that does not pass them on (on Windows, a classic text box of a window that never
+        // had the focus): the field read back without the text.
+        if (obj(sent.data.escalation).reason === "delivery_failed" && /did not contain the requested text/i.test(textOf(sent.result) ?? "")) {
+          return { done: false, refused: "The field did not take the text sent to it in the background", via: str(sent.data.route) ?? "keys", verified: false, states_before: [], states_after: [], effect: "unverifiable" };
+        }
+        answer = sent;
         break;
+      }
       case "scroll_to":
         answer = await this.tool("scroll", { element_token: token, direction: "down", amount: 1 }, ctx, true);
         break;
