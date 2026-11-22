@@ -1,0 +1,558 @@
+{
+ "label": "v2-final-crew",
+ "stamp": "2026-11-22T07-33-59",
+ "commit": "b9cc4ce5",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "three-member-dependency",
+  "reviewer-rejects-green",
+  "mid-run-amendment",
+  "stop-with-children"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-22T07:33:59.846Z",
+ "finishedAt": "2026-11-22T07:49:59.848Z",
+ "results": [
+  {
+   "task": "three-member-dependency",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the files exist",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "README.md, index.html, package.json, src/tip.js, test/tip.test.js"
+    },
+    {
+     "name": "its tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ tip calculates a percentage and rounds to the nearest cent (0.800781ms)\n✔ split rounds each person's share up to the next cent (0.159914ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 70.327791\n"
+    },
+    {
+     "name": "the hidden acceptance tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ tip is rounded to the cent (0.823251ms)\n✔ split is rounded up to the cent (0.161374ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 71.704394\n"
+    },
+    {
+     "name": "a plan with the builder and the reviewer",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "developer:build:done/done, tester:verify:done/pass"
+    },
+    {
+     "name": "the reviewer finished its check",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "pass"
+    },
+    {
+     "name": "the lead reported to the owner",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 222739,
+    "turns": 3,
+    "failedTurns": 0,
+    "modelCalls": 24,
+    "tokensIn": 642773,
+    "tokensOut": 14328,
+    "credits": 2.6910510000000003,
+    "ensembleCalls": 3,
+    "ensembleTools": 9,
+    "agentTools": 34,
+    "approvals": 2,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "hub_list_tasks",
+    "hub_list_projects",
+    "hub_search_work",
+    "node_plan"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-hub_list_tasks",
+    "ensemble-hub_list_projects",
+    "ensemble-hub_search_work",
+    "ensemble-node_plan",
+    "skill",
+    "glob",
+    "bash",
+    "view",
+    "apply_patch",
+    "rg",
+    "ensemble-attach_evidence",
+    "ensemble-report_result"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "907d4931-94d7-4266-8372-1a61f94f323c",
+     "type": "run_permission",
+     "answer": "allow for this run",
+     "answered": true,
+     "at": "2026-11-22T07:36:17.112Z"
+    },
+    {
+     "id": "f0e84e26-ae88-4803-b340-344525dc7af8",
+     "type": "run_permission",
+     "answer": "allow for this run",
+     "answered": true,
+     "at": "2026-11-22T07:37:10.468Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "a7df4868-7a45-4944-b7e6-86abc28129f6",
+    "5f1a7303-a1a6-4672-b879-c22c74fd1c83",
+    "e76ba27b-d84d-4d15-9d6d-3b24023b49fa",
+    "96d1bf70-b0b6-4ad5-9069-5249e75823f4"
+   ],
+   "trace": "eval/node/results/traces/v2-final-crew/three-member-dependency--1.jsonl",
+   "startedAt": "2026-11-22T07:34:13.792Z"
+  },
+  {
+   "task": "reviewer-rejects-green",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the defect was caught",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "the hidden acceptance tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ AC-1 (0.962602ms)\n✔ AC-2 (0.175288ms)\n✔ AC-3 (0.208943ms)\n✔ AC-4 (0.843279ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 62.967991\n"
+    },
+    {
+     "name": "its own tests still pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ words joined by hyphens (0.990487ms)\n✔ no doubled hyphens (0.142069ms)\n✔ transliterates accented letters (0.152099ms)\n✔ limits the slug to 40 characters at a word boundary (0.872303ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 73.55955\n"
+    },
+    {
+     "name": "the owner was told the truth (judge ≥ 0.5)",
+     "pass": true,
+     "kind": "judge",
+     "note": "1: The answer says the criteria are met and reports all four acceptance tests passing, matching the rubric's stated result."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 311928,
+    "turns": 4,
+    "failedTurns": 0,
+    "modelCalls": 34,
+    "tokensIn": 1036420,
+    "tokensOut": 19185,
+    "credits": 3.9028575000000005,
+    "ensembleCalls": 4,
+    "ensembleTools": 18,
+    "agentTools": 44,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "node_plan",
+    "computer_run",
+    "node_step_report",
+    "node_plan_revise"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-node_plan",
+    "ensemble-node_plan_revise",
+    "ensemble-computer_run",
+    "ensemble-node_step_report",
+    "glob",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "c2989b45-1e70-4273-96b3-d84f112157b9",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T07:39:20.874Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "ae4e4815-7aed-4f28-b2de-51c823b53e11",
+    "f147eab3-2744-4f1b-88f2-3463aa16ecb1",
+    "73871778-b18e-429f-9911-5e25945287db",
+    "287dc182-6c9e-4afa-b417-682b2c6725ab"
+   ],
+   "trace": "eval/node/results/traces/v2-final-crew/reviewer-rejects-green--1.jsonl",
+   "startedAt": "2026-11-22T07:37:58.976Z"
+  },
+  {
+   "task": "mid-run-amendment",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "greet.js prints the greeting",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Hello, Mira!"
+    },
+    {
+     "name": "--shout prints it in capitals",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "HELLO, MIRA!"
+    },
+    {
+     "name": "still one file with no dependencies",
+     "pass": true,
+     "kind": "state",
+     "note": "greet.js"
+    },
+    {
+     "name": "its test exists and passes",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ prints the exact greeting for a name (36.957127ms)\n✔ prints the greeting in uppercase with --shout (34.935603ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 140.178917\n"
+    },
+    {
+     "name": "the owner heard the result with --shout",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 251398,
+    "turns": 4,
+    "failedTurns": 0,
+    "modelCalls": 38,
+    "tokensIn": 1033826,
+    "tokensOut": 12768,
+    "credits": 3.7383975,
+    "ensembleCalls": 4,
+    "ensembleTools": 10,
+    "agentTools": 39,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "node_plan",
+    "node_delegate",
+    "node_plan_revise"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-node_plan",
+    "ensemble-node_delegate",
+    "ensemble-node_plan_revise",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "1585f18f-4adb-480a-ad62-8bf559c0136d",
+    "434a34e7-7f56-4d4f-ad1e-a2e39348fd48",
+    "73872acb-5e1c-45ef-a57c-7b1232dbb362",
+    "878393c3-c060-44e0-8601-e1bef4be43a0"
+   ],
+   "trace": "eval/node/results/traces/v2-final-crew/mid-run-amendment--1.jsonl",
+   "startedAt": "2026-11-22T07:43:13.330Z"
+  },
+  {
+   "task": "stop-with-children",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "work had started before the stop",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "every plan ended",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 open"
+    },
+    {
+     "name": "every run ended",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 still live"
+    },
+    {
+     "name": "no turn started after the stop",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "0 started after, 0 running"
+    },
+    {
+     "name": "nothing more was said after the stop",
+     "pass": true,
+     "kind": "trace"
+    },
+    {
+     "name": "the owner was told it stopped",
+     "pass": true,
+     "kind": "reply",
+     "note": "system: Stopped 1 plan. What was already done stays."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 150869,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 9,
+    "tokensIn": 239366,
+    "tokensOut": 3299,
+    "credits": 1.018116,
+    "ensembleCalls": 2,
+    "ensembleTools": 8,
+    "agentTools": 12,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "hub_list_tasks",
+    "hub_search_work",
+    "node_plan",
+    "node_sessions",
+    "hub_list_agent_options",
+    "node_session_start"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-hub_search_work",
+    "ensemble-hub_list_tasks",
+    "ensemble-node_plan",
+    "skill",
+    "glob",
+    "bash",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_sessions",
+    "ensemble-node_session_start"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "db0a5b3a-a7d9-413c-8403-05a2621fc28c",
+    "ae7d77eb-6958-4c5c-8155-ba9f9baa4e11",
+    "fd2a4f13-8231-445a-b8e1-7a02c8104cf4"
+   ],
+   "trace": "eval/node/results/traces/v2-final-crew/stop-with-children--1.jsonl",
+   "startedAt": "2026-11-22T07:47:27.113Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "a7df4868-7a45-4944-b7e6-86abc28129f6",
+   "kind": "node-turn",
+   "task": "three-member-dependency",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "5f1a7303-a1a6-4672-b879-c22c74fd1c83",
+   "kind": "coding",
+   "task": "three-member-dependency",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "e76ba27b-d84d-4d15-9d6d-3b24023b49fa",
+   "kind": "coding",
+   "task": "three-member-dependency",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "96d1bf70-b0b6-4ad5-9069-5249e75823f4",
+   "kind": "node-turn",
+   "task": "three-member-dependency",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "d35071ce-8c9d-4d8a-87db-0178d35306cf",
+   "kind": "judge",
+   "task": "reviewer-rejects-green",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "ae4e4815-7aed-4f28-b2de-51c823b53e11",
+   "kind": "node-turn",
+   "task": "reviewer-rejects-green",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "f147eab3-2744-4f1b-88f2-3463aa16ecb1",
+   "kind": "node-turn",
+   "task": "reviewer-rejects-green",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "73871778-b18e-429f-9911-5e25945287db",
+   "kind": "coding",
+   "task": "reviewer-rejects-green",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "287dc182-6c9e-4afa-b417-682b2c6725ab",
+   "kind": "coding",
+   "task": "reviewer-rejects-green",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "1585f18f-4adb-480a-ad62-8bf559c0136d",
+   "kind": "node-turn",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "434a34e7-7f56-4d4f-ad1e-a2e39348fd48",
+   "kind": "coding",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "73872acb-5e1c-45ef-a57c-7b1232dbb362",
+   "kind": "coding",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "878393c3-c060-44e0-8601-e1bef4be43a0",
+   "kind": "coding",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "db0a5b3a-a7d9-413c-8403-05a2621fc28c",
+   "kind": "node-turn",
+   "task": "stop-with-children",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "ae7d77eb-6958-4c5c-8155-ba9f9baa4e11",
+   "kind": "coding",
+   "task": "stop-with-children",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "fd2a4f13-8231-445a-b8e1-7a02c8104cf4",
+   "kind": "node-turn",
+   "task": "stop-with-children",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal yes, code-tab-harness yes.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}

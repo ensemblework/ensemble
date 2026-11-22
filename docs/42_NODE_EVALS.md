@@ -12,7 +12,23 @@
 | `eval/node/lib/link.ts`, `lib/capabilities.ts`, `lib/mcp-fake.ts` | The line between the computer and Ensemble that a task can cut; what a checkout has that some tasks require (a task whose requirement is missing is skipped, with what it requires); a fake connected app (an MCP server on 127.0.0.1) |
 | `eval/node/serve.ts` | Serve mode: the same world left running with one owner and one DM node, for a person or a browser test on the real Ensemble Node website; it answers no card |
 | `eval/node/tasks/` | The `core` suite (11 tasks, a DM with one node), the `crew` suite (4 tasks, a lead, a developer and a tester), the `hard` suite (10 tasks on what Node v2 changes: many reads, old memories and meetings, overdue work, the desktop, honest delivery, interruptions), the `orch` suite (13 tasks around the work: a role with no task, plain chat, two writers on one file, a peer's message while a card waits, the computer restarting, losing its line mid-write or offline, no client connected, what a crew run leaves, switching subscription settings, a child in the background, a run finished without acceptance), the `code` suite (3 Code tab tasks: a change across files with Ensemble's verification run, a fact changed between turns of one session, a handoff to a new session) and the `work` suite (3 tasks: a routine, a connected app through Ensemble's connection, a task handed to a coding agent that is done when its branch is on the remote) |
-| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; `baseline-v1-summary.md` is the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna for `core`, `crew` and `hard` side by side, `baseline-v1-orch-code-work.md` the same for `orch`, `code` and `work`, and `v2-pre-summary.md` an early measure of node-v2/phase2 (7ec01739) for `orch`, `code`, `work` and `hard` |
+| `eval/node/results/` | Results as JSON and Markdown, and small per-task traces; `baseline-v1-summary.md` is the Ensemble Node v1 baseline (commit 9a418803) on Copilot CLI with gpt-6-luna for `core`, `crew` and `hard` side by side, `baseline-v1-orch-code-work.md` the same for `orch`, `code` and `work`, `v2-pre-summary.md` an early measure of node-v2/phase2 (7ec01739) for `orch`, `code`, `work` and `hard`, and `v2-final-summary.md` release 0.9.0 against v1 for all six suites, with each v2 failure traced to its cause |
+
+## Latest results
+
+Release 0.9.0 (1ea3823d) against Ensemble Node v1 (9a418803), Copilot CLI with gpt-6-luna, one run of each task, from [`v2-final-summary.md`](../eval/node/results/v2-final-summary.md):
+
+| suite | tasks | passed v1 | passed 0.9.0 | mean score v1 | mean score 0.9.0 | no-answer turns v1 | no-answer turns 0.9.0 | input tokens per task v1 | input tokens per task 0.9.0 | credits per task v1 | credits per task 0.9.0 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| core | 11 | 8 | 11 | 85% | 100% | 1 | 0 | 105k | 142k | 0.43 | 0.62 |
+| crew | 4 | 3 | 4 | 96% | 100% | 5 | 0 | 881k | 738k | 2.95 | 2.84 |
+| hard | 10 | 6 | 9 | 65% | 93% | 0 | 0 | 166k | 139k | 0.67 | 0.51 |
+| orch | 13 | 10 | 12 | 90% | 95% | 2 | 0 | 149k | 247k | 0.69 | 1.02 |
+| code | 3 (v1 ran 2) | 0 | 3 | 67% | 100% | 0 | 0 | 109k | 246k | 0.30 | 0.62 |
+| work | 3 | 3 | 2 | 100% | 89% | 0 | 0 | 161k | 201k | 0.65 | 0.85 |
+| all | 44 (v1 ran 43) | 30 | 41 | 83% | 96% | 8 | 0 | 209k | 237k | 0.81 | 0.93 |
+
+No false claims on either. 0.9.0 fails `desktop-calculator` (it opens Calculator on the owner's screen, whose card the harness declines, and does not try its own agent screen), `finished-without-acceptance` (a coding session edited the acceptance check and Ensemble's run of the edited check marked the task done) and `connected-app-through-bridge` (the reply that held the write lost the answer, and the approval turn's Copilot process exited 1). The summary has each failure's trace lines and the product code it points to.
 
 ## Running it
 

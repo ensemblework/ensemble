@@ -44,11 +44,11 @@ export function checkKey(cwd: string, command: string): string {
 
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 
-/** The package script a check command runs: `test` for `npm test`, `lint` for `npm run lint`; null for any other command. */
-export function packageScript(command: string): string | null {
+/** The package.json script a check command runs: `test` for `npm|pnpm|yarn test` (`bun test` is Bun's own runner), `lint` for `npm run lint`; null for any other command. */
+export function scriptOf(command: string): string | null {
   const [program = "", sub = "", name] = command.trim().split(/\s+/);
   if (!PACKAGE_MANAGERS.has(program)) return null;
-  return sub === "test" ? "test" : sub === "run" && name ? name : null;
+  return sub === "test" && program !== "bun" ? "test" : sub === "run" && name ? name : null;
 }
 
 /** At most this many files of a test folder are read for its hash. */
@@ -109,7 +109,7 @@ async function entriesOf(root: string, cwd: string, command: string): Promise<Na
     return { key: `file:${full}`, label: relative(root, full) || path, name: basename(full) };
   };
   const out = checkFiles(command).map(file);
-  const script = packageScript(command);
+  const script = scriptOf(command);
   if (script) {
     const pkg = join(cwd, "package.json");
     out.push({ key: `script:${pkg}#${script}`, label: `the "${script}" script in ${relative(root, pkg) || "package.json"}`, name: script });
@@ -216,7 +216,7 @@ export function checkFilesNote(acceptance: readonly Pick<AcceptanceCheck, "comma
   const commands: string[] = [];
   for (const check of acceptance) {
     const files = checkFiles(check.command).map((file) => file.replace(/^\.\//, ""));
-    const script = packageScript(check.command);
+    const script = scriptOf(check.command);
     if (!files.length && !script) continue;
     commands.push(`\`${check.command}\``);
     for (const file of files) names.add(file);

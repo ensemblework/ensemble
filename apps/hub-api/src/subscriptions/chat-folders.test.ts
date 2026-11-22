@@ -191,6 +191,41 @@ test("the session a turn began in, noted before the agent has the message, is wh
   assert.deepEqual(dropped.map((row) => row.id).sort(), ["last-session", "noted-session", "third-session"]);
 });
 
+test("a turn under way in a chat whose session expired keeps its new session while another chat's turn sweeps; an expired chat with no turn under way is swept", async () => {
+  const key = "4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c";
+  const placed = await chatFolder(key, { agent: "claude-code", title: "Weekly digest", keepDays: 7 });
+  mkdirSync(placed.folder, { recursive: true });
+  await saveSession(key, "claude-code", "weekly-old", "Rules.", { next: 2, perTurn: true, keepDays: 7, dir: placed.dir });
+  // Unused for more than its 7 days: the turn declines it and starts a new session, noted before the agent has the message.
+  writeFileSync(storePath, JSON.stringify({ ...store(), [key]: { ...store()[key], at: Date.now() - 8 * 24 * 3600_000 } }));
+  assert.deepEqual(await lookSession(key, "claude-code", "Rules.", true, 2), { found: null, declined: "expired" });
+  await takeSession(key, "claude-code", "weekly-new", "Rules.", { position: 2, perTurn: true, keepDays: 7 });
+  await settle();
+  dropped.length = 0;
+  await saveSession("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "codex", "thread-other", "Rules.", { next: 2, perTurn: true });
+  await settle();
+  assert.deepEqual(dropped.map((row) => row.id), [], "neither the session the turn runs in nor the chat goes");
+  assert.equal(store()[key]!.taking?.id, "weekly-new");
+  assert.ok(existsSync(placed.folder));
+  // The turn ends: the new session replaces the expired one, which is deleted from the agent.
+  await saveSession(key, "claude-code", "weekly-new", "Rules.", { next: 4, perTurn: true, keepDays: 7, dir: placed.dir });
+  await settle();
+  assert.deepEqual(dropped.map((row) => row.id), ["weekly-old"]);
+  assert.deepEqual((await lookSession(key, "claude-code", "Rules.", true, 4)).found, { id: "weekly-new", text: null });
+
+  // A note is not a use of the session it names: a turn that took its note back leaves the chat as old as it was.
+  writeFileSync(storePath, JSON.stringify({ ...store(), [key]: { ...store()[key], at: Date.now() - 8 * 24 * 3600_000 } }));
+  await takeSession(key, "claude-code", "weekly-later", "Rules.", { position: 4, perTurn: true, keepDays: 7 });
+  await untakeSession(key, "weekly-later");
+  assert.equal(store()[key]!.taking, undefined);
+  dropped.length = 0;
+  await saveSession("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "codex", "thread-other", "Rules.", { next: 4, perTurn: true });
+  await settle();
+  assert.deepEqual(dropped, [{ id: "weekly-new", folder: placed.folder }], "an expired chat with no turn under way is swept");
+  assert.ok(!(key in store()));
+  assert.equal(existsSync(placed.folder), false);
+});
+
 test("a turn cut off in a session it made in the other home goes on there, and only there", async () => {
   const key = "3e4f5a6b-7c8d-4e9f-8a1b-2c3d4e5f6a7b";
   await saveSession(key, "kimi-code", "own-session", "Rules.", { next: 2, perTurn: true, home: "own" });
