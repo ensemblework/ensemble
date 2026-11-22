@@ -7,9 +7,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentTurnError, PARK_STOP, type AgentTurnIO, type AgentTurnSpec } from "../subscriptions/agents.js";
-import { answerAssistantTurn, MAX_TURNS_AT_ONCE, stopAssistantTurn } from "./assistant.js";
+import { answerAssistantTurn, MAX_TURNS_AT_ONCE, setRelayRetryForTests, stopAssistantTurn } from "./assistant.js";
 import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
-import type { HostedClient } from "./client.js";
+import { RemoteError, type HostedClient } from "./client.js";
 
 const SPEC: AgentTurnSpec = { agent: "claude-code", model: "haiku", effort: null, system: "You are the Ensemble assistant.", prompt: "hello", tools: [{ name: "hub_list_tasks", description: "List", inputSchema: { type: "object" } }], maxTurns: 8 };
 
@@ -186,3 +186,152 @@ test("a node's turn has no turn limit; the agent's own calls ask the web when it
   assert.ok(chat.streamed.every((row) => !row.tools));
   assert.deepEqual(chat.done, [{ result: { text: "ok", model: null, tokensIn: null, tokensOut: null, costUsd: null } }]);
 });
+
+/** Shorter waits between tries, put back after `work`. */
+async function withQuickRetries(work: () => Promise<void>): Promise<void> {
+  setRelayRetryForTests({ delaysMs: [5, 10, 20], toolForMs: 300, doneForMs: 2_000 });
+  try {
+    await work();
+  } finally {
+    setRelayRetryForTests(null);
+  }
+}
+
+const unreachable = () => new RemoteError(0, "Ensemble on the web is not reachable.");
+
+test("a dropped connection loses no reply: a batch the web did not get goes again with its own number, and the end goes again until the web has it", async () => {
+  await withQuickRetries(async () => {
+    const streamed: Array<{ seq: number; text: string }> = [];
+    const done: unknown[] = [];
+    let streamFails = 1;
+    let doneFails = 2;
+    const client = {
+      assistantTurn: async () => ({ spec: SPEC }),
+      assistantStream: async (_id: string, body: { seq: number; text: string }) => {
+        streamed.push(body);
+        if (streamFails-- > 0) throw unreachable();
+        return { stop: false };
+      },
+      assistantDone: async (_id: string, body: unknown) => {
+        done.push(body);
+        if (doneFails-- > 0) throw new RemoteError(502, "Bad gateway");
+      },
+    } as unknown as HostedClient;
+    const result = { text: "Hello there", model: "claude-haiku-5-5", tokensIn: 10, tokensOut: 3, costUsd: null };
+    await answerAssistantTurn(client, { id: "turn-lost-link" }, async (_spec, io) => {
+      io.onDelta("Hello");
+      await pause(260);
+      io.onDelta(" there");
+      return result;
+    });
+    assert.deepEqual(streamed.slice(0, 2), [{ seq: 1, text: "Hello" }, { seq: 1, text: "Hello" }], "the same batch, with the same number");
+    const taken = new Map(streamed.map((row) => [row.seq, row.text]));
+    assert.equal([...taken.values()].join(""), "Hello there", "every word arrived");
+    assert.deepEqual(done, [{ result }, { result }, { result }], "the end went again until the web had it");
+  });
+});
+
+test("a turn whose reading the web did not answer (the connection dropped, a gateway had none) is read again, and runs once", async () => {
+  await withQuickRetries(async () => {
+    const failures = [unreachable(), new RemoteError(504, "Gateway timeout")];
+    let reads = 0;
+    const fake = fakeClient();
+    (fake.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      reads += 1;
+      const failure = failures.shift();
+      if (failure) throw failure;
+      return { spec: SPEC };
+    };
+    let runs = 0;
+    const result = { text: "Hello.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+    await answerAssistantTurn(fake.client, { id: "turn-read-again" }, async () => {
+      runs += 1;
+      return result;
+    });
+    assert.equal(reads, 3, "read again until the web answered");
+    assert.equal(runs, 1);
+    assert.deepEqual(fake.done, [{ result }], "and its end went once");
+
+    // The web never answers the reading: after the wait, the turn ends with why, once the web hears it.
+    const silent = fakeClient();
+    (silent.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      throw unreachable();
+    };
+    await assert.rejects(answerAssistantTurn(silent.client, { id: "turn-never-read" }, async () => result), /not reachable/);
+    assert.equal(silent.done.length, 1);
+    assert.match(JSON.stringify(silent.done[0]), /lost its connection to Ensemble on the web before it could read this message, so nothing was done/);
+
+    // Another runtime of this computer read it first: left alone at once, never read again.
+    let taken = 0;
+    const other = fakeClient();
+    (other.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      taken += 1;
+      throw new RemoteError(409, "This turn was picked up by another Ensemble on this computer.");
+    };
+    assert.equal(await answerAssistantTurn(other.client, { id: "turn-read-taken" }, async () => result), "taken");
+    assert.equal(taken, 1);
+    assert.deepEqual(other.done, []);
+  });
+});
+
+test("with the web's word, a tool call goes with its own id and again with it when its answer is lost; a call never answered is said to have maybe happened", async () => {
+  await withQuickRetries(async () => {
+    const bodies: Array<{ name: string; input: unknown; callId?: string }> = [];
+    let fails = 2;
+    const fake = fakeClient({ spec: { ...SPEC, relay: 1 } });
+    (fake.client as { assistantTool: unknown }).assistantTool = async (_id: string, body: { name: string; input: unknown; callId?: string }) => {
+      bodies.push(body);
+      if (fails-- > 0) throw unreachable();
+      return { text: '{"ok":true,"summary":"Added “Call the venue”."}' };
+    };
+    let answer = "";
+    await answerAssistantTurn(fake.client, { id: "turn-call-id" }, async (_spec, io) => {
+      answer = (await io.call("hub_create_tasks", { tasks: [{ title: "Call the venue" }] })).text;
+      return { text: "Added.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+    });
+    assert.equal(answer, '{"ok":true,"summary":"Added “Call the venue”."}', "the call's own answer, not an error");
+    assert.equal(bodies.length, 3);
+    assert.ok(bodies[0]!.callId && bodies.every((body) => body.callId === bodies[0]!.callId), "each try carries the same id");
+
+    // Its answer never came: the agent's same call again goes with that call's id (the web gives that call's answer); another call gets its own.
+    const calls: Array<{ input: unknown; callId?: string }> = [];
+    let down = true;
+    const again = fakeClient({ spec: { ...SPEC, relay: 1 } });
+    (again.client as { assistantTool: unknown }).assistantTool = async (_id: string, body: { input: unknown; callId?: string }) => {
+      calls.push(body);
+      if (down) throw unreachable();
+      return { text: '{"ok":true}' };
+    };
+    await answerAssistantTurn(again.client, { id: "turn-same-call" }, async (_spec, io) => {
+      assert.match((await io.call("hub_create_tasks", { tasks: [{ title: "Pay the deposit" }] })).text, /may already have happened/);
+      down = false;
+      assert.equal((await io.call("hub_create_tasks", { tasks: [{ title: "Pay the deposit" }] })).text, '{"ok":true}');
+      await io.call("hub_create_tasks", { tasks: [{ title: "Pay the deposit" }] });
+      return { text: "Paid.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+    });
+    const ids = calls.map((body) => body.callId);
+    assert.equal(ids.at(-2), ids[0], "the same call again is that call");
+    assert.notEqual(ids.at(-1), ids[0], "once its answer came, the next one is a new call");
+
+    // Never answered: after the wait, the agent hears its outcome is unknown.
+    for (const spec of [{ ...SPEC, relay: 1 }, SPEC]) {
+      const tries: unknown[] = [];
+      const lost = fakeClient({ spec });
+      (lost.client as { assistantTool: unknown }).assistantTool = async (_id: string, body: unknown) => {
+        tries.push(body);
+        throw unreachable();
+      };
+      let said: { text: string; isError?: boolean } | null = null;
+      await answerAssistantTurn(lost.client, { id: `turn-never-${tries.length}-${spec === SPEC ? "old" : "new"}` }, async (_spec, io) => {
+        said = await io.call("hub_create_tasks", { tasks: [{ title: "Pay the deposit" }] });
+        return { text: "Unsure.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+      });
+      assert.equal(said!.isError, true);
+      assert.match(said!.text, /may already have happened\. Check whether it took effect before you call it again/);
+      assert.equal(JSON.parse(said!.text).uncertain, true);
+      if (spec === SPEC) assert.equal(tries.length, 1, "a server that takes no call ids is never sent a call twice");
+      else assert.ok(tries.length > 1);
+    }
+  });
+});
+

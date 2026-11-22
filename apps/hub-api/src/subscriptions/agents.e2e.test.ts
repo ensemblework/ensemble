@@ -6,7 +6,7 @@
  * port (CI); sandboxes without local listening skip it.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
@@ -623,6 +623,8 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (message.method === "session/load") { log({ method: "session/load", cwd: message.params.cwd, session: message.params.sessionId }); return send({ id: message.id, result: {} }); }
   if (message.method === "session/prompt") {
     log({ method: "session/prompt", text: message.params.prompt.map((part) => part.text || "").join("") });
+    // Working on it until the turn is stopped, when the STANDIN_HOLD file is there (taken once).
+    if (process.env.STANDIN_HOLD && require("node:fs").existsSync(process.env.STANDIN_HOLD)) return void require("node:fs").rmSync(process.env.STANDIN_HOLD);
     send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
     return send({ id: message.id, result: { stopReason: "end_turn" } });
   }
@@ -774,6 +776,50 @@ test("a chat that goes between its owner and others keeps each session in the ho
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    forgetExecutablesForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an agent that names its own sessions has a new one noted once it says its id: a runtime that stops mid-turn leaves the note, and the turn goes on in that session", async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-acp-cut-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "grok"), FAKE_GROK);
+  chmodSync(join(bin, "grok"), 0o755);
+  const log = join(root, "acp.jsonl");
+  const store = join(root, "state", "assistant-sessions.json");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_ACP: process.env.STANDIN_ACP, STANDIN_HOLD: process.env.STANDIN_HOLD, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_ACP = log;
+  process.env.STANDIN_HOLD = join(root, "hold");
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  const key = "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a";
+  const turn = (prompt: string, signal: AbortSignal, resume?: "only") =>
+    runAgentTurn({ agent: "grok-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: "", position: 0, ...(resume ? { resume } : {}) } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal });
+  try {
+    writeFileSync(join(root, "hold"), "");
+    const stop = new AbortController();
+    const first = turn("What's due?", stop.signal);
+    // What this computer has on disk while the agent works on the message: all a runtime that stops now leaves.
+    let left = "";
+    for (const end = Date.now() + 15_000; !left && Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 20))) {
+      const text = existsSync(store) ? readFileSync(store, "utf8") : "{}";
+      if ((JSON.parse(text) as Record<string, { taking?: { id: string } }>)[key]?.taking?.id === "grok-session-1") left = text;
+    }
+    assert.ok(left, "the session Grok named is noted before the turn ends");
+    stop.abort();
+    await assert.rejects(first);
+    assert.equal((JSON.parse(readFileSync(store, "utf8")) as Record<string, { taking?: unknown }>)[key]?.taking, undefined, "a turn stopped here takes its note back");
+    writeFileSync(store, left);
+    assert.equal((await turn("Go on where you were.", new AbortController().signal, "only")).resumed, true);
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; session?: string });
+    assert.deepEqual(calls.map((call) => [call.method, call.session ?? null]), [["session/new", null], ["session/prompt", null], ["session/load", "grok-session-1"], ["session/prompt", null]]);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
     forgetExecutablesForTests();
     rmSync(root, { recursive: true, force: true });
   }

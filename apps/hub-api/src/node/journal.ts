@@ -11,7 +11,8 @@
  * identical call after an answer that never reached the computer (its request ended first) is that call
  * again; and a turn resumed after a restart meets the calls its first try made, so one that only started
  * (`dispatched` with no result, `uncertain` after the restart) answers that it may have run and was not run
- * again. A second identical call after any of these runs: the caller has seen the first one's answer.
+ * again (so does one whose relayed turn was cut off when its computer restarted, `uncertainCallsOf`). A second
+ * identical call after any of these runs: the caller has seen the first one's answer.
  */
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -85,7 +86,7 @@ function replayOf(settled: Settled, why: "running" | "unreceived" | "earlier"): 
 
 /** What a call that may have run without saying so answers, in place of running it again. */
 export function uncertainReplay(tool: string): JournalReplay {
-  const summary = `An earlier ${tool} call with this input started but its result was never saved (the server restarted), so it may already have happened. It was not run again.`;
+  const summary = `An earlier ${tool} call with this input started but its result was never saved (its turn was cut off), so it may already have happened. It was not run again.`;
   return {
     state: "failed",
     summary,
@@ -251,6 +252,17 @@ export async function uncertainCalls(app: Pick<FastifyInstance, "prisma">): Prom
     byTurn.set(row.attemptTurnId, [...(byTurn.get(row.attemptTurnId) ?? []), { tool: row.tool, label: row.label }]);
   }
   return byTurn;
+}
+
+/**
+ * One turn try cut off while it ran here (its computer restarted, or Ensemble lost touch with it; node/brain.ts): its
+ * calls that started and never settled become `uncertain`, as after a restart. Returns those that can change something.
+ */
+export async function uncertainCallsOf(app: Pick<FastifyInstance, "prisma">, attemptTurnId: string): Promise<Array<{ tool: string; label: string | null }>> {
+  const prisma = app.prisma;
+  const rows = await prisma.nodeToolJournal.findMany({ where: { attemptTurnId, state: "dispatched" }, select: { id: true, tool: true, label: true, sideEffect: true } });
+  if (rows.length) await prisma.nodeToolJournal.updateMany({ where: { id: { in: rows.map((row) => row.id) }, state: "dispatched" }, data: { state: "uncertain" } });
+  return rows.filter((row) => row.sideEffect).map((row) => ({ tool: row.tool, label: row.label }));
 }
 
 /** The calls of a turn try that acted: settled ones that can change something. */

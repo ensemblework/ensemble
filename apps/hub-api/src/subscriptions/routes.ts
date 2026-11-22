@@ -20,7 +20,7 @@ import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { appPresence, detectAgents } from "./detect.js";
-import { finishTurn, heard, inRelayedRequest, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
+import { finishTurn, heard, liveTurn, pickTurn, relayedCall, spoke, streamInto, turnFor } from "./relay.js";
 import { OwnAskShape, OwnToolEventShape } from "./bridge.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
 import { computerAgents, deviceOwners, thisComputer } from "./turn.js";
@@ -60,7 +60,8 @@ const TAKEN = "This turn was picked up by another Ensemble on this computer.";
 /** A plain media type for a turn file's download; anything else goes as bytes. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
-const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
+/** `callId`: the computer's own id for the call (`assistantRelay` 1); the same call sent again with it never runs twice. */
+const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}), callId: z.string().min(1).max(100).optional() });
 /**
  * `status`: a line for the chat while the computer waits on something (0.8.0); `tools`: the agent's own calls in a
  * node's turn (`assistantTurns` 5). Older computers send neither.
@@ -191,7 +192,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
       request.log.warn({ userId: device.userId, device: device.id }, `A second Ensemble on ${device.name} asked for an assistant turn another one took`);
       return reply.code(409).send({ error: TAKEN });
     }
-    heard(turn);
+    spoke(turn);
     return { spec: turn.spec };
   });
 
@@ -204,7 +205,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     const file = turn.spec.files?.find((row) => row.id === params.fileId);
     if (!file || !turn.read) return reply.code(404).send({ error: "That file is not part of this turn." });
-    heard(turn);
+    spoke(turn);
     let bytes: Uint8Array | null = null;
     try {
       bytes = await turn.read(file.id);
@@ -227,12 +228,13 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turn) return reply.code(410).send({ text: "This turn has ended.", isError: true });
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ text: TAKEN, isError: true });
     const body = ToolCall.parse(request.body);
-    heard(turn);
-    // Whether the answer reached the computer: a request that ended before it means the computer's next identical call is this one again.
-    let received = false;
-    reply.raw.once("finish", () => (received = true));
+    spoke(turn);
+    // The same call sent again with its id (its answer was lost) gets the first one's answer. Whether an answer reached the
+    // computer: a request that ended before it means the computer's next identical call is this one again (node/journal.ts).
+    const { answer, delivered } = relayedCall(turn, body.callId, body.name, body.input);
+    reply.raw.once("finish", delivered);
     try {
-      return await inRelayedRequest(() => received, () => turn.call(body.name, body.input));
+      return await answer;
     } catch (error) {
       request.log.warn({ err: error }, "relayed assistant tool failed");
       return { text: JSON.stringify({ error: "The tool failed on Ensemble's side." }), isError: true };
@@ -251,7 +253,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ decision: "deny", message: TAKEN });
     if (!turn.ask) return reply.code(409).send({ decision: "deny", message: "This turn does not ask its owner about the agent's own calls." });
     const body = OwnAskShape.parse(request.body);
-    heard(turn);
+    spoke(turn);
     try {
       const answer = await turn.ask(body);
       // Not answered in time: the turn parks, and the agent's run stops once this answer has reached the computer.

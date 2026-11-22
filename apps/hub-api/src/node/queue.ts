@@ -519,6 +519,9 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
   if (own) await own.acquire();
   await pool.acquire();
   const slot = new Slot(pool, own);
+  // Cut off by its computer (subscriptions/relay.ts): resumed by another turn, or the same turn again, whose end settles what it holds.
+  let continues = false;
+  let again: NodeTurn | null = null;
   try {
     const claimed = await prisma.nodeTurn.updateMany({ where: { id: turnId, status: "queued" }, data: { status: "running", outcome: "running" } });
     if (claimed.count !== 1) return;
@@ -537,6 +540,22 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
       if (outcome.status === "coalesced") {
         await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "done", outcome: "coalesced", error: "Merged into the next turn: a newer message came first.", finishedAt: new Date() } });
         await carryNote(prisma, turn);
+        return;
+      }
+      if (outcome.status === "requeue") {
+        // Cut off before it did anything (its computer restarted): the same turn runs again from the start.
+        await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "queued", outcome: "queued", receipts: [] as Prisma.InputJsonValue } });
+        continues = true;
+        again = turn;
+        return;
+      }
+      if (outcome.status === "interrupted" && outcome.resume) {
+        // Cut off after it had started acting: resumed as after a restart here, told what may already have run.
+        await prisma.nodeTurn.update({
+          where: { id: turnId },
+          data: { status: "failed", outcome: "interrupted", model: outcome.model ?? null, credits: outcome.credits ?? null, error: truncateText(outcome.error ?? "Interrupted.", 500), finishedAt: new Date() },
+        });
+        continues = await resumeTurn(app, turn, outcome.resume.cut, outcome.resume.mayHaveRun, outcome.resume.ownCalls);
         return;
       }
       await prisma.nodeTurn.update({
@@ -567,10 +586,11 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
     slot.give();
-    // Held captures its owner sent while it ran, which its reply did not show (evidence/held.ts).
-    if (head.roomId) await deliverAfterTurn(app, { nodeId: head.nodeId, roomId: head.roomId, chain: head.originTurnId ?? turnId }).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not show released captures"));
+    if (again) schedule(app, again);
+    // Held captures its owner sent while it ran, which its reply did not show (evidence/held.ts); a turn that goes on shows its own.
+    if (head.roomId && !continues) await deliverAfterTurn(app, { nodeId: head.nodeId, roomId: head.roomId, chain: head.originTurnId ?? turnId }).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not show released captures"));
     // An independent answer: once the round has none left to run, its answers are brought together (node/groups.ts).
-    if (head.snapshotSeq !== null) await roundTurnEnded(app, head).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not check an independent round"));
+    if (head.snapshotSeq !== null && !continues) await roundTurnEnded(app, head).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not check an independent round"));
   }
 }
 
@@ -673,8 +693,62 @@ export function abortAllTurns(): void {
   delayed.clear();
 }
 
-/** How the note of a turn resumed after a restart begins (`recoverTurns`). */
-export const RESTART_NOTE = "Your previous turn was cut off by a server restart after it had started acting. Do not repeat what it already did: check first (node_sessions, the plan card, the workspace).";
+/** How the note of a turn resumed after it was cut off begins (`resumeTurn`): node/brain.ts keeps it ahead of a plan's update. */
+export const CUT_OFF_NOTE = "Your previous turn was cut off";
+
+/** What cut off a turn that is resumed: a server restart here, or its computer (subscriptions/relay.ts `TurnCutOff`). */
+export type CutOff = { by: string; error: string };
+const SERVER_RESTART: CutOff = { by: "by a server restart", error: "Interrupted by a server restart after it had acted." };
+
+/**
+ * A turn cut off after it had started acting is not run again from the start: a new turn in its lane resumes it
+ * (`origin_turn_id`), told what cut it off, what it ran and each call that started without a result (node/journal.ts:
+ * it may have acted and is never run again blindly), with its audience, request, principals and snapshot. False when
+ * its node cannot take it (paused or gone): its plan's part then settles.
+ */
+export async function resumeTurn(
+  app: FastifyInstance,
+  turn: NodeTurn,
+  cut: CutOff,
+  mayHaveRun: ReadonlyArray<{ tool: string; label: string | null }>,
+  ownCalls: ReadonlyArray<{ name: string; summary: string }> = [],
+): Promise<boolean> {
+  const receipts = (Array.isArray(turn.receipts) ? (turn.receipts as Array<{ name?: string; state?: string; summary?: string | null }>) : [])
+    .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
+    .join("\n");
+  const unsure = mayHaveRun.map((row) => `- ${row.tool}${row.label ? ` ${row.label}` : ""}`).join("\n");
+  const own = ownCalls.map((row) => `- ${row.name}${row.summary ? `: ${row.summary}` : ""}`).join("\n");
+  // A lead's report or re-plan turn is told where its plan stands when it starts (node/brain.ts): its old update is not repeated.
+  const leadPlanTurn = turn.reason === "plan" && Boolean(turn.planId) && !turn.planStep;
+  const note = [
+    `${CUT_OFF_NOTE} ${cut.by}, after it had started acting. Do not repeat what it already did: check first (node_sessions, the plan card, the workspace).`,
+    unsure ? `These calls started but their result was never saved, so they may already have happened. Check each one before you do it again; the same call made again first answers that it may have run:\n${unsure}` : "",
+    own ? `Your own calls that started and never said they ended, so they may have run in part or in full:\n${own}` : "",
+    receipts ? `It ran:\n${receipts}` : "",
+    leadPlanTurn ? "" : (turn.note ?? ""),
+  ].filter(Boolean).join("\n");
+  const resumed = turn.roomId
+    ? await enqueueTurn(app, {
+        nodeId: turn.nodeId,
+        roomId: turn.roomId,
+        reason: turn.reason,
+        triggerMessageId: turn.triggerMessageId,
+        note,
+        private: turn.private,
+        planId: turn.planId,
+        planStep: turn.planStep,
+        audience: turn.audience === "room" ? "room" : "owner",
+        peerRequestId: turn.peerRequestId,
+        principals: (turn.principals ?? {}) as Record<string, unknown>,
+        originTurnId: turn.originTurnId ?? turn.id,
+        spaceId: turn.spaceId,
+        snapshotSeq: turn.snapshotSeq,
+        deadlineAt: turn.deadlineAt,
+      })
+    : false;
+  if (!resumed) await planTurnEnded(app, turn, cut.error).catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
+  return resumed;
+}
 
 /**
  * After a restart (B4): a turn cut off before it acted runs again; one cut off after it acted is not
@@ -694,39 +768,8 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
       await prisma.nodeTurn.update({ where: { id: turn.id }, data: { status: "queued", outcome: "queued", receipts: [] as Prisma.InputJsonValue } });
       continue;
     }
-    await prisma.nodeTurn.update({ where: { id: turn.id }, data: { status: "failed", outcome: "failed", error: "Interrupted by a server restart after it had acted.", finishedAt: new Date(now) } });
-    const receipts = (Array.isArray(turn.receipts) ? (turn.receipts as Array<{ name?: string; state?: string; summary?: string | null }>) : [])
-      .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
-      .join("\n");
-    const unsure = mayHaveRun.map((row) => `- ${row.tool}${row.label ? ` ${row.label}` : ""}`).join("\n");
-    // A lead's report or re-plan turn is told where its plan stands when it starts (node/brain.ts): its old update is not repeated.
-    const leadPlanTurn = turn.reason === "plan" && Boolean(turn.planId) && !turn.planStep;
-    const note = [
-      RESTART_NOTE,
-      unsure ? `These calls started but their result was never saved, so they may already have happened. Check each one before you do it again; the same call made again first answers that it may have run:\n${unsure}` : "",
-      receipts ? `It ran:\n${receipts}` : "",
-      leadPlanTurn ? "" : (turn.note ?? ""),
-    ].filter(Boolean).join("\n");
-    const resumed = turn.roomId
-      ? await enqueueTurn(app, {
-          nodeId: turn.nodeId,
-          roomId: turn.roomId,
-          reason: turn.reason,
-          triggerMessageId: turn.triggerMessageId,
-          note,
-          private: turn.private,
-          planId: turn.planId,
-          planStep: turn.planStep,
-          audience: turn.audience === "room" ? "room" : "owner",
-          peerRequestId: turn.peerRequestId,
-          principals: (turn.principals ?? {}) as Record<string, unknown>,
-          originTurnId: turn.originTurnId ?? turn.id,
-          spaceId: turn.spaceId,
-          snapshotSeq: turn.snapshotSeq,
-          deadlineAt: turn.deadlineAt,
-        })
-      : false;
-    if (!resumed) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
+    await prisma.nodeTurn.update({ where: { id: turn.id }, data: { status: "failed", outcome: "failed", error: SERVER_RESTART.error, finishedAt: new Date(now) } });
+    await resumeTurn(app, turn, SERVER_RESTART, mayHaveRun);
   }
   const old = await prisma.nodeTurn.findMany({ where: { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } }, select: { id: true, nodeId: true, roomId: true, planId: true, planStep: true } });
   const missions = await prisma.nodeMission.findMany({ where: { id: { in: [...new Set(old.map((row) => row.planId).filter((id): id is string => Boolean(id)))] } }, select: { id: true, status: true } });
