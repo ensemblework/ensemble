@@ -169,5 +169,27 @@ class _Params:
         return self.value
 
 
+class Failures(unittest.TestCase):
+    def test_an_apps_refusal_is_named_as_one_not_error(self):
+        import json
+
+        from gi.repository import GLib
+
+        from desktop_helper.rpc import parse_line
+        from desktop_helper.server import Helper
+
+        found = Helper.__new__(Helper)
+        found.cancelled = set()
+
+        def refuse(_params, _deadline, _id):
+            raise GLib.Error.new_literal(GLib.quark_from_string("atspi_error"), "", 1)
+
+        found.methods = {"a11y.do": refuse}
+        answer = json.loads(found.handle(parse_line(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "a11y.do", "params": {}}).encode())))
+        self.assertNotIn("failed: Error", answer["error"]["message"])
+        self.assertIn("refused", answer["error"]["message"])
+        self.assertEqual(answer["error"]["data"]["ran"], "maybe")
+
+
 if __name__ == "__main__":
     unittest.main()

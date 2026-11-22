@@ -124,7 +124,12 @@ const methods = {
   },
   "input.drag": () => (changed(), { sent: true }),
   "input.scroll": () => (changed(), { sent: true }),
-  "input.keys": () => (changed(), { sent: true, times: 1 }),
+  // `keysText`: what a key leaves in the text that has the keyboard (Calculator's display after Return), even where the screen's picture shows no change.
+  "input.keys": () => {
+    changed();
+    if (state.keysText !== undefined && state.focus?.focused) state.focus.focused.text = state.keysText;
+    return { sent: true, times: 1 };
+  },
   "input.text": (params) => {
     if (params.secret && /[^\x20-\x7e]/.test(params.text)) {
       if (!state.fillSecrets) return { sent: false, typed: { keysym: 0, atspi: 0, clipboard: 0, untyped: 0 }, stopped: "secret_untypeable" };
@@ -142,6 +147,8 @@ const methods = {
   "a11y.do": (params) => {
     const element = state.tree.elements.find((item) => item.id === params.element);
     if (params.background && params.action === "press" && element && element.actions.length === 0) fail("needs_screen", `Element ${params.element} has no action to press: only moving the focus to it would do something.`);
+    // `keepsKeyboard`: the app does not let accessibility move its keyboard (GTK 4's GrabFocus).
+    if (params.action === "focus" && state.keepsKeyboard) return { done: false, via: "atspi:focus", refused: state.keepsKeyboard, states_before: ["focusable"], states_after: ["focusable"] };
     changed();
     if (params.action === "set_text" || params.action === "insert_text") return { done: true, via: `atspi:${params.action}`, verified: params.text !== undefined ? true : null };
     const after = params.action === "focus" ? ["focusable", "focused"] : params.action === "select" || params.action === "toggle" ? ["focusable", params.action === "select" ? "selected" : "checked"] : ["focusable"];
