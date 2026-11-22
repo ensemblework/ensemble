@@ -186,7 +186,13 @@ function verifyAuthenticode(path, publisher) {
   const shown = spawnSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: { ...env, ENSEMBLE_SIGNED_FILE: path } });
   const [status, subject] = `${shown.stdout ?? ""}`.trim().split(/\r?\n/);
   if (shown.status !== 0 || status?.trim() !== "Valid") throw new Error(`cua-driver.exe's Authenticode signature does not verify (${status?.trim() || shown.stderr?.trim() || "no answer"}).`);
-  if (!subject?.includes(`O=${publisher}`) && !subject?.includes(`CN=${publisher}`)) throw new Error(`cua-driver.exe is signed by ${subject?.trim() || "nobody"}; the pin says ${publisher}.`);
+  if (signerOrganisation(subject ?? "") !== publisher) throw new Error(`cua-driver.exe is signed by ${subject?.trim() || "nobody"}; the pin says ${publisher}.`);
+}
+
+/** The organisation (O=) of a certificate subject, quoted when it holds a comma: `CN="Cua AI, Inc.", O="Cua AI, Inc.", C=US`. */
+export function signerOrganisation(subject) {
+  const found = /(?:^|,\s*)O=(?:"((?:[^"]|"")*)"|([^,]*))/.exec(subject);
+  return found ? (found[1]?.replace(/""/g, '"') ?? found[2]?.trim() ?? null) : null;
 }
 
 /** On a Mac: the bundle's signature holds and is its publisher's (the pinned team). */

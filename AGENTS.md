@@ -46,7 +46,7 @@ Where a change usually needs a doc update:
 | Plots (`app/(hub)/plots`, `src/plots`, `ensemble_agent/plots`) | [`docs/20_PLOTS_DESIGN.md`](docs/20_PLOTS_DESIGN.md) |
 | Block diagrams (`packages/block-diagrams`) | [`docs/21`](docs/21_BLOCK_DIAGRAMS_DSL.md), [`docs/21` cheat sheet](docs/21_BLOCK_DIAGRAMS_CHEATSHEET.md), [`docs/22`](docs/22_BLOCK_DIAGRAMS_FOR_AGENTS.md) and `.github/skills/block-diagrams/SKILL.md` (22 and the skill are the same text) |
 | Quick capture (`apps/quick-capture`) | [`docs/20_QUICK_CAPTURE.md`](docs/20_QUICK_CAPTURE.md) |
-| Desktop app (`apps/desktop`, `src/desktop`, `src/transfer`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md) |
+| Desktop app (`apps/desktop`, `src/desktop`, `src/transfer`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md), [`docs/desktop/WINDOWS_CHECKLIST.md`](docs/desktop/WINDOWS_CHECKLIST.md) |
 | Remote tasks and devices (`src/remote`, `src/devices`) | [`docs/25`](docs/25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
 | Ensemble Node (`apps/hub-api/src/node`, `lib/node-origin.ts`, `GET /api/bridge/node`, the CLI's Node tab `apps/cli/src/tui/node.ts`). The website is the separate `ensemblework/ensemble-node` repository | [`docs/35`](docs/35_ENSEMBLE_NODE.md), the API table in `docs/02`, `docs/26` for the CLI tab |
 | Ensemble Node evals (`eval/node`) | [`docs/42`](docs/42_NODE_EVALS.md), [`eval/node/README.md`](eval/node/README.md) |
