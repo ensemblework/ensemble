@@ -54,6 +54,7 @@ jobs:
           $process = [System.Diagnostics.Process]::GetCurrentProcess()
           Write-Output "session $($process.SessionId), interactive: $([Environment]::UserInteractive)"
           query session 2>$null
+          exit 0
 
       - name: Fetch the pinned Cua Driver
         run: node scripts/fetch-cua-driver.mjs --out desktop-smoke/bin --windows ${{ matrix.arch }}
