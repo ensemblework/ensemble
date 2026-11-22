@@ -50,7 +50,7 @@ import { sessionPrompts } from "./session-touch.js";
 import { acpPrompts, acpTurns, codexTurns, MAX_REPLAYED, OUTSIDE_APPS, outsideOf, readOutside, type Outside, type OutsideTurn } from "./outside.js";
 import { promptsOf, withPrompts } from "../workspace/outside-runs.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
-import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, notePrompts, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
+import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, notePrompts, saveSession, SESSION_KEY, sessionFolder, takeSession, untakeSession, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
 import { addClaudeResult, claudeFromSubAgent, otherCodexThread, type ClaudeSpend } from "../workspace/engines/sub-agents.js";
 
@@ -165,8 +165,10 @@ type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string
 /**
  * `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). `servers`: the
  * MCP servers the agent loads by itself here (Copilot's and Codex's, agent-mcp.ts), for the driver to turn off.
+ * `took`: a new session's id, as soon as an agent that names its own sessions says it, before it has the message
+ * (`takeSession`).
  */
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[]; verdicts?: OwnVerdicts }) => Promise<DriverResult>;
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[]; verdicts?: OwnVerdicts; took?: (id: string) => Promise<void> }) => Promise<DriverResult>;
 
 /**
  * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
@@ -385,7 +387,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, servers, verdicts }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, servers, verdicts, took }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: codexEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -526,6 +528,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session, ju
     ) as { thread?: { id?: string }; model?: string };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw agentProblem("codex", "it did not start a conversation");
+    await took?.(threadId);
     // Named after the chat in the Codex app, not after its first message (Ensemble's instructions).
     if (session && !session.resume) await nameCodexThread(server, threadId, sessionTitle(spec.session?.title));
     // The node's project, with this chat, in the ChatGPT app's sidebar: now, or once the app is closed.
@@ -615,7 +618,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts, took }) => {
   const model = chosen(spec.model);
   const child = spawn(bin, ["--sandbox", spec.ownTools ? "disabled" : "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
@@ -675,6 +678,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, j
     const started = session?.resume ? await reopen(rpc, "session/load", session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
     sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
+    await took?.(sessionId);
     // ACP has no system prompt: Ensemble's instructions lead a session's first message, after the chat's title.
     sent = 1;
     const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
@@ -892,7 +896,7 @@ export function answerAcpTurn(method: string, params: Record<string, unknown>): 
 /** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
 const runAcpTurn =
   (id: AcpEngine): Driver =>
-  async ({ spec, io, folder, mcp, files, session, judge, verdicts }) => {
+  async ({ spec, io, folder, mcp, files, session, judge, verdicts, took }) => {
     const model = chosen(spec.model);
     const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env, ensembleMcpOnly: !spec.ownTools || Boolean(spec.node) });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
@@ -942,6 +946,7 @@ const runAcpTurn =
       const started = session?.resume ? await reopen(rpc, launch.resume, session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
       sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
       if (!sessionId) throw agentProblem(id, "it did not start a session");
+      await took?.(sessionId);
       // An agent that can start in a mode acting without asking (Antigravity, Mistral Vibe's accept-edits) goes to
       // the one that asks, so every tool of its own reaches answerAcpTurn and is refused.
       const modes = (started.modes ?? {}) as { currentModeId?: string; availableModes?: Array<{ id?: string }> };
@@ -1119,11 +1124,12 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     if (found && update === null) restart = restartOf("instructions");
     const earlier = found && update !== null ? found.id : null;
     if (only && !earlier) throw new AgentTurnError("failed", NOT_KEPT);
+    // Claude Code and Copilot run in the session they are given; the others say theirs as they start it.
+    const given = spec.agent === "claude-code" || spec.agent === "copilot-cli";
     // Stopped because the node's turn parked: the chat keeps this session, now holding the message and the wait for the
-    // owner, as after a turn that ended. Claude Code and Copilot run in the session they are given; the others say theirs.
+    // owner, as after a turn that ended.
     const keepParked = async (session: TurnSession, error: unknown): Promise<void> => {
       if (!key || io.signal.reason !== PARK_STOP) return;
-      const given = spec.agent === "claude-code" || spec.agent === "copilot-cli";
       const native = given ? session?.id : promptsOf(error)?.session;
       if (!native) return;
       await saveSession(key, spec.agent, native, spec.system, {
@@ -1136,7 +1142,15 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         prompts: given ? await sessionPrompts(spec.agent, native, folder).catch(() => null) : (promptsOf(error)?.prompts ?? null),
       }).catch(() => undefined);
     };
+    // The session that takes the message, noted before the agent has it (turn-sessions.ts `takeSession`): when this
+    // computer restarts mid-turn nothing after is saved, and the turn's continuation goes on in that session.
+    let taken = null as string | null;
+    const take = async (id: string): Promise<void> => {
+      taken = id;
+      await takeSession(key!, spec.agent, id, spec.system, { ...(position === undefined ? {} : { position }), perTurn, ...(group ? { folder: group } : {}), ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}) }).catch(() => undefined);
+    };
     const run = async (session: TurnSession): Promise<DriverResult> => {
+      if (key && session && (session.resume || given)) await take(session.id);
       try {
         return await DRIVERS[spec.agent]({
           spec: { ...spec, prompt: session?.resume ? (update ? `${update}\n\n---\n\n${spec.prompt}` : spec.prompt) : history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt },
@@ -1150,6 +1164,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
           servers,
           ...(judge ? { judge } : {}),
           ...(verdicts ? { verdicts } : {}),
+          ...(key && session && !session.resume && !given ? { took: take } : {}),
         });
       } catch (error) {
         await keepParked(session, error);
@@ -1159,29 +1174,35 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
     let result: DriverResult;
     let resumed = Boolean(earlier);
     try {
-      result = await run(key ? (earlier ? { id: earlier, resume: true, ...(found?.usage ? { usage: found.usage } : {}), ...(found?.prompts !== undefined ? { since: found.prompts } : {}) } : { id: randomUUID(), resume: false }) : null);
-    } catch (error) {
-      // The chat's session went on but the turn failed or was stopped: its prompts are noted for the next turn, once
-      // this error has gone back. A session the agent could not reopen, or an agent that keeps none, leaves nothing to note.
-      if (key && earlier && !(error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported)) {
-        // A stopped turn stays in the chat with its "Stopped.": the session's place in the chat moves with it (a failed turn's does not).
-        const next = io.signal.aborted && position !== undefined ? { next: position + 2 } : {};
-        later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began, ...next }).catch(() => undefined));
+      try {
+        result = await run(key ? (earlier ? { id: earlier, resume: true, ...(found?.usage ? { usage: found.usage } : {}), ...(found?.prompts !== undefined ? { since: found.prompts } : {}) } : { id: randomUUID(), resume: false }) : null);
+      } catch (error) {
+        // The chat's session went on but the turn failed or was stopped: its prompts are noted for the next turn, once
+        // this error has gone back. A session the agent could not reopen, or an agent that keeps none, leaves nothing to note.
+        if (key && earlier && !(error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported)) {
+          // A stopped turn stays in the chat with its "Stopped.": the session's place in the chat moves with it (a failed turn's does not).
+          const next = io.signal.aborted && position !== undefined ? { next: position + 2 } : {};
+          later?.(notePromptsAfter({ key, agent: spec.agent, session: earlier, folder, error, began, ...next }).catch(() => undefined));
+        }
+        if (io.signal.aborted || !key) throw error;
+        if (only) throw error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported ? new AgentTurnError("failed", NOT_KEPT) : error;
+        if (error instanceof SessionGone || error instanceof SessionBusy) {
+          restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
+          // What the person added there before it could not be reopened still comes in.
+          outside ??= error.outside;
+          // Kept to be deleted with the chat, unless the agent said it no longer has it.
+          await forgetSession(key, { gone: error instanceof SessionGone && error.proven });
+          resumed = false;
+          result = await run({ id: randomUUID(), resume: false });
+        } else if (error instanceof SessionUnsupported) {
+          resumed = false;
+          result = await run(null);
+        } else throw error;
       }
-      if (io.signal.aborted || !key) throw error;
-      if (only) throw error instanceof SessionGone || error instanceof SessionBusy || error instanceof SessionUnsupported ? new AgentTurnError("failed", NOT_KEPT) : error;
-      if (error instanceof SessionGone || error instanceof SessionBusy) {
-        restart = restartOf(error instanceof SessionBusy ? "busy" : "gone", error);
-        // What the person added there before it could not be reopened still comes in.
-        outside ??= error.outside;
-        // Kept to be deleted with the chat, unless the agent said it no longer has it.
-        await forgetSession(key, { gone: error instanceof SessionGone && error.proven });
-        resumed = false;
-        result = await run({ id: randomUUID(), resume: false });
-      } else if (error instanceof SessionUnsupported) {
-        resumed = false;
-        result = await run(null);
-      } else throw error;
+    } catch (error) {
+      // The turn ended here without its session saved: the chat's session stays as it was.
+      if (key && taken) await untakeSession(key, taken).catch(() => undefined);
+      throw error;
     }
     // The chat will have this message and its reply: the next turn resumes only from there.
     if (key && result.session) {
@@ -1195,7 +1216,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
         // How many prompts the session holds now, to read only what comes after next time (outside.ts).
         prompts: result.prompts !== undefined ? result.prompts : await sessionPrompts(spec.agent, result.session, folder).catch(() => null),
       });
-    }
+    } else if (key && taken) await untakeSession(key, taken).catch(() => undefined);
     // A turn that keeps no session leaves none in the agent either, deleted in the folder it ran in, which goes after.
     if (result.oneOff) {
       dropOneOff(spec.agent, result.oneOff, key ? undefined : folder);

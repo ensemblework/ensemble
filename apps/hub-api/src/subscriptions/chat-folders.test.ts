@@ -13,11 +13,11 @@ const state = mkdtempSync(join(tmpdir(), "ensemble-chat-folders-"));
 process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
 after(() => rmSync(state, { recursive: true, force: true }));
 
-const { chatFolder, chatFolderName, dropSession, findSession, forgetSession, saveSession, sessionFolder, setNativeDropForTests } = await import("./turn-sessions.js");
+const { chatFolder, chatFolderName, dropSession, findSession, forgetSession, lookSession, saveSession, sessionFolder, setNativeDropForTests, takeSession, untakeSession } = await import("./turn-sessions.js");
 const dropped: Array<{ id: string; folder: string }> = [];
 setNativeDropForTests(async (_agent, id, folder) => void dropped.push({ id, folder }));
 const storePath = join(state, "assistant-sessions.json");
-const store = () => JSON.parse(readFileSync(storePath, "utf8")) as Record<string, { id: string; dir?: string; keep?: number }>;
+const store = () => JSON.parse(readFileSync(storePath, "utf8")) as Record<string, { id: string; dir?: string; keep?: number; retired?: string[]; taking?: { id: string } }>;
 const chats = join(state, "assistant");
 const settle = () => new Promise((done) => setTimeout(done, 30));
 
@@ -150,6 +150,45 @@ test("a replaced session is deleted from the agent and the chat goes on in its f
   assert.deepEqual(dropped, [{ id: "thread-3", folder: placed.folder }]);
   assert.equal(existsSync(placed.folder), false, "an expired chat's folder goes with it");
   assert.ok(!(key in store()));
+});
+
+test("the session a turn began in, noted before the agent has the message, is where the turn goes on after the computer stopped mid-turn", async () => {
+  const key = "2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a";
+  const placed = await chatFolder(key, { agent: "claude-code", title: "Venue week" });
+  mkdirSync(placed.folder, { recursive: true });
+  // The chat's first message starts a session; the computer stops before the turn ends, so nothing after is saved.
+  await takeSession(key, "claude-code", "cut-session", "Rules.", { position: 0, perTurn: true });
+  assert.deepEqual(await chatFolder(key, { agent: "claude-code", title: "Venue week and catering" }), placed, "the folder that session began in keeps its name");
+  assert.deepEqual((await lookSession(key, "claude-code", "Rules.", true, 0, true)).found, { id: "cut-session", text: null }, "the turn's continuation goes on in it");
+  assert.deepEqual((await lookSession(key, "claude-code", "Rules.", true, 0)).found, { id: "cut-session", text: null }, "so does the chat's next turn after a failed one");
+  await saveSession(key, "claude-code", "cut-session", "Rules.", { next: 2, perTurn: true, dir: placed.dir });
+  assert.equal(store()[key]!.taking, undefined, "the turn's end replaces the note");
+
+  // A turn that ends here takes its note back: the chat's session is as it was.
+  await takeSession(key, "claude-code", "cut-session", "Rules.", { position: 2, perTurn: true });
+  await untakeSession(key, "cut-session");
+  assert.deepEqual(await lookSession(key, "claude-code", "Rules.", true, 2, true), { found: null, declined: "moved" });
+
+  // A noted session that cannot be reopened is the one forgotten; the chat's own stays until another replaces it.
+  await takeSession(key, "claude-code", "noted-session", "Rules.", { position: 2, perTurn: true });
+  await forgetSession(key);
+  assert.equal(store()[key]!.id, "cut-session");
+  assert.deepEqual(store()[key]!.retired, ["noted-session"]);
+  assert.equal(store()[key]!.taking, undefined);
+
+  // Another session goes on in place of a noted one: it is deleted from the agent, like any session it replaced.
+  await takeSession(key, "claude-code", "replaced-session", "Rules.", { position: 2, perTurn: true });
+  await settle();
+  dropped.length = 0;
+  await saveSession(key, "claude-code", "third-session", "Rules.", { next: 4, perTurn: true, dir: placed.dir });
+  await settle();
+  assert.deepEqual(dropped.map((row) => row.id).sort(), ["cut-session", "replaced-session"]);
+
+  // Deleting the chat deletes a noted session with the rest.
+  await takeSession(key, "claude-code", "last-session", "Rules.", { position: 4, perTurn: true });
+  dropped.length = 0;
+  assert.equal(await dropSession(key), true);
+  assert.deepEqual(dropped.map((row) => row.id).sort(), ["last-session", "noted-session", "third-session"]);
 });
 
 test("a folder name in the store that is a path is never used", async () => {

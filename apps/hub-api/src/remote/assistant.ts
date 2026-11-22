@@ -164,9 +164,12 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
   try {
     let body: { spec?: unknown } | null;
     try {
-      body = (await client.assistantTurn(id)) as { spec?: unknown } | null;
+      // Read again while the web cannot be reached: one whose answer was lost, the web gives this runtime again.
+      body = (await persist(() => client.assistantTurn(id), retry.toolForMs, controller.signal)) as { spec?: unknown } | null;
     } catch (error) {
       if (error instanceof RemoteError && error.status === 409) return "taken";
+      // Never read: the web hears so once it answers again, rather than waiting on a turn this computer cannot run.
+      if (unanswered(error) && !controller.signal.aborted) await end({ error: { problem: "failed", message: "This computer lost its connection to Ensemble on the web before it could read this message, so nothing was done. Try again." } }).catch(() => undefined);
       throw error;
     }
     if (!body) return;

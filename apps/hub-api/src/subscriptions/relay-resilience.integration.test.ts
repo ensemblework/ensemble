@@ -2,14 +2,19 @@
  * A turn the web relays to the owner's computer when that computer restarts, or its connection drops
  * (docs/25 §4.9, docs/35 §5.8), through Ensemble's real routes on an in-memory database. The computer is
  * simulated by its requests (each runtime with its own instance id and event stream), or is the real
- * computer-side code (remote/assistant.ts) talking HTTP to this API through a link that loses answers.
+ * computer-side code (remote/assistant.ts) talking HTTP to this API through a link that loses answers, or
+ * runs as processes of its own (the runtime and its agent, a stand-in Claude Code) that the test kills.
  */
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import type { LightMyRequestResponse } from "fastify";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
+import { makeTestDirectory } from "../test/temporary.js";
 
 const h = await createHttpHarness();
 const { sseHub } = await import("../lib/sse.js");
@@ -380,6 +385,258 @@ test("connection lost during a write and at the end: the computer sends the call
     frames.stop();
     computerSide.setRelayRetryForTests(null);
     relay.stopComputerTurns(plan.laptop.id);
+    await settleTurns();
+  }
+});
+
+test("a turn whose reading's answer was lost is read again by the same runtime: the reply arrives at once, and once", async () => {
+  computerSide.setRelayRetryForTests({ delaysMs: [20, 40, 80], toolForMs: 1_500, doneForMs: 3_000 });
+  const plan = await onPlan("Noor", { assistantRelay: 1 });
+  const client = hostedClient(base, plan.key.token);
+  const realFetch = globalThis.fetch;
+  const reads: string[] = [];
+  // The link drops: the first reading never gets there, and the second's answer is lost after the web gave the turn to this runtime.
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (!/\/assistant-turns\/[^/]+$/.test(url) || (init?.method ?? "GET") !== "GET") return realFetch(input, init);
+    reads.push(url);
+    if (reads.length === 1) throw new TypeError("fetch failed");
+    const response = await realFetch(input, init);
+    if (reads.length > 2) return response;
+    await response.text();
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+  const answering: Array<Promise<unknown>> = [];
+  const listen = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${plan.laptop.id}` || frame.event !== "assistant.turn") return;
+    answering.push(computerSide.answerAssistantTurn(client, frame.data, async () => ({ text: "Hello from the laptop.", model: "gpt-6.1-sol", tokensIn: 3, tokensOut: 4, costUsd: null })));
+  });
+  try {
+    assert.equal((await post(plan.owner, plan.room.id, "Say hello.")).statusCode, 201);
+    await until(async () => (await h.prisma.nodeTurn.findFirst({ where: { nodeId: plan.node.id, status: "done" } })) ?? null, "the turn to end", 10_000);
+    await Promise.all(answering);
+    await settleTurns();
+    assert.equal(reads.length, 3, "read again until the web's answer arrived");
+    assert.equal((await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id } })).outcome, "done");
+    const said = await replies(plan.owner, plan.room.id, plan.node.id);
+    assert.deepEqual(said.map((row) => [row.kind, row.body]), [["text", "Hello from the laptop."]], "answered once, not after ten minutes of silence");
+  } finally {
+    globalThis.fetch = realFetch;
+    listen();
+    computerSide.setRelayRetryForTests(null);
+    relay.stopComputerTurns(plan.laptop.id);
+    await settleTurns();
+  }
+});
+
+const CLAUDE = { id: "claude-code", via: "cli", version: "2.1.0", signedIn: true, models: [{ id: "haiku", label: "Haiku" }], typedModels: true };
+
+/**
+ * The computer's runtime as a process of its own: its event stream, and each turn the web hands it answered by
+ * remote/assistant.ts with the agent's real turn (subscriptions/agents.ts) on the stand-in Claude Code below.
+ */
+const RUNTIME = `const [client, assistant, registry] = await Promise.all(${JSON.stringify(["../remote/client.ts", "../remote/assistant.ts", "../workspace/engines/registry.ts"].map((path) => new URL(path, import.meta.url).href))}.map((url) => import(url)));
+// The stand-in never calls Ensemble's tools.
+registry.setLocalPort(1);
+setInterval(() => undefined, 60_000);
+const hosted = client.hostedClient(process.env.STANDIN_API, process.env.STANDIN_TOKEN);
+await hosted.events((event, data) => {
+  if (event === "assistant.turn") void assistant.answerAssistantTurn(hosted, data).catch((error) => process.stderr.write(String(error?.stack ?? error) + "\\n"));
+  if (event === "assistant.stop") assistant.stopAssistantTurn(data);
+}, new AbortController().signal);
+`;
+
+/**
+ * Claude Code's session handling as the runtime sees it: a new session with the id it is given, an earlier one by
+ * \`--resume\` (refused once its transcript is gone), each message added to the session's transcript. Every run is
+ * noted in \`runs.jsonl\`. With a \`hold\` file there, it takes the next message into the session and works on it
+ * until the test ends it (\`held\` says which session and process).
+ */
+const STANDIN_CLAUDE = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const after = (flag) => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
+if (args.includes('--version')) { process.stdout.write('2.1.0 (Claude Code)\\n'); process.exit(0); }
+if (!args.includes('--system-prompt-file')) process.exit(0);
+let prompt = '';
+process.stdin.on('data', (chunk) => (prompt += chunk));
+process.stdin.on('end', () => {
+  const home = process.env.STANDIN_HOME;
+  const resumed = after('--resume');
+  const id = after('--session-id') || resumed;
+  fs.appendFileSync(path.join(home, 'runs.jsonl'), JSON.stringify({ id, resumed: Boolean(resumed), prompt }) + '\\n');
+  const dir = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'standin');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, id + '.jsonl');
+  if (resumed && !fs.existsSync(file)) { process.stderr.write('No conversation found with session ID: ' + id + '\\n'); process.exit(1); }
+  const line = (value) => fs.appendFileSync(file, JSON.stringify(value) + '\\n');
+  const say = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+  line({ type: 'user', entrypoint: 'sdk-cli', timestamp: new Date().toISOString(), message: { role: 'user', content: prompt } });
+  say({ type: 'system', subtype: 'init', session_id: id, model: 'claude-haiku-test' });
+  if (fs.existsSync(path.join(home, 'hold'))) {
+    fs.rmSync(path.join(home, 'hold'));
+    fs.writeFileSync(path.join(home, 'held'), JSON.stringify({ id, pid: process.pid }));
+    setInterval(() => undefined, 60_000);
+    return;
+  }
+  const reply = resumed ? 'Went on in the same session.' : 'Started.';
+  line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: reply }] } });
+  say({ type: 'result', subtype: 'success', is_error: false, result: reply, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 2 } });
+});
+`;
+
+type Run = { id: string; resumed: boolean; prompt: string };
+
+/** The owner's computer with a stand-in Claude Code, whose runtime the test starts, and kills as the computer restarts. */
+function computer(name: string, deviceId: string, token: string) {
+  const root = makeTestDirectory(`ensemble-restart-${name}-`);
+  mkdirSync(join(root, "bin"));
+  writeFileSync(join(root, "bin", "claude"), STANDIN_CLAUDE);
+  chmodSync(join(root, "bin", "claude"), 0o755);
+  writeFileSync(join(root, "runtime.mjs"), RUNTIME);
+  const env = {
+    ...process.env,
+    PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}`,
+    STANDIN_API: base,
+    STANDIN_TOKEN: token,
+    STANDIN_HOME: root,
+    CLAUDE_CONFIG_DIR: join(root, "claude"),
+    ENSEMBLE_REMOTE_STATE_DIR: join(root, "state"),
+    ENSEMBLE_WORKSPACE_ROOT: join(root, "workspace"),
+    XDG_CONFIG_HOME: join(root, "config"),
+  };
+  const children: ChildProcess[] = [];
+  const agents: number[] = [];
+  const streams = () => sseHub.listeners(`device:${deviceId}`);
+  return {
+    runs: (): Run[] => (existsSync(join(root, "runs.jsonl")) ? readFileSync(join(root, "runs.jsonl"), "utf8").trim().split("\n").map((row) => JSON.parse(row) as Run) : []),
+    sessions: () => JSON.parse(readFileSync(join(root, "state", "assistant-sessions.json"), "utf8")) as Record<string, { id: string; next?: number; taking?: unknown }>,
+    /** The agent takes its next message into the session and is still working on it when the computer restarts. */
+    holdNext: () => writeFileSync(join(root, "hold"), ""),
+    async held(): Promise<{ id: string; pid: number }> {
+      const held = await until(async () => existsSync(join(root, "held")) && (JSON.parse(readFileSync(join(root, "held"), "utf8")) as { id: string; pid: number }), "the agent working on the message", 20_000);
+      rmSync(join(root, "held"));
+      agents.push(held.pid);
+      return held;
+    },
+    /** A runtime of this computer, once its event stream is open. */
+    async start(): Promise<() => void> {
+      await until(async () => streams() === 0, "the earlier runtime's stream to end");
+      const child = spawn(process.execPath, ["--import", "tsx", join(root, "runtime.mjs")], { env, stdio: ["ignore", "ignore", "inherit"] });
+      children.push(child);
+      await until(async () => streams() === 1, "the runtime's event stream", 30_000);
+      return () => child.kill("SIGKILL");
+    },
+    /** The computer restarts: its runtime and the agent working on the message end at once, saving nothing more. */
+    restart(stop: () => void, agent: { pid: number }) {
+      stop();
+      process.kill(agent.pid, "SIGKILL");
+    },
+    close() {
+      for (const child of children) child.kill("SIGKILL");
+      for (const pid of agents) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+/** One of the owner's computers, paired, with Claude Code signed in there. */
+async function withClaude(name: string) {
+  const owner = await person(name);
+  const key = await h.asToken(owner, "device");
+  const laptop = await h.prisma.device.create({
+    data: { userId: owner.id, name: `${name}'s laptop`, platform: "linux", appVersion: "cli-0.9.0", tokenId: key.id, lastSeenAt: new Date(), capabilities: { assistantTurns: 6, assistantRelay: 1, agents: [{ ...CLAUDE, checkedAt: new Date().toISOString() }] } },
+  });
+  return { owner, key, laptop, pc: computer(name.toLowerCase(), laptop.id, key.token) };
+}
+
+test("on the computer's own runtime and agent: a chat cut off by its computer's restart goes on in the agent session that took it, for its first message and a later one", async () => {
+  const { owner, laptop, pc } = await withClaude("Tomas");
+  const set = await owner.inject({ method: "PATCH", url: "/api/settings", payload: { models: { medium: { provider: "claude-code", model: "haiku", effort: "default" } }, assistant: { defaultTier: "medium", writePolicy: "immediate" } } });
+  assert.equal(set.statusCode, 200, set.body);
+  let stop = await pc.start();
+  try {
+    // The chat's first message: the agent starts its session, and the computer restarts while it works.
+    pc.holdNext();
+    const first = owner.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "Plan my week around the venue visit." } });
+    const session = await pc.held();
+    pc.restart(stop, session);
+    stop = await pc.start();
+    const firstBody = (await first).body;
+    assert.doesNotMatch(firstBody, /event: error/, firstBody);
+    assert.match(firstBody, /Went on in the same session\./);
+    const conversation = await h.prisma.assistantConversation.findFirstOrThrow({ where: { userId: owner.id }, orderBy: { createdAt: "desc" } });
+
+    // A later message, in that session: cut off the same way, it goes on there too.
+    pc.holdNext();
+    const second = owner.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "Now add the catering call.", conversationId: conversation.id } });
+    pc.restart(stop, await pc.held());
+    stop = await pc.start();
+    const secondBody = (await second).body;
+    assert.doesNotMatch(secondBody, /event: error/, secondBody);
+    assert.match(secondBody, /Went on in the same session\./);
+
+    const runs = pc.runs();
+    assert.deepEqual(runs.map((run) => [run.id, run.resumed]), [[session.id, false], [session.id, true], [session.id, true], [session.id, true]], "one agent session throughout");
+    assert.match(runs[1]!.prompt, /Your answer was cut off when Tomas's laptop restarted/);
+    assert.match(runs[3]!.prompt, /Your answer was cut off when Tomas's laptop restarted/);
+    const kept = pc.sessions()[conversation.id]!;
+    assert.equal(kept.id, session.id);
+    assert.equal(kept.next, 4, "the chat's two messages and their replies");
+    assert.equal(kept.taking, undefined);
+  } finally {
+    stop();
+    pc.close();
+    relay.stopComputerTurns(laptop.id);
+    await settleTurns();
+  }
+});
+
+test("on the computer's own runtime and agent: a node's turn cut off by its computer's restart resumes in the agent session that took it", async () => {
+  const { owner, laptop, pc } = await withClaude("Imani");
+  const made = await owner.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } });
+  assert.equal(made.statusCode, 201, made.body);
+  const { node, room } = json(made) as { node: { id: string }; room: { id: string } };
+  await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "claude-code", model: "haiku" } });
+  let stop = await pc.start();
+  try {
+    assert.equal((await post(owner, room.id, "Say hello.")).statusCode, 201);
+    await until(async () => (await replies(owner, room.id, node.id)).length === 1, "the node's first reply", 20_000);
+    const [session] = pc.runs();
+
+    // The next turn goes on in that session; the computer restarts after the turn began acting.
+    pc.holdNext();
+    assert.equal((await post(owner, room.id, "Draft a short note about the venue visit.")).statusCode, 201);
+    const agent = await pc.held();
+    const cut = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id, status: "running" } });
+    const started = await turnJournal(h.app, cut).begin({ name: "hub_create_tasks", arguments: JSON.stringify({ tasks: [{ title: "Confirm the venue" }] }), sideEffect: true });
+    assert.ok("ticket" in started);
+    await started.ticket.dispatched();
+    pc.restart(stop, agent);
+    stop = await pc.start();
+    await until(async () => (await replies(owner, room.id, node.id)).length === 2, "the resumed turn's reply", 20_000);
+    await settleTurns();
+
+    const runs = pc.runs();
+    assert.deepEqual(runs.map((run) => [run.id, run.resumed]), [[session!.id, false], [session!.id, true], [session!.id, true]], "the resumed turn went on in the session that took the cut one");
+    assert.match(runs[2]!.prompt, /Your previous turn was cut off when Imani's laptop restarted[\s\S]*hub_create_tasks/);
+    assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: cut.id } })).outcome, "interrupted");
+    assert.equal((await h.prisma.nodeTurn.findFirstOrThrow({ where: { originTurnId: cut.id } })).outcome, "done");
+    assert.deepEqual((await replies(owner, room.id, node.id)).map((row) => [row.kind, row.body]), [["text", "Started."], ["text", "Went on in the same session."]]);
+    const conversation = Object.entries(pc.sessions()).find(([, entry]) => entry.id === session!.id);
+    assert.ok(conversation, "the chat keeps that session");
+    assert.equal(conversation[1].taking, undefined);
+  } finally {
+    stop();
+    pc.close();
+    relay.stopComputerTurns(laptop.id);
     await settleTurns();
   }
 });

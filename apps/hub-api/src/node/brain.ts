@@ -854,7 +854,9 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
       return { status: "requeue", error: failure.message };
     }
-    await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "assistant", content: `(Cut off here: ${failure.message})` } });
+    // Kept as a failed exchange: the resumed turn goes on at the same place in the agent's session there, which took
+    // this message (assistant/agent.ts `sessionPosition`, subscriptions/turn-sessions.ts `takeSession`).
+    await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "error", content: `(Cut off here: ${failure.message})` } });
     await prisma.assistantConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
     await saveCursor(readUpTo);
     return { status: "interrupted", error: failure.message, resume: { cut: { by: `when ${failure.what}`, error: failure.message }, mayHaveRun, ownCalls: failure.ownCalls.filter((call) => call.acts) } };

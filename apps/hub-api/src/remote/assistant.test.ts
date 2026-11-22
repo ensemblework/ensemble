@@ -231,6 +231,49 @@ test("a dropped connection loses no reply: a batch the web did not get goes agai
   });
 });
 
+test("a turn whose reading the web did not answer (the connection dropped, a gateway had none) is read again, and runs once", async () => {
+  await withQuickRetries(async () => {
+    const failures = [unreachable(), new RemoteError(504, "Gateway timeout")];
+    let reads = 0;
+    const fake = fakeClient();
+    (fake.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      reads += 1;
+      const failure = failures.shift();
+      if (failure) throw failure;
+      return { spec: SPEC };
+    };
+    let runs = 0;
+    const result = { text: "Hello.", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+    await answerAssistantTurn(fake.client, { id: "turn-read-again" }, async () => {
+      runs += 1;
+      return result;
+    });
+    assert.equal(reads, 3, "read again until the web answered");
+    assert.equal(runs, 1);
+    assert.deepEqual(fake.done, [{ result }], "and its end went once");
+
+    // The web never answers the reading: after the wait, the turn ends with why, once the web hears it.
+    const silent = fakeClient();
+    (silent.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      throw unreachable();
+    };
+    await assert.rejects(answerAssistantTurn(silent.client, { id: "turn-never-read" }, async () => result), /not reachable/);
+    assert.equal(silent.done.length, 1);
+    assert.match(JSON.stringify(silent.done[0]), /lost its connection to Ensemble on the web before it could read this message, so nothing was done/);
+
+    // Another runtime of this computer read it first: left alone at once, never read again.
+    let taken = 0;
+    const other = fakeClient();
+    (other.client as { assistantTurn: unknown }).assistantTurn = async () => {
+      taken += 1;
+      throw new RemoteError(409, "This turn was picked up by another Ensemble on this computer.");
+    };
+    assert.equal(await answerAssistantTurn(other.client, { id: "turn-read-taken" }, async () => result), "taken");
+    assert.equal(taken, 1);
+    assert.deepEqual(other.done, []);
+  });
+});
+
 test("with the web's word, a tool call goes with its own id and again with it when its answer is lost; a call never answered is said to have maybe happened", async () => {
   await withQuickRetries(async () => {
     const bodies: Array<{ name: string; input: unknown; callId?: string }> = [];
