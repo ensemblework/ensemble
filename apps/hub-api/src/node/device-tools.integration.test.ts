@@ -27,7 +27,7 @@ const { settleTurns } = await import("./queue.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
-const { deviceTools, forComputer, signInWhich } = await import("./device-tools.js");
+const { deviceTools, forComputer, signInWhich, unseenNote, unseenPaths } = await import("./device-tools.js");
 const { postMessage } = await import("./store.js");
 const { ModelTimeoutError } = await import("../lib/model-timeout.js");
 after(() => h.close());
@@ -697,6 +697,70 @@ test("unattended calls say so; the computer's refusal is the node's answer; an o
   script = () => gitStatus;
   await say(mira, room.id, "status of app?");
   assert.match((await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!, /Update Ensemble on Mira's laptop/);
+});
+
+test("computer_run without a folder runs in the node's own folder and says so; a path it cannot see there brings the folders the computer shares", async () => {
+  const mira = await person("Mira");
+  const folders = [{ label: "notes", kind: "folder", access: "read-write" }, { label: "app", kind: "repo", access: "read-write" }];
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 2, folders, sandbox: "strong", sandboxInfo: { mechanism: "bubblewrap", osSandbox: true } });
+  const { node, room } = await createNode(mira);
+  const device = computer(laptop.id, key, (data) => {
+    if (data.command === "pwd") return { status: 200, body: { exitCode: 0, output: `/home/mira/ensemble-workspace/nodes/${node.slug}\n` } };
+    if (data.folder === "notes") return data.command === "ls" ? { status: 200, body: { exitCode: 0, output: "alpha-plan.md\n" } } : { status: 200, body: { exitCode: 1, output: "cat: /home/mira/notes/missing.md: No such file or directory\n" } };
+    if (data.folder === "app") return { status: 200, body: { exitCode: 1, output: "npm ERR! Missing script: \"test\"\n" } };
+    // The sandbox shows a command only the folder it runs in: the owner's other folders are not there.
+    return { status: 200, body: { exitCode: 2, output: "ls: cannot access '/home/mira/notes': No such file or directory\n" } };
+  });
+  const said = async (body: string, call: Record<string, unknown>) => {
+    script = () => ({ calls: [{ name: "computer_run", arguments: call }], then: "Done." });
+    await say(mira, room.id, body);
+    return (await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!;
+  };
+  try {
+    assert.match(await said("where do you work?", { command: "pwd" }), /^Exit code 0 in your own folder on Mira's laptop\.$/);
+    assert.equal(device.heard[0]!.folder, undefined, "the computer runs it in the node's own folder");
+    const unseen = await said("what is in /home/mira/notes?", { command: "ls -la -- /home/mira/notes" });
+    assert.match(unseen, /^Exit code 2 in your own folder on Mira's laptop\./);
+    assert.match(unseen, /`\/home\/mira\/notes` cannot be seen from your own folder/);
+    assert.match(unseen, /name that folder in folder: one Mira's laptop shares \(“notes”, “app”\) or its full path/);
+    assert.match(await said("and now?", { folder: "notes", command: "ls" }), /^Exit code 0\.$/);
+    assert.match(await said("open the missing one", { folder: "notes", command: "cat /home/mira/notes/missing.md" }), /^Exit code 1\.$/, "a file missing in the folder it named brings no list");
+    assert.match(await said("run the tests", { folder: "app", command: "npm test" }), /^Exit code 1\.$/, "a failure that names no path it cannot see brings no list");
+  } finally {
+    device.stop();
+  }
+  const row = await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: node.id } });
+  const scopeRoom = await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } });
+  const scope = { prisma: h.prisma, node: row, room: scopeRoom, lineage: { rootMessageId: null, botDepth: 0, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis as never, dispatch: async () => undefined, turnId: "t", plan: null };
+  assert.match(deviceTools(scope).find((tool) => tool.name === "computer_run")!.description, /Without folder it runs in your own folder: to work in a folder of your owner's, name it as folder\./);
+});
+
+test("unseenPaths: the paths a failed command could not see, from its own error lines", () => {
+  const own = { own: "assistant" };
+  assert.deepEqual(unseenPaths("ls -la -- /home/mira/notes", "ls: cannot access '/home/mira/notes': No such file or directory\n", own), ["/home/mira/notes"]);
+  assert.deepEqual(unseenPaths('bash -c "cat ~/notes/plan.md | head"', "cat: /home/mira/notes/plan.md: No such file or directory\n", own), ["~/notes/plan.md"]);
+  assert.deepEqual(unseenPaths("python3 ../data/run.py", "python3: can't open file '/w/nodes/data/run.py': [Errno 2] No such file or directory\n", own), ["../data/run.py"], "as the program resolved it");
+  assert.deepEqual(unseenPaths("cat ../data/run.py", "cat: ../data/run.py: Permission denied\n", own), ["../data/run.py"]);
+  assert.deepEqual(unseenPaths("cat ../data/run.py", "cat: ../data/run.py: No such file or directory\n", { ...own, cwd: "src/app" }), [], "../ from a subfolder may still be inside");
+  assert.deepEqual(unseenPaths("/usr/bin/python3 script.py", "python3: can't open file 'script.py': [Errno 2] No such file or directory\n", own), [], "a program's own path is not what was missing");
+  assert.deepEqual(unseenPaths("ls /home/mira/ensemble-workspace/nodes/assistant/out", "ls: cannot access '/home/mira/ensemble-workspace/nodes/assistant/out': No such file or directory\n", own), [], "a path in the node's own folder is visible there");
+  assert.deepEqual(unseenPaths("npm test", "npm ERR! Missing script: \"test\"\n", own), []);
+  const missing = "cat: /home/mira/notes/missing.md: No such file or directory\n";
+  assert.deepEqual(unseenPaths("cat /home/mira/notes/missing.md", missing, { folder: "notes" }), [], "under a folder named by its label it may only be missing");
+  assert.deepEqual(unseenPaths("cat /home/mira/notes/missing.md", missing, { folder: "/home/mira/notes/" }), [], "inside a folder named by its full path");
+  assert.deepEqual(unseenPaths("cat /home/mira/app/plan.md", "cat: /home/mira/app/plan.md: No such file or directory\n", { folder: "/home/mira/notes" }), ["/home/mira/app/plan.md"]);
+  assert.deepEqual(unseenPaths("cat ../app/plan.md", "cat: ../app/plan.md: No such file or directory\n", { folder: "notes" }), ["../app/plan.md"], "../ from a folder's top leaves it");
+});
+
+test("unseenNote: only a computer whose OS sandbox hides the other folders names the ones to use", () => {
+  const run = { command: "ls /home/mira/notes", output: "ls: cannot access '/home/mira/notes': No such file or directory\n" };
+  const folders = [{ label: "notes", kind: "folder", access: "read-write" }];
+  const laptop = (sandboxInfo: { mechanism: string; osSandbox: boolean }) => ({ name: "Mira's laptop", capabilities: { folders, sandbox: sandboxInfo.osSandbox ? "strong" : "advisory", sandboxInfo } });
+  assert.equal(unseenNote(run, "assistant", laptop({ mechanism: "none", osSandbox: false }), []), null, "without one the command sees every folder: the path is only missing");
+  assert.equal(unseenNote(run, "assistant", laptop({ mechanism: "landlock", osSandbox: true }), []), "`/home/mira/notes` cannot be seen from your own folder: a command sees only the folder it runs in. To work there, name that folder in folder: one Mira's laptop shares (“notes”) or its full path.");
+  assert.match(unseenNote(run, "assistant", { name: "Mira's laptop", capabilities: { sandbox: "reduced" } }, [])!, /name that folder in folder: its full path\.$/, "a computer that publishes only its sandbox's strength, and shares nothing");
+  assert.match(unseenNote(run, "assistant", laptop({ mechanism: "bubblewrap", osSandbox: true }), ["app"])!, /name that folder in folder: one you may use \(“app”\)\.$/, "a helper names only its own folders");
+  assert.equal(unseenNote({ ...run, output: "" }, "assistant", laptop({ mechanism: "bubblewrap", osSandbox: true }), []), null);
 });
 
 test("the computer tools are the owner's alone: not in a turn someone else started or that others read", async () => {
