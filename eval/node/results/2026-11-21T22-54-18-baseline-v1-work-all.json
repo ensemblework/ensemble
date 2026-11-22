@@ -1,0 +1,344 @@
+{
+ "label": "baseline-v1-work-all",
+ "stamp": "2026-11-21T22-54-18",
+ "commit": "1720b03a",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "create-a-routine",
+  "connected-app-through-bridge",
+  "assign-to-coding-agent-verify"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T22:46:26.927Z",
+ "finishedAt": "2026-11-21T22:53:52.325Z",
+ "results": [
+  {
+   "task": "create-a-routine",
+   "suite": "work",
+   "category": "work",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "one routine",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "assistant “Weekday due-tasks summary” 30 8 * * 1-5"
+    },
+    {
+     "name": "weekdays at 8:30",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "30 8 * * 1-5"
+    },
+    {
+     "name": "in the owner's time zone",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Asia/Calcutta (owner Asia/Calcutta)"
+    },
+    {
+     "name": "its action is a summary of the tasks due that day",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "summarize my tasks due today. keep it short, list each task title and any important detail, and say if no tasks are due today."
+    },
+    {
+     "name": "its next run is a weekday at 08:30",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Mon 08:30"
+    },
+    {
+     "name": "active",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "active"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 29793,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 40989,
+    "tokensOut": 246,
+    "credits": 0.2930305,
+    "ensembleCalls": 1,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_create_routine"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_create_routine"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "42013abf-59f9-4aaa-b7e2-979b83c11caf"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-work/create-a-routine--1.jsonl",
+   "startedAt": "2026-11-21T22:46:46.813Z"
+  },
+  {
+   "task": "connected-app-through-bridge",
+   "suite": "work",
+   "category": "work",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "it looked Acme up in the CRM",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "find_customer, add_note"
+    },
+    {
+     "name": "one note, on Acme's record, about the renewal",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "{\"note\":\"Call about the renewal\",\"customerId\":\"cus_1042\"}"
+    },
+    {
+     "name": "the renewal date in the answer",
+     "pass": true,
+     "kind": "reply",
+     "note": "acme corp’s contract renews on 2027-03-14. the note “call about the renewal” is ready to apply to their fieldnote crm record; no one will be emailed. source: fi"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 36125,
+    "turns": 2,
+    "failedTurns": 1,
+    "modelCalls": 4,
+    "tokensIn": 87810,
+    "tokensOut": 403,
+    "credits": 0.507505,
+    "ensembleCalls": 1,
+    "ensembleTools": 2,
+    "agentTools": 2,
+    "approvals": 1,
+    "unanswered": 0,
+    "errors": 2,
+    "noAnswerTurns": 0,
+    "errorMessages": 1
+   },
+   "tools": [
+    "mcp_fieldnote_cr_eab4_find_customer",
+    "mcp_fieldnote_cr_eab4_add_note"
+   ],
+   "agentToolNames": [
+    "ensemble-mcp_fieldnote_cr_eab4_find_customer",
+    "ensemble-mcp_fieldnote_cr_eab4_add_note"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "deec24a7-12bf-4b53-b34a-4339476b5edb",
+     "type": "tools",
+     "answer": "approve",
+     "answered": true,
+     "at": "2026-11-21T22:47:36.498Z"
+    }
+   ],
+   "errors": [
+    "turn of @assistant failed: GitHub Copilot stopped: exit 1",
+    "error message in the chat: GitHub Copilot stopped: exit 1"
+   ],
+   "sessions": [
+    "3d710e6e-9056-4b7f-8244-61b65ed74ef0"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-work/connected-app-through-bridge--1.jsonl",
+   "startedAt": "2026-11-21T22:47:17.307Z"
+  },
+  {
+   "task": "assign-to-coding-agent-verify",
+   "suite": "work",
+   "category": "work",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a branch was pushed to origin",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "fix/parse-date-day-month"
+    },
+    {
+     "name": "its tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "fix/parse-date-day-month: ✔ parses DD/MM/YYYY without swapping day and month (1.456056ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 80.794167\n"
+    },
+    {
+     "name": "the fix is on it (hidden tests)",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "fix/parse-date-day-month: ✔ parses DD/MM/YYYY (1.498129ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 94.043411\n"
+    },
+    {
+     "name": "main was left as it was",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "done only with the branch, and the owner heard its name",
+     "pass": true,
+     "kind": "reply",
+     "note": "task done; started github copilot on the eval computer in the parsers folder for [fix parsedate in the parsers repo](ensemble://tas"
+    },
+    {
+     "name": "nothing reached GitHub",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "origin\t<work>/tasks/assign-to-coding-agent-verify-1/remote/parsers.git (fetch) | origin\t<work>/tasks/assign-to-coding-agent-verify-1/remote/parsers.git (push)"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 89010,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 15,
+    "tokensIn": 354447,
+    "tokensOut": 3536,
+    "credits": 1.1347715,
+    "ensembleCalls": 2,
+    "ensembleTools": 5,
+    "agentTools": 23,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_tasks",
+    "hub_list_agent_options",
+    "hub_item_context",
+    "node_session_start",
+    "hub_update_task"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_list_tasks",
+    "ensemble-hub_list_agent_options",
+    "ensemble-hub_item_context",
+    "ensemble-node_session_start",
+    "ensemble-hub_update_task",
+    "ensemble-ensemble_context",
+    "rg",
+    "glob",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "e1e5db0f-65fa-4d16-972a-915076835611",
+    "e5fe6d12-2671-4e6d-b2fe-a718f75f3ebb"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-work-rerun/assign-to-coding-agent-verify--1.jsonl",
+   "startedAt": "2026-11-21T22:52:21.862Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "42013abf-59f9-4aaa-b7e2-979b83c11caf",
+   "kind": "node-turn",
+   "task": "create-a-routine",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "3d710e6e-9056-4b7f-8244-61b65ed74ef0",
+   "kind": "node-turn",
+   "task": "connected-app-through-bridge",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "135f0d47-b3e9-422b-92b2-7792e22435dd",
+   "kind": "coding",
+   "task": "assign-to-coding-agent-verify",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "bd263cf5-ff72-49fc-9919-6ddc05489ec0",
+   "kind": "node-turn",
+   "task": "assign-to-coding-agent-verify",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "e1e5db0f-65fa-4d16-972a-915076835611",
+   "kind": "node-turn",
+   "task": "assign-to-coding-agent-verify",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "e5fe6d12-2671-4e6d-b2fe-a718f75f3ebb",
+   "kind": "coding",
+   "task": "assign-to-coding-agent-verify",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal no, code-tab-harness no.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ).",
+  "Combined from 2026-11-21T22-46-26-baseline-v1-work, 2026-11-21T22-52-06-baseline-v1-work-rerun; a later run of a task replaces an earlier one."
+ ]
+}

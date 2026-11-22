@@ -81,9 +81,9 @@ test("no-answer turns and error messages come from the metrics, or from the erro
 test("the suite table has a row per suite, an overall row, and input tokens per task", () => {
   const lines = suiteTable([run("a"), run("b", { suite: "hard", pass: false, verifiedPass: false, score: 0.5, falseClaims: ["x"] }), run("c", { suite: "hard" })]).split("\n");
   assert.equal(lines.length, 5);
-  assert.match(lines[2]!, /^\| core \| 1 \| 1 \| 1 \| 100% \| 0 \| 0 \| 0 \| 12k \| 1 \| 1\.0 min \| 0\.50 \|$/);
-  assert.match(lines[3]!, /^\| hard \| 2 \| 1 \| 1 \| 75% \| 0 \| 0 \| 1 \| 12k \| 2 \| 2\.0 min \|/);
-  assert.match(lines[4]!, /^\| \*\*all\*\* \| 3 \| 2 \| 2 \|/);
+  assert.match(lines[2]!, /^\| core \| 1 \| 0 \| 1 \| 1 \| 100% \| 0 \| 0 \| 0 \| 12k \| 1 \| 1\.0 min \| 0\.50 \|$/);
+  assert.match(lines[3]!, /^\| hard \| 2 \| 0 \| 1 \| 1 \| 75% \| 0 \| 0 \| 1 \| 12k \| 2 \| 2\.0 min \|/);
+  assert.match(lines[4]!, /^\| \*\*all\*\* \| 3 \| 0 \| 2 \| 2 \|/);
 });
 
 test("a summary puts several runs' suites side by side and lists its sources", () => {
@@ -95,6 +95,24 @@ test("a summary puts several runs' suites side by side and lists its sources", (
   assert.match(text, /- \[`one\.md`\]\(one\.md\): core, 1 task, 1 of 1 agent session deleted\./);
   assert.equal(text.match(/- same setup/g)?.length, 1);
   assert.ok(!text.includes("—") && !text.includes(" -- "));
+});
+
+test("a skipped task counts in no total and is listed with what it requires", () => {
+  const skipped = run("restart-reconciliation", { suite: "orch", status: "skipped", skipped: "requires tool-journal (the node tool journal)", pass: false, verifiedPass: false, score: 0, checks: [], metrics: { ...run("x").metrics, wallMs: 0, tokensIn: 0, turns: 0 } });
+  const t = totals([run("a", { suite: "orch" }), skipped]);
+  assert.deepEqual([t.runs, t.skipped, t.passed, t.meanScore], [1, 1, 1, 1]);
+  const suites = suiteTable([run("a", { suite: "orch" }), skipped]).split("\n");
+  assert.match(suites[2]!, /^\| orch \| 1 \| 1 \| 1 \| 1 \| 100% \|/);
+  const onlySkipped = suiteTable([skipped]).split("\n");
+  assert.match(onlySkipped[2]!, /^\| orch \| 0 \| 1 \| 0 \| 0 \| n\/a \|/);
+  const table = summaryTable([run("a", { suite: "orch" }), skipped]).split("\n");
+  assert.match(table[3]!, /^\| restart-reconciliation \| orch \| skipped \|/);
+  assert.equal(table[3]!.split("|").length, table[0]!.split("|").length);
+  assert.match(table.at(-1)!, /\*\*1\/1\*\* \(1 skipped\)/);
+  const saved: Saved = { label: "x", stamp: "s", commit: "abc", agent: "copilot-cli", model: "gpt-6-luna", judgeModel: "gpt-6-luna", tasks: [], repeat: 1, startedAt: "", finishedAt: "", results: [skipped], cleanup: [], notes: [] };
+  const text = markdown(saved);
+  assert.match(text, /## Skipped\n\n- \*\*restart-reconciliation\*\*: requires tool-journal/);
+  assert.doesNotMatch(text, /\*\*restart-reconciliation\*\*: all checks passed/);
 });
 
 test("a stuck plan step the harness finished without is counted and listed as a problem, with the step and why", () => {

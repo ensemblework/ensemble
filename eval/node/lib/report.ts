@@ -30,6 +30,8 @@ const cell = (text: string) => text.replace(/\|/g, "/").replace(/\s*\n\s*/g, " "
 
 export type Totals = {
   runs: number;
+  /** Tasks this checkout could not run (it lacks what they require): in no other total. */
+  skipped: number;
   passed: number;
   verified: number;
   meanScore: number;
@@ -51,10 +53,13 @@ export type Totals = {
   wallMs: number;
 };
 
+export const isSkipped = (result: Pick<RunResult, "status">): boolean => result.status === "skipped";
+
 export function totals(rows: RunResult[]): Totals {
-  const results = rows.map(withMetrics);
+  const results = rows.map(withMetrics).filter((row) => !isSkipped(row));
   return {
     runs: results.length,
+    skipped: rows.filter(isSkipped).length,
     passed: results.filter((row) => row.pass).length,
     verified: results.filter((row) => row.verifiedPass).length,
     meanScore: mean(results.map((row) => row.score)),
@@ -81,6 +86,7 @@ function row(input: RunResult, repeats: number): string {
   const result = withMetrics(input);
   const m = result.metrics;
   const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
+  if (isSkipped(result)) return `| ${name} | ${result.suite} | skipped | | | | | | | | | | | | | |`;
   const status = result.status === "done" ? (result.pass ? "pass" : "fail") : result.status;
   return `| ${name} | ${result.suite} | ${status} | ${result.verifiedPass ? "yes" : "no"} | ${pct(result.score)} | ${result.falseClaims.length} | ${m.noAnswerTurns ?? 0} / ${m.errorMessages ?? 0} | ${m.turns} | ${m.modelCalls} | ${m.ensembleTools} | ${m.agentTools} | ${thousands(m.tokensIn)} / ${thousands(m.tokensOut)} | ${m.credits.toFixed(2)} | ${seconds(m.wallMs)} | ${approvalsCell(m.approvals, m.unanswered, m.stuckSteps ?? 0)} | ${m.errors} |`;
 }
@@ -98,7 +104,7 @@ const HEADER = [
 
 export function summaryTable(results: RunResult[], repeats = 1): string {
   const t = totals(results);
-  const total = `| **total** | | **${t.passed}/${t.runs}** | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.noAnswerTurns} / ${t.errorMessages} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${t.errors} |`;
+  const total = `| **total** | | **${t.passed}/${t.runs}**${t.skipped ? ` (${t.skipped} skipped)` : ""} | ${t.verified}/${t.runs} | ${pct(t.meanScore)} | ${t.falseClaims} | ${t.noAnswerTurns} / ${t.errorMessages} | ${t.turns} | ${t.modelCalls} | ${t.ensembleTools} | ${t.agentTools} | ${thousands(t.tokensIn)} / ${thousands(t.tokensOut)} | ${t.credits.toFixed(2)} | ${seconds(t.wallMs)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${t.errors} |`;
   return [...HEADER, ...results.map((result) => row(result, repeats)), total].join("\n");
 }
 
@@ -110,11 +116,11 @@ export function suiteTable(results: RunResult[]): string {
   const suites = [...new Set(results.map((result) => result.suite))];
   const line = (name: string, rows: RunResult[]) => {
     const t = totals(rows);
-    return `| ${name} | ${t.runs} | ${t.passed} | ${t.verified} | ${pct(t.meanScore)} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${minutes(t.wallMs)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
+    return `| ${name} | ${t.runs} | ${t.skipped} | ${t.passed} | ${t.verified} | ${t.runs ? pct(t.meanScore) : "n/a"} | ${t.noAnswerTurns} | ${t.errorMessages} | ${t.falseClaims} | ${thousands(t.runs ? t.tokensIn / t.runs : 0)} | ${approvalsCell(t.approvals, t.unanswered, t.stuckSteps)} | ${minutes(t.wallMs)} | ${(t.runs ? t.credits / t.runs : 0).toFixed(2)} |`;
   };
   return [
-    "| suite | tasks | passed | verified | mean score | turns ended with no answer | error messages | false claims | input tokens per task | approvals | time | credits per task |",
-    "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    "| suite | tasks run | skipped | passed | verified | mean score | turns ended with no answer | error messages | false claims | input tokens per task | approvals | time | credits per task |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ...suites.map((suite) => line(suite, results.filter((result) => result.suite === suite))),
     ...(suites.length > 1 ? [line("**all**", results)] : []),
   ].join("\n");
@@ -137,7 +143,7 @@ function cleanupLines(entries: CleanupEntry[]): string[] {
 /** Every task that failed, claimed something false, hit an error, met a card the harness could not approve or had a plan step stuck. */
 function problemLines(results: RunResult[], repeats: number): string[] {
   const lines: string[] = [];
-  const problems = results.filter((result) => !result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined" || stuck(card)));
+  const problems = results.filter((result) => !isSkipped(result) && (!result.pass || result.falseClaims.length || result.errors.length || result.cards.some((card) => !card.answered || card.answer === "declined" || stuck(card))));
   if (!problems.length) lines.push("None.");
   for (const result of problems) {
     const name = repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task;
@@ -159,9 +165,16 @@ function problemLines(results: RunResult[], repeats: number): string[] {
   return lines;
 }
 
+/** Tasks this checkout could not run, with what each requires. */
+function skippedLines(results: RunResult[], repeats: number): string[] {
+  const skipped = results.filter(isSkipped);
+  if (!skipped.length) return [];
+  return ["", "## Skipped", "", ...skipped.map((result) => `- **${repeats > 1 ? `${result.task} #${result.repeat + 1}` : result.task}**: ${cell(result.skipped ?? "requires what this checkout lacks")}.`)];
+}
+
 /** What the columns mean, for every summary. */
 export const COLUMNS =
-  "Score is the share of a task's checks that passed; a task passes when all do. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not); stuck: those for a plan step that got stuck, which the harness finished without, or kept as it was when what the step worked from changed (each is listed below with the step and why).";
+  "Score is the share of a task's checks that passed; a task passes when all do. A skipped task needs something this checkout lacks (its requirement is listed): it ran nothing and counts in no total. Verified: it passed and every check that looks at real evidence (a row, a file, a picture, a tool that ran) passed. No answer / error msgs: turns that failed because the agent ended without a reply, and error messages posted in the chat. Turns are Ensemble's node turns; model calls, tokens and credits are the agent's own, read from its session logs. Approvals are the owner cards the harness answered (or could not); stuck: those for a plan step that got stuck, which the harness finished without, or kept as it was when what the step worked from changed (each is listed below with the step and why).";
 
 /** Several saved runs side by side: their suites, then every task. */
 export function summary(title: string, runs: Array<{ name: string; saved: Saved }>): string {
@@ -187,6 +200,7 @@ export function summary(title: string, runs: Array<{ name: string; saved: Saved 
     "## Failed checks, false claims and errors",
     "",
     ...problemLines(results, repeats),
+    ...skippedLines(results, repeats),
     "",
     "## Sources",
     "",
@@ -216,6 +230,7 @@ export function markdown(saved: Saved): string {
     "## Failed checks, false claims and errors",
     "",
     ...problemLines(saved.results, repeats),
+    ...skippedLines(saved.results, repeats),
   ];
   lines.push("", "## Cleanup receipt", "", ...cleanupLines(saved.cleanup));
   if (saved.notes.length) lines.push("", "## Notes", "", ...saved.notes.map((note) => `- ${note}`));

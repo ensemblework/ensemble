@@ -22,8 +22,10 @@ export type Redactor = { text: (value: string, max?: number) => string; deep: <T
 
 /** A redactor for this run: `places` maps absolute folders (the run's scratch root) to the placeholder written instead. */
 export function redactor(places: Record<string, string> = {}, home = homedir()): Redactor {
-  // Ensemble writes folders in the home as ~/…, so each place is named in that form too.
-  const named = Object.entries(places).flatMap(([path, name]) => (path.startsWith(`${home}/`) ? [[path, name], [`~${path.slice(home.length)}`, name]] : [[path, name]]));
+  // Ensemble writes folders in the home as ~/…, so each place is named in that form too, and lower-cased, as the graders' notes write it.
+  const named = Object.entries(places)
+    .flatMap(([path, name]) => (path.startsWith(`${home}/`) ? [[path, name], [`~${path.slice(home.length)}`, name]] : [[path, name]]))
+    .flatMap(([path, name]) => (path !== path.toLowerCase() ? [[path, name], [path.toLowerCase(), name]] : [[path, name]]));
   const swaps = [...named, [home, "~"]].filter(([path]) => path!.length > 1).sort((a, b) => b[0]!.length - a[0]!.length) as Array<[string, string]>;
   const text = (value: string, max = 4000): string => {
     let out = value;

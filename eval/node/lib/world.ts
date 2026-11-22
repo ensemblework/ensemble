@@ -10,11 +10,13 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HttpUser } from "../../../apps/hub-api/src/test/http.js";
 import { startComputer } from "./computer.js";
+import { startLink } from "./link.js";
 
 export type Log = (line: string) => void;
 export type Owner = { id: string; name: string; email: string; inject: HttpUser["inject"] };
@@ -49,7 +51,7 @@ export function hermetic(dirs: { state: string; workspace: string; app: string; 
   for (const key of Object.keys(process.env)) {
     if (/(_API_KEY|_API_TOKEN|_SECRET)$|^(AZURE|OPENAI|ANTHROPIC|GEMINI|XAI|MISTRAL|GOOGLE_API|STRIPE|RESEND)_/.test(key)) delete process.env[key];
   }
-  for (const key of ["ENSEMBLE_TEST_DATABASE_URL", "ENSEMBLE_REMOTE_API", "ENSEMBLE_INSTALL_PATH", "ENSEMBLE_LOCAL_ONLY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_RUNTIME_MODE", "ENSEMBLE_DISCOVERY_FILE", "ENSEMBLE_SECRET_KEY_FILE", "ENSEMBLE_CHROMIUM", "HUB_API_PUBLIC_URL", "AZURE_STORAGE_CONNECTION_STRING", ...DESKTOP_SESSION]) {
+  for (const key of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ENSEMBLE_TEST_DATABASE_URL", "ENSEMBLE_REMOTE_API", "ENSEMBLE_INSTALL_PATH", "ENSEMBLE_LOCAL_ONLY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_RUNTIME_MODE", "ENSEMBLE_DISCOVERY_FILE", "ENSEMBLE_SECRET_KEY_FILE", "ENSEMBLE_CHROMIUM", "HUB_API_PUBLIC_URL", "AZURE_STORAGE_CONNECTION_STRING", ...DESKTOP_SESSION]) {
     delete process.env[key];
   }
   // Wayland, PipeWire and PulseAudio find the desktop's sockets in XDG_RUNTIME_DIR by default.
@@ -72,6 +74,8 @@ export function hermetic(dirs: { state: string; workspace: string; app: string; 
     TMP: dirs.tmp,
     TEMP: dirs.tmp,
     ENSEMBLE_TIMEZONE: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    // The GitHub CLI finds no account: an agent's `gh` reaches nothing of the owner's.
+    GH_CONFIG_DIR: join(dirs.app, "gh"),
   });
 }
 
@@ -170,7 +174,8 @@ export function agentHome(dir: string): boolean {
   return Object.keys(accounts).length > 0;
 }
 
-export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log }) {
+/** `durableComputer`: the computer keeps its database on disk, for a run with a task that restarts it. */
+export async function bootWorld(options: { workDir: string; agent: string; model: string; log: Log; durableComputer?: boolean }) {
   // Chromium's singleton socket lives in the computer's TMPDIR, and a Unix socket path holds at most 107 bytes.
   if (Buffer.byteLength(join(options.workDir, "nv-XXXXXX", "pc", "tmp")) > 60) throw new Error(`The work folder ${options.workDir} is too deep for the computer's browser: pick one with a shorter path.`);
   mkdirSync(options.workDir, { recursive: true });
@@ -202,14 +207,42 @@ export async function bootWorld(options: { workDir: string; agent: string; model
   const { stopJob } = await import("../../../apps/hub-api/src/workspace/worker.js");
   const { startNode } = await import("../../../apps/hub-api/src/node/runs.js");
   const stopNode = startNode(harness.app);
-  const computer = await startComputer(dirs.computer).catch(async (error: unknown) => {
+  const link = await startLink({ host: "127.0.0.1", port });
+  const computer = await startComputer(dirs.computer, { durable: options.durableComputer === true }).catch(async (error: unknown) => {
     stopNode();
+    await link.close().catch(() => undefined);
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
     bus.stop();
     throw error;
   });
   options.log(`computer: own process, sandbox ${computer.sandbox ?? "none"}, ${computer.pipewire ? "PipeWire for an agent screen" : "no PipeWire, so no agent screen"}`);
+
+  /**
+   * One answer Ensemble gives the computer, lost on its way: the next request to a matching address whose
+   * answer matches gets its connection closed instead of the answer (what Ensemble did stays done), and
+   * the link to the computer then stays down for `ms`. Only where the task pairs through the link.
+   */
+  let losing: { url: RegExp; answer: RegExp; ms: number } | null = null;
+  const lost: Array<{ at: string; url: string }> = [];
+  harness.app.server.prependListener("request", (request: IncomingMessage, response: ServerResponse) => {
+    const armed = losing;
+    if (!armed || !armed.url.test(request.url ?? "")) return;
+    const write = response.write.bind(response) as (...args: unknown[]) => boolean;
+    const end = response.end.bind(response) as (...args: unknown[]) => ServerResponse;
+    const swallowed = (chunk: unknown): boolean => {
+      if (losing !== armed) return false;
+      const text = typeof chunk === "string" ? chunk : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : "";
+      if (!armed.answer.test(text)) return false;
+      losing = null;
+      lost.push({ at: new Date().toISOString(), url: (request.url ?? "").replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ":id") });
+      response.socket?.destroy();
+      link.drop(armed.ms, "an answer lost on its way to the computer");
+      return true;
+    };
+    response.write = ((...args: unknown[]) => (swallowed(args[0]) ? true : write(...args))) as ServerResponse["write"];
+    response.end = ((...args: unknown[]) => (swallowed(args[0]) ? response : end(...args))) as ServerResponse["end"];
+  });
 
   const { saveSettings } = await import("../../../apps/hub-api/src/lib/settings.js");
   const { deviceOnline } = await import("../../../apps/hub-api/src/devices/constants.js");
@@ -226,12 +259,13 @@ export async function bootWorld(options: { workDir: string; agent: string; model
 
   /**
    * Pairs this computer with the owner, as `ensemble login` does, and waits until it is online with the
-   * agent signed in. The owner's default run profile then runs coding sessions there with that agent and model.
+   * agent signed in. The owner's default run profile then runs coding sessions there with that agent and
+   * model. `viaLink`: the computer reaches Ensemble through the link a task can cut (lib/link.ts).
    */
-  async function pair(owner: Owner): Promise<{ id: string; name: string }> {
+  async function pair(owner: Owner, pairing: { viaLink?: boolean } = {}): Promise<{ id: string; name: string }> {
     const coded = await owner.inject({ method: "POST", url: "/api/devices/pair", payload: {} });
     if (coded.statusCode !== 201) throw new Error(`No pairing code: ${coded.statusCode} ${coded.body.slice(0, 200)}`);
-    await computer.pair(base, (coded.json() as { code: string }).code, "Eval computer");
+    await computer.pair(pairing.viaLink ? link.base : base, (coded.json() as { code: string }).code, "Eval computer");
     const deadline = Date.now() + 120_000;
     for (;;) {
       const device = await prisma.device.findFirst({ where: { userId: owner.id, revokedAt: null }, orderBy: { createdAt: "desc" } });
@@ -258,6 +292,7 @@ export async function bootWorld(options: { workDir: string; agent: string; model
   async function close(): Promise<void> {
     stopNode();
     await computer.close().catch(() => undefined);
+    await link.close().catch(() => undefined);
     await harness.app.close().catch(() => undefined);
     await harness.close().catch(() => undefined);
     bus.stop();
@@ -279,6 +314,19 @@ export async function bootWorld(options: { workDir: string; agent: string; model
     unpair,
     share: computer.share,
     unshare: computer.unshare,
+    /** The computer's own process, its folders and its connection to Ensemble. */
+    computer: {
+      offline: computer.offline,
+      online: computer.online,
+      restart: computer.restart,
+      inspect: computer.inspect,
+      durable: options.durableComputer === true,
+      dirs: { root: dirs.computer, state: join(dirs.computer, "state"), workspace: join(dirs.computer, "workspace"), tmp: join(dirs.computer, "tmp") },
+    },
+    link,
+    loseAnswer: (match: { url: RegExp; answer: RegExp } | null, ms = 0) => void (losing = match ? { ...match, ms } : null),
+    lostAnswers: () => [...lost],
+    deviceOnline,
     stopJob,
     close,
   };
