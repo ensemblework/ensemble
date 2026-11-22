@@ -37,6 +37,18 @@ const asked: string[] = [];
 const caller: Caller = { key: "node:smoke:windows", label: "the Windows smoke test", budgetMs: 120_000, gate: async (app) => (asked.push(`${app.category}: ${app.name}`), { allow: true }) };
 const children: ChildProcess[] = [];
 
+step("the session probe");
+const probe = new HelperProcess({ spawn: () => windowsProbeCommand(), helloTimeoutMs: 60_000 });
+try {
+  const state = await probe.call<Record<string, unknown>>("state", {}, { timeoutMs: 60_000 });
+  console.log(`  ${JSON.stringify(state)}`);
+} catch (error) {
+  console.log(`  the probe failed: ${error instanceof Error ? error.message : String(error)}\n  its last output: ${probe.stderr()}`);
+  throw error;
+} finally {
+  await probe.stop();
+}
+
 step("readiness");
 const readiness = await desktopReadiness("win32");
 console.log(JSON.stringify({ ready: readiness.ready, session: readiness.session, background: readiness.background, recorder: readiness.recorder, checks: readiness.checks, reason: readiness.reason ?? null }));

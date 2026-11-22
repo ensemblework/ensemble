@@ -9,8 +9,9 @@
 # It reads and shows only: it never sends input, takes no screenshot and opens no port.
 $ErrorActionPreference = 'Stop'
 $utf8 = New-Object System.Text.UTF8Encoding $false
-[Console]::InputEncoding = $utf8
-[Console]::OutputEncoding = $utf8
+# Without a console of its own (pipes only) Windows may refuse to change the console's code pages.
+try { [Console]::InputEncoding = $utf8 } catch { }
+try { [Console]::OutputEncoding = $utf8 } catch { }
 
 Add-Type -TypeDefinition @'
 using System;
@@ -63,7 +64,7 @@ public static class EnsembleProbe {
     } finally { CloseDesktop(desktop); }
   }
 
-  public static long SessionId() { uint session; return ProcessIdToSessionId(GetCurrentProcessId(), out session) ? session : -1; }
+  public static long SessionId() { uint session; return ProcessIdToSessionId(GetCurrentProcessId(), out session) ? (long)session : -1L; }
 
   public static int ConnectState(long session) {
     IntPtr buffer; int bytes;
