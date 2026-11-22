@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // A stand-in for cua-driver 0.56.6 (`cua-driver mcp --direct`) in tests: MCP over stdin and stdout
-// (initialize, tools/list, tools/call) with the tool shapes of the macOS backend, and a Mac held in memory.
+// (initialize, tools/list, tools/call) with the tool shapes of the macOS backend, and a Mac held in memory; with
+// `platform: "windows"` those of the Windows backend (screen pixels, program files as app names, launch paths,
+// integrity levels, text typed through a token added to the element's value, typing into a `focused` element).
 // FAKE_CUA_STATE names a JSON file with the Mac (apps, windows, elements, screen, permissions); it is read at
 // start, and again on every call for what tests change on the fly (effects, refusals, slow tools, failures).
 // Like macOS, the permissions are read once per process: Cua Driver's own (`accessibility`, `screen_recording`),
@@ -27,6 +29,7 @@ const world = {
   elements: {},
   ...read(),
 };
+const WINDOWS = world.platform === "windows";
 const EMBEDDED = process.argv.includes("--embedded") || process.env.CUA_DRIVER_EMBEDDED === "1";
 const granted = EMBEDDED
   ? { accessibility: world.host_accessibility === true, screen_recording: world.host_screen_recording === true }
@@ -63,10 +66,10 @@ function chunk(type, body) {
   return Buffer.concat([head, body, tail]);
 }
 /** A picture of the screen: one colour from the seed, with a stripe so a crop differs from the whole. */
-function png(width, height, seed) {
+function png(width, height, seed, black = false) {
   const row = Buffer.alloc(1 + width * 3);
   const colour = [(seed * 37) % 256, (seed * 91) % 256, (seed * 53) % 256];
-  for (let x = 0; x < width; x += 1) row.set(x < width / 4 ? [255, 255, 255] : colour, 1 + x * 3);
+  if (!black) for (let x = 0; x < width; x += 1) row.set(x < width / 4 ? [255, 255, 255] : colour, 1 + x * 3);
   const raw = Buffer.alloc(height * row.length);
   for (let y = 0; y < height; y += 1) row.copy(raw, y * row.length);
   const header = Buffer.alloc(13);
@@ -120,7 +123,7 @@ const SCHEMAS = {
   scroll: { ...ACTION, pid: {}, window_id: {}, element_token: {}, direction: {}, amount: {}, by: {}, x: {}, y: {}, scope: {} },
   drag: { ...ACTION, pid: {}, window_id: {}, from_x: {}, from_y: {}, to_x: {}, to_y: {}, duration_ms: {}, steps: {}, modifier: {}, button: {}, scope: {} },
   move_cursor: { session: {}, x: {}, y: {}, scope: {}, cursor_id: {}, delivery_mode: {} },
-  launch_app: { bundle_id: {}, name: {}, urls: {}, creates_new_application_instance: {}, additional_arguments: {} },
+  launch_app: WINDOWS ? { bundle_id: {}, aumid: {}, name: {}, path: {}, launch_path: {}, urls: {}, additional_arguments: {}, start_minimized: {} } : { bundle_id: {}, name: {}, urls: {}, creates_new_application_instance: {}, additional_arguments: {} },
   bring_to_front: { pid: {}, window_id: {} },
   start_recording: { session: {}, output_dir: {}, record_video: {}, state_timeout_ms: {}, include_accessibility_tree: {}, redact_values: {} },
   stop_recording: {},
@@ -145,10 +148,10 @@ function refusal(tool, live) {
   return failed(`Refused: ${code}`, { code, effect: "refused" });
 }
 
-const screenPoints = () => ({ width: world.screen.width / world.screen.scale, height: world.screen.height / world.screen.scale });
+const screenPoints = () => (WINDOWS ? { width: world.screen.width, height: world.screen.height } : { width: world.screen.width / world.screen.scale, height: world.screen.height / world.screen.scale });
 
 const tools = {
-  check_permissions: () => ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: EMBEDDED, direct_runtime: !EMBEDDED } }),
+  check_permissions: () => (WINDOWS ? ok({ elevated: false, integrity_level: "Medium", integrity_level_rid: 8192, uia: true, post_message: true }) : ok({ accessibility: granted.accessibility, screen_recording: granted.screen_recording, screen_recording_capturable: null, direct_capture_status: "not_checked", source: { attribution: "host", embedded: EMBEDDED, direct_runtime: !EMBEDDED } })),
   get_desktop_state: (args, live) => {
     if (!granted.screen_recording) return failed("Screen Recording permission is not granted for this process.");
     if (live.screenshotFails) return failed("capture failed: the display stream returned no frame");
@@ -158,9 +161,9 @@ const tools = {
     const scale = edge > 0 ? Math.min(1, edge / Math.max(native.width, native.height)) : 1;
     const width = Math.max(1, Math.round(native.width * scale));
     const height = Math.max(1, Math.round(native.height * scale));
-    const picture = png(width, height, world.seed);
+    const picture = png(width, height, world.seed, live.blackScreen === true);
     const points = screenPoints();
-    const facts = { platform: "macos", display: "primary", screenshot_width: width, screenshot_height: height, screen_width: points.width, screen_height: points.height, scale_factor: native.scale, screenshot_mime_type: "image/png", capture_id: `cap-${world.seed}`, ...(scale < 1 ? { screenshot_original_width: native.width, screenshot_original_height: native.height } : {}) };
+    const facts = { platform: WINDOWS ? "windows" : "macos", display: "primary", screenshot_width: width, screenshot_height: height, screen_width: points.width, screen_height: points.height, scale_factor: native.scale, screenshot_mime_type: "image/png", capture_id: `cap-${world.seed}`, ...(scale < 1 ? { screenshot_original_width: native.width, screenshot_original_height: native.height } : {}) };
     if (args.screenshot_out_file) {
       writeFileSync(args.screenshot_out_file, picture);
       return ok({ ...facts, screenshot_file_path: args.screenshot_out_file });
@@ -204,6 +207,12 @@ const tools = {
     if (args.element_token && !element(args.element_token)) return failed("Refused: the element token is stale.", { status: "refused", refusal: { code: "stale_element_token", message: "stale" } });
     if (!args.element_token && args.scope !== "desktop") return failed("type_text needs a pid, an element_token or scope desktop.", { code: "invalid_arguments" });
     typed += 1;
+    if (WINDOWS) {
+      // A token's text goes to the end of the element's value; without one, to the element that has the keyboard.
+      const focused = live.focused ?? world.focused;
+      const target = args.element_token ? element(args.element_token).item : focused ? (world.elements[String(focused.window)] ?? []).find((item) => item.element_index === focused.index) : null;
+      if (target) target.value = `${target.value ?? ""}${args.text}`;
+    }
     const front = live.frontAfterTypes;
     if (front && typed === front.count) {
       for (const app of world.apps) app.active = app.pid === front.pid;
@@ -221,7 +230,7 @@ const tools = {
   },
   move_cursor: () => ok(action("unverifiable", { route: "global_input", mode: "foreground" })),
   launch_app: (args) => {
-    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : item.name === args.name || item.launch_path === args.name));
+    const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
     if (!app) return failed(`App not installed: ${args.bundle_id ?? args.name}`, { error: "APP_NOT_INSTALLED", suggestions: [] });
     app.running = true;
     const windows = world.windows.filter((win) => win.pid === app.pid);
@@ -232,7 +241,7 @@ const tools = {
     return ok({ status: "activated", code: "bring_to_front_exact_window_verified", pid: args.pid, window_id: args.window_id ?? null, activated: true });
   },
   start_recording: (args, live) => {
-    if (live.recordingFails) return failed("video recording requires macOS 15.0 or later");
+    if (live.recordingFails) return failed(WINDOWS ? "ffmpeg not found on PATH" : "video recording requires macOS 15.0 or later");
     mkdirSync(join(args.output_dir, "turn-00001"), { recursive: true });
     writeFileSync(join(args.output_dir, "turn-00001", "action.json"), JSON.stringify({ tool: "click" }));
     recorder = { dir: args.output_dir, video: args.record_video === true, active: true };

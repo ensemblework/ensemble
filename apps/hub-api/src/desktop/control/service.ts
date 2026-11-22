@@ -18,9 +18,10 @@
  * asks for the foreground: steps aim at elements through accessibility only, never moving the pointer,
  * typing or changing the focus there, and wait while the owner uses the app they act in.
  *
- * On macOS (`platform: "darwin"`, drivers/macos-cua.ts) there is only the owner's screen. An app opens behind
- * the owner's windows without asking for their screen, typing and keys aimed at an element go in through
- * accessibility in either mode, and each action's verdict starts from the driver's own account of it.
+ * On macOS and Windows (`platform` `darwin` or `win32`: cua-driver, drivers/cua-adapter.ts) there is only the
+ * owner's screen. An app opens behind the owner's windows without asking for their screen, typing and keys aimed
+ * at an element go in through accessibility in either mode, and each action's verdict starts from the driver's own
+ * account of it.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
@@ -127,8 +128,10 @@ export type GateApp = { id: string; name: string; category: GateCategory };
 export const OWNER_SCREEN_GATE: GateApp = { id: "screen:owner", name: "the pointer and keyboard", category: "screen" };
 
 export const NEEDS_SCREEN = "Needs the screen: ask to use the owner's screen (foreground: true asks them once) or use the agent screen.";
-/** macOS has no agent screen. */
-const NEEDS_SCREEN_MAC = "Needs the screen: ask to use the owner's screen (foreground: true asks them once).";
+/** macOS and Windows have no agent screen. */
+const NEEDS_SCREEN_OWNER = "Needs the screen: ask to use the owner's screen (foreground: true asks them once).";
+const SCREEN_LOCKED = "The computer's screen is locked: only your owner can unlock it. Ask them, or hand it over with desktop_handoff.";
+type IdleAnswer = { locked: boolean | null; idle_ms: number | null; why?: string };
 /** The owner's answer for a sensitive app: allowed, to be asked (once per app and run), or refused with why. */
 export type GateAnswer = { allow: true } | { allow: false; ask: true } | { allow: false; ask: false; reason: string };
 
@@ -244,8 +247,8 @@ export type DesktopServiceOptions = {
   helperIdleMs?: number;
   /** Screenshots kept in `captureDir`. */
   keepScreenshots?: number;
-  /** The helper's system: the Linux helper (default) or cua-driver on macOS. */
-  platform?: "linux" | "darwin";
+  /** The helper's system: the Linux helper (default), or cua-driver on macOS and Windows. */
+  platform?: "linux" | "darwin" | "win32";
 };
 
 /** Why every desktop capture waits for the owner's preview: nothing can check a screen for secrets. */
@@ -284,14 +287,15 @@ export async function sweepRecordingParts(root: string, olderThanMs: number, kee
 const POINTER_STEPS = new Set<StepAction>(["click", "double_click", "right_click", "drag"]);
 /**
  * Steps that work through accessibility alone, on an element: the owner's pointer, keyboard and focus stay
- * theirs. On macOS an app also opens without taking the front, and keys go to an element through accessibility.
+ * theirs. Through cua-driver (macOS, Windows) an app also opens without taking the front, and keys go to an element
+ * through accessibility.
  */
-function backgroundStep(step: DesktopStep, mac = false): boolean {
+function backgroundStep(step: DesktopStep, cua = false): boolean {
   if (step.action === "wait") return true;
-  if (mac && step.action === "open") return true;
+  if (cua && step.action === "open") return true;
   if (!step.element) return false;
   if (step.action === "click") return !step.button || step.button === "left";
-  return ["press", "set_text", "select", "toggle", "scroll", "type", ...(mac ? ["key"] : [])].includes(step.action);
+  return ["press", "set_text", "select", "toggle", "scroll", "type", ...(cua ? ["key"] : [])].includes(step.action);
 }
 
 /** A step's verdict from the driver's own account of it (cua-driver's `effect`), when it gives one. */
@@ -308,7 +312,7 @@ const NO_SCREEN: ScreenRef = { node: -1, x: 0, y: 0, width: 0, height: 0, name: 
 type StepContext = { secrets: readonly string[]; allowed: Set<string>; background: boolean; idleMs: number | null };
 /**
  * Why the helper stopped typing before the end: the owner's input, the window in front changing, a secret it could
- * not type whole, or (macOS) no time for another chunk, or the work it was for ending.
+ * not type whole, or (cua-driver) no time for another chunk, or the work it was for ending.
  */
 type TypingStop = "owner_input" | "focus_moved" | "secret_untypeable" | "out_of_time" | "cancelled";
 type RecordingState = { id: string; owner: string; node: number; temp: string; dir: string; startedAt: number; maxMs: number; mime: string; container: string; codec: string; ended: string | null; endedAt: number | null; lost: boolean; counter: number };
@@ -383,8 +387,9 @@ export class DesktopService {
 
   private readonly now = (): number => (this.options.now ?? Date.now)();
 
-  private get mac(): boolean {
-    return this.options.platform === "darwin";
+  /** cua-driver on macOS or Windows: no agent screen, apps open behind, keys go to elements. */
+  private get cua(): boolean {
+    return this.options.platform === "darwin" || this.options.platform === "win32";
   }
 
   private sleep(ms: number): Promise<void> {
@@ -562,7 +567,7 @@ export class DesktopService {
    */
   private async guard(deadline: Deadline, kind: "look" | "screen" | "background" = "screen"): Promise<{ idleMs: number | null }> {
     if (this.screenName === "agent") return { idleMs: null };
-    const idle = await this.call<{ locked: boolean | null; idle_ms: number | null }>("idle", {}, deadline, { maxMs: 5_000 });
+    const idle = await this.call<IdleAnswer>("idle", {}, deadline, { maxMs: 5_000 });
     const change = this.lease.observeIdle(idle.idle_ms);
     if (change) this.ledger.invalidateAll();
     if (this.lease.holder === "owner" && kind !== "background") {
@@ -573,7 +578,8 @@ export class DesktopService {
         { lease: this.lease.view() },
       );
     }
-    if (idle.locked) throw new DesktopError("screen_locked", "The computer's screen is locked: only your owner can unlock it. Ask them, or hand it over with desktop_handoff.", "no");
+    // The driver may say why (User Account Control's secure desktop on Windows): only the owner can act there.
+    if (idle.locked) throw new DesktopError("screen_locked", idle.why ?? SCREEN_LOCKED, "no");
     if (kind === "screen" && this.ownerActiveNow(idle.idle_ms)) {
       throw new DesktopError("owner_has_control", "Your owner is using the keyboard or mouse right now: input on their screen waits until they pause. Try again in a moment, or work in the background or on the agent screen.", "no");
     }
@@ -951,7 +957,7 @@ export class DesktopService {
         let failed = false;
         try {
           const background = mode === "background";
-          if (background && !backgroundStep(step, this.mac)) throw new DesktopError("needs_screen", `${this.mac ? NEEDS_SCREEN_MAC : NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
+          if (background && !backgroundStep(step, this.cua)) throw new DesktopError("needs_screen", `${this.cua ? NEEDS_SCREEN_OWNER : NEEDS_SCREEN} ${step.action === "focus" ? "Moving the focus" : step.element ? `${step.action} on an element` : step.action} uses the owner's ${step.action === "type" || step.action === "key" || step.action === "focus" ? "keyboard" : "pointer"}.`, "no");
           if (deadline.abort.signal.aborted) throw new DesktopError("cancelled", "The work these steps were for ended, so this one did not run.", "no");
           const { idleMs } = await this.guard(deadline, background ? "background" : "screen");
           counter ??= this.lease.counter;
@@ -1010,7 +1016,7 @@ export class DesktopService {
 
   /**
    * The sensitive apps a click by position could land in: where the desktop says which window is at each point
-   * (macOS), that window's app (the app in front for a point outside every window); else the one in front and
+   * (macOS, Windows), that window's app (the app in front for a point outside every window); else the one in front and
    * any with a window that shows.
    */
   private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[], points: readonly Point[] = []): GateApp[] {
@@ -1091,7 +1097,7 @@ export class DesktopService {
   }
 
   private async step(caller: Caller, step: DesktopStep, batchCapture: string | undefined, deadline: Deadline, context: StepContext): Promise<Omit<StepOutcome, "index" | "action">> {
-    if (context.background && step.action !== "wait" && !(this.mac && step.action === "open")) return this.elementStep(caller, step, deadline, context);
+    if (context.background && step.action !== "wait" && !(this.cua && step.action === "open")) return this.elementStep(caller, step, deadline, context);
     switch (step.action) {
       case "wait": {
         await this.sleep(Math.min(step.ms ?? 0, Math.max(0, deadline.remaining() - 6_000)));
@@ -1123,8 +1129,8 @@ export class DesktopService {
         return this.pointerStep(caller, step, batchCapture, deadline, context);
       case "type":
       case "key":
-        // macOS does not say which element has the keyboard: typing and keys aimed at an element go in through accessibility.
-        if (this.mac && step.element) return this.elementStep(caller, step, deadline, context);
+        // cua-driver does not say which element has the keyboard: typing and keys aimed at an element go in through accessibility.
+        if (this.cua && step.element) return this.elementStep(caller, step, deadline, context);
         return this.keyboardStep(caller, step, deadline, context);
     }
   }
@@ -1366,8 +1372,8 @@ export class DesktopService {
   async open(caller: Caller, input: { app: string; waitSec?: number }): Promise<OpenResult> {
     return this.runAs(caller, async (deadline) => {
       const allowed = new Set<string>();
-      if (this.mac) {
-        // macOS opens an app behind the owner's windows: no pointer, keyboard or screen of theirs is used.
+      if (this.cua) {
+        // cua-driver opens an app behind the owner's windows: no pointer, keyboard or screen of theirs is used.
         await this.guard(deadline, "background");
         const opened = await this.openApp(caller, input.app, (input.waitSec ?? 8) * 1000, deadline, allowed, false);
         this.ledger.invalidate(caller.key);
@@ -1382,9 +1388,9 @@ export class DesktopService {
     });
   }
 
-  /** `front`: bring it to the front once it is open (always, but for an app opened in the background on macOS). */
+  /** `front`: bring it to the front once it is open (always, but for an app opened in the background through cua-driver). */
   private async openApp(caller: Caller, ref: string, waitMs: number, deadline: Deadline, allowed: Set<string>, front = true): Promise<OpenResult> {
-    if (front || !this.mac) await this.ensureSession(deadline);
+    if (front || !this.cua) await this.ensureSession(deadline);
     const found = await this.call<{ apps: CatalogApp[] }>("apps.catalog", { query: ref, limit: 5 }, deadline);
     const exact = found.apps.find((app) => app.id.toLowerCase() === ref.toLowerCase() || app.name.toLowerCase() === ref.toLowerCase()) ?? found.apps[0];
     if (!exact) throw new DesktopError("not_found", `No installed app is called ${ref}. desktop_apps lists them.`, "no");
@@ -1401,7 +1407,8 @@ export class DesktopService {
     let via: string | null = focused ? "launch" : front ? null : "background";
     if (front && !focused && launched.app.running && this.lease.holder === "agent") {
       const moved = await this.call<{ focused: boolean; via: string | null }>("apps.focus", { app: launched.app.running.pid ?? launched.app.name, allow_input: true, search: launched.app.name }, deadline, { effects: true, maxMs: 10_000 }).catch(() => null);
-      if (moved?.via === "search") this.lease.agentInput();
+      // Search types; cua-driver's bring_to_front on Windows passes the foreground lock with a synthetic key.
+      if (moved?.via === "search" || (this.cua && moved)) this.lease.agentInput();
       focused = Boolean(moved?.focused);
       via = moved?.via ?? null;
     }

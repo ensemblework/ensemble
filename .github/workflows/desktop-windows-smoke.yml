@@ -1,0 +1,77 @@
+name: desktop-windows-smoke
+
+# Desktop control on a real Windows desktop: the pinned Cua Driver (checked by its SHA-256 and Authenticode
+# signature) and the session probe under DesktopService, on the runner's interactive session
+# (apps/hub-api/scripts/desktop-windows-smoke.ts). It keeps the screenshot it took as an artifact.
+on:
+  pull_request:
+    paths:
+      - apps/hub-api/src/desktop/control/**
+      - apps/hub-api/desktop-helper/windows/**
+      - apps/hub-api/scripts/desktop-windows-smoke.ts
+      - scripts/fetch-cua-driver*
+      - .github/workflows/desktop-windows-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Desktop control smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            arch: x64
+          - os: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install the API and what it uses
+        run: pnpm install --frozen-lockfile --filter "@ensemble/hub-api..."
+
+      - name: The session this job runs in
+        shell: pwsh
+        run: |
+          $process = [System.Diagnostics.Process]::GetCurrentProcess()
+          Write-Output "session $($process.SessionId), interactive: $([Environment]::UserInteractive)"
+          query session 2>$null
+
+      - name: Fetch the pinned Cua Driver
+        run: node scripts/fetch-cua-driver.mjs --out desktop-smoke/bin --windows ${{ matrix.arch }}
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          DATABASE_URL: postgresql://localhost/unused
+        run: |
+          $env:ENSEMBLE_CUA_DRIVER_DIR = Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke\bin'
+          pnpm --filter @ensemble/hub-api exec tsx scripts/desktop-windows-smoke.ts --out (Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke\out')
+
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-windows-smoke-${{ matrix.arch }}
+          if-no-files-found: warn
+          path: |
+            desktop-smoke/out/screen.png
+            desktop-smoke/out/result.json

@@ -1,6 +1,6 @@
 /**
  * A Model Context Protocol client over a child process's stdin and stdout (JSON-RPC 2.0, one message per
- * line), for cua-driver (macos-cua.ts). Like HelperProcess it starts the child on first use with only the
+ * line), for cua-driver (cua-adapter.ts). Like HelperProcess it starts the child on first use with only the
  * environment it is given, refuses a server that is not the pinned version, gives every call a deadline and
  * kills the child when an answer comes too late (so it can never act on that call later), and starts it again
  * after a crash, at most `maxRestarts` times in `restartWindowMs`.
@@ -22,6 +22,8 @@ export type McpOptions = {
   spawn: () => HelperCommand | { unavailable: string };
   /** The only server version used (`serverInfo.version`). */
   version: string;
+  /** What the driver is called in errors and logs ("The macOS desktop driver"). */
+  label?: string;
   log?: (message: string) => void;
   maxRestarts?: number;
   restartWindowMs?: number;
@@ -58,6 +60,10 @@ export class McpStdioClient extends EventEmitter {
     return (this.options.now ?? Date.now)();
   }
 
+  private get label(): string {
+    return this.options.label ?? "The desktop driver";
+  }
+
   get running(): boolean {
     return this.child !== null && this.state === "ready";
   }
@@ -88,7 +94,7 @@ export class McpStdioClient extends EventEmitter {
     if (this.starting) return this.starting;
     if (this.crashedTooOften()) {
       this.state = "failed";
-      throw new HelperError("gone", `The macOS desktop driver stopped ${this.crashTimes.length} times in a few minutes; it rests until it has been quiet for a while.`, "no", true);
+      throw new HelperError("gone", `${this.label} stopped ${this.crashTimes.length} times in a few minutes; it rests until it has been quiet for a while.`, "no", true);
     }
     this.starting = this.reaped()
       .then(() => this.launch())
@@ -139,7 +145,7 @@ export class McpStdioClient extends EventEmitter {
       const hello = await this.request<{ serverInfo?: { version?: unknown } }>("initialize", { protocolVersion: MCP_PROTOCOL, capabilities: {}, clientInfo: { name: "ensemble", version: "1" } }, { timeoutMs: helloMs, effects: false });
       const version = typeof hello?.serverInfo?.version === "string" ? hello.serverInfo.version : null;
       if (version !== this.options.version) {
-        const reason = `The macOS desktop driver here is cua-driver ${version ?? "of an unknown version"}; this Ensemble uses ${this.options.version}. Update the Ensemble app.`;
+        const reason = `${this.label} here is cua-driver ${version ?? "of an unknown version"}; this Ensemble uses ${this.options.version}. Update the Ensemble app.`;
         await this.stop();
         this.state = "unavailable";
         this.reason = reason;
@@ -159,7 +165,7 @@ export class McpStdioClient extends EventEmitter {
         this.state = "failed";
         child.kill("SIGKILL");
       }
-      if (this.state === "failed") this.reason ??= error instanceof Error ? error.message : "The macOS desktop driver did not start.";
+      if (this.state === "failed") this.reason ??= error instanceof Error ? error.message : `${this.label} did not start.`;
       throw error;
     }
   }
@@ -169,7 +175,7 @@ export class McpStdioClient extends EventEmitter {
     try {
       this.handleLine(child, line);
     } catch (error) {
-      this.options.log?.(`macOS desktop driver: a message was ignored (${error instanceof Error ? error.message.slice(0, 120) : "unreadable"})`);
+      this.options.log?.(`${this.label.replace(/^The /, "")}: a message was ignored (${error instanceof Error ? error.message.slice(0, 120) : "unreadable"})`);
     }
   }
 
@@ -199,7 +205,7 @@ export class McpStdioClient extends EventEmitter {
     if (message.error) {
       const error = (typeof message.error === "object" ? message.error : {}) as { code?: unknown; message?: unknown };
       const code = typeof error.code === "number" ? error.code : 0;
-      const text = typeof error.message === "string" ? error.message.slice(0, 500) : "The macOS desktop driver failed.";
+      const text = typeof error.message === "string" ? error.message.slice(0, 500) : `${this.label} failed.`;
       waiting.reject(new HelperError(code === -32602 ? "invalid_params" : code === -32601 ? "method_not_found" : "internal", text, "no"));
     } else waiting.resolve(message.result);
   }
@@ -213,14 +219,14 @@ export class McpStdioClient extends EventEmitter {
     if (!expected) {
       this.crashes += 1;
       this.crashTimes.push(this.now);
-      this.options.log?.(`macOS desktop driver ended (${error ? error.message : signal ?? `exit ${code}`})`);
+      this.options.log?.(`${this.label.replace(/^The /, "")} ended (${error ? error.message : signal ?? `exit ${code}`})`);
     }
     if (this.state !== "unavailable") this.state = expected ? "stopped" : "failed";
     if (!expected && error) this.reason = error.message;
     for (const [id, waiting] of this.pending) {
       this.pending.delete(id);
       clearTimeout(waiting.timer);
-      waiting.reject(new HelperError("gone", "The macOS desktop driver stopped before it answered.", waiting.effects ? "maybe" : "no", true));
+      waiting.reject(new HelperError("gone", `${this.label} stopped before it answered.`, waiting.effects ? "maybe" : "no", true));
     }
     this.emit("exit", { code, signal, expected });
   }
@@ -237,7 +243,7 @@ export class McpStdioClient extends EventEmitter {
 
   private request<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number; effects: boolean }): Promise<T> {
     const child = this.child;
-    if (!child || !child.stdin) return Promise.reject(new HelperError("gone", "The macOS desktop driver is not running.", "no", true));
+    if (!child || !child.stdin) return Promise.reject(new HelperError("gone", `${this.label} is not running.`, "no", true));
     const id = (this.nextId += 1);
     const late: Ran = options.effects ? "maybe" : "no";
     const what = method === "tools/call" ? String(params.name) : method;
@@ -245,7 +251,7 @@ export class McpStdioClient extends EventEmitter {
       const timer = setTimeout(() => {
         if (!this.pending.has(id)) return;
         this.pending.delete(id);
-        reject(new HelperError("deadline", `The macOS desktop driver did not answer ${what} in time.`, late, true));
+        reject(new HelperError("deadline", `${this.label} did not answer ${what} in time.`, late, true));
         // Killed so it can never act on this call later; the next call starts it again.
         if (this.child === child) {
           this.state = "failed";

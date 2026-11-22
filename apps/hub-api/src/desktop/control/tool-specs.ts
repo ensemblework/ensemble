@@ -15,7 +15,7 @@ export const SCREENS = ["agent", "owner"] as const;
 const screen = z
   .enum(SCREENS)
   .optional()
-  .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent. A Mac has no agent screen: there it is always owner.");
+  .describe("agent: your own private screen, which nobody sees unless they watch it (the default for apps you open yourself). owner: your owner's real screen, only for an app or session already open there or when they ask to watch. Default: where you last worked, else agent. A Mac or Windows PC has no agent screen: there it is always owner.");
 
 const share = z.boolean().optional().describe("true: also send this picture to your owner in this chat, held for them to preview first. Use it whenever they want to see the screen.");
 
@@ -35,7 +35,7 @@ export const DesktopStep = z
     direction: z.enum(["up", "down", "left", "right"]).optional().describe("scroll: which way. With an element instead, scroll brings it into view."),
     amount: z.number().int().min(1).max(30).optional().describe("scroll: how many notches (default 3)."),
     text: z.string().max(5_000).optional().describe("type or set_text: the text. A saved secret goes by its name, $NAME, and only into a password field."),
-    keys: z.string().max(80).optional().describe("key: one key or a combination, such as Return, Escape, ctrl+s, alt+Tab, ctrl+shift+t (on a Mac cmd+s; with an element there, the keys go to that element in the background)."),
+    keys: z.string().max(80).optional().describe("key: one key or a combination, such as Return, Escape, ctrl+s, alt+Tab, ctrl+shift+t (on a Mac cmd+s; on a Mac or Windows PC, with an element, the keys go to that element in the background)."),
     repeat: z.number().int().min(1).max(30).optional(),
     name: z.string().max(60).optional().describe("press, select or toggle: which of the element's actions, when it has several."),
     ms: z.number().int().min(0).max(10_000).optional().describe("wait: milliseconds."),
@@ -110,7 +110,7 @@ export const DESKTOP_TOOLS = [
   {
     name: "desktop_open",
     description:
-      "Open an installed app by its id from desktop_apps and wait until its window can be read. By default it opens on your private agent screen, where you work without disturbing your owner; on their screen (screen owner) it takes the front, so your owner is asked once for this work. On a Mac it opens behind your owner's windows without asking: work in it through its element ids. Blocks up to about 25 seconds, more when the agent screen starts. A password manager, terminal, system settings or banking app asks your owner first, once per app in this work.",
+      "Open an installed app by its id from desktop_apps and wait until its window can be read. By default it opens on your private agent screen, where you work without disturbing your owner; on their screen (screen owner) it takes the front, so your owner is asked once for this work. On a Mac or Windows PC it opens behind your owner's windows without asking: work in it through its element ids. Blocks up to about 25 seconds, more when the agent screen starts. A password manager, terminal, system settings or banking app asks your owner first, once per app in this work.",
     input: z
       .object({
         app: z.string().min(1).max(200).describe("The app's id or name."),
@@ -198,7 +198,7 @@ export function isDesktopTool(name: string): name is DesktopToolName {
 }
 
 /** How long the server waits for a desktop call's answer: what the call may take, plus the way there and back. */
-/** About what typing takes a character, with its checks every 8 (a Mac is the slower; Linux is quicker). */
+/** About what typing takes a character, with its checks every 8 (a Mac or Windows PC is the slower; Linux is quicker). */
 const TYPING_MS_PER_CHAR = 45;
 
 /** The time one type step may take: the longest text allowed (5,000 characters) finishes in it. */

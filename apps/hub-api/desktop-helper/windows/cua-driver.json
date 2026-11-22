@@ -1,0 +1,29 @@
+{
+  "name": "cua-driver",
+  "licence": "MIT",
+  "version": "0.56.6",
+  "tag": "cua-driver-rs-v0.56.6",
+  "sourceCommit": "53260e000221483c5ab3f49607aae5c66c23e883",
+  "cargoLockSha256": "de0058a6f9ee9445d3f7d79508ed342058d424bb9c113fc8f678dc6666d2e313",
+  "publisher": "Cua AI, Inc.",
+  "assets": {
+    "x64": {
+      "asset": "cua-driver-rs-0.56.6-windows-x86_64.zip",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.56.6/cua-driver-rs-0.56.6-windows-x86_64.zip",
+      "sha256": "83728838f93149d673dd7bd0b968c3bea2300b816062aa0fd7fb076385a6c638",
+      "bytes": 32610287,
+      "member": "cua-driver-rs-0.56.6-windows-x86_64/cua-driver.exe",
+      "exeSha256": "bd841ef2954d8a73eeb9c8fa55b10e8dd67d740013b56582868228d73e2a7f46",
+      "exeBytes": 33322320
+    },
+    "arm64": {
+      "asset": "cua-driver-rs-0.56.6-windows-arm64.zip",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.56.6/cua-driver-rs-0.56.6-windows-arm64.zip",
+      "sha256": "040b79c1911622a08cc1dbfd346eb0006dcf58d3cbc887e64d72e2aecb102745",
+      "bytes": 30377875,
+      "member": "cua-driver-rs-0.56.6-windows-arm64/cua-driver.exe",
+      "exeSha256": "f36de77ba37e45f2c0a17911f00b2cda4a8db4067e87f727b941a2b63cce6651",
+      "exeBytes": 28560720
+    }
+  }
+}

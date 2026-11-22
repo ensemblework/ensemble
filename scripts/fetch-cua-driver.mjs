@@ -1,27 +1,33 @@
 #!/usr/bin/env node
 /**
- * Fetch Cua Driver (cua-driver, MIT, https://github.com/trycua/cua), the macOS desktop driver Ensemble starts
- * (apps/hub-api/src/desktop/control/drivers/macos-cua.ts), at the version pinned in
- * apps/hub-api/desktop-helper/macos/cua-driver.json: the universal (arm64 and x86_64) release archive is
- * checked against the pinned SHA-256 before anything is unpacked, and only `CuaDriver.app`, signed and
- * notarized by its publisher and copied unchanged, is taken from it, with its licence and notices.
+ * Fetch Cua Driver (cua-driver, MIT, https://github.com/trycua/cua), the desktop driver Ensemble starts, at the
+ * version pinned for each system; the release archive is checked against the pinned SHA-256 before anything is
+ * unpacked, and only the driver is taken from it, unchanged, with its licence and notices:
  *
- *   node scripts/fetch-cua-driver.mjs --out <dir>
+ * - macOS (drivers/macos-cua.ts, apps/hub-api/desktop-helper/macos/cua-driver.json): the universal (arm64 and
+ *   x86_64) archive's `CuaDriver.app`, signed and notarized by its publisher, whose signature is checked on a Mac;
+ * - Windows (drivers/windows-cua.ts, apps/hub-api/desktop-helper/windows/cua-driver.json): the x64 or arm64 zip's
+ *   `cua-driver.exe`, checked against its own pinned SHA-256 and, on Windows, its Authenticode signature (valid,
+ *   the pinned publisher's).
  *
- * Writes `<dir>/CuaDriver.app`, `<dir>/CuaDriver.LICENSE` and `<dir>/CuaDriver.THIRD_PARTY_NOTICES.md`.
- * ENSEMBLE_CUA_DRIVER_ARCHIVE names an archive downloaded already (an offline build); it is checked the same
- * way. Downloads are kept in node_modules/.cache/ensemble-cua-driver.
+ *   node scripts/fetch-cua-driver.mjs --out <dir> [--windows x64|arm64]
+ *
+ * Writes `<dir>/CuaDriver.app` (macOS) or `<dir>/cua-driver.exe` (Windows), `<dir>/CuaDriver.LICENSE` and
+ * `<dir>/CuaDriver.THIRD_PARTY_NOTICES.md`. ENSEMBLE_CUA_DRIVER_ARCHIVE names an archive downloaded already (an
+ * offline build); it is checked the same way. Downloads are kept in node_modules/.cache/ensemble-cua-driver.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateRawSync } from "node:zlib";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const CUA_DRIVER_PIN = JSON.parse(readFileSync(join(root, "apps/hub-api/desktop-helper/macos/cua-driver.json"), "utf8"));
+export const WINDOWS_CUA_DRIVER_PIN = JSON.parse(readFileSync(join(root, "apps/hub-api/desktop-helper/windows/cua-driver.json"), "utf8"));
 
-const LICENSE = `Cua Driver (cua-driver) ${CUA_DRIVER_PIN.version} (${CUA_DRIVER_PIN.url}), source commit ${CUA_DRIVER_PIN.sourceCommit}.
+const license = (pin, url) => `Cua Driver (cua-driver) ${pin.version} (${url}), source commit ${pin.sourceCommit}.
 
 MIT License
 
@@ -94,12 +100,91 @@ export async function fetchCuaDriver({ out }) {
     // Copied byte for byte with its modes: the publisher's signature covers every file of the bundle.
     cpSync(join(work, pin.member), app, { recursive: true, verbatimSymlinks: true });
     copyFileSync(join(work, notices), join(target, "CuaDriver.THIRD_PARTY_NOTICES.md"));
-    writeFileSync(join(target, "CuaDriver.LICENSE"), LICENSE);
+    writeFileSync(join(target, "CuaDriver.LICENSE"), license(pin, pin.url));
     if (process.platform === "darwin") verifySignature(app, pin.teamId);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
   console.log(`Cua Driver ${pin.version} (sha256 ${pin.sha256} of ${pin.asset}) at ${join(target, "CuaDriver.app")}`);
+}
+
+/** One file of a zip archive, by its name: read from the central directory, stored or deflated (no ZIP64). */
+export function zipMember(zip, name) {
+  const floor = Math.max(0, zip.length - 65_557);
+  let end = -1;
+  for (let at = zip.length - 22; at >= floor; at -= 1) {
+    if (zip.readUInt32LE(at) === 0x06054b50) {
+      end = at;
+      break;
+    }
+  }
+  if (end < 0) throw new Error("not a zip archive");
+  const count = zip.readUInt16LE(end + 10);
+  let at = zip.readUInt32LE(end + 16);
+  for (let n = 0; n < count; n += 1) {
+    if (zip.readUInt32LE(at) !== 0x02014b50) throw new Error("the zip archive's directory is damaged");
+    const method = zip.readUInt16LE(at + 10);
+    const packed = zip.readUInt32LE(at + 20);
+    const size = zip.readUInt32LE(at + 24);
+    const nameLength = zip.readUInt16LE(at + 28);
+    const extra = zip.readUInt16LE(at + 30);
+    const comment = zip.readUInt16LE(at + 32);
+    const local = zip.readUInt32LE(at + 42);
+    if (zip.toString("utf8", at + 46, at + 46 + nameLength) === name) {
+      if (zip.readUInt32LE(local) !== 0x04034b50) throw new Error(`${name}'s entry in the zip archive is damaged`);
+      const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+      const body = zip.subarray(start, start + packed);
+      const data = method === 0 ? Buffer.from(body) : method === 8 ? inflateRawSync(body) : null;
+      if (!data) throw new Error(`${name} is packed in a way this reader does not know (method ${method})`);
+      if (data.length !== size) throw new Error(`${name} unpacked to ${data.length} bytes; the archive says ${size}`);
+      return data;
+    }
+    at += 46 + nameLength + extra + comment;
+  }
+  throw new Error(`${name} is not in the zip archive`);
+}
+
+/** Puts the pinned `cua-driver.exe` for `arch` (x64 or arm64) into the folder `out`, with its licence and notices. */
+export async function fetchWindowsCuaDriver({ out, arch = process.arch }) {
+  const pin = WINDOWS_CUA_DRIVER_PIN;
+  const asset = pin.assets[arch];
+  if (!asset) throw new Error(`cua-driver ${pin.version} has no Windows build for ${arch} in the pin (apps/hub-api/desktop-helper/windows/cua-driver.json).`);
+  const target = resolve(out);
+  const cache = join(root, "node_modules", ".cache", "ensemble-cua-driver");
+  mkdirSync(cache, { recursive: true });
+  const given = process.env.ENSEMBLE_CUA_DRIVER_ARCHIVE?.trim();
+  const archive = given ? resolve(given) : join(cache, asset.asset);
+  if (!given && (!existsSync(archive) || sha256(archive) !== asset.sha256)) {
+    console.log(`downloading ${asset.url}`);
+    await download(asset.url, archive);
+  }
+  const actual = existsSync(archive) ? sha256(archive) : "missing";
+  if (actual !== asset.sha256) {
+    if (!given) rmSync(archive, { force: true });
+    throw new Error(`cua-driver ${pin.version}: ${archive} has SHA-256 ${actual}; the pin (apps/hub-api/desktop-helper/windows/cua-driver.json) says ${asset.sha256}.`);
+  }
+  const zip = readFileSync(archive);
+  const exe = zipMember(zip, asset.member);
+  const exeSha = createHash("sha256").update(exe).digest("hex");
+  if (exeSha !== asset.exeSha256 || exe.length !== asset.exeBytes) throw new Error(`cua-driver.exe in ${asset.asset} has SHA-256 ${exeSha} (${exe.length} bytes); the pin says ${asset.exeSha256} (${asset.exeBytes} bytes).`);
+  const notices = zipMember(zip, `${dirname(asset.member)}/THIRD_PARTY_NOTICES.md`);
+  mkdirSync(target, { recursive: true });
+  const path = join(target, "cua-driver.exe");
+  writeFileSync(`${path}.part`, exe);
+  renameSync(`${path}.part`, path);
+  writeFileSync(join(target, "CuaDriver.THIRD_PARTY_NOTICES.md"), notices);
+  writeFileSync(join(target, "CuaDriver.LICENSE"), license(pin, asset.url));
+  if (process.platform === "win32") verifyAuthenticode(path, pin.publisher);
+  console.log(`Cua Driver ${pin.version} (sha256 ${asset.sha256} of ${asset.asset}) at ${path}`);
+}
+
+/** On Windows: the program's Authenticode signature is valid and its publisher's (the pinned organisation). */
+function verifyAuthenticode(path, publisher) {
+  const script = "$s = Get-AuthenticodeSignature -LiteralPath $env:ENSEMBLE_SIGNED_FILE; Write-Output $s.Status; Write-Output $s.SignerCertificate.Subject";
+  const shown = spawnSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: { ...process.env, ENSEMBLE_SIGNED_FILE: path } });
+  const [status, subject] = `${shown.stdout ?? ""}`.trim().split(/\r?\n/);
+  if (shown.status !== 0 || status?.trim() !== "Valid") throw new Error(`cua-driver.exe's Authenticode signature does not verify (${status?.trim() || shown.stderr?.trim() || "no answer"}).`);
+  if (!subject?.includes(`O=${publisher}`) && !subject?.includes(`CN=${publisher}`)) throw new Error(`cua-driver.exe is signed by ${subject?.trim() || "nobody"}; the pin says ${publisher}.`);
 }
 
 /** On a Mac: the bundle's signature holds and is its publisher's (the pinned team). */
@@ -114,11 +199,13 @@ function verifySignature(app, teamId) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const at = process.argv.indexOf("--out");
   const out = at > 0 ? process.argv[at + 1] : null;
-  if (!out) {
-    console.error("Usage: node scripts/fetch-cua-driver.mjs --out <dir>");
+  const windows = process.argv.indexOf("--windows");
+  const arch = windows > 0 ? process.argv[windows + 1] : null;
+  if (!out || (windows > 0 && !arch)) {
+    console.error("Usage: node scripts/fetch-cua-driver.mjs --out <dir> [--windows x64|arm64]");
     process.exit(1);
   }
-  await fetchCuaDriver({ out }).catch((error) => {
+  await (arch ? fetchWindowsCuaDriver({ out, arch }) : fetchCuaDriver({ out })).catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   });

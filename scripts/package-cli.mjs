@@ -54,8 +54,8 @@ mkdirSync(sidecarDir, { recursive: true });
 if (options.skipSidecar) {
   copyNodeOnly(sidecarDir);
 } else {
-  // Desktop control on a Mac uses the Cua Driver the installed Ensemble app carries.
-  run(process.execPath, ["scripts/assemble-desktop-sidecar.mjs", "--dest", sidecarDir, "--no-cua-driver"], { cwd: root });
+  // Desktop control on a Mac uses the Cua Driver the installed Ensemble app carries; on Windows the CLI carries its own.
+  run(process.execPath, ["scripts/assemble-desktop-sidecar.mjs", "--dest", sidecarDir, ...(options.target.startsWith("darwin-") ? ["--no-cua-driver"] : [])], { cwd: root });
 }
 
 copyFileSync(bundle, join(libDir, "ensemble.mjs"));
