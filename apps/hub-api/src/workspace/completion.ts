@@ -15,7 +15,7 @@ import { z } from "zod";
 import { parseReport, REPORT_OUTCOMES, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
 import { agentEnv } from "../subscriptions/detect.js";
-import { acceptanceFolder, isCheckCommand, type AcceptanceCheck } from "./acceptance-checks.js";
+import { acceptanceFolder, checkFilesProblem, isCheckCommand, type AcceptanceCheck } from "./acceptance-checks.js";
 import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
 import { judgeEngineCall } from "./engines/judge.js";
 import { runCommand, type RunResult } from "./runner.js";
@@ -341,17 +341,18 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
     if (!check.rerun) continue;
     runs.push(await once({ name: check.name, id: check.id ?? null, command: check.rerun.command, cwd: check.rerun.cwd ?? null, expects: check.rerun.expects, claimed: check.verdict, exitCode: null, ms: 0, counts: null, output: "" }));
   }
-  const planned: Array<Omit<CheckRun, "verdict" | "reason">> = [];
+  const planned: Array<{ base: Omit<CheckRun, "verdict" | "reason">; problem: string | null }> = [];
   for (const check of options.acceptance ?? []) {
     const cwd = await acceptanceFolder(ctx.root, check.folder);
     const where = await rerunFolder(ctx, cwd);
     if (!("refused" in where) && ran.has(`${where.cwd}\0${check.command.replace(/\s+/g, " ").trim()}`)) continue;
     const claimed = report?.checks?.find((row) => row.id === check.id)?.verdict ?? "skipped";
-    planned.push({ name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" });
+    // Text anyone could have written: held to the check forms again here, and a file it runs must be in the run's folder now.
+    const problem = !isCheckCommand(check.command) ? NOT_A_CHECK : "refused" in where ? null : await checkFilesProblem(ctx.root, where.cwd, check.command);
+    planned.push({ base: { name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" }, problem });
   }
-  // Text anyone could have written: each command is held to the check forms again here, and the owner allows them
-  // on one card unless the run is unattended. Once allowed they run as in Review only; a read-only run stays read-only.
-  const runnable = planned.filter((row) => isCheckCommand(row.command));
+  // The owner allows them on one card unless the run is unattended. Once allowed they run as in Review only; a read-only run stays read-only.
+  const runnable = planned.filter((row) => !row.problem).map((row) => row.base);
   let judgeCtx = ctx;
   let refused: string | null = null;
   if (runnable.length && !ctx.job.unattended) {
@@ -362,8 +363,8 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
       else if (!options.signal.aborted) refused = answer === "deny" ? DENIED : UNANSWERED;
     }
   }
-  for (const base of planned) {
-    if (!isCheckCommand(base.command)) runs.push({ ...base, verdict: "not_run", reason: NOT_A_CHECK });
+  for (const { base, problem } of planned) {
+    if (problem) runs.push({ ...base, verdict: "not_run", reason: problem });
     else if (refused) runs.push({ ...base, verdict: "not_run", reason: refused });
     else runs.push(await once(base, judgeCtx));
   }

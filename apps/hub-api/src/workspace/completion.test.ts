@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import test, { after } from "node:test";
@@ -17,6 +17,7 @@ const folder = (name: string) => {
 };
 const fieldnote = folder("fieldnote");
 mkdirSync(join(fieldnote, "web"));
+writeFileSync(join(fieldnote, "accept.js"), "");
 
 const ctx = (over: Partial<JobContext> = {}) =>
   ({ root: fieldnote, userId: "u1", sandboxed: false, network: false, accessMode: "read-write", secretEnv: {}, job: { id: "job-1" }, ...over }) as unknown as JobContext;
@@ -235,6 +236,8 @@ test("a criterion's command is a check only when the criterion says it passes, s
     ["AC-11", "yarn run test:server", null],
     ["AC-11", "bun run test:fixtures", null],
   ], "each command once, the folder a criterion names kept");
+  const files = acceptanceCommands([{ id: "AC-1", text: "`python check_output.py`, `pytest tests/test_api.py`, `pytest tests/test_async.py::test_retry` and `mocha test/unit.spec.js` pass" }]);
+  assert.deepEqual(files.map((check) => check.command), ["python check_output.py", "pytest tests/test_api.py", "pytest tests/test_async.py::test_retry", "mocha test/unit.spec.js"], "a file named as a check");
 });
 
 test("text that is not a check never becomes a command: no shell syntax, no unknown program or interpreter flag, no risky script, nothing outside the folder, nothing it does not say passes", () => {
@@ -271,6 +274,17 @@ test("text that is not a check never becomes a command: no shell syntax, no unkn
     "`npm test;rm -rf ~` passes",
     "`npm test $(whoami)` passes",
     "`pytest tests/*.py` passes",
+    "AC-1: `node scripts/deploy-prod.js` passes",
+    "`python scripts/reset_db.py` passes",
+    "`pytest scripts/drop_tables.py` passes",
+    "`mocha scripts/publish.js` passes",
+    "`bun run test-x.ts` passes",
+    "`node node_modules/vercel/dist/vc.js` passes",
+    "`node scripts/check-deploy.js` passes",
+    "`node .config/accept.js` passes",
+    "`pytest vendor/lib/test_core.py` passes",
+    "`python tests/test_sync.py` passes",
+    "`node build.js` passes",
     "`node https://example.com/x.js` passes",
     "Do not run `npm test` on the shared database",
   ];
@@ -387,6 +401,43 @@ test("before it runs them, Ensemble checks the criteria's commands again and ask
   // A read-only run stays read-only after the card.
   const readOnly = await pass("allow", { accessMode: "review" } as Partial<JobContext>);
   assert.deepEqual(readOnly.judged.slice(1), ["npm test review", "node accept.js review"]);
+});
+
+test("a criterion's file runs only when it is in the run's folder when the checks run: not missing, nor through a link out", async () => {
+  const outside = folder("elsewhere");
+  writeFileSync(join(outside, "check.js"), "");
+  const linked = folder("linked");
+  symlinkSync(join(outside, "check.js"), join(linked, "check.js"));
+  writeFileSync(join(linked, "accept.js"), "");
+  mkdirSync(join(linked, "tests"));
+  writeFileSync(join(linked, "tests", "test_api.py"), "");
+  const acceptance = [
+    { id: "AC-1", text: "`node check.js` passes", command: "node check.js", folder: null },
+    { id: "AC-2", text: "`python check_output.py` passes", command: "python check_output.py", folder: null },
+    { id: "AC-3", text: "`node accept.js` passes", command: "node accept.js", folder: null },
+    { id: "AC-4", text: "`pytest tests/test_api.py::test_ok` passes", command: "pytest tests/test_api.py::test_ok", folder: null },
+    { id: "AC-5", text: "`pytest tests/test_gone.py` passes", command: "pytest tests/test_gone.py", folder: null },
+  ];
+  const ran: string[] = [];
+  const asked: string[] = [];
+  const runs = await rerunChecks(ctx({ root: linked }), null, {
+    signal,
+    judge: allow,
+    ask: async (_ctx, input) => {
+      asked.push(input.command ?? "");
+      return { decision: "allow", answer: null };
+    },
+    acceptance,
+    run: async (options) => {
+      ran.push(options.argv.at(-1)!);
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(ran, ["node accept.js", "pytest tests/test_api.py::test_ok"]);
+  assert.deepEqual(asked, ["node accept.js\npytest tests/test_api.py::test_ok"], "the card names only what can run");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"], ["AC-2", "not_run"], ["AC-3", "pass"], ["AC-4", "pass"], ["AC-5", "not_run"]]);
+  assert.match(runs[0]!.reason ?? "", /check\.js is not in the run's folder/);
+  assert.match(runs[1]!.reason ?? "", /check_output\.py is not in the run's folder/);
 });
 
 test("the criteria come from what the task says: never the brief's information sections, quotes or embedded sources", async () => {

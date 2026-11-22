@@ -5,7 +5,7 @@
  * (completion.ts), and the task is done only when they pass.
  */
 import { lstat, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { acceptanceOf as stepAcceptance } from "../node/packet.js";
@@ -61,12 +61,39 @@ const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const CHECK_SCRIPT = /^(?:test|lint|build|check|typecheck|verify)(?:[:-][A-Za-z0-9:._-]*)?$/i;
 /** Words a checking script never has anywhere in its name: it deploys, publishes, resets, migrates or changes things. */
 const RISKY = ["deploy", "release", "publish", "reset", "drop", "migrat", "seed", "clean", "push", "prod", "watch", "install", "upload", "commit", "delete", "destroy", "purge", "wipe", "update", "write"];
-/** Short ones, as a whole part of the name (`lint:fix`, `test:rm`), so `format`, `fixtures` and `server` stay clear. */
-const RISKY_PART = new Set(["rm", "rmrf", "fix", "serve", "start"]);
+/** Short ones, as a whole part of the name (`lint:fix`, `test:rm`, `sync_users`), so `format`, `fixtures`, `server` and `async` stay clear. */
+const RISKY_PART = new Set(["rm", "rmrf", "fix", "serve", "start", "sync"]);
+/** Words that make a file's name a check's: `test_api.py`, `unit.spec.js`, `accept.js`, `check_output.py`, a `tests` folder. */
+const CHECK_WORDS = new Set(["test", "tests", "testing", "spec", "specs", "check", "checks", "accept", "acceptance", "verify", "lint"]);
+/** Folders a check's file never comes from: installed packages, vendored code, git's own. */
+const NOT_PROJECT = new Set(["node_modules", "vendor", ".git"]);
+/** A package script name that is a file (`bun run` runs files): never taken as a script. */
+const FILE_LIKE = /\/|\.(?:[cm]?[jt]sx?|py|sh)$/i;
+
+/** A name's parts: split at `/ : . _ -` and where a lower-case letter or digit meets a capital. */
+function nameParts(name: string): string[] {
+  return name
+    .split(/[/:._-]+/)
+    .flatMap((part) => part.split(/(?<=[a-z0-9])(?=[A-Z])/))
+    .map((part) => part.toLowerCase())
+    .filter(Boolean);
+}
 
 function riskyScript(name: string): boolean {
   const lower = name.toLowerCase();
-  return RISKY.some((word) => lower.includes(word)) || lower.split(/[:._-]/).some((part) => RISKY_PART.has(part));
+  return RISKY.some((word) => lower.includes(word)) || nameParts(name).some((part) => RISKY_PART.has(part));
+}
+
+/**
+ * Whether a file (or test folder) a check command runs is a check's: its own name has a check word, its
+ * path no risky word, and it is not in installed packages, vendored code, git's folder or a hidden folder.
+ * A deploy or reset script a criterion names is never run as a check.
+ */
+function checkFile(path: string): boolean {
+  const file = path.split("::")[0]!;
+  const segments = file.split("/").filter((segment) => segment && segment !== ".");
+  if (!segments.length || segments.some((segment) => segment.startsWith(".") || NOT_PROJECT.has(segment.toLowerCase()))) return false;
+  return nameParts(segments.at(-1)!).some((part) => CHECK_WORDS.has(part)) && !riskyScript(file);
 }
 
 type Args = {
@@ -78,33 +105,41 @@ type Args = {
   paths?: RegExp;
   /** After `--`: what the test binary or linter takes. */
   rest?: RegExp;
+  /** The words after the flags are files the program runs (pytest, mocha), each held to `checkFile`. */
+  files?: boolean;
 };
 
-function argsAllowed(args: readonly string[], spec: Args): boolean {
+/** The words after the flags (the paths), or null when an argument is not allowed. */
+function positionals(args: readonly string[], spec: Args): string[] | null {
+  const found: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
-    if (arg === "--" && spec.rest) return args.slice(index + 1).every((word) => spec.rest!.test(word));
+    if (arg === "--" && spec.rest) return args.slice(index + 1).every((word) => spec.rest!.test(word)) ? found : null;
     const valued = spec.valued?.[arg];
     if (valued) {
       const value = args[index + 1];
       index += 1;
-      if (!value || value.startsWith("-") || (valued === "word" ? !WORD.test(value) : !(spec.paths ?? /^[\w./-]+$/).test(value) || !staysInside(value))) return false;
+      if (!value || value.startsWith("-") || (valued === "word" ? !WORD.test(value) : !(spec.paths ?? /^[\w./-]+$/).test(value) || !staysInside(value))) return null;
       continue;
     }
     if (arg.startsWith("-")) {
-      if (!spec.flags.test(arg)) return false;
+      if (!spec.flags.test(arg)) return null;
       continue;
     }
-    if (!spec.paths?.test(arg) || !staysInside(arg)) return false;
+    if (!spec.paths?.test(arg) || !staysInside(arg) || (spec.files && !checkFile(arg))) return null;
+    found.push(arg);
   }
-  return true;
+  return found;
 }
+
+const argsAllowed = (args: readonly string[], spec: Args) => positionals(args, spec) !== null;
 
 const TEST_PATHS = /^[\w./-]+(?:::[\w.-]+)*$/;
 const PYTEST: Args = {
   flags: /^(?:-q{1,2}|-v{1,2}|-x|-s|-l|-ra|-rA|--quiet|--verbose|--exitfirst|--no-header|--strict-markers|--lf|--last-failed|--ff|--failed-first|--disable-warnings|--tb=(?:auto|long|short|line|native|no)|--maxfail=\d{1,3}|--durations=\d{1,3})$/,
   valued: { "-k": "word", "-m": "word", "-n": "word" },
   paths: TEST_PATHS,
+  files: true,
 };
 const CARGO: Args = {
   flags: /^(?:--workspace|--all|--all-targets|--all-features|--release|--locked|--offline|--frozen|-q|--quiet|-v|--verbose|--lib|--bins|--tests|--doc|--no-fail-fast)$/,
@@ -113,6 +148,7 @@ const CARGO: Args = {
 };
 const GO: Args = { flags: /^-(?:v|race|short|cover|failfast|count=\d{1,3}|timeout=\w+|vet=off)$/, valued: { "-run": "word", "-count": "word", "-timeout": "word" }, paths: /^\.(?:\/[\w.-]+)*$/ };
 const JS_RUNNER: Args = { flags: /^(?:--run|--runInBand|-i|--ci|--coverage|--silent|--passWithNoTests|--bail|--recursive|--exit|--reporter=[\w-]+)$/, paths: TEST_PATHS };
+const MOCHA: Args = { ...JS_RUNNER, files: true };
 const TSC: Args = { flags: /^(?:--noEmit|--pretty)$/, valued: { "-p": "path", "--project": "path" }, paths: /^[\w./-]+$/ };
 const ESLINT: Args = { flags: /^(?:--quiet|--no-cache|--max-warnings=\d{1,4}|--format=[\w-]+)$/, valued: { "--max-warnings": "word" }, paths: /^[\w./-]+$/ };
 const RUFF: Args = { flags: /^(?:--quiet|-q|--no-cache|--statistics|--check|--diff)$/, paths: /^[\w./-]+$/ };
@@ -135,7 +171,7 @@ export function isCheckCommand(command: string): boolean {
   const [program = "", sub = "", ...rest] = words;
   if (PACKAGE_MANAGERS.has(program)) {
     if (sub === "test") return rest.length === 0;
-    return sub === "run" && rest.length === 1 && CHECK_SCRIPT.test(rest[0]!) && !riskyScript(rest[0]!);
+    return sub === "run" && rest.length === 1 && CHECK_SCRIPT.test(rest[0]!) && !FILE_LIKE.test(rest[0]!) && !riskyScript(rest[0]!);
   }
   switch (program) {
     case "pytest":
@@ -144,9 +180,9 @@ export function isCheckCommand(command: string): boolean {
     case "python":
     case "python3":
       if (sub === "-m") return rest[0] === "pytest" && argsAllowed(rest.slice(1), PYTEST);
-      return words.length === 2 && /^[\w./-]+\.py$/.test(sub);
+      return words.length === 2 && /^[\w./-]+\.py$/.test(sub) && checkFile(sub);
     case "node":
-      return words.length === 2 && /^[\w./-]+\.(?:js|mjs|cjs)$/.test(sub);
+      return words.length === 2 && /^[\w./-]+\.(?:js|mjs|cjs)$/.test(sub) && checkFile(sub);
     case "cargo":
       return ["test", "build", "check", "clippy"].includes(sub) && argsAllowed(rest, CARGO);
     case "go":
@@ -154,8 +190,9 @@ export function isCheckCommand(command: string): boolean {
     case "vitest":
       return argsAllowed(sub === "run" ? rest : words.slice(1), JS_RUNNER);
     case "jest":
-    case "mocha":
       return argsAllowed(words.slice(1), JS_RUNNER);
+    case "mocha":
+      return argsAllowed(words.slice(1), MOCHA);
     case "tsc":
       return words.includes("--noEmit") && argsAllowed(words.slice(1), TSC);
     case "eslint":
@@ -169,6 +206,29 @@ export function isCheckCommand(command: string): boolean {
     default:
       return false;
   }
+}
+
+/** The files and test folders a check command runs, as it names them (node's or python's file, pytest's and mocha's paths); empty when it names none. */
+export function checkFiles(command: string): string[] {
+  if (!isCheckCommand(command)) return [];
+  const [program = "", sub = "", ...rest] = command.split(" ");
+  const strip = (path: string) => path.split("::")[0]!;
+  if (program === "node") return [sub];
+  if (program === "python" || program === "python3") return sub === "-m" ? (positionals(rest.slice(1), PYTEST) ?? []).map(strip) : [sub];
+  if (program === "pytest" || program === "py.test") return (positionals([sub, ...rest].filter(Boolean), PYTEST) ?? []).map(strip);
+  if (program === "mocha") return positionals([sub, ...rest].filter(Boolean), MOCHA) ?? [];
+  return [];
+}
+
+/** Why a check command's files cannot run where it runs (`cwd`): one is missing, or lies outside the run's folder through a link; null when each is there. */
+export async function checkFilesProblem(root: string, cwd: string, command: string): Promise<string | null> {
+  const real = await realpath(root).catch(() => null);
+  if (!real) return "The run's folder is gone.";
+  for (const file of checkFiles(command)) {
+    const found = await realpath(resolve(cwd, file)).catch(() => null);
+    if (!found || !within(real, found)) return `${file} is not in the run's folder.`;
+  }
+  return null;
 }
 
 function folderOf(text: string): string | null {
