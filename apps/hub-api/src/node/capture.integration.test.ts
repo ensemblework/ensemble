@@ -25,7 +25,9 @@ const scratch = homeScratch(".ensemble-node-capture-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
-const { settleTurns } = await import("./queue.js");
+const { recoverTurns, settleTurns } = await import("./queue.js");
+const { deliverReleased } = await import("../evidence/held.js");
+const { postMessage } = await import("./store.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
@@ -189,6 +191,47 @@ type Row = { id: string; kind: string; authorNodeId: string | null; body: string
 
 async function messages(user: HttpUser, roomId: string): Promise<Row[]> {
   return json(await user.inject({ method: "GET", url: `/api/node/rooms/${roomId}/messages` })).messages as Row[];
+}
+
+/** Files of a node's own captures that its owner already released (uploaded, usable). */
+async function releasedFiles(user: HttpUser, node: { id: string }, count: number): Promise<string[]> {
+  const ids: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const row = await h.prisma.jobEvidence.create({
+      data: { userId: user.id, nodeId: node.id, operation: `node:${node.id}:own`, kind: "screenshot", name: `screen-${index + 1}.png`, mime: "image/png", size: 100, sha256: "b".repeat(64), storageKey: `screen-${randomUUID()}.png` },
+    });
+    ids.push(row.id);
+  }
+  return ids;
+}
+
+/** A node's preview card as its Send leaves it: released, its files still to be shown, for `turnId`'s chain. */
+async function releasedCard(user: HttpUser, node: { id: string }, roomId: string, ids: string[], turnId: string | null) {
+  const { message } = await postMessage(h.prisma, {
+    roomId,
+    userId: user.id,
+    authorKind: "node",
+    authorNodeId: node.id,
+    kind: "approval",
+    body: "Preview before it's used.",
+    visibleTo: [user.id],
+    data: {
+      type: "media_preview",
+      status: "released",
+      evidence: ids.map((id, index) => ({ id, name: `screen-${index + 1}.png` })),
+      operation: `node:${node.id}:own`,
+      nodeCapture: true,
+      ...(turnId ? { turnId, originTurnId: turnId } : {}),
+      delivery: "pending",
+      result: { released: ids, discarded: [] },
+    },
+  });
+  return message;
+}
+
+/** Every file the node's messages show in a room, one entry per showing. */
+async function shownIn(user: HttpUser, roomId: string, nodeId: string): Promise<string[]> {
+  return (await messages(user, roomId)).filter((row) => row.authorNodeId === nodeId && row.kind !== "approval").flatMap((row) => (row.data.media ?? []).map((item) => item.evidenceId));
 }
 
 async function until(check: () => Promise<boolean>, what: string) {
@@ -358,6 +401,72 @@ test("a node's held capture released on its own is posted too, once its card set
     const shown = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
     assert.equal(shown.length, 1);
     assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 0);
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a capture sent while its turn ran is shown after a restart cut that turn short", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira);
+  await say(mira, room.id, "screenshot the calculator");
+  const trigger = (await messages(mira, room.id)).filter((row) => row.authorNodeId === null).at(-1)!;
+  const [first] = await releasedFiles(mira, node, 1);
+  const [second] = await releasedFiles(mira, node, 1);
+  // The turn that took the first one had acted and was still running when the process stopped; the
+  // second one's turn was still queued, too old to run after the restart.
+  const cut = await h.prisma.nodeTurn.create({ data: { userId: mira.id, nodeId: node.id, roomId: room.id, reason: "dm", triggerMessageId: trigger.id, status: "running", outcome: "running", sideEffectsAt: new Date() } });
+  const stale = await h.prisma.nodeTurn.create({ data: { userId: mira.id, nodeId: node.id, roomId: room.id, reason: "dm", triggerMessageId: trigger.id, status: "queued", outcome: "queued", createdAt: new Date(Date.now() - 2 * 3_600_000) } });
+  const cards = [await releasedCard(mira, node, room.id, [first!], cut.id), await releasedCard(mira, node, room.id, [second!], stale.id)];
+  await recoverTurns(h.app);
+  await settleTurns();
+  const resumed = await h.prisma.nodeTurn.findFirstOrThrow({ where: { originTurnId: cut.id } });
+  assert.equal(resumed.status, "done", "the cut turn went on under a new id");
+  assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [first, second].sort(), "each shown once");
+  for (const card of cards) assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).data as { delivery?: string }).delivery, "posted");
+});
+
+test("a card with more files than one message holds shows them all, eight to a message, once", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira);
+  const ids = await releasedFiles(mira, node, 11);
+  const card = await releasedCard(mira, node, room.id, ids, null);
+  await Promise.all([deliverReleased(h.app, card), deliverReleased(h.app, card)]);
+  await deliverReleased(h.app, card);
+  const posts = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind !== "approval" && row.data.media?.length);
+  assert.deepEqual(posts.map((row) => row.data.media!.length), [8, 3]);
+  assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [...ids].sort());
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).data as { delivery?: string }).delivery, "posted");
+});
+
+test("files a partly failed Send released are shown once its last file is released on its own", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    script = (turn) =>
+      turn.transcript.includes("screenshot both")
+        ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }, { name: "capture_screenshot", arguments: { target: "web", url: `${base}/login` } }], then: "Taken." }
+        : { text: "ok" };
+    await say(mira, room.id, "screenshot both pages");
+    const card = (await messages(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "media_preview")!;
+    const [first, second] = card.data.evidence!.map((item) => item.id);
+    assert.ok(first && second, "both on one card");
+    // The computer cannot send the second one this time: the Send releases only the first.
+    const [kept] = computer.db.evidence.splice(computer.db.evidence.findIndex((row) => row.id === second), 1);
+    const sent = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+    assert.equal(sent.statusCode, 200, sent.body);
+    let now = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.equal(now.data.status, "pending");
+    // Later it can, and the owner releases that one on its own.
+    computer.db.evidence.push(kept!);
+    const one = await mira.inject({ method: "POST", url: `/api/node/evidence/${second}/release`, payload: { decision: "approve" } });
+    assert.equal(one.statusCode, 200, one.body);
+    await settleTurns();
+    now = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.deepEqual([now.data.status, [...((now.data.result as { released: string[] }).released)].sort()], ["released", [first, second].sort()]);
+    assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [first, second].sort(), "both shown, once");
   } finally {
     computer.stop();
   }

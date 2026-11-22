@@ -396,8 +396,12 @@ async function settlePreview(app: FastifyInstance, card: NodeMessage, node: Node
   const answers = (current.data as { answers?: Record<string, string> }).answers ?? {};
   const answered = (kind: "released" | "discarded", now: readonly string[]) => parsed.evidence.filter((item) => now.includes(item.id) || answers[item.id] === kind).map((item) => item.id);
   const result = { released: answered("released", settled.released), discarded: answered("discarded", settled.discarded) };
-  // Some could not be sent (the computer offline, upload off there): the owner can try again or discard.
-  if (settled.failed.length) return updateMessageData(prisma, current, { status: "pending", error: settled.failed.map((item) => `“${item.name}”: ${item.error}`).join(" "), result });
+  // Some could not be sent (the computer offline, upload off there): the owner can try again or discard,
+  // here or one file at a time, and what was answered now stays answered.
+  if (settled.failed.length) {
+    const given = { ...answers, ...Object.fromEntries(result.released.map((id) => [id, "released"])), ...Object.fromEntries(result.discarded.map((id) => [id, "discarded"])) };
+    return updateMessageData(prisma, current, { status: "pending", error: settled.failed.map((item) => `“${item.name}”: ${item.error}`).join(" "), result, answers: given });
+  }
   // The node's own released captures are shown without a turn of their own (evidence/held.ts `deliverReleased`).
   const deliver = input.decision === "approve" && result.released.length > 0 && parsed.nodeCapture === true;
   const updated = await updateMessageData(prisma, current, { status: result.released.length ? "released" : "discarded", error: null, result, ...(deliver ? { delivery: "pending" } : {}) });
