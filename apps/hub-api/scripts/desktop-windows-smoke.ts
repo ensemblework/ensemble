@@ -50,6 +50,8 @@ const failures: string[] = [];
 const unchecked: string[] = [];
 const heldOk = process.argv.includes("--foreground-may-be-held");
 let held: string | null = null;
+/** The app in front at the latest `frontApp()`. */
+let frontAppName = "";
 
 /** A check that lets the rest of the smoke run; the run fails at the end. */
 function expect(ok: unknown, message: string): boolean {
@@ -309,7 +311,6 @@ async function notepadInFront(): Promise<boolean> {
   return /notepad/i.test((await frontApp()) ?? "");
 }
 
-let frontAppName = "";
 /** The app in front with its window's title, as desktop control sees it; null when no app is. */
 async function frontApp(): Promise<string | null> {
   const look = await service.observe(caller, { screenshot: false, elements: false }).catch(() => null);

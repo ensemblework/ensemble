@@ -20,11 +20,13 @@ Sign in to Windows as a standard user (not an administrator) for the checks, so 
 ## Notepad
 
 - [ ] **Open behind.** Ask a node to open Notepad. It opens without taking the front from the window you are using, and no card asks anything.
-- [ ] **Type.** Ask it to type "Ensemble 0.9.1 on Windows" in Notepad. It asks once on a card for your pointer and keyboard ("This mission"); after that it brings Notepad forward, the text arrives whole, and reading Notepad's elements shows the same text. A second typing step in the same mission does not ask again.
+- [ ] **Type behind.** Ask it to add a line to Notepad's text without your screen. On Windows 11's Notepad the text arrives without your pointer moving or Notepad taking the front. On Windows 10's Notepad the step says the field did not take it and to click into it (it never claims it typed), and nothing arrives.
+- [ ] **Type.** Ask it to type "Ensemble 0.9.1 on Windows" in Notepad. It asks once on a card for your pointer and keyboard ("This mission"); after that it brings Notepad forward, the text arrives whole, and reading Notepad's elements shows the same text. A second typing step in the same mission does not ask again. If Windows keeps your window in front instead, the open step says Notepad did not come to the front, never that it did, and the node clicks into Notepad.
+- [ ] **Clicks land where aimed.** On a display at least 1920 pixels wide (screenshots are smaller than it), at 100% and at 150% (Settings → Display), ask it to click into the middle of Notepad's text by its place on a screenshot, then to type a word: the word goes where the screenshot showed the click.
 - [ ] **Your input wins.** Ask for a long text (a few hundred characters) and type something yourself while it goes in: the step ends `partial`, saying how many characters went in and that you used the keyboard, and the agent waits two minutes after your last input.
 - [ ] **Floor.** With the Ensemble app's window open beside Notepad, ask the node to click on the Ensemble window by its position, and to press a button in it by its element: both are refused (`ensemble_window`). A Hub tab in Edge, also minimised, is refused (`unknown_page`).
 - [ ] **Sensitive apps.** Ask it to read Windows PowerShell's window: it asks once on a card as a terminal; Settings asks as system settings. Neither is refused.
-- [ ] **Close without saving.** Ask it to close Notepad without saving: Notepad closes, and no file was written.
+- [ ] **Close without saving.** Ask it to close Notepad without saving: Notepad closes (alt+F4 in front, then "Don't save" when asked), no file was written, and the step never says the keys did not run.
 
 ## A screenshot of a named window
 
