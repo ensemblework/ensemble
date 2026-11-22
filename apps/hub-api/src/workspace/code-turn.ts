@@ -146,10 +146,11 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
     now: input.now,
     handoff: handoff ? { id: handoff.record.id, text: renderHandoff(handoff.record) } : null,
     // The message as queued, with what it mentions read in full (`withMentionedContent`), not the composer's words alone.
-    message: steer && resumed ? steerPrompt(job.instructions) : job.instructions,
+    message: job.instructions,
     previous: resumed ? await lastDelivered(prisma, job, job.continueFromJobId) : null,
   });
-  return { prompt: built.prompt, record: { ...built.record, operation }, operation, handoff, skills };
+  // A steer leads with the note that the turn at work was cut off for it, before what changed and the message.
+  return { prompt: steer && resumed ? steerPrompt(built.prompt) : built.prompt, record: { ...built.record, operation }, operation, handoff, skills };
 }
 
 /** Keeps what the turn sent on its run: the packet, its version, and the skills it gave the agent. */

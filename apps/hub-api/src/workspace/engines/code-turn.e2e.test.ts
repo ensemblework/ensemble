@@ -39,8 +39,10 @@ if (!resume) {
   const reported = lines.find((line) => line.id === 3);
   if (reported.error || reported.result.isError) tools += " report refused: " + JSON.stringify(reported);
 }
-appendFileSync(process.env.STANDIN_LOG, JSON.stringify({ agent: "claude", resume, maxTurns: args.includes("--max-turns"), first: prompt.split("\\n")[0], last: prompt.split("\\n").at(-1), tools }) + "\\n");
+appendFileSync(process.env.STANDIN_LOG, JSON.stringify({ agent: "claude", resume, maxTurns: args.includes("--max-turns"), first: prompt.split("\\n")[0], last: prompt.split("\\n").at(-1), tools, ...(resume ? { prompt } : {}) }) + "\\n");
 say({ type: "system", subtype: "init", session_id: session, model: "claude-test", cwd: process.cwd() });
+// Works until it is stopped, so a message can steer it.
+if (prompt.includes("Take your time.")) { setInterval(() => {}, 1000); return; }
 say({ type: "assistant", message: { content: [{ type: "text", text: "Done." }] } });
 say({ type: "result", subtype: "success", is_error: false, num_turns: 1, result: "Done.", usage: { input_tokens: 10, output_tokens: 5 } });
 `;
@@ -136,5 +138,62 @@ test("a Code tab thread: the packet, checks run again, the message alone in the 
     await side.stop();
     await runtime.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a message while the agent works steers it: the same session goes on with the steer note, the change and what it mentions", { timeout: 400_000 }, async () => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-code-steer-e2e-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "claude"), FAKE_CLAUDE);
+  chmodSync(join(bin, "claude"), 0o755);
+  const log = join(root, "standin.log");
+  writeFileSync(log, "");
+  const runtime = await startStubRuntime();
+  const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, STANDIN_LOG: log });
+  let passed = false;
+  try {
+    const thread = await side.api<{ thread: { id: string } }>("/api/agent/threads", { json: { message: "Export the report" } });
+    const threadId = thread.body.thread.id;
+    const turn = { taskId: threadId, kind: "code", mode: "review", sandbox: false, delivery: "local", markDone: false, chat: true, surface: "code", engine: "claude-code" };
+    const first = await side.api<{ jobId?: string }>("/api/agent/assign", { json: { ...turn, instructions: "Export the report as CSV. Take your time." } });
+    assert.ok(first.body.jobId, JSON.stringify(first.body));
+    // Steered once the agent's session has started.
+    let session: unknown = null;
+    for (let i = 0; i < 300 && !session; i += 1) {
+      await sleep(300);
+      const events = (await side.api<{ events: Array<{ kind: string; data: { session?: unknown } }> }>(`/api/agent/jobs/${first.body.jobId}`)).body.events;
+      session = events.find((event) => event.kind === "engine")?.data.session ?? null;
+    }
+    assert.equal(session, "code-session-1", side.logs().slice(-3000));
+    const spec = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Export format", description: "Semicolons between the columns, UTF-8 with a BOM." } });
+    const update = `Use the export format instead.\n\n(Mentioned in Ensemble: @Export format [task] ensemble://task/${spec.body.task.id})`;
+    const steered = await side.api<{ jobId?: string; delivery?: string }>(`/api/agent/threads/${threadId}/steer`, { json: { jobId: first.body.jobId, turn: { ...turn, instructions: update } } });
+    assert.equal(steered.body.delivery, "steered", JSON.stringify(steered.body));
+    let job: Job = { status: "queued" };
+    for (let i = 0; i < 300 && !["succeeded", "failed", "blocked", "cancelled"].includes(job.status); i += 1) {
+      await sleep(400);
+      job = (await side.api<{ job: Job }>(`/api/agent/jobs/${steered.body.jobId}`)).body.job;
+    }
+    assert.equal(job.status, "succeeded", `${job.error ?? ""}\n${side.logs().slice(-3000)}`);
+
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(calls.length, 2, `${log}: ${JSON.stringify(calls)}`);
+    const resumed = calls[1]!;
+    assert.equal(resumed.resume, "code-session-1", "the same session goes on");
+    // The note first, then what changed in the person's Ensemble (the task it mentions), then the change itself.
+    assert.ok(String(resumed.prompt).startsWith("(Ensemble: you were interrupted because the person changed what they want"), String(resumed.prompt));
+    assert.match(String(resumed.prompt), /Since your last turn[\s\S]*- New: Export format[\s\S]*\n\nUse the export format instead\./);
+    assert.match(String(resumed.prompt), /\(Attached from Ensemble:[\s\S]*Semicolons between the columns, UTF-8 with a BOM\./, "what the change mentions, read in full");
+    const view = await side.api<{ turns: Array<{ id: string; steer: boolean; steeredBy: string | null; packet: { mode: string; operation: string | null } | null }> }>(`/api/agent/threads/${threadId}`);
+    const [stopped, change] = view.body.turns;
+    assert.deepEqual([stopped?.steeredBy, change?.steer], [steered.body.jobId, true]);
+    assert.deepEqual([change?.packet?.mode, change?.packet?.operation], ["delta", "resume"]);
+    passed = true;
+  } finally {
+    await side.stop();
+    await runtime.close();
+    // A failure keeps the folder, with the stand-in's log.
+    if (passed) rmSync(root, { recursive: true, force: true });
   }
 });

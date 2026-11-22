@@ -360,7 +360,7 @@ export type PacketInput = {
   now?: Date;
   /** A new session's handoff record, rendered and bounded (handoff-record.ts), and its id. */
   handoff: { id: string; text: string } | null;
-  /** The person's message as the agent gets it (a steer is already worded as one). */
+  /** The person's message as the agent gets it. */
   message: string;
   /** What the session's last packet delivered; null starts the session with the whole packet. */
   previous: Delivered | null;
