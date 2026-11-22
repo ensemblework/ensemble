@@ -92,9 +92,14 @@ export function appsText(lists: readonly AppsResult[]): string {
   const installed = lists.find((apps) => apps.installed.length)?.installed ?? [];
   if (installed.length) {
     lines.push("Installed (open with desktop_open and the id):");
-    for (const app of installed) lines.push(`- ${app.name}: ${app.id}`);
+    for (const app of installed) lines.push(`- ${app.name}: ${app.id}${app.sandbox ? ` (a ${app.sandbox} app: your owner's screen only)` : ""}`);
   }
   return lines.length ? lines.join("\n") : "No apps found.";
+}
+
+/** Why a snap or Flatpak app does not open on the agent screen, and where it does. */
+export function sandboxedText(name: string, sandbox: string): string {
+  return `${name} is a ${sandbox} app: its sandbox reaches only your owner's display, so it cannot open on the agent screen. Use it on your owner's screen (screen owner), which asks them first.`;
 }
 
 export function openText(opened: OpenResult): string {

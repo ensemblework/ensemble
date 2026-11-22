@@ -20,6 +20,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
+import { deliverAfterTurn, deliverStranded } from "../evidence/held.js";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn, type TurnOutcome } from "./brain.js";
 import type { Mention } from "./mentions.js";
@@ -510,7 +511,7 @@ function schedule(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "
 
 async function execute(app: FastifyInstance, turnId: string): Promise<void> {
   const prisma = app.prisma;
-  const head = await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { lane: true, nodeId: true, planId: true, planStep: true, snapshotSeq: true, triggerMessageId: true } });
+  const head = await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { lane: true, nodeId: true, roomId: true, originTurnId: true, planId: true, planStep: true, snapshotSeq: true, triggerMessageId: true } });
   if (!head) return;
   const work = isWorkLane(head.lane) || Boolean(head.planStep);
   const pool = work ? workPool : talkPool;
@@ -566,6 +567,8 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
     slot.give();
+    // Held captures its owner sent while it ran, which its reply did not show (evidence/held.ts).
+    if (head.roomId) await deliverAfterTurn(app, { nodeId: head.nodeId, roomId: head.roomId, chain: head.originTurnId ?? turnId }).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not show released captures"));
     // An independent answer: once the round has none left to run, its answers are brought together (node/groups.ts).
     if (head.snapshotSeq !== null) await roundTurnEnded(app, head).catch((error: unknown) => app.log.warn({ err: error, turnId }, "Could not check an independent round"));
   }
@@ -725,7 +728,7 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
       : false;
     if (!resumed) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
   }
-  const old = await prisma.nodeTurn.findMany({ where: { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } }, select: { id: true, planId: true, planStep: true } });
+  const old = await prisma.nodeTurn.findMany({ where: { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } }, select: { id: true, nodeId: true, roomId: true, planId: true, planStep: true } });
   const missions = await prisma.nodeMission.findMany({ where: { id: { in: [...new Set(old.map((row) => row.planId).filter((id): id is string => Boolean(id)))] } }, select: { id: true, status: true } });
   const liveMission = new Set(missions.filter((row) => !missionEnded(row.status)).map((row) => row.id));
   const drop = old.filter((row) => !row.planId || !liveMission.has(row.planId));
@@ -733,6 +736,9 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
     await prisma.nodeTurn.updateMany({ where: { id: { in: drop.map((row) => row.id) } }, data: { status: "failed", outcome: "cancelled", error: "Too old to run after a restart.", finishedAt: new Date(now) } });
     for (const turn of drop) if (turn.planId) await planTurnEnded(app, turn, "Too old to run after a restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
   }
+  // Held captures their owner sent while those turns ran: a resumed turn shows its own, the rest are posted now.
+  const places = [...running, ...drop].flatMap((turn) => (turn.roomId ? [{ roomId: turn.roomId, nodeId: turn.nodeId }] : []));
+  await deliverStranded(app, places).catch((error: unknown) => app.log.error({ err: error }, "Could not show released captures after a restart"));
   const queued = await prisma.nodeTurn.findMany({ where: { status: "queued" }, orderBy: { createdAt: "asc" }, select: { id: true, nodeId: true, runAfter: true, lane: true, roomId: true, private: true, planId: true, planStep: true } });
   for (const turn of queued) scheduleLater(app, turn);
   await recoverRounds(app);

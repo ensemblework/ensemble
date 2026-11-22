@@ -818,7 +818,7 @@ export async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Cal
     answer.ok ? (answer.summary ?? "Done.") : `It did not work: ${answer.error?.message ?? "the tool failed"}`,
     kept.length ? `Kept as your evidence: ${kept.map((item) => `${item.kind} “${item.name}” [${item.id}]${item.local ? " (kept on the computer: evidence upload is off there)" : ""}`).join("; ")}.` : "",
     media.length === 1 ? `This ${NOUNS[media[0]!.kind] ?? "file"} will appear with your reply.` : media.length > 1 ? `These ${media.length} files will appear with your reply (node_show to choose fewer).` : "",
-    held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they release it, and you are told when they do. The card asks them; do not ask in your reply.` : "",
+    held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they send it from the card, and then it shows in this chat by itself. The card asks them; do not ask in your reply.` : "",
     expects && answer.ok && !media.length && !held.length ? `No ${expects} came back, so nothing will show with your reply: never say one is attached or shown. Try again, or tell your owner it did not work.` : "",
     show === "none" && kept.length
       ? `It is in your evidence, not yet in your owner's Ensemble Files: to put it there, call hub_save_file with evidence "${kept[0]!.id}"; to show it in this chat, node_show. Never write a link to it yourself.`

@@ -15,6 +15,7 @@ import { ownCallTrace, runAssistantTurn, type AssistantTurnResult, type ClaimSta
 import { getTool } from "../assistant/registry.js";
 import { pauseQuestion } from "../assistant/runaway.js";
 import { env } from "../config.js";
+import { markRepliedWith, releasedForTurn } from "../evidence/held.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
 import { loadSettings } from "../lib/settings.js";
@@ -35,7 +36,7 @@ import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
-import { missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
+import { MAX_MEDIA, missionMedia, peekTurnMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
 import { chooseTiers } from "./skills.js";
@@ -953,9 +954,12 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   if (ownerReads && turn.planId && !turn.planStep && leadPlan?.kind !== "replan" && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
-  const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
   // An answer the owner agreed to share reaches the room only as their draft (node/audience.ts).
   const drafted = text && text !== NO_REPLY && !opensPlan ? await draftDisclosure(app, { turn, node, room, text, lineage }) : false;
+  // Held captures of this turn's chain its owner sent while it ran come with its reply (evidence/held.ts).
+  const released = ownerReads && !drafted ? await releasedForTurn(prisma, { ownerId: owner, nodeId: node.id, roomId: room.id, chain: turn.originTurnId ?? turn.id, limit: MAX_MEDIA - media.length }) : null;
+  for (const item of released?.media ?? []) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
+  const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
   if (mediaData.media && !drafted) trace.delivered(mediaData.media);
   if (text && text !== NO_REPLY && !opensPlan && !drafted) {
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
@@ -971,6 +975,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
     // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
     await postAsNode(scope, replyRoom, "", replyPrivateTo, { data: mediaData });
   }
+  if (released?.cards.length) await markRepliedWith(prisma, released.cards);
   if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
   // The lead's report turn: the plan is done, unless it added steps (they start now).
   if (turn.planId && !turn.planStep) await afterReport(app, turn.planId, turn.id);

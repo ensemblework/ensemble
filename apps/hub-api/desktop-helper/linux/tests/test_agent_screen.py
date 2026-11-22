@@ -68,15 +68,34 @@ class Environment(unittest.TestCase):
         self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", shell, "the compositor keeps the computer's system bus")
         self.assertEqual(shell["PATH"], "/usr/bin:/bin")
 
-    def test_the_pkexec_there_refuses_and_says_why(self):
+    def test_pkexec_snap_and_flatpak_there_refuse_and_say_why(self):
         import subprocess
 
         with tempfile.TemporaryDirectory() as folder:
-            shim = screen.write_privilege_shims(folder)["pkexec"]
-            self.assertEqual(os.stat(shim).st_mode & 0o777, 0o700)
-            ran = subprocess.run([shim, "true"], capture_output=True, text=True, timeout=10)
-        self.assertEqual(ran.returncode, 127)
-        self.assertIn("agent screen", ran.stderr)
+            shims = screen.write_privilege_shims(folder)
+            self.assertEqual(sorted(shims), ["flatpak", "pkexec", "snap"])
+            for name, shim in shims.items():
+                with self.subTest(name=name):
+                    self.assertEqual(os.stat(shim).st_mode & 0o777, 0o700)
+                    ran = subprocess.run([shim, "run", "firefox"], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(ran.returncode, 127)
+                    self.assertIn("agent screen", ran.stderr)
+                    self.assertIn("owner", ran.stderr)
+
+    def test_snap_and_flatpak_apps_are_not_seen_there(self):
+        owner = {**self.owner, "XDG_DATA_DIRS": "/usr/local/share:/usr/share:/var/lib/snapd/desktop:/var/lib/flatpak/exports/share:/home/mira/.local/share/flatpak/exports/share/"}
+        env = screen.session_env(owner, state_dir="/s", runtime="/r", wayland=None)
+        self.assertEqual(env["XDG_DATA_DIRS"].split(":"), ["/home/mira/.local/share", "/usr/local/share", "/usr/share"])
+
+    def test_the_bus_and_its_apps_know_the_agent_screens_display_from_the_start(self):
+        found = screen.paths("/run/user/1000", "0a1b2c3d")
+        env = screen.apps_environment(self.owner, state_dir="/s", found=found, system_bus_address=f"unix:path={found['system_bus']}")
+        self.assertEqual(env["WAYLAND_DISPLAY"], found["wayland"], "absolute: a lookup in another runtime folder never finds a wayland-0")
+        self.assertEqual(env["XDG_RUNTIME_DIR"], found["runtime"])
+        self.assertEqual(env["DBUS_SYSTEM_BUS_ADDRESS"], f"unix:path={found['system_bus']}")
+        self.assertEqual(env["PATH"].split(":")[0], found["bin"])
+        for key in ("DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS"):
+            self.assertNotIn(key, env)
 
     def test_the_system_bus_of_the_apps_starts_no_service(self):
         config = screen.session_config("/run/user/1000/ensemble-agent-0a1b2c3d/system_bus_socket", None)
@@ -177,6 +196,46 @@ class Services(unittest.TestCase):
             ids = screen.activatable_apps(screen.desktop_entries([root]))
             self.assertEqual(ids, ["org.gnome.TextEditor"])
             self.assertEqual(sorted(screen.allowed_service_files([root], ids)), ["ca.desrt.dconf", "org.gnome.TextEditor"])
+
+    def test_no_service_that_starts_a_sandbox(self):
+        with tempfile.TemporaryDirectory() as root:
+            services = os.path.join(root, "share", "dbus-1", "services")
+            sandboxed = os.path.join(root, "snapd", "desktop", "dbus-1", "services")
+            os.makedirs(services)
+            os.makedirs(sandboxed)
+            for folder, name, program in (
+                (services, "org.example.Snappy", "/usr/bin/snap run snappy"),
+                (services, "org.example.Flat", "/usr/bin/flatpak run org.example.Flat"),
+                (services, "org.gnome.TextEditor", "/usr/bin/gnome-text-editor --gapplication-service"),
+                (sandboxed, "org.example.Store", "/usr/bin/true"),
+            ):
+                with open(os.path.join(folder, f"{name}.service"), "w") as handle:
+                    handle.write(f"[D-BUS Service]\nName={name}\nExec={program}\n")
+            found = screen.allowed_service_files([os.path.join(root, "share"), os.path.join(root, "snapd", "desktop")], ["org.example.Snappy", "org.example.Flat", "org.gnome.TextEditor", "org.example.Store"])
+            self.assertEqual(sorted(found), ["org.gnome.TextEditor"])
+
+    def test_system_entries_that_start_a_sandbox_are_masked_for_the_agent_session(self):
+        import subprocess
+        import sys
+
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as own:
+            system = os.path.join(root, "applications")
+            mine = os.path.join(own, "applications")
+            os.makedirs(system)
+            os.makedirs(mine)
+            for name, program in (("snap-handle-link", "/usr/bin/snap handle-link %U"), ("firefox", "env BAMF_DESKTOP_FILE_HINT=x /snap/bin/firefox %u"), ("org.gnome.Calculator", "true")):
+                with open(os.path.join(system, f"{name}.desktop"), "w") as handle:
+                    handle.write(f"[Desktop Entry]\nType=Application\nName={name}\nExec={program}\n")
+            with open(os.path.join(mine, "gone.desktop"), "w") as handle:
+                handle.write(screen.MASK.format(name="gone"))
+            with open(os.path.join(mine, "kept.desktop"), "w") as handle:
+                handle.write("[Desktop Entry]\nType=Application\nName=kept\nExec=true\n")
+            self.assertEqual(screen.mask_sandboxed_entries([root], mine), ["firefox.desktop", "snap-handle-link.desktop"])
+            self.assertEqual(sorted(os.listdir(mine)), ["firefox.desktop", "kept.desktop", "snap-handle-link.desktop"])
+            # GLib reads the session's own folder first, so for it the masked apps are gone.
+            probe = "from gi.repository import Gio\ndef found(name):\n    try:\n        return Gio.DesktopAppInfo.new(name) is not None\n    except TypeError:\n        return False\nprint(found('firefox.desktop'), found('org.gnome.Calculator.desktop'))"
+            seen = subprocess.run([sys.executable, "-c", probe], env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": own, "XDG_DATA_HOME": own, "XDG_DATA_DIRS": root}, capture_output=True, text=True, timeout=30)
+            self.assertEqual(seen.stdout.split(), ["False", "True"], seen.stderr[-300:])
 
 
 class Leftovers(unittest.TestCase):

@@ -34,6 +34,7 @@ import { newCaptureId, ObservationLedger, type Capture, type ScreenRef } from ".
 import { boxToRegion, imageToLogical, MAX_LONG_EDGE, type Region } from "./mapping.js";
 import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
 import { GATE_WORDS, sensitiveApp, type GateCategory } from "./sensitive.js";
+import { sandboxedText } from "./text.js";
 import { typingMs, type DesktopStep, type StepAction } from "./tool-specs.js";
 
 export type DesktopCode =
@@ -181,7 +182,11 @@ export type ActResult = {
   observeError: string | null;
 };
 
-export type AppsResult = { screen: ScreenName; installed: Array<{ id: string; name: string }>; running: Array<{ name: string; id: string | null; windows: Array<{ title: string; active: boolean }> }> };
+/** An installed app; `sandbox` when it starts as a snap or Flatpak app, which never opens on the agent screen. */
+export type InstalledApp = { id: string; name: string; sandbox?: string };
+type CatalogApp = { id: string; name: string; sandbox?: string | null };
+
+export type AppsResult = { screen: ScreenName; installed: InstalledApp[]; running: Array<{ name: string; id: string | null; windows: Array<{ title: string; active: boolean }> }> };
 
 export type OpenResult = { screen: ScreenName; app: { id: string; name: string }; stages: Record<string, boolean>; focused: boolean; via: string | null; waitedMs: number };
 
@@ -675,14 +680,14 @@ export class DesktopService {
 
   async apps(input: { query?: string; running?: boolean }, budgetMs = 20_000): Promise<AppsResult> {
     return this.run(budgetMs, async (deadline) => {
-      const installed = input.running ? [] : (await this.call<{ apps: Array<{ id: string; name: string }> }>("apps.catalog", { ...(input.query ? { query: input.query } : {}), limit: input.query ? 20 : 80 }, deadline)).apps;
+      const installed = input.running ? [] : (await this.call<{ apps: CatalogApp[] }>("apps.catalog", { ...(input.query ? { query: input.query } : {}), limit: input.query ? 20 : 80 }, deadline)).apps;
       const listed = await this.call<{ apps: HelperApp[] }>("a11y.apps", {}, deadline).catch(() => ({ apps: [] as HelperApp[] }));
       const query = input.query?.trim().toLowerCase();
       const running = listed.apps
         .filter((app) => app.windows.length && app.name !== "gnome-shell")
         .filter((app) => !query || `${app.name} ${app.app_id ?? ""}`.toLowerCase().includes(query))
         .map((app) => ({ name: app.name, id: app.app_id, windows: app.windows.map((window) => ({ title: hideSecretValues(window.title), active: window.active })) }));
-      return { screen: this.screenName, installed: installed.map((app) => ({ id: app.id, name: app.name })), running };
+      return { screen: this.screenName, installed: installed.map((app) => ({ id: app.id, name: app.name, ...(app.sandbox ? { sandbox: app.sandbox } : {}) })), running };
     });
   }
 
@@ -1364,9 +1369,11 @@ export class DesktopService {
   /** `front`: bring it to the front once it is open (always, but for an app opened in the background on macOS). */
   private async openApp(caller: Caller, ref: string, waitMs: number, deadline: Deadline, allowed: Set<string>, front = true): Promise<OpenResult> {
     if (front || !this.mac) await this.ensureSession(deadline);
-    const found = await this.call<{ apps: Array<{ id: string; name: string }> }>("apps.catalog", { query: ref, limit: 5 }, deadline);
+    const found = await this.call<{ apps: CatalogApp[] }>("apps.catalog", { query: ref, limit: 5 }, deadline);
     const exact = found.apps.find((app) => app.id.toLowerCase() === ref.toLowerCase() || app.name.toLowerCase() === ref.toLowerCase()) ?? found.apps[0];
     if (!exact) throw new DesktopError("not_found", `No installed app is called ${ref}. desktop_apps lists them.`, "no");
+    // Before anyone is asked: the sandbox of a snap or Flatpak app reaches only the owner's display.
+    if (this.screenName === "agent" && exact.sandbox) throw new DesktopError("unsupported", sandboxedText(exact.name, exact.sandbox), "no");
     await this.gate(caller, this.gateApp({ name: exact.name, app_id: exact.id }), allowed);
     const launched = await this.call<{ app: { id: string; name: string; running: HelperApp | null }; stages: Record<string, boolean>; waited_ms: number }>(
       "apps.launch",

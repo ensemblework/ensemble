@@ -11,7 +11,14 @@ Isolation, each point a constraint:
 - the session's bus, AT-SPI bus, Wayland socket and every runtime file live in a private folder
   (`XDG_RUNTIME_DIR` of its own): the owner's sockets of the same names are never replaced;
 - the private bus starts only allowlisted services (settings, the permission store, apps that start by
-  D-Bus): never the owner's keyring, file systems, document portal, indexer or calendar;
+  D-Bus), never by systemd: never the owner's keyring, file systems, document portal, indexer or calendar.
+  It and every app there know the agent screen's display from the start;
+- apps are started from their own command line in a scope of their own (apps.exec_entry), so nothing
+  asks an app on the owner's bus to open a window;
+- snap and Flatpak apps never start there: their sandbox picks its own runtime folder, where a snap
+  reaches only displays named `wayland-N` (`/run/user/<uid>/snap.<name>/wayland-0` links to the
+  owner's). The session does not see their entries, masks system entries that start them, and its
+  `snap` and `flatpak` refuse;
 - apps there get a system bus of their own with no service on it and a `pkexec` that refuses: polkit
   counts every process of this user outside a login session as the owner's session, so a privileged
   request (mounting, installing, location, power) would otherwise reach polkit or GeoClue and ask the
@@ -20,8 +27,8 @@ Isolation, each point a constraint:
 - settings, data and caches are private folders; no sound; no login session id.
 Shared with the owner's session: the user's PipeWire (the screen's frames), and the computer's system bus
 for the compositor itself, which registers with GDM and follows logind as any GNOME Shell does.
-It is started with the helper (`--agent-screen`) and stopped with it, after the apps on it: they end on
-a signal rather than by losing their display.
+It is started with the helper (`--agent-screen`) and stopped with it, after the apps it started, which
+end on a signal; what its bus started ends with the bus.
 """
 from __future__ import annotations
 
@@ -38,6 +45,8 @@ import subprocess
 import time
 from typing import Callable, Iterable, Mapping
 from xml.sax.saxutils import escape
+
+from .apps import desktop_entry, read_entry, sandbox_of
 
 DEFAULT_SIZE = (1600, 1000)
 SIZE = re.compile(r"^(\d{3,4})x(\d{3,4})$")
@@ -144,13 +153,20 @@ def private_dirs(state_dir: str) -> dict[str, str]:
     return {key: os.path.join(state_dir, part) for key, part in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state"))}
 
 
+def sandbox_data_dir(folder: str) -> bool:
+    """A data folder of snap or Flatpak apps (their desktop entries and D-Bus services)."""
+    folder = folder.rstrip("/")
+    return folder.endswith("/snapd/desktop") or folder.endswith("/flatpak/exports/share")
+
+
 def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, wayland: str | None, bus_address: str | None = None, system_bus_address: str | None = None, bin_dir: str | None = None) -> dict[str, str]:
     """The agent session's environment: the owner's language and paths, nothing of the owner's session.
 
     No DISPLAY, XAUTHORITY, owner's bus or login session id; its own runtime folder, settings and data;
-    the owner's installed apps still found (their data folder is read first); no sound, no virtual file
-    systems; PipeWire shared for the frames. For apps, `system_bus_address` and `bin_dir` give them the
-    agent screen's own system bus and privileged programs (`write_privilege_shims`)."""
+    the owner's installed apps still found (their data folder is read first), but not snap or Flatpak
+    apps; no sound, no virtual file systems; PipeWire shared for the frames. For apps,
+    `system_bus_address` and `bin_dir` give them the agent screen's own system bus and the programs that
+    refuse there (`write_privilege_shims`)."""
     out = {key: value for key, value in base.items() if key in KEEP or key.startswith("LC_")}
     if bin_dir:
         out["PATH"] = ":".join([bin_dir, *[entry for entry in (out.get("PATH") or "/usr/bin:/bin").split(":") if entry and entry != bin_dir]])
@@ -159,7 +175,7 @@ def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, waylan
     out.update(private_dirs(state_dir))
     home = base.get("HOME", "")
     owner_data = base.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    system = [entry for entry in (base.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if entry]
+    system = [entry for entry in (base.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if entry and not sandbox_data_dir(entry)]
     out["XDG_DATA_DIRS"] = ":".join([owner_data, *[entry for entry in system if entry != owner_data]])
     out["XDG_RUNTIME_DIR"] = runtime
     out["PIPEWIRE_RUNTIME_DIR"] = owner_runtime(base)
@@ -176,26 +192,38 @@ def session_env(base: Mapping[str, str], *, state_dir: str, runtime: str, waylan
     return out
 
 
+def apps_environment(base: Mapping[str, str], *, state_dir: str, found: Mapping[str, str], system_bus_address: str) -> dict[str, str]:
+    """What the private bus starts services with and apps run with: the session's environment with the
+    agent screen's display (absolute, so a lookup in another runtime folder never finds a `wayland-0`),
+    its system bus for apps and the programs that refuse there."""
+    return session_env(base, state_dir=state_dir, runtime=found["runtime"], wayland=found["wayland"], system_bus_address=system_bus_address, bin_dir=found["bin"])
+
+
 def session_config(bus_path: str, services_dir: str | None) -> str:
     """A bus listening at `bus_path` that starts the services in `services_dir`, or none at all."""
     text = SESSION_CONF.format(bus=escape(bus_path), services=escape(services_dir or ""))
     return text if services_dir else text.replace("  <servicedir></servicedir>\n", "")
 
 
-PRIVILEGE_SHIM = """#!/bin/sh
-echo "$(basename "$0") does not run on Ensemble's agent screen: it would ask the owner on their own screen without telling them why. Ask them through Ensemble, which shows them a card first." >&2
+SHIM = """#!/bin/sh
+echo "$(basename "$0") does not run on Ensemble's agent screen: {why}" >&2
 exit 127
 """
+SHIM_REASONS = {
+    "pkexec": "it would ask the owner on their own screen without telling them why. Ask them through Ensemble, which shows them a card first.",
+    "snap": "snap apps reach only the owner's display, never the agent screen's. Use the app on the owner's screen.",
+    "flatpak": "Flatpak apps pick their own runtime folder and session services, never the agent screen's. Use the app on the owner's screen.",
+}
 
 
 def write_privilege_shims(folder: str) -> dict[str, str]:
-    """Programs that stand in for privileged ones on the agent screen's PATH, refusing with why."""
+    """Programs that stand in for privileged and sandboxing ones on the agent screen's PATH, refusing with why."""
     os.makedirs(folder, mode=0o700, exist_ok=True)
     out = {}
-    for name in ("pkexec",):
+    for name, why in SHIM_REASONS.items():
         path = os.path.join(folder, name)
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(PRIVILEGE_SHIM)
+            handle.write(SHIM.format(why=why))
         os.chmod(path, 0o700)
         out[name] = path
     return out
@@ -283,15 +311,43 @@ def activatable_apps(entries: Iterable[str]) -> list[str]:
 
 
 def allowed_service_files(data_dirs: Iterable[str], app_ids: Iterable[str]) -> dict[str, str]:
-    """Service name to its file, for the allowlisted services and the D-Bus started apps."""
+    """Service name to its file, for the allowlisted services and the D-Bus started apps; none that starts a sandbox."""
     wanted = set(ALLOWED_SERVICES) | set(app_ids)
     found: dict[str, str] = {}
     for folder in data_dirs:
+        if sandbox_data_dir(folder):
+            continue
         for name in sorted(wanted):
             path = os.path.join(folder, "dbus-1", "services", f"{name}.service")
-            if name not in found and os.path.isfile(path):
-                found[name] = path
+            if name in found or not os.path.isfile(path):
+                continue
+            service = desktop_entry(read_entry(path).replace("[D-BUS Service]", "[Desktop Entry]"))
+            if sandbox_of(path, service):
+                continue
+            found[name] = path
     return found
+
+
+MASK = "[Desktop Entry]\nType=Application\nName={name}\nHidden=true\nX-Ensemble-Masked=true\n"
+
+
+def mask_sandboxed_entries(data_dirs: Iterable[str], applications: str) -> list[str]:
+    """Hides, for the agent session only, the system entries that start a snap or Flatpak app (a link
+    handler such as `snap-handle-link`): a `Hidden` entry of the same name in its own data folder, which
+    is read first. Masks of entries that went are removed. Answers the names masked."""
+    os.makedirs(applications, mode=0o700, exist_ok=True)
+    masked = []
+    for path in desktop_entries(data_dirs):
+        entry = desktop_entry(read_entry(path))
+        if sandbox_of(path, entry):
+            masked.append(os.path.basename(path))
+    for name in os.listdir(applications):
+        if name.endswith(".desktop") and name not in masked and "X-Ensemble-Masked=true" in read_entry(os.path.join(applications, name)):
+            os.unlink(os.path.join(applications, name))
+    for name in masked:
+        with open(os.path.join(applications, name), "w", encoding="utf-8") as handle:
+            handle.write(MASK.format(name=name[: -len(".desktop")]))
+    return sorted(masked)
 
 
 def _die_with_parent() -> None:
@@ -425,7 +481,9 @@ class AgentScreen:
         os.makedirs(self.paths["services"], mode=0o700)
         write_privilege_shims(self.paths["bin"])
         env = session_env(self.base, state_dir=self.state_dir, runtime=runtime, wayland=None)
-        data_dirs = [env["XDG_DATA_HOME"], *env["XDG_DATA_DIRS"].split(":")]
+        system_data = env["XDG_DATA_DIRS"].split(":")
+        data_dirs = [env["XDG_DATA_HOME"], *system_data]
+        mask_sandboxed_entries(system_data, os.path.join(env["XDG_DATA_HOME"], "applications"))
         for name, path in allowed_service_files(data_dirs, activatable_apps(desktop_entries(data_dirs))).items():
             os.symlink(path, os.path.join(self.paths["services"], f"{name}.service"))
         # The apps' system bus: nothing on it, so their privileged requests reach no service and no polkit.
@@ -436,7 +494,7 @@ class AgentScreen:
         if not self.system_bus_address:
             self.stop()
             raise AgentScreenError("The agent screen's own system bus for its apps did not start.")
-        apps_env = session_env(self.base, state_dir=self.state_dir, runtime=runtime, wayland=None, system_bus_address=self.system_bus_address, bin_dir=self.paths["bin"])
+        apps_env = apps_environment(self.base, state_dir=self.state_dir, found=self.paths, system_bus_address=self.system_bus_address)
         with open(self.paths["config"], "w", encoding="utf-8") as handle:
             handle.write(session_config(self.paths["bus"], self.paths["services"]))
         # What this bus starts (apps that start by D-Bus among them) gets the apps' environment.
@@ -448,7 +506,7 @@ class AgentScreen:
             raise AgentScreenError("The agent screen's own session bus did not start.")
         self.bus_address = address
         env = {**env, "DBUS_SESSION_BUS_ADDRESS": address}
-        self.apps_env = {**apps_env, "DBUS_SESSION_BUS_ADDRESS": address, "WAYLAND_DISPLAY": self.paths["wayland"]}
+        self.apps_env = {**apps_env, "DBUS_SESSION_BUS_ADDRESS": address}
         self._spawn([launcher, "--launch-immediately"], env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         gsettings = _which("gsettings", self.base)
         if gsettings:
