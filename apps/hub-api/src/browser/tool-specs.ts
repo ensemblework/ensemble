@@ -6,7 +6,8 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-export type ToolSpec = { name: string; description: string; input: z.ZodTypeAny };
+/** `readOnly`: it only looks and changes nothing (runaway detection, assistant/runaway.ts). */
+export type ToolSpec = { name: string; description: string; input: z.ZodTypeAny; readOnly?: boolean };
 
 const tab = z.string().regex(/^t\d{1,9}$/, "a tab id such as t1").describe("The tab, from browser_open or browser_tabs.");
 const ref = z.string().min(1).max(40).describe("An element's [ref=…] from the latest browser_snapshot.");
@@ -32,12 +33,14 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_tabs",
+    readOnly: true,
     description: "List this work's open tabs: id, URL, title, the windows its pages opened (a payment or sign-in popup: popup, openedBy), and whether one is recording or paused for a sign-in.",
     input: z.object({}).strict(),
   },
   { name: "browser_close", description: "Close one of this work's tabs (a popup too). A recording running in it is finished and saved first; a live view of it ends.", input: z.object({ tab }).strict() },
   {
     name: "browser_snapshot",
+    readOnly: true,
     description:
       "Read the page as an accessibility tree, with a [ref=…] for each element to use in browser_click and browser_type. Password and code fields never show their values. Long pages are cut at maxChars. `mode: \"interactive\"` gives only links, buttons, fields, headings and short texts (at most 8,000 characters): best for deciding what to click.",
     input: z.object({ tab, maxChars: z.number().int().min(1000).max(100_000).optional(), mode: z.enum(["full", "interactive"]).optional().describe("full (default) or interactive.") }).strict(),
@@ -55,6 +58,7 @@ export const BROWSER_TOOLS = [
   { name: "browser_press", description: "Press a key or chord in the tab: Enter, Escape, Tab, ArrowDown, Control+A.", input: z.object({ tab, key: z.string().min(1).max(40) }).strict() },
   {
     name: "browser_wait",
+    readOnly: true,
     description: "Wait until a CSS selector (or ref) appears, a text is shown, or the URL matches a glob such as **/dashboard; with none of them, just wait timeoutMs.",
     input: z
       .object({
@@ -69,6 +73,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_screenshot",
+    readOnly: true,
     description:
       "Save a screenshot of the tab to this work's evidence folder: the viewport by default; what `focus` names in words (\"the stock chart\", \"price table\", \"search results\"), found on the page, scrolled into view and captured with a margin (`focusFound` says whether it was found); one element by its ref or a CSS selector; the full page only when asked for it. Cookie banners are closed first. Optionally at another viewport size. Password and code fields are masked. A screenshot showing a saved secret or a key-like string comes back held: the owner previews it before it is sent.",
     input: z
@@ -85,10 +90,11 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_console",
+    readOnly: true,
     description: "The tab's console messages and uncaught page errors since it opened (the latest 300), with secrets hidden.",
     input: z.object({ tab, level: z.enum(["error", "warning", "all"]).optional(), clear: z.boolean().optional() }).strict(),
   },
-  { name: "browser_network_errors", description: "Requests that failed or answered 400 or above, since the tab opened.", input: z.object({ tab, clear: z.boolean().optional() }).strict() },
+  { name: "browser_network_errors", readOnly: true, description: "Requests that failed or answered 400 or above, since the tab opened.", input: z.object({ tab, clear: z.boolean().optional() }).strict() },
   {
     name: "browser_record",
     description:
@@ -120,6 +126,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_login_check",
+    readOnly: true,
     description:
       "Check now whether the owner finished signing in (or passed the human check) on a tab that waits for them, such as when they say they did. Done: the tab is yours again (take a new snapshot). Not yet: it keeps waiting and says what the page still shows. Never ask for a password or code in the chat.",
     input: z.object({ tab }).strict(),
@@ -132,6 +139,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_view",
+    readOnly: true,
     description:
       "Show a web page in one call: opens it, closes cookie banners and pop-ups, takes a screenshot and returns the page's text. `focus` names what the screenshot should show (\"the stock chart\", \"the price table\", \"search results\"); without it, the top of the page. Call it once per screenshot asked for. Example: {url: \"https://www.google.com/finance/quote/GOOG:NASDAQ?window=5D\", focus: \"price chart\"}. `location` (\"Wisconsin\", \"Madison, WI\", \"53703\") sets the delivery place first (Amazon's ZIP). A site that blocks automated browsing is shown read-only from a clean browser (mode \"clean\"); a human check says humanCheck.",
     input: z
@@ -146,6 +154,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_fetch",
+    readOnly: true,
     description:
       "Download a file (a PDF, an image, a CSV, a document) from its address, with this browser's sign-ins, into your evidence: for papers and documents to keep. Example: {url: \"https://openaccess.thecvf.com/content/CVPR2026/papers/Paper.pdf\"}. A web page is refused: give the file's own link (find it with browser_extract). Up to 100 MB. `tab` uses that tab's browser.",
     input: z
@@ -158,6 +167,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_extract",
+    readOnly: true,
     description:
       "Read a page as clean Markdown (headings, lists, tables, links) with the products and prices it shows: for research, facts, specifications and prices. Give `url` to open it first, or a `tab` you have open. `focus` names a part (\"specifications\", \"price table\"). Example: {url: \"https://en.wikipedia.org/wiki/PlayStation_5\", focus: \"specifications\"}. Sites that block automated browsing are read from a clean browser.",
     input: z
@@ -183,6 +193,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_shop",
+    readOnly: true,
     description:
       "Compare a product's prices across stores in one call. Searches each store (default amazon, walmart, target, bestbuy, costco; also newegg, ebay, gamestop, bhphotovideo, or any shop's domain), up to three at once, with the delivery place set (a US state is enough: \"Wisconsin\" → ZIP 53703), and returns each store's best offers (title, price, availability, delivery, link), a screenshot of its results, and its status: ok, human_check, blocked (the site refuses automated browsing), no_results or error. Example: {query: \"PS5 console\", location: \"Wisconsin\"}. Report \"not shown\" for a store without prices; never guess one.",
     input: z

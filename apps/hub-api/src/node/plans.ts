@@ -1,34 +1,48 @@
 /**
- * Crew plans and node work as missions (docs/35 §6.2–6.3; ensemble-node docs/design B1, B2, B4).
+ * Crew plans and node work as missions (docs/35 §6.2-6.4; ensemble-node docs/design B1, B2, B4).
  *
  * A mission is a row in node_missions with its steps in node_steps; its card (a `plan` message, whose
  * id is the mission's id) is a view of them. Every change runs in one transaction that locks the
  * mission, applies the pure rules of missions-core.ts (what starts, what is held, what is repaired,
- * when the lead reports), stores the steps, writes the effects to the outbox and refreshes the card.
- * The outbox (node/outbox.ts) then delivers the effects at least once; turns it enqueues carry an
- * operation id, so a redelivered effect does nothing new.
+ * how a stuck step climbs the ladder, when the lead reports), stores the steps, writes the effects to
+ * the outbox and refreshes the card. The outbox (node/outbox.ts) then delivers the effects at least
+ * once; turns it enqueues carry an operation id, so a redelivered effect does nothing new.
  *
  * Execution and result are separate: a step whose run finished may have failed its checks, and a
- * failed check holds every step after it until the build is repaired and checked again.
+ * failed check holds every step after it until the build is repaired and checked again. A step's
+ * result enters its lead once: recorded with the attempt's `reportedAt` in the transaction that wakes
+ * the lead, and marked delivered in the transaction that starts the lead's turn carrying it.
  */
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { Prisma, type NodeAgent, type NodeMessage, type NodeMission, type NodeRoom, type NodeStep, type PrismaClient } from "@prisma/client";
+import { sectionText } from "@ensemble/prompts";
 import { truncateText } from "../lib/text.js";
 import { stopJob } from "../workspace/worker.js";
 import { stopPlanTurns } from "./queue.js";
 import { announce, postMessage, roomPeople, updateMessageData } from "./store.js";
 import {
   conclude,
+  decide,
   draftOf,
   ENDED,
   finish,
   heldBy,
+  lastAttempt,
+  LIVE_MISSIONS,
+  markDelivered,
   missionEnded,
+  openConflicts,
+  raiseConflicts,
   ready,
+  replaceStep,
+  satisfied,
   settle,
   stepById,
+  stuck,
+  unseen,
   type Attempt,
+  type Decision,
   type Draft,
   type Effect,
   type Finish,
@@ -37,20 +51,25 @@ import {
   type StepState,
   type StepStatus,
 } from "./missions-core.js";
-import { parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
-import { renderConstraints, type Constraints, type PlanInput, type StepInput } from "./plan-contract.js";
+import { CHECKING_KINDS, parseReport, STEP_KINDS, withStrength, type StepKind, type StepOutcome } from "./report.js";
+import { renderConstraints, type ArtifactInput, type Constraints, type PlanInput, type ProofKind, type StepInput } from "./plan-contract.js";
+import { conflictsOf, reviewPart, storedPacket, versionLines, type MissionArtifact, type PacketHeader, type StoredPacket } from "./packet.js";
+import { activeHeuristics } from "./heuristics.js";
 import { missionOriginFor } from "./peer-requests.js";
 import { claimEvents, releaseIn, stepHolder } from "./claims.js";
 import { staleChecks, type Stale } from "./parallel.js";
 import { withVisionChecks } from "./vision.js";
 
-export { ENDED, missionEnded } from "./missions-core.js";
+export { ENDED, LIVE_MISSIONS, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
 
-/** A brake on runaway planning, not on work: a plan's steps. */
-export const MAX_STEPS = 30;
-/** Failed agent runs one step attempt may have; then its node reports instead of trying again. Runs that work are not counted. */
-export const MAX_STEP_FAILURES = 4;
+/**
+ * How big a plan may be and how many failed agent runs one attempt may have: brakes on runaway planning,
+ * not on work, from the config (node/heuristics.ts `plans`).
+ */
+export function planLimits(): { maxSteps: number; maxRequirements: number; maxStepFailures: number } {
+  return activeHeuristics().plans;
+}
 
 export type PlanStatus = MissionStatus;
 
@@ -70,6 +89,12 @@ export type PlanStep = {
   /** Steps that must be done (or passed) before this one starts. */
   after: string[];
   verifies: string | null;
+  /** A verify or review step: the acceptance criteria it judges (empty: all of its requirements'). */
+  acceptanceIds?: string[];
+  /** A re-plan replaced it with this step: it no longer counts. */
+  supersededBy?: string | null;
+  /** Versions of its task packet so far (node/packet.ts). */
+  packetVersion?: number;
   /** An integration step: the builds whose worktrees or snapshots it brings into the folder (B13). */
   integrates?: string[];
   requirementIds: string[];
@@ -89,7 +114,7 @@ export type PlanStep = {
 };
 
 export type RequirementStatus = "open" | "in_progress" | "accepted" | "failed" | "deferred" | "cancelled";
-export type Requirement = { id: string; text: string; status: RequirementStatus; acceptance: Array<{ id: string; text: string; mandatory: boolean }>; evidence?: string[] };
+export type Requirement = { id: string; text: string; status: RequirementStatus; acceptance: Array<{ id: string; text: string; mandatory: boolean; proof?: ProofKind }>; evidence?: string[] };
 
 export type PlanData = {
   type: "plan";
@@ -112,6 +137,8 @@ export type PlanData = {
   steps: PlanStep[];
   /** The routine whose occurrence started it (node/routines.ts). */
   routine: RoutineLink | null;
+  /** What its steps work from, with hashes (node/packet.ts `MissionArtifact`). */
+  artifacts?: MissionArtifact[];
 };
 
 /** A routine's occurrence, on the mission it started: notify says when its result is posted. */
@@ -172,13 +199,46 @@ function stepState(row: NodeStep): StepState {
     result: row.result,
     progress: row.progress,
     nudged: row.nudged,
+    supersededBy: row.supersededBy,
     startedAt: iso(row.startedAt),
     endedAt: iso(row.endedAt),
   };
 }
 
+/** A stuck step climbs the escalation ladder in a crew plan; a node's own work and a routine that reports nothing end as they are. */
+export function laddered(row: Pick<NodeMission, "kind" | "contract" | "routine">): boolean {
+  const routine = row.routine as RoutineLink | null;
+  return row.kind === "plan" && row.contract >= 3 && routine?.notify !== "never";
+}
+
 function missionState(row: NodeMission): MissionState {
-  return { id: row.id, contract: row.contract, status: row.status as MissionStatus, reportedAt: iso(row.reportedAt) };
+  return { id: row.id, contract: row.contract, status: row.status as MissionStatus, reportedAt: iso(row.reportedAt), ladder: laddered(row) };
+}
+
+/** The mission's artifact registry (node_missions.artifacts). */
+export function artifactsOf(mission: Pick<NodeMission, "artifacts">): MissionArtifact[] {
+  return Array.isArray(mission.artifacts) ? (mission.artifacts as unknown as MissionArtifact[]) : [];
+}
+
+/** The registry after the lead names artifacts: a new hash for a known ref keeps the one before in `versions`. */
+export function registerArtifacts(registry: readonly MissionArtifact[], items: readonly ArtifactInput[], now: string): { registry: MissionArtifact[]; changed: string[] } {
+  const next = registry.map((row) => ({ ...row, versions: [...(row.versions ?? [])] }));
+  const changed: string[] = [];
+  for (const item of items) {
+    const known = next.find((row) => row.ref === item.ref);
+    if (!known) {
+      next.push({ ref: item.ref, ...(item.label ? { label: item.label } : {}), hash: item.hash ?? null, at: now, versions: [] });
+      continue;
+    }
+    if (item.label) known.label = item.label;
+    if (item.hash && item.hash !== known.hash) {
+      known.versions = [...(known.versions ?? []), { hash: known.hash, at: known.at }].slice(-10);
+      known.hash = item.hash;
+      known.at = now;
+      changed.push(item.ref);
+    }
+  }
+  return { registry: next, changed };
 }
 
 function storedRequirements(mission: Pick<NodeMission, "requirements">): Requirement[] {
@@ -198,11 +258,11 @@ export function ledger(requirements: Requirement[], deferred: PlanData["deferred
   return requirements.map((requirement) => {
     if (requirement.status === "cancelled") return requirement;
     if (deferredIds.has(requirement.id)) return { ...requirement, status: "deferred" };
-    const covering = steps.filter((step) => step.requirementIds.includes(requirement.id));
-    const satisfied = covering.length > 0 && covering.every((step) => step.outcome === "done" || step.outcome === "pass");
-    const checked = !requirement.acceptance?.length || covering.some((step) => step.kind === "verify" && step.outcome === "pass");
+    const covering = steps.filter((step) => !step.supersededBy && step.requirementIds.includes(requirement.id));
+    const met = covering.length > 0 && covering.every((step) => satisfied(step));
+    const checked = !requirement.acceptance?.length || covering.some((step) => CHECKING_KINDS.has(step.kind) && step.outcome === "pass");
     let status: RequirementStatus;
-    if (satisfied && checked) status = "accepted";
+    if (met && checked) status = "accepted";
     else if (ended) status = "failed";
     else if (covering.some((step) => step.status !== "waiting")) status = "in_progress";
     else status = "open";
@@ -234,6 +294,7 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
     requirements: ledger(storedRequirements(mission), storedDeferred(mission), steps, missionEnded(mission.status)),
     deferred: storedDeferred(mission),
     routine: mission.routine && typeof mission.routine === "object" ? (mission.routine as RoutineLink) : null,
+    ...(artifactsOf(mission).length ? { artifacts: artifactsOf(mission) } : {}),
     steps: steps.map((step, index) => {
       const row = rows[index]!;
       const holder = heldBy(view, step);
@@ -248,6 +309,9 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
         ...(row.run && typeof row.run === "object" && Object.values(row.run as object).some(Boolean) ? { run: row.run as StepRun } : {}),
         after: step.after,
         verifies: step.verifies,
+        ...(row.acceptanceIds?.length ? { acceptanceIds: [...row.acceptanceIds] } : {}),
+        ...(row.supersededBy ? { supersededBy: row.supersededBy } : {}),
+        ...(row.packetVersion ? { packetVersion: row.packetVersion } : {}),
         ...(integratesOf(row).length ? { integrates: integratesOf(row) } : {}),
         requirementIds: step.requirementIds,
         status: step.status,
@@ -283,7 +347,10 @@ export async function loadPlan(db: Db, planId: string): Promise<{ message: NodeM
 // Changes: one transaction per change, effects into the outbox
 
 type Ctx = { prisma: PrismaClient; app?: FastifyInstance };
-type Change = (draft: Draft, mission: NodeMission) => false | void | { body?: string };
+/** In the change's transaction: the client and the step rows as read under the lock. */
+type Within = { tx: Prisma.TransactionClient; rows: NodeStep[] };
+type ChangeResult = false | void | { body?: string };
+type Change = (draft: Draft, mission: NodeMission, within: Within) => ChangeResult | Promise<ChangeResult>;
 
 let outboxKick: ((app: FastifyInstance) => void) | null = null;
 
@@ -302,7 +369,9 @@ function effectRow(effect: Effect, mission: NodeMission, steps: StepState[], ver
     const step = stepById({ steps }, effect.stepId)!;
     return { kind: "turn", key: `turn:${effect.stepId}:${effect.attempt}:${effect.reason}`, payload: { stepId: effect.stepId, attempt: effect.attempt, reason: effect.reason, nodeId: step.nodeId } };
   }
-  if (effect.kind === "report") return { kind: "report", key: `report:${version}`, payload: { judgement: effect.judgement, leadNodeId: mission.leadNodeId } };
+  if (effect.kind === "report") return { kind: "report", key: effect.key ?? `report:${version}`, payload: { judgement: effect.judgement, leadNodeId: mission.leadNodeId } };
+  if (effect.kind === "replan") return { kind: "replan", key: effect.key ?? `replan:${version}`, payload: { steps: effect.steps, judgement: effect.judgement, leadNodeId: mission.leadNodeId } };
+  if (effect.kind === "decide") return { kind: "decide", key: effect.key ?? `decide:${effect.stepId}:${effect.attempt}`, payload: { stepId: effect.stepId, attempt: effect.attempt, why: effect.why } };
   return { kind: "expire_cards", key: `expire:${effect.steps?.join(",") ?? "all"}:${version}`, payload: { steps: effect.steps, why: effect.why } };
 }
 
@@ -320,13 +389,13 @@ export async function mutateMission(ctx: Ctx, planId: string, change: Change, op
     if (!mission) return null;
     const rows = await tx.nodeStep.findMany({ where: { missionId: planId }, orderBy: { position: "asc" } });
     const draft = draftOf(missionState(mission), rows.map(stepState));
-    const verdict = change(draft, mission);
+    const verdict = await change(draft, mission, { tx, rows });
     const leadHandle = await leadHandleOf(tx, mission);
     if (verdict === false) {
       const card = await tx.nodeMessage.findUnique({ where: { id: planId } });
       return { mission, rows, leadHandle, card, changed: false, kicked: false };
     }
-    if (options.settle !== false) settle(draft, new Date().toISOString());
+    if (options.settle !== false) settle(draft, new Date().toISOString(), { replanTurns: activeHeuristics().escalation.replanTurns });
     const now = new Date();
     for (const step of draft.steps) {
       if (!draft.dirty.has(step.id)) continue;
@@ -341,6 +410,9 @@ export async function mutateMission(ctx: Ctx, planId: string, change: Change, op
           result: step.result,
           progress: step.progress,
           nudged: step.nudged,
+          supersededBy: step.supersededBy ?? null,
+          after: step.after,
+          verifies: step.verifies,
           startedAt: step.startedAt ? new Date(step.startedAt) : null,
           endedAt: step.endedAt ? new Date(step.endedAt) : null,
         },
@@ -349,7 +421,12 @@ export async function mutateMission(ctx: Ctx, planId: string, change: Change, op
     const version = mission.version + 1;
     const updated = await tx.nodeMission.update({
       where: { id: planId },
-      data: { status: draft.mission.status, version, ...(missionEnded(draft.mission.status) && !mission.endedAt ? { endedAt: now } : {}) },
+      data: {
+        status: draft.mission.status,
+        version,
+        ...(missionEnded(draft.mission.status) && !mission.endedAt ? { endedAt: now } : {}),
+        ...(draft.mission.reportedAt && !mission.reportedAt ? { reportedAt: new Date(draft.mission.reportedAt) } : {}),
+      },
     });
     // What ended steps (or the ended mission) held on the computer goes to the next in line (node/claims.ts).
     const ended = draft.steps.filter((step) => draft.dirty.has(step.id) && ENDED.has(step.status)).map((step) => stepHolder(planId, step.id));
@@ -418,6 +495,9 @@ export async function addStep(
 ): Promise<{ planId: string; step: PlanStep; position: number }> {
   let plan = await currentPlan(db, input.lead.id, input.turnId, input.continuing);
   if ((input.step.executor ?? "node") === "node" && input.step.node.id !== input.lead.id) await assertInRoom(db, plan?.message.roomId ?? input.room.id, [input.step.node]);
+  // A new plan has no steps yet: its first step comes after none and checks none. Refused before any card is made.
+  const named = input.step.verifies ?? input.step.after[0];
+  if (!plan && named) throw new PlanError(`@${named.replace(/^@/, "")} has no step in a plan of this turn yet. Add its step first, then this one after it.`);
   if (!plan) {
     const { message } = await postMessage(db, {
       roomId: input.room.id,
@@ -457,7 +537,8 @@ export async function addStep(
     const mission = await tx.nodeMission.findUniqueOrThrow({ where: { id: planId } });
     if (missionEnded(mission.status)) throw new PlanError("That plan has ended; start a new one in a new turn.");
     const rows = await tx.nodeStep.findMany({ where: { missionId: planId }, orderBy: { position: "asc" } });
-    if (rows.length >= MAX_STEPS) throw new PlanError(`A plan holds at most ${MAX_STEPS} steps. Give one node a bigger step instead.`);
+    const { maxSteps } = planLimits();
+    if (rows.length >= maxSteps) throw new PlanError(`A plan holds at most ${maxSteps} steps. Give one node a bigger step instead.`);
     const latest = (handle: string) => [...rows].reverse().find((row) => row.handle === handle || row.handle === handle.replace(/^@/, ""));
     const after = [...new Set(input.step.after)].map((handle) => {
       const found = latest(handle);
@@ -472,13 +553,17 @@ export async function addStep(
     }
     const kind = input.step.kind ?? "other";
     let verifies: string | null = null;
-    if (kind === "verify") {
+    if (CHECKING_KINDS.has(kind)) {
       if (input.step.verifies) {
         const target = latest(input.step.verifies);
-        if (!target) throw new PlanError(`@${input.step.verifies.replace(/^@/, "")} has no step in this plan to verify. Add its build step first.`);
+        if (!target) throw new PlanError(`@${input.step.verifies.replace(/^@/, "")} has no step in this plan to ${kind === "review" ? "review" : "verify"}. Add its build step first.`);
         verifies = target.id;
       } else {
-        verifies = after.map((id) => rows.find((row) => row.id === id)!).filter((row) => row.kind === "build").at(-1)?.id ?? null;
+        verifies = after.map((id) => rows.find((row) => row.id === id)!).filter((row) => row.kind === "build" || (kind === "review" && row.kind === "write")).at(-1)?.id ?? null;
+      }
+      // Named or found from `after`, the work a review checks is never its own reviewer's.
+      if (kind === "review" && rows.find((row) => row.id === verifies)?.nodeId === input.step.node.id) {
+        throw new PlanError("A review is independent: give it to another node (or a helper) than the one whose work it reviews.");
       }
     }
     position = rows.length + 1;
@@ -495,6 +580,8 @@ export async function addStep(
         brief,
         after,
         verifies,
+        // A review judges what the work it reviews covers.
+        ...(kind === "review" && verifies ? { requirementIds: rows.find((row) => row.id === verifies)?.requirementIds ?? [] } : {}),
         ...(input.step.run && Object.values(input.step.run).some(Boolean) ? { run: input.step.run as Prisma.InputJsonValue } : {}),
       },
     });
@@ -512,7 +599,7 @@ export async function stepLive(db: Db, planId: string, stepId: string): Promise<
     db.nodeMission.findUnique({ where: { id: planId }, select: { status: true } }),
     db.nodeStep.findUnique({ where: { missionId_id: { missionId: planId, id: stepId } }, select: { status: true } }),
   ]);
-  return Boolean(mission && (mission.status === "running" || mission.status === "reporting") && step && !ENDED.has(step.status as StepStatus));
+  return Boolean(mission && (mission.status === "running" || mission.status === "replanning" || mission.status === "reporting") && step && !ENDED.has(step.status as StepStatus));
 }
 
 /** The step row (for its kind, attempt, conversation and brief). */
@@ -525,7 +612,8 @@ export async function startPlan(app: FastifyInstance, planId: string, intro: str
   const card = await app.prisma.nodeMessage.findUnique({ where: { id: planId }, select: { body: true } });
   await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
     if (draft.mission.status !== "draft") return false;
-    draft.mission.status = "running";
+    // A plan whose first step could not be added is never opened: it ends stopped, with nothing to report.
+    draft.mission.status = draft.steps.length ? "running" : "stopped";
     draft.missionDirty = true;
     return { body: intro?.trim() ? truncateText(intro.trim(), 6000) : card?.body || "Plan" };
   });
@@ -536,27 +624,47 @@ export async function advancePlan(app: FastifyInstance, planId: string): Promise
   await mutateMission({ prisma: app.prisma, app }, planId, () => undefined);
 }
 
-/** A step's node finished it, could not, or was stopped; what runs next starts (or the build is repaired). */
-export async function finishStep(app: FastifyInstance, planId: string, stepId: string, outcome: Finish): Promise<boolean> {
+/**
+ * A step's node finished it, could not, or was stopped; what runs next starts (or the build is repaired).
+ * Once per attempt: a second result for it changes nothing. `claimRun`: the agent run whose end carried
+ * the result is marked reported in the same transaction, so its end is taken once, whatever happens next.
+ */
+export async function finishStep(app: FastifyInstance, planId: string, stepId: string, outcome: Finish, options: { claimRun?: string } = {}): Promise<boolean> {
   // Confirm before sending (B20): pictures the step's requirements asked for are judged before its report counts.
   if (outcome.report && outcome.status === "done") {
     const owner = (await app.prisma.nodeMission.findUnique({ where: { id: planId }, select: { userId: true } }))?.userId;
     if (owner) outcome = { ...outcome, report: await withVisionChecks(app, { ownerId: owner, missionId: planId, stepId, report: outcome.report }) };
   }
   let ended = false;
-  await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission) => {
-    ended = finish(draft, stepId, { ...outcome, mandatory: mandatoryFor(mission, draft, stepId) }, new Date().toISOString());
+  await mutateMission({ prisma: app.prisma, app }, planId, async (draft, mission, { tx, rows }) => {
+    if (options.claimRun) {
+      const claimed = await tx.nodeRun.updateMany({ where: { id: options.claimRun, reportedAt: null }, data: { reportedAt: new Date() } });
+      if (claimed.count !== 1) return false;
+    }
+    const now = new Date().toISOString();
+    const step = stepById(draft, stepId);
+    const row = rows.find((candidate) => candidate.id === stepId);
+    const stored = storedPacket(row?.packet);
+    const header = step && stored && stored.header.attempt === step.attempt ? stored.header : null;
+    // Conflicts: what this attempt's packet named has a new version now (node/packet.ts).
+    const conflicts = header && outcome.status === "done" ? conflictsOf(header, artifactsOf(mission), draft, now) : [];
+    const criteria = row ? judgedBy(mission, row) : { mandatory: [], judged: [] };
+    // A reviewer whose computer takes only the first report format was never asked for strength: the checks it ran in its review count as judged now.
+    const report = outcome.report && row?.kind === "review" && header?.reportVersion === 1 ? withStrength(outcome.report, "A") : outcome.report;
+    ended = finish(draft, stepId, { ...outcome, ...(report ? { report } : {}), mandatory: criteria.mandatory, judged: row?.kind === "review" ? criteria.judged : [], conflicts }, now);
     return ended ? undefined : false;
   });
   return ended;
 }
 
-/** Mandatory acceptance ids of the requirements a verification covers. */
-function mandatoryFor(mission: NodeMission, draft: Draft, stepId: string): string[] {
-  const step = stepById(draft, stepId);
-  if (!step || step.kind !== "verify" || !step.requirementIds.length) return [];
-  const requirements = Array.isArray(mission.requirements) ? (mission.requirements as unknown as Requirement[]) : [];
-  return requirements.filter((row) => step.requirementIds.includes(row.id)).flatMap((row) => (row.acceptance ?? []).filter((item) => item.mandatory !== false).map((item) => item.id));
+/** The acceptance criteria a verify or review step judges (its own `acceptanceIds`, else all of its requirements'), and those that must pass. */
+function judgedBy(mission: Pick<NodeMission, "requirements">, step: Pick<NodeStep, "kind" | "requirementIds" | "acceptanceIds">): { mandatory: string[]; judged: string[] } {
+  if (!CHECKING_KINDS.has(step.kind) || !step.requirementIds.length) return { mandatory: [], judged: [] };
+  const only = step.acceptanceIds?.length ? new Set(step.acceptanceIds) : null;
+  const items = storedRequirements(mission)
+    .filter((row) => step.requirementIds.includes(row.id))
+    .flatMap((row) => (row.acceptance ?? []).filter((item) => !only || only.has(item.id)));
+  return { mandatory: items.filter((item) => item.mandatory !== false).map((item) => item.id), judged: items.map((item) => item.id) };
 }
 
 export async function stepProgress(db: PrismaClient, planId: string, stepId: string, progress: string): Promise<void> {
@@ -584,22 +692,127 @@ export async function nudgeStep(app: FastifyInstance, planId: string, stepId: st
   return nudged;
 }
 
-/** After the lead's report turn: done, unless that turn added steps (then they start). */
-export async function afterReport(app: FastifyInstance, planId: string): Promise<void> {
-  await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission) => {
-    if (draft.mission.status !== "reporting") return false;
-    if (draft.steps.some((row) => row.status === "waiting" && ready(draft, row))) {
+/** The lead's plan turn that last started for a mission (node_missions.lead_turn), and what it was for. */
+export type LeadTurn = { id: string; kind: "report" | "replan"; at: string };
+
+function leadTurnOf(mission: Pick<NodeMission, "leadTurn">): LeadTurn | null {
+  const row = mission.leadTurn as Partial<LeadTurn> | null;
+  return row && typeof row.id === "string" && (row.kind === "report" || row.kind === "replan") ? (row as LeadTurn) : null;
+}
+
+/** Whether more of the lead's work on a mission is on its way: another of its plan turns queued or running, or a report or re-plan not delivered yet. */
+async function leadOnItsWay(tx: Prisma.TransactionClient, planId: string, except: string | null): Promise<boolean> {
+  const turns = await tx.nodeTurn.count({ where: { planId, planStep: null, status: { in: ["queued", "running"] }, ...(except ? { id: { not: except } } : {}) } });
+  if (turns) return true;
+  return (await tx.nodeOutbox.count({ where: { missionId: planId, deliveredAt: null, kind: { in: ["report", "replan"] } } })) > 0;
+}
+
+/**
+ * After the lead's plan turn `turnId`, by what that turn started as (beginPlanTurn), never by where the
+ * mission has got to meanwhile; any other turn's end changes nothing. A re-plan turn: if the mission is
+ * still re-planning it goes on, and the rules take the next rung for what is still stuck (its
+ * replacement starts, or its owner gets a card). A report turn: if the mission is still reporting it is
+ * done, unless that turn added steps (they start), or results came in that the turn did not carry: then
+ * exactly one more report turn (its operation is keyed by those results, so asking again adds nothing).
+ * `dropped`: the turn may have ended before it began (stopped or dropped before it ran); then, when the
+ * mission still waits for its lead and nothing else of the lead's is on its way, the report or re-plan
+ * the mission waits for is given up as if that turn had ended, so the plan never waits forever.
+ */
+export async function afterReport(app: FastifyInstance, planId: string, turnId: string | null, options: { dropped?: boolean } = {}): Promise<void> {
+  await mutateMission({ prisma: app.prisma, app }, planId, async (draft, mission, { tx }) => {
+    const began = leadTurnOf(mission);
+    const waiting = draft.mission.status === "replanning" ? "replan" : draft.mission.status === "reporting" ? "report" : null;
+    const kind = turnId && began?.id === turnId ? began.kind : options.dropped && waiting && !(await leadOnItsWay(tx, planId, turnId)) ? waiting : null;
+    if (!kind) return false;
+    if (kind === "replan") {
+      if (draft.mission.status !== "replanning") return false;
       draft.mission.status = "running";
       draft.missionDirty = true;
       return undefined;
     }
-    const status = conclude(draft, new Date().toISOString());
+    if (draft.mission.status !== "reporting") return false;
+    if (draft.steps.some((row) => row.status === "working" || (row.status === "waiting" && ready(draft, row)))) {
+      draft.mission.status = "running";
+      draft.missionDirty = true;
+      return undefined;
+    }
+    const fresh = unseen(draft.steps);
+    if (fresh.length) {
+      draft.effects.push({ kind: "report", judgement: [], key: `report:resume:${fresh.map((row) => `${row.stepId}.${row.n}`).join(",")}` });
+      return undefined;
+    }
+    const now = new Date().toISOString();
+    const status = conclude(draft, now);
     // A mission with requested deliverables not accepted (and not deferred) is not a success.
     const open = ledger(storedRequirements(mission), storedDeferred(mission), draft.steps, true).filter((row) => row.status === "failed");
     if (status === "succeeded" && open.length) draft.mission.status = "partially_completed";
+    draft.mission.reportedAt = draft.mission.reportedAt ?? now;
     return undefined;
   });
-  await app.prisma.nodeMission.updateMany({ where: { id: planId, reportedAt: null }, data: { reportedAt: new Date() } });
+}
+
+/**
+ * The lead's report or re-plan turn starts: in one transaction, it becomes the mission's lead turn (what
+ * it is for decides what its end does, afterReport), every result it now carries is marked delivered to
+ * it (the lead's seen list), and its update is written from the mission as it is now. A turn that only
+ * carries on that work (the owner's answer to its card) takes its place without carrying results
+ * (`carry: false`). Null when the mission no longer waits for its lead (it went on running, or it ended).
+ */
+export async function beginPlanTurn(app: FastifyInstance, planId: string, turnId: string, options: { carry?: boolean } = {}): Promise<{ kind: "report" | "replan"; note: string } | null> {
+  const carry = options.carry !== false;
+  let kind: "report" | "replan" | null = null;
+  const result = await mutateMission(
+    { prisma: app.prisma, app },
+    planId,
+    async (draft, _mission, { tx }) => {
+      if (draft.mission.status !== "reporting" && draft.mission.status !== "replanning") return false;
+      const now = new Date().toISOString();
+      kind = draft.mission.status === "replanning" ? "replan" : "report";
+      // What this turn is for is kept with the mission: its end acts on that alone (afterReport).
+      await tx.nodeMission.update({ where: { id: planId }, data: { leadTurn: { id: turnId, kind, at: now } satisfies LeadTurn } });
+      return carry && markDelivered(draft, turnId, now).length ? undefined : false;
+    },
+    { settle: false },
+  );
+  if (!kind || !result) return null;
+  return { kind, note: kind === "replan" ? replanNote(result.data) : reportNote(result.data) };
+}
+
+/** The owner's card for a stuck step (node/outbox.ts posts it): one decision, one press. */
+export const PLAN_DECISION_CARD = "plan_decision";
+
+/**
+ * The owner answered a stuck step's card. Approve: try it again (or, for a conflict, redo it with the
+ * new version); discard: finish the plan without it (or keep its result as it is). False when the card
+ * no longer applies (the step moved on, was replaced, or was decided already).
+ */
+export async function answerPlanDecision(app: FastifyInstance, planId: string, stepId: string, attempt: number, answer: "approve" | "discard"): Promise<boolean> {
+  let applied = false;
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+    if (missionEnded(draft.mission.status)) return false;
+    const step = stepById(draft, stepId);
+    const last = step && lastAttempt(step);
+    if (!step || !last || last.n !== attempt) return false;
+    const conflict = last.escalation?.why === "conflict" || openConflicts(step).length > 0;
+    const how: Decision["how"] = answer === "approve" ? (conflict ? "forward" : "retry") : conflict ? "keep" : "finish_without";
+    applied = decide(draft, stepId, { by: "owner", how, at: new Date().toISOString() });
+    if (applied && draft.mission.status !== "running" && draft.mission.status !== "draft") {
+      draft.mission.status = "running";
+      draft.missionDirty = true;
+    }
+    return applied ? undefined : false;
+  });
+  return applied;
+}
+
+/** The lead cannot take its re-plan turn (paused or gone): the mission goes on, and its owner is asked. */
+export async function replanSkipped(app: FastifyInstance, planId: string): Promise<void> {
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+    if (draft.mission.status !== "replanning") return false;
+    draft.mission.status = "running";
+    draft.missionDirty = true;
+    return undefined;
+  });
 }
 
 /** Ends a mission at once (its lead cannot report: paused or gone). */
@@ -616,9 +829,9 @@ export async function endPlan(app: FastifyInstance, planId: string): Promise<voi
  * blocked, or the lead's report is given up, so the plan never waits forever. A no-op when the turn
  * already settled it, or when a run or card of the step is still to come back.
  */
-export async function planTurnEnded(app: FastifyInstance, turn: { planId: string | null; planStep: string | null }, why: string): Promise<void> {
+export async function planTurnEnded(app: FastifyInstance, turn: { id: string; planId: string | null; planStep: string | null }, why: string): Promise<void> {
   if (!turn.planId) return;
-  if (!turn.planStep) return afterReport(app, turn.planId);
+  if (!turn.planStep) return afterReport(app, turn.planId, turn.id, { dropped: true });
   if (await stepPending(app.prisma, turn.planId, turn.planStep)) return;
   await finishStep(app, turn.planId, turn.planStep, { status: "blocked", result: why, outcome: "blocked" });
 }
@@ -634,9 +847,9 @@ export async function currentAttempt(db: Db, planId: string, stepId: string): Pr
   return (await attemptStart(db, planId, stepId)).attempt;
 }
 
-/** Whether a step still waits on an agent run or a card of its own (in its current attempt). */
-export async function stepPending(db: Db, planId: string, stepId: string): Promise<boolean> {
-  return (await stepRuns(db, planId, stepId)).pending > 0 || (await stepCardsWaiting(db, planId, stepId)) > 0;
+/** Whether a step still waits on an agent run or a card of its own (in its current attempt). `except`: a run whose end is being taken now. */
+export async function stepPending(db: Db, planId: string, stepId: string, options: { except?: string } = {}): Promise<boolean> {
+  return (await stepRuns(db, planId, stepId, options)).pending > 0 || (await stepCardsWaiting(db, planId, stepId)) > 0;
 }
 
 /** The run settings the lead gave a step. */
@@ -649,10 +862,10 @@ export async function stepRun(db: Db, planId: string, stepId: string): Promise<S
  * Agent runs the step's current attempt started, and those its node will still hear about: not
  * reported yet and not taken over by a newer call (a steer, a replacement, a stop), whose end wakes nobody.
  */
-export async function stepRuns(db: Db, planId: string, stepId: string): Promise<{ total: number; pending: number; failed: number }> {
+export async function stepRuns(db: Db, planId: string, stepId: string, options: { except?: string } = {}): Promise<{ total: number; pending: number; failed: number }> {
   const { since } = await attemptStart(db, planId, stepId);
-  const runs = await db.nodeRun.findMany({ where: { planId, planStep: stepId, ...(since ? { createdAt: { gte: since } } : {}) }, select: { messageId: true, reportedAt: true, jobId: true } });
-  const open = runs.filter((row) => !row.reportedAt);
+  const runs = await db.nodeRun.findMany({ where: { planId, planStep: stepId, ...(since ? { createdAt: { gte: since } } : {}) }, select: { id: true, messageId: true, reportedAt: true, jobId: true } });
+  const open = runs.filter((row) => !row.reportedAt && row.id !== options.except);
   const cards = open.length ? await db.nodeMessage.findMany({ where: { id: { in: open.map((row) => row.messageId).filter((id): id is string => Boolean(id)) } }, select: { data: true } }) : [];
   const quiet = cards.filter((card) => typeof (card.data as { quiet?: unknown } | null)?.quiet === "string").length;
   const failed = runs.length ? await db.workspaceJob.count({ where: { id: { in: runs.map((row) => row.jobId) }, status: "failed" } }) : 0;
@@ -688,7 +901,7 @@ export async function stopPlans(app: FastifyInstance, where: { roomId?: string; 
   const missions = await db.nodeMission.findMany({
     where: {
       userId: where.userId,
-      status: { in: ["draft", "running", "reporting"] },
+      status: { in: [...LIVE_MISSIONS] },
       ...(where.planId ? { id: where.planId } : {}),
       AND: [
         ...(where.roomId ? [{ OR: [{ id: { in: cards.map((row) => row.id) } }, { originRoomId: where.roomId }] }] : []),
@@ -759,26 +972,31 @@ function checksLine(attempt: Attempt | undefined): string {
   return checks.map((check) => `  - ${check.verdict.toUpperCase()} ${check.name}${check.detail ? `: ${truncateText(check.detail.replace(/\s+/g, " "), 400)}` : ""}`).join("\n");
 }
 
-/** What a step's node is told when its step (or a new attempt of it) starts. */
-export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason"] = "first"): string {
+/**
+ * What a step's node is told when its step (or a new attempt of it) starts. `header`: the attempt's task
+ * packet, whose later versions say what changed and what stays.
+ */
+export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason"] = "first", header: PacketHeader | null = null): string {
   const before = step.after.map((id) => data.steps.find((row) => row.id === id)).filter((row): row is PlanStep => Boolean(row));
   const run = step.run ? Object.entries(step.run).filter(([, value]) => value).map(([key, value]) => `${key} ${value}`).join(", ") : "";
   const current = step.attempts.find((row) => row.n === step.attempt);
-  const lines: string[] = [];
+  const lines: string[] = header ? versionLines(header) : [];
   if (reason === "nudge") {
-    return "Your step is not reported yet. Report it now with node_step_report: outcome (done, pass, fail or blocked), a short summary, the commit in subject if you made one, and for a verification each check with its verdict. A reply in prose does not count as a report.";
+    return "Your step is not reported yet. Report it now with node_step_report: outcome (done, pass, fail, partial, uncertain or blocked), a short summary, the commit in subject if you made one, and for a verification or review each check with its verdict and strength. A reply in prose does not count as a report.";
   }
   if (reason === "repair") {
     const verify = data.steps.find((row) => row.id === current?.forVerify);
     const failed = verify?.attempts.filter((row) => row.outcome === "fail").at(-1);
     lines.push(
-      `Repair, attempt ${step.attempt} of your step in @${data.leadHandle}'s plan: @${verify?.handle ?? "the tester"}'s independent check of your work FAILED.`,
+      `Repair, attempt ${step.attempt} of your step in @${data.leadHandle}'s plan: @${verify?.handle ?? "the tester"}'s independent ${verify?.kind === "review" ? "review" : "check"} of your work FAILED.`,
       failed?.summary ? `Their report: ${truncateText(failed.summary, 1500)}` : "",
       checksLine(failed) ? `Failing checks:\n${checksLine(failed)}` : "",
       failed?.candidate?.commit ? `Tested commit: ${failed.candidate.commit}.` : "",
       "Fix only this, in the same agent session as before (node_session_send to your session), and keep everything else as it is. Then report with node_step_report: what changed, with the new commit in subject.",
       `Your original step, for reference: ${step.brief}`,
     );
+  } else if (step.kind === "review") {
+    lines.push(`${reason === "retest" ? `Review again, attempt ${step.attempt}` : "Your review"} in @${data.leadHandle}'s plan (${stepTitle(data, step)}):`, reviewPart(data, step, reason), sectionText("node/85-task-review"));
   } else if (reason === "retest") {
     lines.push(
       `Retest, attempt ${step.attempt} of your check in @${data.leadHandle}'s plan: the build was repaired after your check failed.`,
@@ -787,6 +1005,8 @@ export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason
       `Your original step, for reference: ${step.brief}`,
     );
   } else {
+    if (reason === "amend") lines.push(`Attempt ${step.attempt} of your step: what it works from changed, so do it again with the new version (the changes are above).`);
+    if (reason === "retry") lines.push(`Attempt ${step.attempt} of your step: it was stuck, and it is to be tried again.`);
     lines.push(`Your step in @${data.leadHandle}'s plan (${stepTitle(data, step)}, ${step.kind}):`, step.brief);
     const covers = data.requirements.filter((row) => step.requirementIds.includes(row.id));
     if (covers.length) {
@@ -811,28 +1031,59 @@ export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason
   return lines.filter((line) => line !== "").join("\n");
 }
 
-export const STEP_RULES = [
-  "How a step works: nothing you write is posted in the conversation, and nobody talks to you meanwhile. Your result is what you report with node_step_report.",
-  "- Simple work you do yourself, now: look things up (hub_web_search), browse and take screenshots, run a command, read or write a file or a report on the computer. Then call node_step_report.",
-  "- Writing or changing code in a repository, or a long test-and-fix loop: ONE agent session for this step (node_session_start, or node_session_send to your session when it is the same line of work), then reply exactly (no reply). You get a turn when the run ends.",
-  "- Tell the agent to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result. When the step's result is a file on the computer and no evidence of it was attached, bring it into the chat with node_share_file and name it in your report's evidence.",
-  "- When a tool says it is waiting for your owner (a card), reply exactly (no reply): you get a turn when they answer. Never report blocked because a card is waiting.",
-  "- When the step is finished, call node_step_report: outcome done (build, write, research) or pass/fail (a verification), a short summary of what changed and how it was checked, the commit in subject, each check with its verdict, and evidence (links, files).",
-  "- A verification passes only if every check passes. Name each check; a fail needs the failing check. Do not fix what you test.",
-  "- If it cannot be done (a decision only your owner can make, missing access, a failure you cannot fix), report outcome blocked with why (or node_step_blocked). Do not retry the same failing run.",
-].join("\n");
+/** How a step works, at the end of every step's update: the section a step turn's instructions carry too (node/instructions.ts). */
+export const STEP_RULES = sectionText("node/21-step-rules");
 
-/** What the lead is told when its plan has nothing left to run. */
-export function reportNote(data: PlanData, judgement: string[] = []): string {
-  const ok = data.steps.every((row) => row.outcome === "done" || row.outcome === "pass");
-  const failed = data.steps.filter((row) => row.outcome === "fail");
-  const held = data.steps.filter((row) => row.held);
-  const stale = data.steps.filter((row) => row.staleAfter).map((row) => {
+/** Why steps need their lead's judgement, from their latest attempts (missions-core.ts `settle` writes it there). */
+export function judgementOf(data: Pick<PlanData, "steps">): string[] {
+  return data.steps.flatMap((row) => {
+    const last = row.attempts.at(-1);
+    return last?.judgement && !last.decision && !row.supersededBy ? [last.judgement] : [];
+  });
+}
+
+function conflictLines(data: Pick<PlanData, "steps">): string[] {
+  return data.steps.flatMap((row) =>
+    openConflicts(row).map((conflict) => `- @${row.handle}'s step worked from ${conflict.label ?? conflict.ref} at ${conflict.was.slice(0, 12)}, which is now ${conflict.now.slice(0, 12)}: its result is not accepted until it is redone with the new version or kept as it is.`),
+  );
+}
+
+function decisionLines(data: Pick<PlanData, "steps">): string[] {
+  const words: Record<Decision["how"], string> = { retry: "try it again", finish_without: "finish without it", forward: "redo it with the new version", keep: "keep its result as it is", replaced: "replace it" };
+  return data.steps.flatMap((row) => {
+    const decided = [...row.attempts].reverse().find((attempt) => attempt.decision)?.decision;
+    return decided ? [`- @${row.handle}: ${decided.by === "owner" ? "your owner" : "you"} chose to ${words[decided.how]}${row.supersededBy ? ` (replaced by step ${row.supersededBy})` : ""}.`] : [];
+  });
+}
+
+/** What reports say is left, and the decisions only the owner can make. */
+function remainingLines(data: Pick<PlanData, "steps">): { remaining: string[]; owner: string[] } {
+  const remaining: string[] = [];
+  const owner: string[] = [];
+  for (const row of data.steps.filter((step) => !step.supersededBy)) {
+    const last = row.attempts.at(-1);
+    if (last?.remaining?.length && row.outcome !== "done" && row.outcome !== "pass") remaining.push(`- @${row.handle}: ${last.remaining.map((item) => truncateText(item, 200)).join("; ")}`);
+    if (last?.ownerDecision) owner.push(`- @${row.handle}: ${truncateText(last.ownerDecision, 300)}`);
+  }
+  return { remaining, owner };
+}
+
+/** What the lead is told when its plan has nothing left to run (its report turn). */
+export function reportNote(data: PlanData, judgement: string[] = judgementOf(data)): string {
+  const counted = data.steps.filter((row) => !row.supersededBy);
+  const ok = counted.every((row) => (row.outcome === "done" || row.outcome === "pass") && !openConflicts(row).length);
+  const failed = counted.filter((row) => row.outcome === "fail");
+  const held = counted.filter((row) => row.held);
+  const stale = counted.filter((row) => row.staleAfter).map((row) => {
     const tested = [...row.attempts].reverse().find((attempt) => attempt.outcome === "pass")?.candidate;
     const was = tested?.commit ?? tested?.contentHash;
     const after = row.staleAfter!;
     return `- @${row.handle}'s check passed${was ? ` for ${was.slice(0, 12)}` : ""}, but @${after.handle}'s step then left ${after.candidate.slice(0, 12)} in the same place: that pass does not cover it.`;
   });
+  const conflicts = conflictLines(data);
+  const decisions = decisionLines(data);
+  const unfinished = counted.filter((row) => row.outcome === "partial" || row.outcome === "uncertain");
+  const left = remainingLines(data);
   const routine = data.routine
     ? [
         `This was your routine “${data.routine.title}”${data.routine.trigger ? ` (${data.routine.trigger})` : ""}.`,
@@ -844,13 +1095,53 @@ export function reportNote(data: PlanData, judgement: string[] = []): string {
     data.kind === "self" ? "Your own work ended. Its report:" : "Your plan has nothing left to run. The steps:",
     ...data.steps.map((row) => resultLine(data, row)),
     ...(failed.length ? ["", "Failed checks:", ...failed.map((row) => `- @${row.handle}:\n${checksLine(row.attempts.at(-1)) || `  ${truncateText(row.result ?? "", 400)}`}`)] : []),
+    ...(unfinished.length ? ["", "Not done (partial or uncertain never count as done):", ...unfinished.map((row) => `- @${row.handle} (${row.outcome}): ${truncateText((row.result ?? "").replace(/\s+/g, " "), 400)}`)] : []),
+    ...(left.remaining.length ? ["", "What is left, as reported:", ...left.remaining] : []),
+    ...(left.owner.length ? ["", "Decisions only your owner can make, as reported:", ...left.owner] : []),
+    ...(conflicts.length ? ["", "Conflicts (what a step worked from changed):", ...conflicts] : []),
+    ...(decisions.length ? ["", "Decisions on stuck steps:", ...decisions] : []),
     ...(stale.length ? ["", "Passing checks a later change made stale (tell your owner; only a new check would cover it):", ...stale] : []),
     ...(data.requirements.length ? ["", "Requirements:", ...data.requirements.map((row) => `- ${row.status}: ${row.text}`)] : []),
     ...(judgement.length ? ["", "Needs your judgement:", ...judgement.map((line) => `- ${line}`)] : []),
     "",
     ok
       ? "Tell your owner, in one message, what was done and checked, and anything that needs them. Do not repeat each report; summarise."
-      : `Tell your owner, in one message, what was done, what ${held.length ? "is held and why" : "did not finish and why"}, and what you need from them. To repair, redo or add work, call node_delegate (it continues this plan); to ask your owner, say what you need in your one message.`,
+      : `Tell your owner, in one message, what was done, what ${held.length ? "is held and why" : "did not finish and why"}, what remains, and the one decision you need from them, if any. To repair, redo or add work, call node_delegate (it continues this plan); to ask your owner, say what you need in your one message.`,
+  ].join("\n");
+}
+
+/** What the lead is told in its one re-plan turn: the stuck steps with why, and the rest of the plan. */
+export function replanNote(data: PlanData): string {
+  const stuckRows = data.steps.filter((row) => {
+    const last = row.attempts.at(-1);
+    return last?.escalation?.replan && !last.escalation.owner && !last.decision && !row.supersededBy;
+  });
+  const others = data.steps.filter((row) => !stuckRows.includes(row));
+  const why = (row: PlanStep): string[] => {
+    const last = row.attempts.at(-1)!;
+    const lines: string[] = [];
+    if (last.escalation?.why === "conflict") {
+      for (const conflict of openConflicts(row)) lines.push(`  What it worked from changed: ${conflict.label ?? conflict.ref} was ${conflict.was.slice(0, 12)}, is now ${conflict.now.slice(0, 12)}.`);
+    }
+    if (last.judgement) lines.push(`  ${last.judgement}`);
+    const checks = checksLine(last);
+    if (checks) lines.push(checks);
+    if (last.remaining?.length) lines.push(`  Left to do: ${last.remaining.map((item) => truncateText(item, 200)).join("; ")}`);
+    if (last.ownerDecision) lines.push(`  Needs your owner: ${truncateText(last.ownerDecision, 300)}`);
+    return lines;
+  };
+  return [
+    `Some steps of your plan are stuck and nothing else can run. This is your one re-plan turn for them (@${data.leadHandle}'s plan, revision ${data.revision}):`,
+    ...stuckRows.flatMap((row) => [`- step ${row.id}: ${resultLine(data, row).slice(2)}`, ...why(row)]),
+    "",
+    "The rest of the plan:",
+    ...(others.length ? others.map((row) => resultLine(data, row)) : ["- (no other steps)"]),
+    "",
+    "For each stuck step, choose one:",
+    "- Replace it: node_plan_revise with a step that has replaces (the stuck step's id): another member, another agent or model, or a changed brief. The steps after it wait for the new one.",
+    "- A conflict: node_plan_revise resolve [{step, how: forward}] redoes it with the new version; how: keep accepts its result as it is.",
+    "- Leave it: your owner gets a card in the chat with the one decision it needs. Do not run the same thing again.",
+    "Then reply exactly (no reply), or one line for your owner; they hear the outcome when the plan ends.",
   ].join("\n");
 }
 
@@ -895,9 +1186,10 @@ export async function createPlan(
     id: row.id,
     text: row.text,
     status: "open",
-    acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false })),
+    acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false, ...(item.proof ? { proof: item.proof } : {}) })),
     ...(row.evidence?.length ? { evidence: row.evidence } : {}),
   }));
+  const artifacts = registerArtifacts([], input.plan.artifacts ?? [], new Date().toISOString()).registry;
   // An accepted peer request (node/peer-requests.ts): who asked, where the result goes, its principals.
   const origin = await missionOriginFor(db, input.turnId, input.plan.constraints);
   await db.$transaction(async (tx) => {
@@ -916,6 +1208,7 @@ export async function createPlan(
         constraints: input.plan.constraints as Prisma.InputJsonValue,
         requirements: requirements as unknown as Prisma.InputJsonValue,
         deferred: input.plan.deferred as unknown as Prisma.InputJsonValue,
+        artifacts: artifacts as unknown as Prisma.InputJsonValue,
         ...(input.routine ? { routine: input.routine as unknown as Prisma.InputJsonValue } : {}),
         ...origin,
       },
@@ -938,6 +1231,7 @@ export async function createPlan(
           verifies: step.verifies ? (ids.get(step.verifies) ?? null) : null,
           integrates: (step.integrates ?? []).map((id) => ids.get(id)!).filter(Boolean),
           requirementIds: step.requirementIds,
+          acceptanceIds: step.acceptanceIds ?? [],
           ...(run ? { run: run as Prisma.InputJsonValue } : {}),
         },
       });
@@ -953,18 +1247,29 @@ export type Revision = {
   constraints?: Constraints;
   requirements?: Requirement[];
   defer?: Array<{ requirementId: string; reason: string }>;
+  /** New versions of what the steps work from: steps that used an older one hold a conflict. */
+  artifacts?: ArtifactInput[];
+  /** Conflicts the lead settles: forward redoes the step with the new version; keep accepts its result. */
+  resolve?: Array<{ step: string; how: "forward" | "keep" }>;
   /** Resolved nodes for added steps' `to` handles. */
   nodes?: Map<string, PlanNode>;
 };
 
 /**
  * Revises a running plan (node_plan_revise): new constraints apply to every step's next note; added
- * steps join (their `after` names new step ids or existing ones); waiting steps can be cancelled;
- * requirements can be added or deferred. The revision number goes up; the rules then settle.
+ * steps join (their `after` names new step ids or existing ones), and one that `replaces` a stuck step
+ * takes its place; waiting steps can be cancelled; requirements can be added or deferred; a new
+ * version of an artifact raises a conflict on the finished steps that used the old one, and the lead
+ * can resolve conflicts. The revision number goes up; the rules then settle.
  */
-export async function revisePlan(app: FastifyInstance, planId: string, change: Revision): Promise<{ revision: number; added: string[]; cancelled: string[] }> {
+export async function revisePlan(app: FastifyInstance, planId: string, change: Revision): Promise<{ revision: number; added: string[]; cancelled: string[]; replaced: string[]; conflicts: string[]; resolved: string[] }> {
   const added: string[] = [];
   const cancelled: string[] = [];
+  const replaced: string[] = [];
+  const conflicted: string[] = [];
+  const resolved: string[] = [];
+  const replacing = new Map<string, string>();
+  let changedRefs: string[] = [];
   let revision = 0;
   const card = await app.prisma.nodeMessage.findUnique({ where: { id: planId }, select: { roomId: true } });
   const lead = (await app.prisma.nodeMission.findUnique({ where: { id: planId }, select: { leadNodeId: true } }))?.leadNodeId;
@@ -983,11 +1288,18 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
     for (const step of change.add ?? []) {
       const target = change.nodes?.get(step.to);
       if (!target) throw new PlanError(`There is no node @${step.to} for step “${step.id}”.`);
-      const after = step.after.map((ref) => {
+      const old = step.replaces ? rows.find((row) => row.id === resolve(step.replaces!)) : undefined;
+      if (step.replaces && !old) throw new PlanError(`Step “${step.id}” replaces “${step.replaces}”, which is not a step of this plan.`);
+      if (old?.supersededBy) throw new PlanError(`Step “${old.id}” was already replaced by “${old.supersededBy}”.`);
+      if (old?.status === "working") throw new PlanError(`Step “${old.id}” is still working: replace it once it has ended.`);
+      const given = step.after.map((ref) => {
         const id = resolve(ref);
         if (!id) throw new PlanError(`Step “${step.id}” comes after “${ref}”, which is not a step of this plan.`);
         return id;
       });
+      // A replacement comes where the step it replaces came: after what that came after, never after it.
+      const after = (old && !given.length ? old.after : given).filter((id) => id !== old?.id);
+      if (old) replacing.set(ids.get(step.id)!, old.id);
       const run = runFor(step, constraints);
       await tx.nodeStep.create({
         data: {
@@ -1001,9 +1313,10 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
           executor: target.node.id === mission.leadNodeId ? "self" : "node",
           brief: truncateText(step.brief.trim(), 4000),
           after,
-          verifies: step.verifies ? (resolve(step.verifies) ?? null) : null,
+          verifies: step.verifies ? (resolve(step.verifies) ?? null) : (old?.verifies ?? null),
           integrates: (step.integrates ?? []).map((ref) => resolve(ref)).filter((id): id is string => Boolean(id)),
-          requirementIds: step.requirementIds,
+          requirementIds: step.requirementIds.length ? step.requirementIds : (old?.requirementIds ?? []),
+          acceptanceIds: step.acceptanceIds ?? old?.acceptanceIds ?? [],
           ...(run ? { run: run as Prisma.InputJsonValue } : {}),
         },
       });
@@ -1011,6 +1324,8 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
     }
     const requirements = [...storedRequirements(mission), ...(change.requirements ?? [])];
     const deferred = [...storedDeferred(mission), ...(change.defer ?? [])];
+    const registered = registerArtifacts(artifactsOf(mission), change.artifacts ?? [], new Date().toISOString());
+    changedRefs = registered.changed;
     const updated = await tx.nodeMission.update({
       where: { id: planId },
       data: {
@@ -1018,12 +1333,29 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
         constraints: constraints as Prisma.InputJsonValue,
         requirements: requirements as unknown as Prisma.InputJsonValue,
         deferred: deferred as unknown as Prisma.InputJsonValue,
+        ...(change.artifacts?.length ? { artifacts: registered.registry as unknown as Prisma.InputJsonValue } : {}),
       },
     });
     revision = updated.revision;
   });
-  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission, { rows }) => {
     const now = new Date().toISOString();
+    for (const [next, old] of replacing) if (replaceStep(draft, old, next, now)) replaced.push(old);
+    // Finished steps whose packet named an artifact that now has a new version hold a conflict until it is resolved.
+    if (changedRefs.length) {
+      for (const row of rows) {
+        const step = stepById(draft, row.id);
+        const packet = storedPacket(row.packet);
+        if (!step || step.status !== "done" || (step.outcome !== "done" && step.outcome !== "pass") || !packet || packet.header.attempt !== step.attempt) continue;
+        const found = conflictsOf(packet.header, artifactsOf(mission), draft, now).filter((item) => changedRefs.includes(item.ref));
+        if (raiseConflicts(draft, step.id, found)) conflicted.push(step.id);
+      }
+    }
+    for (const item of change.resolve ?? []) {
+      const step = stepById(draft, item.step);
+      if (step && openConflicts(step).length && decide(draft, step.id, { by: "lead", how: item.how, at: now })) resolved.push(step.id);
+    }
+    if (replaced.length || resolved.length) draft.effects.push({ kind: "expire_cards", steps: [...replaced, ...resolved], why: "Its lead decided." });
     for (const id of change.cancel ?? []) {
       const step = stepById(draft, id);
       if (!step || step.status !== "waiting") continue;
@@ -1033,21 +1365,54 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
       draft.dirty.add(step.id);
       cancelled.push(step.id);
     }
-    // A plan that was reporting goes on when the revision added work that can start.
-    if (draft.mission.status === "reporting" && draft.steps.some((row) => row.status === "waiting" && ready(draft, row))) {
+    // A plan that was reporting goes on when the revision added work that can start (or started some).
+    if (draft.mission.status === "reporting" && draft.steps.some((row) => row.status === "working" || (row.status === "waiting" && ready(draft, row)))) {
       draft.mission.status = "running";
       draft.missionDirty = true;
     }
     return undefined;
   });
-  return { revision, added, cancelled };
+  return { revision, added, cancelled, replaced, conflicts: conflicted, resolved };
 }
 
-/** The acceptance ids a verify step must report passing checks for (its requirements' mandatory criteria). */
-export async function mandatoryIds(db: Db, planId: string, stepId: string): Promise<string[]> {
+/** The acceptance ids a verify or review step judges, and those that must pass (node_step_report's verdict). */
+export async function acceptanceFor(db: Db, planId: string, stepId: string): Promise<{ mandatory: string[]; judged: string[] }> {
   const [mission, step] = await Promise.all([db.nodeMission.findUnique({ where: { id: planId } }), db.nodeStep.findUnique({ where: { missionId_id: { missionId: planId, id: stepId } } })]);
-  if (!mission || !step || step.kind !== "verify") return [];
-  return storedRequirements(mission)
-    .filter((row) => step.requirementIds.includes(row.id))
-    .flatMap((row) => (row.acceptance ?? []).filter((item) => item.mandatory !== false).map((item) => item.id));
+  return mission && step ? judgedBy(mission, step) : { mandatory: [], judged: [] };
+}
+
+/**
+ * What started a mission, for its packets' headers: another person's request, a task on the room's
+ * board, a routine, else its owner's message (the lead's turn that made it).
+ */
+export function packetOrigin(mission: Pick<NodeMission, "id" | "routine" | "requestedBy" | "deliverTo" | "leadTurnId">): { origin: { kind: "message" | "routine" | "task" | "peer"; id: string | null }; rootTaskId: string } {
+  const requested = mission.requestedBy as { requestId?: unknown } | null;
+  const deliver = mission.deliverTo as { taskId?: unknown } | null;
+  const routine = mission.routine as RoutineLink | null;
+  if (typeof requested?.requestId === "string") return { origin: { kind: "peer", id: requested.requestId }, rootTaskId: `request:${requested.requestId}` };
+  if (typeof deliver?.taskId === "string") return { origin: { kind: "task", id: deliver.taskId }, rootTaskId: `task:${deliver.taskId}` };
+  if (routine?.id) return { origin: { kind: "routine", id: routine.id }, rootTaskId: mission.id };
+  return { origin: { kind: "message", id: mission.leadTurnId }, rootTaskId: mission.id };
+}
+
+/**
+ * Compiles a step attempt's task packet and stores it on the step, once per attempt and reason (a
+ * redelivered start finds it stored). The packet's version follows the one before; its amendment is
+ * computed from that one's header. Null when the attempt is no longer current.
+ */
+export async function storeStepPacket(db: PrismaClient, planId: string, stepId: string, attempt: number, reason: Attempt["reason"], compile: (previous: PacketHeader | null, registry: MissionArtifact[], mission: NodeMission) => StoredPacket): Promise<StoredPacket | null> {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM node_missions WHERE id = ${planId} FOR UPDATE`;
+    const [mission, row] = await Promise.all([tx.nodeMission.findUnique({ where: { id: planId } }), tx.nodeStep.findUnique({ where: { missionId_id: { missionId: planId, id: stepId } } })]);
+    if (!mission || !row || row.attempt !== attempt || ENDED.has(row.status as StepStatus)) return null;
+    const stored = storedPacket(row.packet);
+    if (stored && stored.header.attempt === attempt && stored.header.reason === reason) return stored;
+    const packet = compile(stored?.header ?? null, artifactsOf(mission), mission);
+    const attempts = (Array.isArray(row.attempts) ? (row.attempts as unknown as Attempt[]) : []).map((item) => (item.n === attempt ? { ...item, packet: { version: packet.header.packetVersion, hash: packet.header.hash } } : item));
+    await tx.nodeStep.update({
+      where: { missionId_id: { missionId: planId, id: stepId } },
+      data: { packet: packet as unknown as Prisma.InputJsonValue, packetVersion: packet.header.packetVersion, attempts: attempts as unknown as Prisma.InputJsonValue },
+    });
+    return packet;
+  });
 }

@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "types": ["node"],
+    "typeRoots": ["../../apps/hub-api/node_modules/@types"]
+  },
+  "include": ["./**/*.ts"]
+}

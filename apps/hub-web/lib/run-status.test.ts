@@ -17,3 +17,11 @@ test("a terminal run stops its animation even with stale running job state", () 
   assert.equal(runPresentation({ jobStatus: "running", outcome: "waiting_approval" }).active, false);
   assert.equal(runPresentation({ jobStatus: "interrupted" }).label, "Interrupted");
 });
+
+test("a finished run is done only when the checks Ensemble ran again passed", () => {
+  assert.deepEqual(runPresentation({ outcome: "success", verified: "passed" }), { label: "Done", tone: "green", active: false });
+  assert.deepEqual(runPresentation({ outcome: "success", verified: "failed" }), { label: "Checks failed", tone: "red", active: false });
+  assert.deepEqual(runPresentation({ outcome: "success", verified: "not_verified" }), { label: "Not verified", tone: "yellow", active: false });
+  assert.equal(runPresentation({ outcome: "success", verified: null }).label, "Done", "a run with no checks, as before");
+  assert.equal(runPresentation({ outcome: "failed", verified: "failed" }).label, "Failed");
+});

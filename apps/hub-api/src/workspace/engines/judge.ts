@@ -14,10 +14,11 @@
  * the phone or `ensemble needs`.
  */
 import { resolve } from "node:path";
-import { checkGit, expandHome, GuardError, harmlessPath, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
+import { checkGit, expandHome, GuardError, harmlessPath, holdsProtected, isNeverProgram, isRemoteProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
-import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, attachedValues, cloneForAgent, floorRefusal, granted, outsideArgs, outsidePath, plainArgs, quietArgs, realOutside, RUN_RULE_SOURCE, segmentReadsOnly, WRITE_TOOL, type JobContext } from "../tools.js";
+import { gitWrites } from "../git-read.js";
 import type { ShellSegment } from "../shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
 import { inSkillFolder, skillRootsHere, skillScript } from "./skills.js";
@@ -39,10 +40,12 @@ export const ENSEMBLE_OWN_TOOLS = ["ask_person", "report_result", "attach_eviden
 
 const ALLOW: EngineAnswer = { decision: "allow" };
 const READS = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
+/** Reads that go through everything under a folder. */
+const SEARCHES = new Set(["Grep", "Glob"]);
 const WRITES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const SHELLS = new Set(["Bash", "PowerShell"]);
 /** Bookkeeping tools that touch nothing outside the agent itself. */
-const HARMLESS = new Set([
+export const HARMLESS: ReadonlySet<string> = new Set([
   "TodoWrite", "TodoRead", "Task", "Agent", "ExitPlanMode", "BashOutput", "KillShell", "KillBash", "Skill", "SlashCommand", "ToolSearch",
   "ListMcpResourcesTool", "ReadMcpResourceTool",
   ...ENSEMBLE_OWN_TOOLS.map((name) => `mcp__ensemble__${name}`),
@@ -66,8 +69,29 @@ async function outside(ctx: JobContext, path: string, write: boolean, options: {
   return verdict.held ? { ...refused(verdict.held), asked: verdict.asked } : { decision: "allow", asked: verdict.asked };
 }
 
-function pathsOf(input: Record<string, unknown>): string[] {
-  return [str(input.file_path), str(input.path), str(input.notebook_path)].filter((value): value is string => Boolean(value));
+/** Every path a file tool's input names: its own fields, and `paths` (GitHub Copilot's searches, a patch's files). */
+export function pathsOf(input: Record<string, unknown>): string[] {
+  const many = Array.isArray(input.paths) ? input.paths : [input.paths];
+  return [str(input.file_path), str(input.path), str(input.notebook_path), str(input.filePath), ...many.map(str)].filter((value): value is string => Boolean(value));
+}
+
+/** Where a glob that names its place looks (`~/notes/*.md`, `/srv/app/src`): the folder before its first wildcard. */
+export function globRoot(pattern: unknown): string | null {
+  const text = str(pattern)?.trim();
+  if (!text || !/^(?:~(?=[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(text)) return null;
+  return text.split(/[*?[{]/)[0]!.replace(/[^\\/]*$/, "") || "/";
+}
+
+/** The files a patch in the apply_patch form adds, changes, deletes or moves to (`*** Update File: …`, `*** Move to: …`). */
+export function patchPaths(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  const found = [...text.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)].map((match) => match[1]!.trim()).filter(Boolean);
+  return [...new Set(found)];
+}
+
+/** The patch text of an apply_patch call, however the agent sent it. */
+function patchText(input: Record<string, unknown>): string {
+  return [input.value, input.input, input.patch, input.content, input.diff, input.text].find((value): value is string => typeof value === "string" && value.includes("*** ")) ?? "";
 }
 
 /** Rough shell split: each program's argv, quotes honoured (`parseShell`). */
@@ -83,9 +107,10 @@ export function shellSegments(command: string): string[][] {
 export async function quietCommand(root: string, parsed: ShellSegment[], sandboxed: boolean): Promise<boolean> {
   if (!parsed.some((segment) => segment.argv.length)) return false;
   for (const segment of parsed) {
-    if (segment.assigned || !within(root, segment.cwd)) return false;
+    if (segment.assigned || segment.fed || !within(root, segment.cwd)) return false;
     if (segment.redirects.some((redirect) => redirect.write && !harmlessPath(resolve(segment.cwd, expandHome(redirect.path))))) return false;
     if (!segment.argv.length) continue;
+    if (!(await segmentReadsOnly(segment))) return false;
     if (!sandboxed && segment.argv[0]!.split(/[\\/]/).pop()!.replace(/\.exe$/i, "") === "git") return false;
     if (!(await quietArgs(root, segment.argv, segment.cwd))) return false;
   }
@@ -123,9 +148,13 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
     return { decision: "deny", message: `${cloned.message}${rest}` };
   }
   let remote = false;
+  /** Programs that run as the administrator or change the system: asked about on a card in every mode. */
+  const system = new Set<string>();
   for (const argv of segments) {
     const program = argv[0]!;
-    if (isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).${/pkill|killall/.test(program) ? " Stop a process with kill and its process id instead." : ""}` };
+    const name = programName(program);
+    if (readsSignIns(name, argv)) return { decision: "deny", message: SIGN_INS };
+    if (isNeverProgram(program) || PRIVILEGE.has(name)) system.add(name);
     if (isRemoteProgram(program)) {
       if (!ctx.network) return { decision: "deny", message: "The internet is off for this run." };
       remote = true;
@@ -158,7 +187,12 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   const writesIn: string[] = [];
   const roots = skillRootsHere();
   for (const segment of parsed) {
-    const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+    const writes = segment.argv.length > 0 && !(await segmentReadsOnly(segment));
+    // A git config write to --global, --system or --file writes that file, wherever the command runs (git-read.ts).
+    for (const path of gitWrites(segment.argv, segment.cwd)) {
+      mark(path, true);
+      writesIn.push(path);
+    }
     // Running a skill's script (`python3 ~/.agents/skills/x/scripts/search.py …`, or from that folder) reads the
     // skill's folder, never changes it; anything else the command names or redirects to is judged as usual.
     const script = writes ? skillScript(segment, roots) : null;
@@ -183,12 +217,16 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   // each is held to the hard floor. The mode was already asked about that folder itself.
   for (const segment of parsed) {
     if (!segment.argv.length || within(ctx.root, segment.cwd)) continue;
-    const writes = !readsOnly(segment.argv);
-    for (const arg of plainArgs(segment.argv)) {
-      const real = await realOutside(resolve(segment.cwd, arg));
-      const floor = within(ctx.root, real) || harmlessPath(real) ? null : outsideRefusal(real, writes);
-      if (floor) return { decision: "deny", message: `${real}: ${floor}` };
+    const writes = !(await segmentReadsOnly(segment));
+    for (const arg of [...plainArgs(segment.argv), ...attachedValues(segment.argv)]) {
+      const message = await floorRefusal(resolve(segment.cwd, arg), writes, ctx.root);
+      if (message) return { decision: "deny", message };
     }
+  }
+  for (const name of system) {
+    const answer = await systemProgram(ctx, name, command, withdrawn);
+    if (answer.decision !== "allow") return answer;
+    asked = true;
   }
   const noted = async (answer: EngineAnswer) => {
     if (answer.decision === "allow") {
@@ -207,6 +245,38 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   // Paths outside the folder were judged above; reading inside it asks nobody, and a command the person just approved is not asked again.
   if (asked || (posix && (await quietCommand(ctx.root, parsed, ctx.sandboxed && !unsandboxed)))) return noted(ALLOW);
   return noted(refused(await allowOrRefuse(ctx, "command", true, { toolName: "Bash", title: `Run ${command.slice(0, 140)}`, command }, withdrawn)));
+}
+
+/** Programs that run a command as the administrator, asking for a password on a terminal. */
+const PRIVILEGE = new Set(["sudo", "su", "doas", "pkexec", "runas", "gsudo"]);
+const programName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+
+/** The computer's sign-in stores read through their programs (the macOS keychain, the Linux secret service): the hard floor, like their files. */
+function readsSignIns(program: string, argv: readonly string[]): boolean {
+  if (program === "security") return argv.slice(1).some((arg) => /^(find-generic-password|find-internet-password|dump-keychain|export|export-pkcs12)$/.test(arg));
+  if (program === "secret-tool") return argv.slice(1).some((arg) => arg === "lookup" || arg === "search");
+  return false;
+}
+const SIGN_INS = "That reads the computer's saved passwords and keys, which never leave it through an agent.";
+
+/**
+ * A program that runs as the administrator (sudo and the like) or changes the system (its scheduler, its
+ * settings, other programs: osascript, launchctl, crontab…): asked about on a card in every mode,
+ * unattended too, and answered at most for this run. A read-only run refuses it.
+ */
+async function systemProgram(ctx: JobContext, name: string, command: string, withdrawn?: AbortSignal): Promise<EngineAnswer> {
+  if (ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: nothing that changes the computer." };
+  const toolName = `program:${name}`;
+  const privileged = PRIVILEGE.has(name);
+  const rule = ctx.prisma ? await ctx.prisma.decisionRule.findFirst({ where: { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName }, orderBy: { createdAt: "desc" } }) : null;
+  if (rule?.decision === "deny") return { decision: "deny", message: `The person did not allow ${name} in this run.` };
+  if (rule?.decision === "allow") return ALLOW;
+  await ctx.progress(`Waiting for approval: ${name}`);
+  const title = privileged ? `Run as the administrator: ${command.slice(0, 120)}` : `Run ${name}, which changes this computer: ${command.slice(0, 110)}`;
+  const answer = await askPerson(ctx, { event: "permission", toolName, title, command }, withdrawn);
+  if (answer.decision === "allow") return ALLOW;
+  const said = answer.answer ? ` They said: ${answer.answer}` : "";
+  return { decision: "deny", message: `The person did not allow this.${said}${privileged ? " Say which command needs the administrator and why, and carry on without it." : ""}` };
 }
 
 /**
@@ -246,15 +316,14 @@ async function questions(ctx: JobContext, input: Record<string, unknown>, withdr
  * they would in the person's own agent, without asking. Refused whatever the request: the dangerous
  * commands, the privilege, persistence and system-settings programs, and, outside the turn's own folder,
  * what no run may reach (keys and sign-ins, Ensemble's own data and code, start-up items, the system's
- * files, other accounts: `outsideRefusal`).
+ * files, other accounts: `outsideRefusal`). `neverPrograms: false` leaves those programs to the caller
+ * (an Ensemble Node's turn asks its owner about them: subscriptions/node-own-tools.ts).
  */
-export async function judgeFloor(root: string, call: EngineCall): Promise<EngineAnswer> {
+export async function judgeFloor(root: string, call: EngineCall, options: { neverPrograms?: boolean } = {}): Promise<EngineAnswer> {
   const input = call.input ?? {};
   const guarded = async (path: string, write: boolean): Promise<EngineAnswer | null> => {
-    const real = await realOutside(resolve(root, expandHome(path)));
-    if (within(root, real) || harmlessPath(real)) return null;
-    const floor = outsideRefusal(real, write);
-    return floor ? { decision: "deny", message: `${real}: ${floor}` } : null;
+    const message = await floorRefusal(resolve(root, expandHome(path)), write, root);
+    return message ? { decision: "deny", message } : null;
   };
   if (SHELLS.has(call.tool)) {
     const command = str(input.command);
@@ -263,14 +332,16 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
     if (hit) return { decision: "deny", message: dangerousMessage(hit) };
     // Run where the agent says (Codex names its working folder), else in the turn's folder.
     const parsed = parseShell(command, str(input.cwd) ? resolve(root, expandHome(str(input.cwd)!)) : root);
-    for (const segment of parsed) {
+    for (const segment of options.neverPrograms === false ? [] : parsed) {
       const program = segment.argv[0];
       if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
     }
     for (const segment of parsed) {
-      const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+      const writes = segment.argv.length > 0 && !(await segmentReadsOnly(segment));
       // Every path a program names (its plain arguments too, in whatever folder it runs) and every redirect.
-      const named = segment.argv.length ? [...outsideArgs(root, segment.argv, segment.cwd), ...plainArgs(segment.argv).map((arg) => resolve(segment.cwd, expandHome(arg)))] : [];
+      const named = segment.argv.length
+        ? [...outsideArgs(root, segment.argv, segment.cwd), ...[...plainArgs(segment.argv), ...attachedValues(segment.argv)].map((arg) => resolve(segment.cwd, expandHome(arg)))]
+        : [];
       for (const path of named) {
         const refused = await guarded(path, writes);
         if (refused) return refused;
@@ -283,9 +354,14 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
     return ALLOW;
   }
   if (READS.has(call.tool) || WRITES.has(call.tool)) {
-    for (const path of pathsOf(input)) {
+    const glob = call.tool === "Glob" ? globRoot(input.pattern) : null;
+    for (const path of [...pathsOf(input), ...(glob ? [glob] : [])]) {
       const refused = await guarded(path, WRITES.has(call.tool));
       if (refused) return refused;
+      // A search reads everything under its folder: never one that holds keys, sign-ins or Ensemble's own data or code.
+      if (SEARCHES.has(call.tool) && holdsProtected(await realOutside(resolve(root, expandHome(path))))) {
+        return { decision: "deny", message: `${path} holds keys, sign-ins or Ensemble's own data, so it is not searched as a whole. Search a folder inside it.` };
+      }
     }
   }
   return ALLOW;
@@ -293,14 +369,27 @@ export async function judgeFloor(root: string, call: EngineCall): Promise<Engine
 
 /**
  * A tool call as an agent's hook names it (Claude Code's own names, GitHub Copilot CLI's), in the
- * judge's terms: shells as Bash, file reads as Read, file changes as Write; anything else as it is.
+ * judge's terms: shells as Bash, file reads as Read, file changes as Write, web pages as WebFetch and
+ * searches as WebSearch; anything else as it is.
  */
 export function hookCall(name: string, input: Record<string, unknown>): EngineCall {
-  const path = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path) ?? str(input.filePath);
-  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "" } };
+  const named = pathsOf(input);
+  const paths = (more: string[] = []) => {
+    const all = [...new Set([...named, ...more])];
+    return all.length ? { paths: all } : {};
+  };
+  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "", ...(str(input.cwd) ? { cwd: str(input.cwd) } : {}) } };
   if (READS.has(name) || WRITES.has(name) || SHELLS.has(name)) return { tool: name, input };
-  if (/^(view|read|read_file|glob|grep|rg|ls|list_dir|search)$/i.test(name)) return { tool: "Read", input: path ? { file_path: path } : {} };
-  if (/^(create|edit|write|str_replace|str_replace_editor|apply_patch|delete|move)$/i.test(name)) return { tool: "Write", input: path ? { file_path: path } : {} };
+  if (/^(grep|rg|search)$/i.test(name)) return { tool: "Grep", input: paths() };
+  if (/^glob$/i.test(name)) return { tool: "Glob", input: { ...paths(), ...(str(input.pattern) ? { pattern: str(input.pattern)! } : {}) } };
+  if (/^(ls|list_dir)$/i.test(name)) return { tool: "LS", input: paths() };
+  if (/^(view|read|read_file)$/i.test(name) || (/^str_replace_editor$/i.test(name) && input.command === "view")) return { tool: "Read", input: paths() };
+  if (/^apply_patch$/i.test(name)) return { tool: "Write", input: paths(patchPaths(patchText(input))) };
+  if (/^(create|edit|write|str_replace|str_replace_editor|delete|move|rename)$/i.test(name)) {
+    return { tool: "Write", input: paths([str(input.destination), str(input.new_path), str(input.newPath), str(input.to)].filter((value): value is string => Boolean(value))) };
+  }
+  if (/^(web_?fetch|fetch|url)$/i.test(name)) return { tool: "WebFetch", input: { url: str(input.url) ?? "" } };
+  if (/^web_?search$/i.test(name)) return { tool: "WebSearch", input: { query: str(input.query) ?? "" } };
   return { tool: name, input };
 }
 

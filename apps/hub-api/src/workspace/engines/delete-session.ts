@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { lstat, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { type CodeEngine } from "@ensemble/shared-types";
+import { othersHome } from "../../subscriptions/agent-mcp.js";
 import { copilotBinary, withCopilotServer } from "../../subscriptions/copilot.js";
 import { antigravityDir } from "../../subscriptions/antigravity.js";
 import { codexEnv } from "../../subscriptions/detect.js";
@@ -18,7 +20,8 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
 /**
  * The agent no longer has the session (deleted in its own app, or expired): already gone counts as deleted.
- * Codex: "no rollout found for thread id <id>"; OpenCode's storage: "Resource not found: …/<id>.json".
+ * Copilot: "Session file not found for <id>"; Codex: "no rollout found for thread id <id>"; OpenCode's storage:
+ * "Resource not found: …/<id>.json".
  */
 const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:|no rollout found for thread|resource not found:|no such session/i.test(message);
 
@@ -196,7 +199,11 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     const program = await copilotBinary();
     if (!program) throw new Error("Install or update GitHub Copilot on this computer to delete its saved session.");
     await withCopilotServer(program, async request => {
-      const answer = await request("session.delete", { sessionId });
+      // Copilot answers a session it no longer has with an error ("Session file not found for <id>"), or with success: false.
+      const answer = await request("session.delete", { sessionId }).catch((error: unknown): Record<string, unknown> => {
+        if (error instanceof Error && absentSession(error.message, sessionId)) return { success: true };
+        throw error;
+      });
       if (answer.success !== true && !(typeof answer.error === "string" && absentSession(answer.error, sessionId))) throw new Error(typeof answer.error === "string" ? answer.error : "Copilot did not confirm deletion. Update Copilot and retry.");
     });
     return;
@@ -217,12 +224,15 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     return;
   }
   if (engine === "mistral-vibe") {
-    // Vibe 2: one folder per session under $VIBE_HOME/logs/session, named by its prefix and short id, its meta.json naming the full id.
-    const root = join(process.env.VIBE_HOME || join(homedir(), ".vibe"), "logs", "session");
-    for (const folder of await folders(root)) {
-      if (!folder.includes(sessionId.slice(0, 8))) continue;
-      const meta = await readFile(join(root, folder, "meta.json"), "utf8").then((text) => JSON.parse(text) as { session_id?: unknown }).catch(() => null);
-      if (meta?.session_id === sessionId) await removeHistory(root, [folder]);
+    // Vibe 2: one folder per session under $VIBE_HOME/logs/session, named by its prefix and short id, its meta.json naming the full id;
+    // a turn someone else could steer kept its session in Ensemble's home for Vibe.
+    for (const vibeHome of [process.env.VIBE_HOME || join(homedir(), ".vibe"), join(othersHome("mistral-vibe"), ".vibe")]) {
+      const root = join(vibeHome, "logs", "session");
+      for (const folder of await folders(root)) {
+        if (!folder.includes(sessionId.slice(0, 8))) continue;
+        const meta = await readFile(join(root, folder, "meta.json"), "utf8").then((text) => JSON.parse(text) as { session_id?: unknown }).catch(() => null);
+        if (meta?.session_id === sessionId) await removeHistory(root, [folder]);
+      }
     }
     return;
   }
@@ -242,21 +252,27 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     }
     return;
   }
+  // Kimi Code and Grok Build keep a session of a turn someone else could steer in Ensemble's home for them: deleted there too.
+  const homes = engine === "kimi-code" || engine === "grok-cli" ? [undefined, ...(existsSync(othersHome(engine)) ? [othersHome(engine)] : [])] : [undefined];
   if (engine === "kimi-code") {
     // Kimi Code deletes a session and everything it saved through its own ACP server.
-    const launch = await ACP_AGENTS["kimi-code"].launch({ root: cwd, sandboxed: false, trusted: false });
-    if (!launch) throw new Error("Install or update Kimi Code on this computer to delete its saved session.");
-    await rpcDelete(launch.program, launch.args, launch.env, async rpc => {
-      await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" } });
-      try { await rpc.request("session/delete", { sessionId }); }
-      catch (error) { if (!(error instanceof Error && (absentSession(error.message, sessionId) || /unknown sessionid|invalid params|-32602/i.test(error.message)))) throw error; }
-    });
+    for (const home of homes) {
+      const launch = await ACP_AGENTS["kimi-code"].launch({ root: cwd, sandboxed: false, trusted: false, ...(home ? { othersHome: home } : {}) });
+      if (!launch) throw new Error("Install or update Kimi Code on this computer to delete its saved session.");
+      await rpcDelete(launch.program, launch.args, launch.env, async rpc => {
+        await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" } });
+        try { await rpc.request("session/delete", { sessionId }); }
+        catch (error) { if (!(error instanceof Error && (absentSession(error.message, sessionId) || /unknown sessionid|invalid params|-32602/i.test(error.message)))) throw error; }
+      });
+    }
     return;
   }
-  const launch = await ACP_AGENTS[engine].launch({ root: cwd, sandboxed: false, trusted: false });
-  if (!launch) throw new Error(`The ${engine} agent is not installed. Install it on this computer and retry deletion.`);
   const args = engine === "grok-cli" ? ["sessions", "delete", sessionId] : engine === "opencode" ? ["session", "delete", sessionId] : null;
-  if (!args) throw new Error("This agent has no verified native session deletion method. Its history has not been hidden.");
-  try { await command(launch.program, [...launch.base, ...args], cwd, launch.env); }
-  catch (error) { if (!(error instanceof Error && absentSession(error.message, sessionId))) throw error; }
+  for (const home of homes) {
+    const launch = await ACP_AGENTS[engine].launch({ root: cwd, sandboxed: false, trusted: false, ...(home ? { othersHome: home } : {}) });
+    if (!launch) throw new Error(`The ${engine} agent is not installed. Install it on this computer and retry deletion.`);
+    if (!args) throw new Error("This agent has no verified native session deletion method. Its history has not been hidden.");
+    try { await command(launch.program, [...launch.base, ...args], cwd, launch.env); }
+    catch (error) { if (!(error instanceof Error && absentSession(error.message, sessionId))) throw error; }
+  }
 }

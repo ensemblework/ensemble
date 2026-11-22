@@ -98,7 +98,26 @@ const UNGUARDED: readonly AnyHubTool[] = [
 ];
 
 // Tools that read a connected app by name check the caller's switched-off apps wherever they run (source-guard.ts).
-const ALL: readonly AnyHubTool[] = UNGUARDED.map(guardSources);
+// Hub reads run together within a step: each reads Ensemble's own data or the public web for one call only.
+const ALL: readonly AnyHubTool[] = UNGUARDED.map(guardSources).map((tool) => (tool.isWrite || tool.parallelSafe !== undefined ? tool : { ...tool, parallelSafe: true }));
+
+/**
+ * Whether a call may run beside the other reads of its step. Writes, connected-app and MCP tools,
+ * and an Ensemble Node's tools (which act on a computer or post) run one at a time, in order.
+ */
+export function runsInParallel(tool: AnyHubTool | undefined): boolean {
+  return Boolean(tool && !tool.isWrite && tool.parallelSafe === true);
+}
+
+/**
+ * Whether a call only looks and changes nothing, for runaway detection (runaway.ts): Hub reads, a tool
+ * marked `readOnly` (an Ensemble Node's snapshot, screenshot or terminal read), and connected-app and
+ * MCP tools that are not writes (an MCP tool is a write unless its server marks it read-only).
+ */
+export function readsOnly(tool: AnyHubTool | undefined): boolean {
+  if (!tool) return false;
+  return tool.readOnly ?? (runsInParallel(tool) || (tool.area === "apps" && !tool.isWrite));
+}
 
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
 

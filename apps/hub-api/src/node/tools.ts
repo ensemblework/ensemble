@@ -9,6 +9,7 @@ import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/cli
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
 import type { Device } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
+import { truncateText } from "../lib/text.js";
 import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { CodeAnswer } from "../remote/contract.js";
@@ -20,16 +21,16 @@ import { deviceTools } from "./device-tools.js";
 import { webTaskTool } from "./web-task.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { crewMember, findCrew, notInCrew } from "./crew.js";
-import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
-import { enqueueTurn } from "./queue.js";
+import { acceptanceFor, addStep, finishStep, kindFromRole, loadPlan, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
+import { enqueueTurn, type DispatchOutcome } from "./queue.js";
 import { planTools } from "./plan-tools.js";
 import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 import { overviewTool } from "./overview.js";
 import { routineTools } from "./routine-tools.js";
 import { attachToTurn, MAX_MEDIA, ownerMedia } from "./media.js";
 import { peerRequestTool } from "./peer-requests.js";
-
-export const MAX_MEMORIES = 200;
+import { KEY_CHARS, MEMORY_CHARS, MEMORY_SCOPES, MemoryRefused, rememberAsNode } from "./memory.js";
+import { skillTool } from "./skills.js";
 
 export type Lineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
 
@@ -44,7 +45,8 @@ export type NodeScope = {
   ownerOnly: boolean;
   /** For questions to the owner's paired computer (devices/file-relay.ts). */
   redis: Parameters<typeof askDeviceFor>[0];
-  dispatch: (message: NodeMessage) => Promise<void>;
+  /** Routes a message it posted (node/queue.ts `dispatchMessage`): who it woke, and the brake that stopped it, if one did. */
+  dispatch: (message: NodeMessage) => Promise<DispatchOutcome | void>;
   /** The turn: a plan made in it opens with its reply (node/plans.ts). */
   turnId: string;
   /** A plan's turn: a step's node doing its step, or the lead reporting (planStep null). */
@@ -80,7 +82,7 @@ export async function postAsNode(
   body: string,
   privateTo: string[] | null,
   extra: { data?: Record<string, unknown>; roomBound?: string } = {},
-): Promise<{ message: NodeMessage; drafted: boolean }> {
+): Promise<{ message: NodeMessage; drafted: boolean; routed?: DispatchOutcome }> {
   const { prisma, node, lineage } = scope;
   const owner = node.userId;
   const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
@@ -119,8 +121,16 @@ export async function postAsNode(
     rootMessageId: lineage.rootMessageId,
     botDepth: lineage.botDepth,
   });
-  await scope.dispatch(message);
-  return { message, drafted: false };
+  const routed = await scope.dispatch(message);
+  return { message, drafted: false, ...(routed ? { routed } : {}) };
+}
+
+/** Why a message a node posted did not wake the node it named (node/router.ts brakes), in words for the node. */
+function notWoken(routed: DispatchOutcome): string {
+  if (routed.brake === "duplicate" || routed.brake === "cycle") return "it repeats what was already said there, so the loop brake stopped it";
+  if (routed.brake === "streak") return "there were too many node messages in a row there";
+  if (routed.brake === "depth") return "this chain of node messages is at its limit";
+  return "it cannot take a turn now";
 }
 
 /** The crew room this node leads for its owner (else the first crew it is in), made on first use. */
@@ -162,6 +172,7 @@ function computerFilesTool(scope: NodeScope): AnyHubTool {
       query: z.string().min(1).max(200).optional().describe("Text to find, for search."),
     }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Files on your owner's computer are read only in a chat with just your owner.");
@@ -222,24 +233,71 @@ async function pickComputer(prisma: PrismaClient, ownerId: string, name: string 
   return device;
 }
 
+/** A project memory's project in the owner's space: by its id, its link or its name. */
+async function projectNamed(prisma: PrismaClient, userId: string, ref: string | undefined): Promise<string> {
+  const text = ref?.trim() ?? "";
+  if (!text) throw new ToolBlockedError("A project memory names its project.", "Pass project: its id, link or name.");
+  const id = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(text)?.[0];
+  const row = await prisma.project.findFirst({ where: { userId, deletedAt: null, ...(id ? { id } : { name: { equals: text, mode: "insensitive" } }) }, select: { id: true } });
+  if (!row) throw new ToolBlockedError(`There is no project “${truncateText(text, 80)}”.`, "Pass its id or link from hub_list_projects.");
+  return row.id;
+}
+
 export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
+  // When the turn began: a memory its owner changed since then is theirs to keep (node/memory.ts).
+  const since = new Date();
   const remember = defineTool({
     name: "node_remember",
     area: "tasks",
     description:
-      "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Call it at once when they state a lasting preference (“only use the MAI model”, “always …”, “never …”, “from now on …”), in their words. Your owner can see and delete every memory.",
-    input: z.object({ content: z.string().min(1).max(500) }).strict(),
+      "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Call it at once when they state a lasting preference (“only use the MAI model”, “always …”, “never …”, “from now on …”), in their words. " +
+      "key: what it is about, in a few words (“preferred model”); saving the same key again replaces that fact (the old one stays as history), so a changed preference is one call with its key. " +
+      "scope: owner (about your owner, read by all their nodes), node (yours, the default), room (only in this conversation), project (only when that project is open; pass project). Your owner sees, edits, pins and deletes every memory; a pinned one only they change.",
+    input: z
+      .object({
+        content: z.string().min(1).max(MEMORY_CHARS),
+        key: z.string().min(1).max(KEY_CHARS).optional().describe("What the fact is about, a few words (“preferred model”): the same key replaces the fact."),
+        scope: z.enum(MEMORY_SCOPES).optional().describe("owner, node (the default), room or project."),
+        project: z.string().min(1).max(200).optional().describe("With scope project: the project's id, link or name."),
+      })
+      .strict(),
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
       if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can ask you to remember something.");
-      await prisma.nodeMemory.create({ data: { userId: node.userId, nodeId: node.id, content: input.content.trim() } });
-      const extra = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" }, skip: MAX_MEMORIES, select: { id: true } });
-      if (extra.length) await prisma.nodeMemory.deleteMany({ where: { id: { in: extra.map((row) => row.id) } } });
-      return toolOk("Remembered.");
+      const projectId = input.scope === "project" ? await projectNamed(prisma, node.userId, input.project) : null;
+      const turn = await prisma.nodeTurn.findUnique({ where: { id: scope.turnId }, select: { triggerMessageId: true } });
+      try {
+        const saved = await rememberAsNode(prisma, {
+          node,
+          roomId: scope.room.id,
+          turnId: scope.turnId,
+          sourceMessageId: turn?.triggerMessageId ?? null,
+          content: input.content,
+          key: input.key ?? null,
+          ...(input.scope ? { scope: input.scope } : {}),
+          projectId,
+          since,
+        });
+        const archived = saved.archived ? ` ${saved.archived} old unused memor${saved.archived === 1 ? "y was" : "ies were"} archived; your owner can bring them back.` : "";
+        const said =
+          saved.status === "same"
+            ? "Already remembered."
+            : saved.status === "restored"
+              ? "Remembered: it was archived and is back."
+              : saved.status === "revised" && saved.replaced
+                ? `Remembered. It replaces “${truncateText(saved.replaced.content, 120)}”, kept as history.`
+                : "Remembered.";
+        return toolOk(`${said}${archived}`, { id: saved.memory.id, key: saved.memory.key, scope: saved.memory.scope, status: saved.status });
+      } catch (error) {
+        if (error instanceof MemoryRefused) throw new ToolBlockedError(error.message, error.hint);
+        throw error;
+      }
     },
   });
+  // Any skill's full text (node/skills.ts): its catalogue line is in the turn's context.
+  const skill = skillTool(scope);
   // A temporary helper answers only the node that made it: read-only assistant tools, plus what its parent granted.
   const grant = helperGrant(node);
   const hands = deviceTools(scope);
@@ -258,7 +316,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       }
       const row = await prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: step.planId, id: step.stepId } }, select: { kind: true, status: true } });
       if (!row || !["waiting", "working"].includes(row.status)) throw new ToolBlockedError("This step has already ended.");
-      const verdict = verdictOf(row.kind, input, await mandatoryIds(prisma, step.planId, step.stepId));
+      const criteria = await acceptanceFor(prisma, step.planId, step.stepId);
+      const verdict = verdictOf(row.kind, input, criteria.mandatory, criteria.judged);
       // A report that contradicts its own checks goes back to the worker to fix, rather than being guessed at.
       if (verdict.problem && input.outcome !== "blocked") throw new ToolBlockedError(verdict.problem, "Report again: name each check with its verdict, and choose the outcome they support.");
       await finishStep(ctx.app, step.planId, step.stepId, { status: input.outcome === "blocked" ? "blocked" : "done", result: input.summary, report: input });
@@ -281,8 +340,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         area: "tasks",
         description:
           "Report your plan step when it is finished (or cannot be). This is your result: a reply in prose does not count. " +
-          "outcome: done (a build, writing, research), pass or fail (a verification: pass only if every check passed, fail with the failing check), blocked (cannot be done: say why in summary). " +
-          "Put the commit (or URL) you built or tested in subject, each check with its verdict in checks, and links or files in evidence.",
+          "outcome: done (a build, writing, research), pass or fail (a verification or review: pass only if every check passed, fail with the failing check), partial (part of it is done: what is left in remaining), uncertain (it ran, but you cannot tell whether it works), blocked (cannot be done: say why in summary), stopped. Partial and uncertain never count as done. " +
+          "Put the commit (or URL) you built or tested in subject; each check with its verdict, the acceptance id it covers and its evidence strength (A a file or record made now, B output seen in this session, C recollection; a review's pass needs A or B) in checks; links or files in evidence; the one decision only your owner can make in ownerDecision.",
         input: StepReport,
         isWrite: false,
         risk: "low",
@@ -300,7 +359,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
           return report(ctx, { outcome: "blocked", summary: input.reason, ...(input.blockedBy ? { blockedBy: input.blockedBy } : {}) });
         },
       }),
-      ...(node.parentNodeId ? [] : [remember]),
+      ...(node.parentNodeId ? [] : [remember, skill]),
     ];
   }
   if (node.parentNodeId) return own;
@@ -324,7 +383,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   return [
     ...own,
     show,
-    ...helperTools(scope),
+    skill,
+    ...helperTools({ ...scope, dispatch: async (message) => void (await scope.dispatch(message)) }),
     ...planTools(scope),
     ...routineTools(scope),
     // My crew in a room with other people: ask someone there, through their lead (node/peer-requests.ts).
@@ -344,8 +404,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         model: z.string().max(120).optional().describe("Only when your owner names a model for the agent runs (as they wrote it, for example GPT 6.1 Sol)."),
         effort: z.string().max(20).optional().describe("Only when your owner names a thinking level (low, medium, high, extra high, max)."),
         context: z.enum(["default", "long_context"]).optional().describe("long_context when your owner asks for the long (1M) context window."),
-        kind: z.enum(STEP_KINDS).optional().describe("build (code), verify (an independent check of a build: give it after the build and verifies), write (docs, copy), research, or other. Defaults from the node's role."),
-        verifies: Handle.optional().describe("For a verify step: the node whose (latest) build step it checks. A failed check sends that build back for repair automatically, then this check runs again; steps after the check wait until it passes."),
+        kind: z.enum(STEP_KINDS).optional().describe("build (code), verify (an independent check of a build: give it after the build and verifies), review (an independent review of a build or writing by another node, judging each acceptance criterion), write (docs, copy), research, or other. Defaults from the node's role."),
+        verifies: Handle.optional().describe("For a verify or review step: the node whose (latest) build or writing step it checks. A failed check sends that work back for repair automatically, then this check runs again; steps after the check wait until it passes."),
       }).strict(),
       isWrite: false,
       risk: "low",
@@ -373,7 +433,11 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         if (target.parentNodeId) {
           // Your own helper works in its task room, by mention (node/helpers.ts).
           const room = await prisma.nodeRoom.findUniqueOrThrow({ where: { id: here!.roomId } });
-          const { message } = await postAsNode(scope, room, `@${here!.handle} ${input.brief}`, null, { data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } } });
+          const { message, routed } = await postAsNode(scope, room, `@${here!.handle} ${input.brief}`, null, { data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } } });
+          // Said as it is: a brief that woke nobody is in the room, and nothing more happened.
+          if (routed && !routed.woken.includes(target.id)) {
+            throw new ToolBlockedError(`Your brief is in “${room.title}”, but @${here!.handle} was not woken: ${notWoken(routed)}.`, "Tell your owner in one line. Ask again only with something new, or when they ask you to.");
+          }
           return toolOk(`Asked @${here!.handle} in “${room.title}”.`, { roomId: room.id, messageId: message.id });
         }
         // A step in this turn's plan, run in a crew: this one, the plan's when continuing it, else the crew you lead.

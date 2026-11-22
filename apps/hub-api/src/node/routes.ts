@@ -24,6 +24,7 @@ import { pausedNotice, stopNodeRuns } from "./sessions.js";
 import { registerSessionRoutes } from "./session-routes.js";
 import { saveSecret, SecretAnswer, SecretError, secretStuck, secretTarget } from "./node-secrets.js";
 import { createCrew, deleteNode, MAX_NODES, promoteHelper } from "./helpers.js";
+import { checkScope, editAsOwner, forgetMemory, KEY_CHARS, listMemories, MEMORY_CHARS, MEMORY_SCOPES, MemoryRefused, memoryView, rememberAsOwner, scopeTitles } from "./memory.js";
 import { stopPlans } from "./plans.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
@@ -50,7 +51,8 @@ import {
 import { CREW_TEMPLATES, NODE_TEMPLATES, nodeTemplate } from "./templates.js";
 import { registerOutbox } from "./outbox.js";
 import { registerRoutineRoutes } from "./routine-routes.js";
-import { stopCommand, stoppedLine, stopWork } from "./stop.js";
+import { steerConversation, stopCommand, stoppedLine, stopWork } from "./stop.js";
+import { GROUP_MODES, groupMode } from "./groups.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { registerLoginRoutes } from "./login-routes.js";
 import { registerTakeoverRoutes } from "./takeover-routes.js";
@@ -69,6 +71,7 @@ import { assignable, registerTaskAssignment, taskNodeWork } from "./task-assignm
 import { nodeNeedsInEnsemble, sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
 import { answerFromChat } from "./chat-answers.js";
 import { FileQuote, registerFileWorkspace, validateFileQuotes } from "./file-workspace.js";
+import { registerTraceRoutes } from "./trace-routes.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -161,6 +164,8 @@ async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom)
     lastMessageAt: room.lastMessageAt?.toISOString() ?? null,
     leadNodeIds: settings.leadNodeIds,
     pinned: settings.pinned,
+    // How a crew or a room answers a message that names several nodes (node/groups.ts).
+    ...(room.kind === "crew" || room.kind === "room" ? { mode: groupMode(room) } : {}),
     // A helper's task room: whose helper it is and where its parent was asked, so the site shows it there.
     ...(room.kind === "task" ? { helper: helperOf(room) } : {}),
     // A room with people: the space that holds its work, if linked (GET /api/node/rooms/:id/space for details).
@@ -376,6 +381,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   await registerTakeoverRoutes(app, nodeAccount);
   // A task given to a node or a crew from its owner field: the node, or the crew's lead, hears once (node/task-assignment.ts).
   registerTaskAssignment(app);
+  // A turn's trace and the decisions about it, for the node's owner only (node/trace.ts).
+  registerTraceRoutes(app, nodeAccount);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};
@@ -595,27 +602,69 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // What a node remembers (node/memory.ts): live memories first (pinned, then newest), then archived ones;
+  // `history=1` adds the revisions newer ones replaced.
   app.get("/api/node/nodes/:id/memory", async (request) => {
     const accountId = nodeAccount(request);
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
-    const rows = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
-    return { memories: rows.map((row) => ({ id: row.id, content: row.content, createdAt: row.createdAt.toISOString() })) };
+    const query = z.object({ history: z.enum(["0", "1", "true", "false"]).optional() }).parse(request.query ?? {});
+    return { memories: await listMemories(prisma, node, { history: query.history === "1" || query.history === "true" }) };
   });
 
+  const MemoryScope = z.enum(MEMORY_SCOPES);
+  const memoryFailure = (error: unknown) => (error instanceof MemoryRefused ? fail(error.status, error.message) : error);
+
+  /** The owner adds a memory; one with the key of a memory it has replaces that one (kept as history). */
   app.post("/api/node/nodes/:id/memory", async (request, reply) => {
     const accountId = nodeAccount(request);
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
-    const body = z.object({ content: z.string().min(1).max(500) }).strict().parse(request.body);
-    const row = await prisma.nodeMemory.create({ data: { userId: accountId, nodeId: node.id, content: body.content.trim() } });
-    return reply.code(201).send({ memory: { id: row.id, content: row.content, createdAt: row.createdAt.toISOString() } });
+    const body = z
+      .object({ content: z.string().trim().min(1).max(MEMORY_CHARS), key: z.string().max(KEY_CHARS).nullish(), scope: MemoryScope.optional(), scopeId: z.string().uuid().nullish(), pinned: z.boolean().optional() })
+      .strict()
+      .refine((value) => value.scopeId == null || value.scope !== undefined, "Send scope with scopeId.")
+      .parse(request.body);
+    try {
+      const scopeId = body.scope ? await checkScope(prisma, node, body.scope, body.scopeId) : null;
+      const saved = await rememberAsOwner(prisma, node, { ...body, scopeId });
+      return reply.code(201).send({ memory: memoryView(saved.memory, await scopeTitles(prisma, node, [saved.memory])), ...(saved.replaced ? { replaced: saved.replaced.id } : {}), archived: saved.archived });
+    } catch (error) {
+      throw memoryFailure(error);
+    }
   });
 
+  /** The owner edits a memory: new words make a revision that replaces it; a key, scope, pin or archive change applies in place. */
+  app.patch("/api/node/nodes/:id/memory/:memoryId", async (request) => {
+    const accountId = nodeAccount(request);
+    const { id, memoryId } = request.params as { id: string; memoryId: string };
+    const node = await ownNode(prisma, accountId, id);
+    const body = z
+      .object({
+        content: z.string().trim().min(1).max(MEMORY_CHARS).optional(),
+        key: z.string().max(KEY_CHARS).nullish(),
+        scope: MemoryScope.optional(),
+        scopeId: z.string().uuid().nullish(),
+        pinned: z.boolean().optional(),
+        archived: z.boolean().optional(),
+      })
+      .strict()
+      .refine((value) => Object.keys(value).length > 0, "Nothing to change.")
+      .refine((value) => value.scopeId === undefined || value.scope !== undefined, "Send scope with scopeId.")
+      .parse(request.body);
+    try {
+      const scopeId = body.scope ? await checkScope(prisma, node, body.scope, body.scopeId) : body.scopeId;
+      const memory = await editAsOwner(prisma, node, memoryId, { ...body, ...(scopeId !== undefined ? { scopeId } : {}) });
+      return { memory: memoryView(memory, await scopeTitles(prisma, node, [memory])) };
+    } catch (error) {
+      throw memoryFailure(error);
+    }
+  });
+
+  /** Deletes a memory with its earlier revisions. */
   app.delete("/api/node/nodes/:id/memory/:memoryId", async (request, reply) => {
     const accountId = nodeAccount(request);
     const { id, memoryId } = request.params as { id: string; memoryId: string };
     const node = await ownNode(prisma, accountId, id);
-    const deleted = await prisma.nodeMemory.deleteMany({ where: { id: memoryId, nodeId: node.id, userId: accountId } });
-    if (!deleted.count) throw fail(404, "That memory is not available.");
+    if (!(await forgetMemory(prisma, node, memoryId))) throw fail(404, "That memory is not available.");
     return reply.code(204).send();
   });
 
@@ -692,8 +741,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       title: z.string().min(1).max(80).optional(),
       leadNodeIds: z.array(z.string().uuid()).max(3).optional(),
       responsibility: z.string().max(300).nullable().optional(),
+      /** independent: each node a message names answers on its own, then one brings the answers together; coordinated (default): one answers, the lead coordinates. */
+      mode: z.enum(GROUP_MODES).optional(),
     }).strict().parse(request.body ?? {});
-    if ((body.title !== undefined || body.leadNodeIds !== undefined) && room.userId !== accountId) throw fail(403, "Only the person who made this room can rename it or pick its lead.");
+    if ((body.title !== undefined || body.leadNodeIds !== undefined || body.mode !== undefined) && room.userId !== accountId) throw fail(403, "Only the person who made this room can rename it, pick its lead or change how it answers.");
+    if (body.mode !== undefined && room.kind !== "crew" && room.kind !== "room") throw fail(400, "Only a crew or a room has a group mode.");
     // In a room with other people each person's lead is their own, and the steward is chosen by its sponsor (node/steward.ts).
     if (body.leadNodeIds !== undefined && room.kind === "room") throw fail(400, "Each person picks their own lead here; the room's steward is set with PUT /api/node/rooms/:id/steward.");
     const title = body.title?.trim();
@@ -711,6 +763,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       if (body.responsibility?.trim()) settings.responsibilities[accountId] = body.responsibility.trim();
       else delete settings.responsibilities[accountId];
     }
+    if (body.mode !== undefined) settings.mode = body.mode;
     const updated = await prisma.nodeRoom.update({
       where: { id: room.id },
       data: { ...(title ? { title } : {}), settings: settings as Prisma.InputJsonValue },
@@ -985,7 +1038,15 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       replyToId: z.string().uuid().optional(),
       files: z.array(z.string().uuid()).max(MESSAGE_FILES_MAX).optional(),
       fileQuotes: z.array(FileQuote).max(4).optional(),
+      /**
+       * What this message does to work going on here (node/steering.ts): interrupt stops your nodes' turn and they go
+       * on with this message; replace makes it new work, stopping what they started here (children "stop", the
+       * default) or keeping it on purpose ("keep"). Left out: a follow-up, or an amendment a turn takes while it works.
+       */
+      steering: z.enum(["interrupt", "replace"]).optional(),
+      children: z.enum(["stop", "keep"]).optional(),
     }).strict().parse(request.body);
+    if (body.children && body.steering !== "replace") throw fail(400, "children goes with steering: replace.");
     const text = stripLoneSurrogates(body.body).trim();
     // Files ride on a message by reference: they stay in the sender's Files (src/files).
     const files = await messageFiles(prisma, accountId, body.files ?? []);
@@ -1010,7 +1071,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       userId: accountId,
       authorKind: "human",
       body: text,
-      ...(replyTo || files.length || fileQuotes.length ? { data: { ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}), ...(fileQuotes.length ? { fileQuotes } : {}) } } : {}),
+      ...(replyTo || files.length || fileQuotes.length || body.steering
+        ? { data: { ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}), ...(fileQuotes.length ? { fileQuotes } : {}), ...(body.steering ? { steering: { kind: body.steering, ...(body.steering === "replace" ? { children: body.children ?? "stop" } : {}) } } : {}) } }
+        : {}),
       visibleTo,
       mentions: mentionsFor(text, members, visibleTo),
       clientId: body.clientId ?? null,
@@ -1026,7 +1089,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         if (await startOnYes(app, room, message)) return;
         // The owner's reply answers what a session here waits on, and leaves Needs me everywhere (node/chat-answers.ts).
         await answerFromChat(app, room, message).catch((error: unknown) => app.log.warn({ err: error, messageId: message.id }, "could not answer a session's request from the chat"));
-        await dispatchMessage(app, message);
+        // An interrupt or a replacement stops what it replaces first; the turns it wakes are told what stopped and what was kept.
+        const steered = body.steering && members.some((row) => row.nodeId && row.userId === accountId) ? await steerConversation(app, { room, accountId, message, kind: body.steering, children: body.children ?? "stop" }) : undefined;
+        await dispatchMessage(app, message, undefined, steered);
       });
     }
     // A person named in public hears of it privately, from their lead (node/room-events.ts).
@@ -1084,7 +1149,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
     const scope = z.object({ scope: z.enum(["room", "all"]).default("room") }).strict().parse(request.body ?? {}).scope;
     const stopped = await stopWork(app, room, accountId, scope);
-    return { stopped: stopped.turns + stopped.plans + stopped.runs, detail: stopped, line: stoppedLine(stopped) };
+    return { stopped: stopped.turns + stopped.plans + stopped.runs + stopped.helpers + stopped.recordings + stopped.commands, detail: stopped, line: stoppedLine(stopped) };
   });
 
   /** Deletes one of my own messages: its text goes, a "deleted" line stays so replies still make sense. */

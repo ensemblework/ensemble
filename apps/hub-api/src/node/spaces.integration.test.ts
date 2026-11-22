@@ -162,7 +162,8 @@ test("parity: a node can call every assistant tool but the two its session tools
     assert.equal(spec.function.parameters.properties?.space?.type, "string", `${spec.function.name} takes a space`);
   }
   const shown = seen[0]!.specs;
-  const hub = shown.filter((spec) => spec.name.startsWith("hub_"));
+  // hub_use_tool only names another tool: the tool it names takes the space.
+  const hub = shown.filter((spec) => spec.name.startsWith("hub_") && spec.name !== "hub_use_tool");
   assert.ok(hub.length > 50, "with toolsets off the model sees them");
   for (const spec of hub) assert.equal(spec.parameters.properties?.space?.type, "string", `${spec.name} takes a space`);
   for (const spec of shown.filter((row) => row.name.startsWith("node_"))) assert.equal(spec.parameters.properties?.space, undefined, `${spec.name} is the node's own`);
@@ -189,7 +190,8 @@ test("playbooks, personal skills, the write policy, Apply and Undo work for a no
   const turn = seen[0]!;
   assert.match(turn.transcript, /<guide name="Diagrams and flowcharts">/, "the message's playbooks are routed as for the assistant");
   assert.ok(turn.tools.includes("hub_create_diagram"), "and bring their tools");
-  assert.match(turn.system, /Release notes style \([0-9a-f-]{36}\): Short bullet points/, "enabled personal skills are in the instructions");
+  assert.match(turn.system, /\n- Release notes style \(your owner's skill\): Short bullet points, newest first\./, "an enabled personal skill its words call for is in the skills catalogue");
+  assert.doesNotMatch(turn.system, /Standing preferences Mira set/, "listed once, in the node's catalogue");
   assert.equal(await h.prisma.task.count({ where: { userId: mira.id, title: "Draw the release flow" } }), 0, "under preview nothing changes before Apply");
   const [held] = await receipts(node.id, room.id);
   assert.equal(held!.state, "awaiting_approval");

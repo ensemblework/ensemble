@@ -20,8 +20,11 @@
  * `apps/server/src/provider/acp` in pingdotgg/t3code, MIT License, Copyright (c) 2026 T3 Tools Inc.).
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { ENGINE_LABELS, type AcpEngine } from "@ensemble/shared-types";
+import { homeVariables, linkSignIn } from "../../subscriptions/agent-mcp.js";
 import { opencodeProgram } from "../../subscriptions/agent-apps.js";
 import { antigravityArgs, antigravityAuthLink, antigravityEnv, antigravityInstalled } from "../../subscriptions/antigravity.js";
 import { agentEnv, quickRun } from "../../subscriptions/detect.js";
@@ -35,7 +38,7 @@ import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
-import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
+import { judgeEngineCall, patchPaths, type EngineAnswer, type EngineCall } from "./judge.js";
 import { engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
@@ -53,6 +56,8 @@ export type AcpLaunch = {
   resume: "session/load" | "session/resume";
   /** The session mode in which the agent asks before acting, set when it starts in another. */
   askingMode?: string;
+  /** The person's own MCP servers are left out, as `ensembleMcpOnly` or `othersHome` asked (agent-mcp.ts). */
+  ownMcpOff?: boolean;
 };
 
 export type AcpLaunchInput = {
@@ -64,6 +69,17 @@ export type AcpLaunchInput = {
   model?: string | null;
   /** Variables for Ensemble's MCP server and the run. */
   extraEnv?: Record<string, string>;
+  /**
+   * Only Ensemble's MCP server, none of the person's own (an assistant turn with Ensemble's tools only, or a node's):
+   * Gemini CLI and Qwen Code take `--allowed-mcp-server-names` for it; the other agents have no such switch.
+   */
+  ensembleMcpOnly?: boolean;
+  /**
+   * A turn someone other than the person can steer: none of the person's own MCP servers on any agent. Those without
+   * a switch for it run with this folder of Ensemble's as their home (agent-mcp.ts `othersHome`), with none of the
+   * person's settings there and their sign-in reached in place.
+   */
+  othersHome?: string;
 };
 
 export type AcpAgent = {
@@ -104,16 +120,27 @@ export const OPENCODE_PERMISSIONS = {
   doom_loop: "ask",
 } as const;
 
-const geminiFlag = new Map<string, string>();
-/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code, built from it) from before it was renamed. */
-async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+const geminiHelp = new Map<string, Promise<string>>();
+/** A Gemini CLI's (or Qwen Code's, built from it) help, read once per program. */
+function geminiHelpText(found: HostLaunch): Promise<string> {
   const key = [found.program, ...found.args].join("\u0000");
-  const known = geminiFlag.get(key);
-  if (known) return known;
-  const help = await quickRun(found.program, [...found.args, "--help"], 15_000);
-  const flag = /--acp\b/.test(help.stdout) || !/--experimental-acp\b/.test(help.stdout) ? "--acp" : "--experimental-acp";
-  geminiFlag.set(key, flag);
-  return flag;
+  let known = geminiHelp.get(key);
+  if (!known) {
+    known = quickRun(found.program, [...found.args, "--help"], 15_000).then((help) => help.stdout);
+    geminiHelp.set(key, known);
+  }
+  return known;
+}
+
+/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code) from before it was renamed. */
+async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+  const help = await geminiHelpText(found);
+  return /--acp\b/.test(help) || !/--experimental-acp\b/.test(help) ? "--acp" : "--experimental-acp";
+}
+
+/** Only Ensemble's MCP server, where the turn asks for that and this Gemini CLI (or Qwen Code) takes the flag. */
+async function geminiMcpOnly(found: HostLaunch, input: AcpLaunchInput): Promise<string[]> {
+  return (input.ensembleMcpOnly || input.othersHome) && /--allowed-mcp-server-names\b/.test(await geminiHelpText(found)) ? ["--allowed-mcp-server-names", "ensemble"] : [];
 }
 
 /** The agent's program on the trusted PATH (an npm shim on Windows as Node and its script), or null. */
@@ -129,8 +156,15 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     launch: async (input) => {
       const found = await onPath("grok");
       if (!found) return null;
+      const env = agentEnv(input.extraEnv);
+      // Grok reads its settings, plugins and trusted folders from its home, and Cursor's and Claude Code's MCP servers from
+      // the home folder: both are Ensemble's for a turn someone else can steer, signed in with the person's own file.
+      if (input.othersHome) {
+        const auth = env.GROK_AUTH_PATH?.trim() || join(env.GROK_HOME?.trim() || join(homedir(), ".grok"), "auth.json");
+        Object.assign(env, homeVariables(input.othersHome), { GROK_HOME: join(input.othersHome, ".grok"), GROK_AUTH_PATH: auth });
+      }
       // `--permission-mode default` on the command line wins over a saved always-approve.
-      return { program: found.program, base: found.args, args: [...found.args, "--permission-mode", "default", "agent", "stdio"], env: agentEnv(input.extraEnv), authMethod: "cached_token", initializeMeta: { clientType: "extension" }, resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, "--permission-mode", "default", "agent", "stdio"], env, authMethod: "cached_token", initializeMeta: { clientType: "extension" }, resume: "session/load", ownMcpOff: Boolean(input.othersHome) };
     },
   },
   opencode: {
@@ -152,7 +186,14 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       });
       // A repository's own opencode.json, agents and plugins load only in a folder the person trusted.
       if (!input.trusted) env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
-      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, resume: "session/load" };
+      // A turn someone else can steer: OpenCode's settings (its global folder, `~/.opencode`, Claude Code's) come from
+      // Ensemble's home for it; its sign-ins and sessions stay in the person's data folder.
+      if (input.othersHome) {
+        const data = env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share");
+        delete env.OPENCODE_CONFIG;
+        Object.assign(env, homeVariables(input.othersHome), { XDG_CONFIG_HOME: join(input.othersHome, ".config"), OPENCODE_CONFIG_DIR: join(input.othersHome, ".config", "opencode"), XDG_DATA_HOME: data, OPENCODE_DISABLE_CLAUDE_CODE: "true" });
+      }
+      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, resume: "session/load", ownMcpOff: Boolean(input.othersHome) };
     },
   },
   "gemini-cli": {
@@ -167,7 +208,8 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["gemini-cli"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      const only = await geminiMcpOnly(found, input);
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...only], env: agentEnv(input.extraEnv), resume: "session/load", ownMcpOff: only.length > 0 };
     },
   },
   antigravity: {
@@ -179,7 +221,8 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     launch: async (input) => {
       const install = antigravityInstalled();
       if (!install) return null;
-      return { program: install.executable, base: [], args: antigravityArgs(), env: antigravityEnv(install, input.extraEnv), authMethod: "oauth-personal", resume: "session/resume", askingMode: "default" };
+      // Its home is always Ensemble's own (antigravity.ts), which holds no MCP server of the person's.
+      return { program: install.executable, base: [], args: antigravityArgs(), env: antigravityEnv(install, input.extraEnv), authMethod: "oauth-personal", resume: "session/resume", askingMode: "default", ownMcpOff: true };
     },
   },
   "mistral-vibe": {
@@ -191,9 +234,17 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     launch: async (input) => {
       const found = await onPath("vibe-acp");
       if (!found) return null;
+      const env = agentEnv(input.extraEnv);
+      // A turn someone else can steer: Vibe's settings, trusted folders and session logs are in Ensemble's home for it, with
+      // the person's key file reached there (a key in the system's keyring is read as always); their Mistral connectors stay off.
+      if (input.othersHome) {
+        const vibeHome = join(input.othersHome, ".vibe");
+        await linkSignIn(join(env.VIBE_HOME?.trim() || join(homedir(), ".vibe"), ".env"), join(vibeHome, ".env"));
+        Object.assign(env, { VIBE_HOME: vibeHome, VIBE_ENABLE_CONNECTORS: "false" });
+      }
       // Vibe's agents are its modes; `ask` asks before every tool, where the default `accept-edits` writes without asking.
       // A folder's own .vibe/ settings, agents and skills load only where the person trusted it in Vibe.
-      return { program: found.program, base: found.args, args: [...found.args], env: agentEnv(input.extraEnv), resume: "session/load", askingMode: "ask" };
+      return { program: found.program, base: found.args, args: [...found.args], env, resume: "session/load", askingMode: "ask", ownMcpOff: Boolean(input.othersHome) };
     },
   },
   "qwen-code": {
@@ -208,7 +259,8 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["qwen-code"].sandbox(process.platform) ?? []) : [];
-      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      const only = await geminiMcpOnly(found, input);
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model, ...only], env: agentEnv(input.extraEnv), resume: "session/load", ownMcpOff: only.length > 0 };
     },
   },
   "kimi-code": {
@@ -226,7 +278,14 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       const env = agentEnv(input.extraEnv);
       if (input.trusted) env.KIMI_CODE_TRUST_WORKSPACE = "1";
       else delete env.KIMI_CODE_TRUST_WORKSPACE;
-      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, authMethod: "login", resume: "session/load", askingMode: "default" };
+      // A turn someone else can steer: Kimi Code's settings, MCP servers and plugins are in Ensemble's home for it, with the
+      // person's sign-in (`kimi login`) reached there.
+      if (input.othersHome) {
+        const kimiHome = join(input.othersHome, ".kimi-code");
+        await linkSignIn(join(env.KIMI_CODE_HOME?.trim() || join(homedir(), ".kimi-code"), "credentials"), join(kimiHome, "credentials"));
+        env.KIMI_CODE_HOME = kimiHome;
+      }
+      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, authMethod: "login", resume: "session/load", askingMode: "default", ownMcpOff: Boolean(input.othersHome) };
     },
   },
 };
@@ -242,8 +301,9 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 /**
  * An ACP tool call in the judge's terms, one call per path it touches. Agents name things their own
  * way: a command in `rawInput.command` (a string or argv) or a backticked title, a path in
- * `locations`, a diff's `path` or `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`),
- * and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * `locations`, a diff's `path`, `rawInput` (`path`, `file_path`, `filePath`, `absolute_path`) or
+ * the files a patch in it names, and an MCP tool as `server: tool`, `server-tool` or `mcp__server__tool`.
+ * A read or a change it cannot be located by carries what the agent said of it (`described`).
  */
 export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineCall[] {
   const raw = record(toolCall.rawInput);
@@ -259,10 +319,12 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
         str(raw.filePath),
         str(raw.fileName),
         str(raw.absolute_path),
+        ...Object.values(raw).flatMap((value) => patchPaths(value)),
         ...extra,
       ].filter((path): path is string => Boolean(path)),
     ),
   ];
+  const described = [title, JSON.stringify(raw)].filter((part) => part && part !== "{}").join(" ").slice(0, 1500);
   switch (toolCall.kind) {
     case "execute": {
       const argv = Array.isArray(raw.command) ? raw.command.filter((item): item is string => typeof item === "string") : [];
@@ -274,12 +336,16 @@ export function acpCalls(toolCall: ToolCall, announced?: string | null): EngineC
     case "delete":
     case "move": {
       const paths = pathsFrom(quoted);
-      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: {} }];
+      return paths.length ? paths.map((path) => ({ tool: "Write", input: { file_path: path } })) : [{ tool: "Write", input: { described } }];
     }
-    case "read":
+    case "read": {
+      const paths = pathsFrom();
+      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: { described } }];
+    }
+    // A search that names no folder looks in the agent's working folder.
     case "search": {
       const paths = pathsFrom();
-      return paths.length ? paths.map((path) => ({ tool: "Read", input: { file_path: path } })) : [{ tool: "Read", input: {} }];
+      return [{ tool: "Grep", input: paths.length ? { paths } : {} }];
     }
     case "fetch":
       return [{ tool: "WebFetch", input: { url: str(raw.url) ?? quoted ?? title } }];

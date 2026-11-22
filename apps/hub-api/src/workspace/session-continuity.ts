@@ -11,7 +11,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { isCodeEngine } from "@ensemble/shared-types";
-import { continuesSessionOf } from "./sessions.js";
+import { continuesSessionOf, startsOwnSession } from "./sessions.js";
 
 /** The agent session a run started or resumed, as its engine reported it. */
 export async function engineSessionOf(prisma: Pick<PrismaClient, "workspaceEvent">, jobId: string): Promise<string | null> {
@@ -24,11 +24,11 @@ export async function engineSessionOf(prisma: Pick<PrismaClient, "workspaceEvent
  * The agent session a run continuing `continueFromJobId` resumes: the nearest earlier run of the same agent
  * session that recorded one. Null when there is none to resume (another agent; a session that was deleted).
  */
-export async function sessionToResume(prisma: Pick<PrismaClient, "workspaceJob" | "workspaceEvent">, job: { continueFromJobId: string | null; provider: string | null; context?: unknown }): Promise<string | null> {
-  let child: { provider: string | null; context: unknown } = { provider: job.provider, context: job.context ?? null };
+export async function sessionToResume(prisma: Pick<PrismaClient, "workspaceJob" | "workspaceEvent">, job: { continueFromJobId: string | null; provider: string | null; model?: string | null; context?: unknown }): Promise<string | null> {
+  let child: { provider: string | null; model?: string | null; context: unknown } = { provider: job.provider, model: job.model ?? null, context: job.context ?? null };
   let id = job.continueFromJobId;
   for (let hops = 0; id && hops < 20; hops += 1) {
-    const run: { provider: string | null; context: unknown; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { provider: true, context: true, continueFromJobId: true } });
+    const run: { provider: string | null; model: string | null; context: unknown; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { provider: true, model: true, context: true, continueFromJobId: true } });
     if (!run || !continuesSessionOf(child, run)) return null;
     const session = await engineSessionOf(prisma, id);
     if (session) return session;
@@ -55,11 +55,11 @@ async function engineRestartOf(prisma: Pick<PrismaClient, "workspaceEvent">, job
  */
 export async function sessionRestartOf(
   prisma: Pick<PrismaClient, "workspaceJob" | "workspaceEvent">,
-  job: { id: string; kind: string; provider: string | null; continueFromJobId: string | null; context: unknown },
+  job: { id: string; kind: string; provider: string | null; model?: string | null; continueFromJobId: string | null; context: unknown },
 ): Promise<SessionRestart | null> {
   if (job.kind !== "code" || !isCodeEngine(job.provider) || !job.continueFromJobId) return null;
-  const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, context: true } });
-  if (!previous || previous.provider !== job.provider) return null;
+  const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, model: true, context: true } });
+  if (!previous || startsOwnSession(job, previous)) return null;
   const mine = await engineSessionOf(prisma, job.id);
   if (!mine) return null;
   if (!continuesSessionOf(job, previous)) return "deleted";

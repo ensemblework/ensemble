@@ -22,7 +22,8 @@ const { RunProfile } = await import("@ensemble/shared-types");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
-type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void> };
+/** `again`: the calls are made again after their results too, for a turn that keeps working step after step. `waitAfter`: slow once the calls have run. */
+type Step = { calls?: Call[]; text?: string; then?: string; wait?: Promise<void>; waitAfter?: Promise<void>; again?: boolean };
 type Seen = { slug: string; transcript: string; system: string; tools: string[] };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
@@ -37,17 +38,19 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
   const step = script(current);
-  if (step.wait && !second) {
+  const slow = second ? step.waitAfter : step.wait;
+  if (slow) {
     // A slow model: the turn is in flight until the test lets it go (or it is aborted).
-    await Promise.race([step.wait, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
+    await Promise.race([slow, new Promise<void>((resolve) => args.signal?.addEventListener("abort", () => resolve(), { once: true }))]);
     if (args.signal?.aborted) {
       const error = new Error("aborted");
       error.name = "AbortError";
       throw error;
     }
   }
-  const calls = second ? [] : (step.calls ?? []);
-  const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
+  const later = second && !step.again;
+  const calls = later ? [] : (step.calls ?? []);
+  const text = later ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
     text,
     toolCalls: calls.map((call, index) => ({ id: `call-${randomBytes(4).toString("hex")}-${index}`, name: call.name, arguments: JSON.stringify(call.arguments) })),
@@ -121,6 +124,15 @@ async function crewOf(user: HttpUser, templates: string[]) {
 const report = (outcome: "done" | "pass" | "fail" | "blocked", summary: string, extra: Record<string, unknown> = {}): Step => ({ calls: [{ name: "node_step_report", arguments: { outcome, summary, ...extra } }], then: "(no reply)" });
 const delegate = (to: string, brief: string, extra: Record<string, unknown> = {}): Call => ({ name: "node_delegate", arguments: { to, brief, ...extra } });
 const planCard = async (user: HttpUser, roomId: string) => (await read(user, roomId)).filter((row) => row.kind === "plan").at(-1)!;
+/** The owner's one-press card for a stuck step (docs/35 §6.4), answered: approve tries again, discard finishes without it. */
+async function decideStuck(user: HttpUser, roomId: string, decision: "approve" | "discard") {
+  const card = (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").at(-1);
+  assert.ok(card, "the owner has the card for the stuck step");
+  const answered = await user.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision } });
+  assert.equal(answered.statusCode, 200, answered.body);
+  await settleTurns();
+  return card;
+}
 
 test("F1: a failed check never releases the next feature; the build is repaired, checked again, then the next feature runs", async () => {
   const kofi = await person("Kofi");
@@ -176,7 +188,8 @@ test("prose is not a result: the worker is asked once to report, then the step i
   const kofi = await person("Kofi");
   const { crew } = await crewOf(kofi, ["manager", "researcher", "docs-writer"]);
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("look into it")) return { calls: [delegate("researcher", "Research it.", { kind: "research" }), delegate("docs", "Write it up.", { after: ["researcher"], kind: "write" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("look into it and write it up")) return { calls: [delegate("researcher", "Research it.", { kind: "research" }), delegate("docs", "Write it up.", { after: ["researcher"], kind: "write" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
     if (turn.slug === "manager") return { text: "The research was not reported, so the write-up waits." };
     if (turn.slug === "researcher") return { text: "I looked around and it seems fine." };
     return { text: "unexpected" };
@@ -184,10 +197,16 @@ test("prose is not a result: the worker is asked once to report, then the step i
   await say(kofi, crew.id, "@manager look into it and write it up");
   assert.deepEqual(seen.map((row) => row.slug), ["manager", "researcher", "researcher", "manager"]);
   assert.match(seen[2]!.transcript, /not reported yet\. Report it now with node_step_report/);
+  // The unreported step is stuck: its lead had its one re-plan turn, and the plan waits for its owner's card.
+  assert.match(seen[3]!.transcript, /one re-plan turn[\s\S]*@researcher \(research, blocked, unverified\)/);
+  assert.equal((await planCard(kofi, crew.id)).data.status, "running");
+  const card = await decideStuck(kofi, crew.id, "discard");
+  assert.match(card.body, /@researcher's step in @manager's plan is stuck\. Not reported \(prose only\)[\s\S]*Try it again, or finish the plan without it\?/);
   const plan = await planCard(kofi, crew.id);
   assert.deepEqual(plan.data.steps.map((row: { status: string; outcome: string }) => [row.status, row.outcome]), [["blocked", "unverified"], ["skipped", "unknown"]]);
   assert.equal(plan.data.status, "partially_completed");
-  assert.match(seen[3]!.transcript, /held by @researcher's step/);
+  assert.match(seen[4]!.transcript, /held by @researcher's step/);
+  assert.match(seen[4]!.transcript, /your owner chose to finish without it/);
 });
 
 test("a verification that passes with a skipped check is refused, and the tool asks for a consistent report", async () => {
@@ -195,7 +214,7 @@ test("a verification that passes with a skipped check is refused, and the tool a
   const { crew } = await crewOf(kofi, ["manager", "feature-engineer", "tester"]);
   let tries = 0;
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("check it")) return { calls: [delegate("builder", "Build.", { kind: "build" }), delegate("tester", "Check it.", { after: ["builder"], kind: "verify" })], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("build it and check it")) return { calls: [delegate("builder", "Build.", { kind: "build" }), delegate("tester", "Check it.", { after: ["builder"], kind: "verify" })], then: "Planned." };
     if (turn.slug === "manager") return { text: "Reported." };
     if (turn.slug === "builder") return report("done", "Built.", { subject: { commit: "abc1234" } });
     if (turn.slug === "tester") {
@@ -251,6 +270,46 @@ test("the node keeps answering while its own work runs, and the work goes on", a
   assert.equal(nodeMessages.length, 2, "one answer to the question and one result: no chatter");
 });
 
+test("a work turn that pauses at its checkpoint leaves its step working, led by the pause, until its owner says to go on", async () => {
+  // The owner's own API key has no step cap: a long turn pauses at its checkpoint (docs/11, Turn limits).
+  process.env.ENSEMBLE_LOOP_CONFIG = JSON.stringify({ checkpointSteps: 10 });
+  try {
+    const mira = await person("Mira");
+    const { node, room } = await createNode(mira, "researcher");
+    await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "openai", model: "gpt-test" } });
+    let requests = 0;
+    let workId = "";
+    script = (turn) => {
+      if (turn.slug !== "researcher") return { text: "unexpected" };
+      if (turn.transcript.includes("Your owner adds, for this step: continue")) return report("done", "Compared Obsidian, Notion and Bear.");
+      if (turn.transcript.includes("Your step in @researcher's plan (your own work")) {
+        requests += 1;
+        return turn.tools.length ? { calls: [{ name: "hub_list_tasks", arguments: { query: `note app ${requests}` } }], again: true } : { text: "Compared Obsidian and Notion; Bear is left." };
+      }
+      if (turn.transcript.includes("Your own work ended")) return { text: "The comparison is ready: Obsidian, Notion and Bear compared." };
+      if (/\] continue$/m.test(turn.transcript)) return { calls: [{ name: "node_work_steer", arguments: { work: workId, note: "continue" } }], then: "(no reply)" };
+      if (turn.transcript.includes("compare three note apps")) return { calls: [{ name: "node_work_start", arguments: { title: "Compare note apps", brief: "Compare three note apps.", kind: "research" } }], then: "(no reply)" };
+      return { text: "unexpected" };
+    };
+    await say(mira, room.id, "please compare three note apps for me");
+    assert.equal(requests, 10, "nine steps of work, then the checkpoint's answer");
+    let work = await planCard(mira, room.id);
+    workId = work.id;
+    assert.equal(work.data.status, "running");
+    assert.equal(work.data.steps[0].status, "working", "a paused turn is not a finished step");
+    assert.equal(work.data.steps[0].progress, "I paused after 10 steps. Say continue to go on. Compared Obsidian and Notion; Bear is left.");
+    assert.ok(!seen.some((row) => row.transcript.includes("not reported yet")), "nor a reply in prose: it is not asked to report");
+
+    await say(mira, room.id, "continue");
+    work = await planCard(mira, room.id);
+    assert.equal(work.data.status, "succeeded");
+    assert.deepEqual([work.data.steps[0].status, work.data.steps[0].result], ["done", "Compared Obsidian, Notion and Bear."]);
+    assert.ok((await read(mira, room.id)).some((row) => row.body.startsWith("The comparison is ready")));
+  } finally {
+    delete process.env.ENSEMBLE_LOOP_CONFIG;
+  }
+});
+
 test("a newer message from the owner merges with a turn that has not acted yet", async () => {
   const mira = await person("Mira");
   const { node, room } = await createNode(mira, "assistant");
@@ -275,6 +334,31 @@ test("a newer message from the owner merges with a turn that has not acted yet",
   assert.deepEqual(replies.map((row) => row.body), ["Both: eggs and milk."], "one answer covering both messages");
   const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
   assert.match(turns[0]!.error ?? "", /Merged into the next turn/);
+  assert.deepEqual(turns.map((row) => [row.status, row.outcome]), [["done", "coalesced"], ["done", "done"]], "the merged turn's real outcome is kept");
+});
+
+test("a turn that has only read (a skill) still merges with a newer message from the owner", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  let release: () => void = () => undefined;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  script = (turn) =>
+    turn.transcript.includes("forget that")
+      ? { text: "Forgotten: nothing is being built." }
+      : { calls: [{ name: "node_skill", arguments: { name: "planning" } }], waitAfter: slow, then: "Building the site now." };
+  await post(mira, room.id, "build me a site for the bakery");
+  const firstTurn = () => h.prisma.nodeTurn.findFirst({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+  const reading = async () => ((await firstTurn())?.receipts ?? []) as Array<{ name: string; state: string }>;
+  for (let i = 0; i < 150 && !(await reading()).some((row) => row.name === "node_skill"); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual((await reading()).map((row) => [row.name, row.state]), [["node_skill", "ok"]], "the first turn read a skill and is still thinking");
+  await post(mira, room.id, "forget that");
+  for (let i = 0; i < 150 && (await firstTurn())?.outcome !== "coalesced"; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await settleTurns();
+  const replies = (await read(mira, room.id)).filter((row) => row.authorNodeId === node.id);
+  assert.deepEqual(replies.map((row) => row.body), ["Forgotten: nothing is being built."], "reading changes nothing: the newer message takes the turn over");
+  const turns = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(turns.map((row) => row.outcome), ["coalesced", "done"]);
 });
 
 test("a newer message never stops a turn bound to something else (an approval); a merged turn's update goes on with the turn that answers", async () => {
@@ -380,6 +464,8 @@ test("stop needs no model: it stops the conversation's work and says what stoppe
   await settleTurns();
   const after = (await read(mira, room.id)).slice(before);
   assert.deepEqual(after.map((row) => [row.authorKind, row.body]), [["human", "stop"], ["system", "Stopped the reply in progress. What was already done stays."]]);
+  const stopped = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  assert.deepEqual([stopped.status, stopped.outcome], ["done", "cancelled"], "a stopped reply keeps its real outcome");
 });
 
 test("an outbox effect delivered twice starts one turn; a restart re-runs a turn that had not acted and resumes one that had", async () => {
@@ -407,7 +493,11 @@ test("an outbox effect delivered twice starts one turn; a restart re-runs a turn
   const cut = await h.prisma.nodeTurn.create({
     data: { userId: kofi.id, nodeId: step.nodeId, roomId: crew.id, reason: "plan", status: "running", note: "Your step: research it.", planId: plan.id, planStep: step.id, lane: `work:${plan.id}:${step.id}` },
   });
-  await h.prisma.nodeStep.update({ where: { missionId_id: { missionId: plan.id, id: step.id } }, data: { status: "working", outcome: "unknown", nudged: false, endedAt: null } });
+  // As a retry would: a new attempt (the first one's result was taken once and stays).
+  await h.prisma.nodeStep.update({
+    where: { missionId_id: { missionId: plan.id, id: step.id } },
+    data: { status: "working", outcome: "unknown", nudged: false, endedAt: null, attempt: 2, attempts: [...step.attempts, { n: 2, reason: "retry", outcome: "unknown", summary: null, startedAt: new Date().toISOString(), endedAt: null }] },
+  });
   await h.prisma.nodeMission.update({ where: { id: plan.id }, data: { status: "running" } });
   await recoverTurns(h.app);
   await settleTurns();

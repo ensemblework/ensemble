@@ -1,6 +1,7 @@
 /**
  * The capture service (ensemble-node design B19): screenshots and video of web pages, Electron
- * apps, other desktop apps on a private virtual display, and terminal transcripts and screens,
+ * apps, other desktop apps on a private virtual display, terminal transcripts and screens, and the
+ * owner's real screen (through desktop control, `DesktopCapture`, always held for their preview),
  * written into the caller's evidence folder with the checks that come before sending them. Its
  * callers, the node's device tools and a coding agent's run MCP server, reach it through
  * `capture/tools.ts`; a node's terminal screens come through `htmlScreenshot`.
@@ -114,8 +115,16 @@ type AppEntry = {
   ended: string | null;
 };
 
+/** The owner's real screen (desktop/control/capture.ts): a screenshot or a recording into an evidence folder, held for their preview. */
+export type DesktopCapture = {
+  screenshot(evidenceDir: string, name?: string): Promise<MediaFile>;
+  video(evidenceDir: string, seconds: number, name?: string): Promise<MediaFile>;
+};
+
 export type CaptureServiceOptions = {
   broker: BrowserBroker;
+  /** Capture of the owner's real screen; absent where this runtime has none. */
+  desktop?: () => DesktopCapture | null;
   dataHome?: string;
   leases?: LeaseTable;
   log?: (message: string) => void;
@@ -224,8 +233,11 @@ export class CaptureService {
         return this.guiScreenshot(request, target, name);
       case "terminal":
         return this.terminalCapture(request, target, name);
-      case "desktop":
-        throw desktopUnsupported();
+      case "desktop": {
+        const desktop = this.options.desktop?.();
+        if (!desktop) throw desktopUnsupported();
+        return desktop.screenshot(request.evidenceDir, name);
+      }
       default:
         throw new CaptureError("bad_input", "Unknown capture target.");
     }
@@ -355,7 +367,12 @@ export class CaptureService {
     const mode = input.mode ?? "realtime";
     if (mode === "frames" && input.steps?.length) throw new CaptureError("bad_input", "Steps run in real time: use mode realtime for a recorded flow, frames for an animation.");
     const target = input.target;
-    if (target.kind === "desktop") throw desktopUnsupported();
+    if (target.kind === "desktop") {
+      const desktop = this.options.desktop?.();
+      if (!desktop) throw desktopUnsupported();
+      if (mode === "frames" || input.steps?.length) throw new CaptureError("not_supported", "Your screen is recorded in real time, without steps: drive it with the desktop tools while desktop_record runs.");
+      return desktop.video(request.evidenceDir, durationMs / 1000, input.name);
+    }
     if (target.kind === "gui") return this.guiVideo(request, target, durationMs, input);
     const choice = chooseVideoEncoder(await findFfmpegs());
     if (!choice) throw new CaptureError("unavailable", "No video encoder on this computer. Run `ensemble capture setup`.");
@@ -779,7 +796,7 @@ function pageName(url: string): string {
 }
 
 function desktopUnsupported(): CaptureError {
-  return new CaptureError("not_supported", "Capturing your real screen is not supported yet. When it is, it will ask for your consent each time (the desktop portal on Wayland, Screen Recording permission on macOS).");
+  return new CaptureError("not_supported", "Capturing your real screen works on Linux, through the desktop portal, which asks the owner the first time, and on macOS in the Ensemble app, with its Screen Recording permission.");
 }
 
 function sleep(ms: number): Promise<void> {

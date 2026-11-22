@@ -33,8 +33,9 @@ const where = {
 export const CAPTURE_TOOLS = [
   {
     name: "capture_screenshot",
+    readOnly: true,
     description:
-      "Save a screenshot to this work's evidence folder. Targets: web (a URL or tab; viewport, device, fullPage, element), electron and gui (an app from capture_app_start, on a private virtual display), terminal (a transcript rendered as PNG or HTML, secrets hidden). Password and code fields are masked; an image that may show a secret, or a desktop app's window, comes back held for the owner to preview.",
+      "Save a screenshot to this work's evidence folder. Targets: web (a URL or tab; viewport, device, fullPage, element), electron and gui (an app from capture_app_start, on a private virtual display), terminal (a transcript rendered as PNG or HTML, secrets hidden), desktop (the owner's real screen, through desktop control on Linux; the computer asks them the first time). Password and code fields are masked; an image that may show a secret, a desktop app's window or the owner's screen comes back held for the owner to preview.",
     input: z
       .object({
         target: z.enum(["web", "electron", "gui", "terminal", "desktop"]),
@@ -51,7 +52,7 @@ export const CAPTURE_TOOLS = [
   {
     name: "capture_video",
     description:
-      "Record a video into the evidence folder, with a poster frame and a small preview. mode realtime records as it happens (optionally running steps: click, type, press, wait, scroll); mode frames steps time frame by frame for smooth, exact animation video (web and Electron). MP4 where this computer has an H.264 encoder, else WebM. Two minutes at most unless the owner allows more.",
+      "Record a video into the evidence folder, with a poster frame and a small preview. mode realtime records as it happens (optionally running steps: click, type, press, wait, scroll); mode frames steps time frame by frame for smooth, exact animation video (web and Electron). MP4 where this computer has an H.264 encoder, else WebM. Two minutes at most unless the owner allows more. target desktop records the owner's real screen in real time, without steps, held for their preview.",
     input: z
       .object({
         target: z.enum(["web", "electron", "gui", "desktop"]),
@@ -83,9 +84,10 @@ export const CAPTURE_TOOLS = [
       .strict(),
   },
   { name: "capture_app_stop", description: "Stop an app started with capture_app_start, and its virtual display. Returns its last output.", input: z.object({ app: z.string().max(40) }).strict() },
-  { name: "capture_apps", description: "The apps this work has started for capture, with their windows and whether they still run.", input: z.object({}).strict() },
+  { name: "capture_apps", readOnly: true, description: "The apps this work has started for capture, with their windows and whether they still run.", input: z.object({}).strict() },
   {
     name: "capture_check",
+    readOnly: true,
     description:
       "Checks to run before sending media, in the report's check shape. app: still running after aliveSec, a window open (with title), no crash in its output. image: the screenshot is not blank. text: the page (url, tab or electron app) shows every expected string.",
     input: z
@@ -103,6 +105,6 @@ export const CAPTURE_TOOLS = [
       })
       .strict(),
   },
-  { name: "capture_status", description: "What this computer can capture: the browser, video encoders, virtual displays, and for each target whether screenshots and video work here.", input: z.object({}).strict() },
+  { name: "capture_status", readOnly: true, description: "What this computer can capture: the browser, video encoders, virtual displays, and for each target whether screenshots and video work here.", input: z.object({}).strict() },
 ] as const satisfies readonly ToolSpec[];
 

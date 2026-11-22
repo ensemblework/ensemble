@@ -15,7 +15,13 @@
  * folder it began in and every agent's app groups its sessions by folder. So a chat's folder takes a new
  * name only while no session of the chat began there (`chatFolder`). Sessions unused for 30 days (a
  * node's: 7, `keepDays`) are dropped with their folders and the agent's own history of them, and a
- * session another one replaced is dropped at once.
+ * session another one replaced is dropped at once. A turn notes its session before the agent has the
+ * message (`takeSession`), so when this computer restarts mid-turn, the turn goes on in that session.
+ *
+ * Grok Build, Kimi Code and Mistral Vibe keep a session in their home folder, and a turn someone other than the
+ * person can steer runs them in Ensemble's home for them (`othersHome`): a session goes on only in the home it
+ * was made in (`home` on the entry). A turn in the other home starts a new session there, and the earlier one is
+ * kept with the chat's retired sessions, to be deleted with the chat from whichever home holds it.
  */
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -44,9 +50,15 @@ export const ROTATE_MESSAGES = 80;
  * 0.8.0, also those someone used outside Ensemble; now what they said there is brought in and the session goes
  * on, subscriptions/outside.ts); they are no longer resumed, and are deleted with the chat. `id` is empty when
  * only those remain, or when the chat has a folder and no session yet.
+ * `taking`: the session a turn here began in, noted before the agent had the message (`takeSession`) and replaced
+ * when the turn ends; left only when this computer's runtime stopped mid-turn (`lookSession`).
  */
-type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string };
+type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[]; dir?: string; home?: SessionHome; taking?: Taking };
+/** `position`: the turn's place in the chat; `text`: the instructions it began with, for an agent that keeps the first message's; `home`: where it was made. */
+type Taking = { agent: SubscriptionProvider; id: string; position?: number; at: number; instructions: string; text?: string; home?: SessionHome };
 export type SessionUsage = { in: number; out: number };
+/** The home a session was made in, for an agent that keeps sessions there: the person's own, or Ensemble's for turns others can steer. */
+export type SessionHome = "own" | "others";
 type Store = Record<string, Entry>;
 
 const file = () => join(stateDir(), "assistant-sessions.json");
@@ -83,11 +95,19 @@ async function write(store: Store): Promise<void> {
   await rename(temporary, path);
 }
 
-/** What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's). */
-export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number };
+function withoutTaking(entry: Entry): Entry {
+  const { taking: _taking, ...rest } = entry;
+  return rest;
+}
 
 /**
- * The session to resume for this chat: the same agent, where the chat was when it last ran, and not
+ * What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's).
+ * `home`: where it was made, when the store knows (an entry from before homes were kept has none).
+ */
+export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number; home?: SessionHome };
+
+/**
+ * The session to resume for this chat: the same agent, the chat not past where it left it, and not
  * past `ROTATE_MESSAGES`. `perTurn`: the agent takes the instructions with every turn (Claude Code's
  * system prompt, Codex's base instructions). For the others, a session whose instructions the store
  * has as text is resumed with an update (`instructionsUpdate`); an older entry with only a hash, on a
@@ -99,22 +119,59 @@ export async function findSession(key: string, agent: SubscriptionProvider, inst
 
 /**
  * Why the chat's session of this agent is not resumed (workspace/engines/session-restart.ts): unused for its
- * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), or
- * an older entry's instructions changed (`instructions`).
+ * keeping days (`expired`), the chat moved on without it (`moved`), past `ROTATE_MESSAGES` (`rotated`), an
+ * older entry's instructions changed (`instructions`), or it was made in the other home (`audience`: the turn
+ * is one someone else can steer and the session the person's own, or the other way round). A session ahead of
+ * the chat is resumed: it took an exchange the chat keeps as failed (the agent answered, and the turn failed
+ * after), so it misses nothing.
  */
-export type Declined = "expired" | "moved" | "rotated" | "instructions";
+export type Declined = "expired" | "moved" | "rotated" | "instructions" | "audience";
 
-/** `findSession`, and why the chat's session of this agent is not resumed when it has one. */
-export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<{ found: Found | null; declined?: Declined }> {
+/**
+ * The chat's session as a turn here left it when this computer's runtime stopped mid-turn (it restarted, `taking`):
+ * nothing after was saved, so the session that took that turn, past its message, is the one the turn's continuation
+ * and the chat's next turn go on in. How many prompts it holds is not known, so nothing in it is brought in as said
+ * in the agent's own app (outside.ts).
+ */
+function cutOff(entry: Entry, taking: Taking): Entry {
+  const rest = withoutTaking(entry);
+  const same = taking.id === rest.id && taking.agent === rest.agent;
+  return {
+    ...rest,
+    agent: taking.agent,
+    id: taking.id,
+    instructions: taking.instructions,
+    at: taking.at,
+    next: taking.position === undefined ? rest.next : taking.position + 2,
+    from: same ? rest.from : taking.position,
+    text: taking.text,
+    usage: same ? rest.usage : undefined,
+    prompts: undefined,
+    // The home the session that took the turn was made in; unknown for a note from before homes were kept.
+    home: taking.home ?? (same ? rest.home : undefined),
+  };
+}
+
+/**
+ * `findSession`, and why the chat's session of this agent is not resumed when it has one. `followUp`: another
+ * message of the turn at `position` (`resume: "only"`), which only the session that took that turn may take.
+ * `home`: the home the turn runs the agent in, for an agent that keeps sessions there; a session made in the
+ * other is not resumed, and is named (`retire`) to keep with the chat's retired sessions.
+ */
+export function lookSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number, followUp = false, home?: SessionHome): Promise<{ found: Found | null; declined?: Declined; retire?: string }> {
   return serial(async () => {
-    const entry = (await read())[key];
+    const stored = (await read())[key];
+    const entry = stored?.taking ? cutOff(stored, stored.taking) : stored;
     if (!entry || !entry.id || entry.agent !== agent) return { found: null };
+    if (home && entry.home && entry.home !== home) return { found: null, declined: "audience", retire: entry.id };
     if (Date.now() - entry.at >= keepMs(entry)) return { found: null, declined: "expired" };
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
-    if (position !== undefined && entry.next !== undefined && entry.next !== position) return { found: null, declined: "moved" };
+    if (position !== undefined && entry.next !== undefined && position > entry.next) return { found: null, declined: "moved" };
+    // A session that did not take the turn (its turn ran elsewhere, or could not keep its session) would miss it.
+    if (followUp && position !== undefined && entry.next !== position + 2) return { found: null, declined: "moved" };
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return { found: null, declined: "rotated" };
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return { found: null, declined: "instructions" };
-    return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) } };
+    return { found: { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}), ...(entry.home ? { home: entry.home } : {}) } };
   });
 }
 
@@ -147,10 +204,10 @@ export function instructionsUpdate(before: string, now: string): string | null {
 }
 
 /**
- * `retire`: the session this one replaces was used outside Ensemble: kept, unresumed, until the chat is deleted.
- * `dir`: the chat's own folder the turn ran in (`chatFolder`).
+ * `retire`: the session this one replaces is kept, unresumed, until the chat is deleted (one made in the other home).
+ * `dir`: the chat's own folder the turn ran in (`chatFolder`). `home`: the home the session was made in.
  */
-export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null; prompts?: number | null; retire?: string; dir?: string };
+export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null; prompts?: number | null; retire?: string; dir?: string; home?: SessionHome };
 
 /**
  * Remembers the chat's session after a turn, and drops sessions unused for their keeping days, and the
@@ -169,7 +226,9 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
         old.push([other, entry, true]);
       }
     }
-    const before = store[key];
+    const stored = store[key];
+    const taking = stored?.taking;
+    const before = stored ? withoutTaking(stored) : undefined;
     const sameAgent = before?.agent === agent;
     const retiring = Boolean(before && sameAgent && opts.retire && before.id === opts.retire);
     // Another session took the chat's place: the old one would only clutter the agent's app (one used outside
@@ -177,6 +236,8 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
     // another agent they go with the old one. An entry with no session yet (`chatFolder`) only names the folder.
     if (before && !sameAgent && (before.id || before.retired?.length)) old.push([key, before, false]);
     else if (before && before.id && before.id !== id && !retiring) old.push([key, { ...before, retired: undefined }, false]);
+    // The session a turn here was cut off in, when another one goes on in its place, goes the same way.
+    if (before && taking && taking.id !== id && taking.id !== before.id) old.push([key, { ...before, agent: taking.agent, id: taking.id, retired: undefined }, false]);
     const retired = sameAgent ? [...(before?.retired ?? []), ...(retiring ? [before!.id] : [])].filter((one) => one && one !== id) : [];
     const continued = before && before.id === id;
     const from = continued ? before.from : opts.next === undefined ? undefined : Math.max(0, opts.next - 2);
@@ -196,6 +257,7 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
       ...(typeof opts.prompts === "number" ? { prompts: opts.prompts } : {}),
       ...(retired.length ? { retired } : {}),
       ...(dir && dir !== key ? { dir } : {}),
+      ...(opts.home ? { home: opts.home } : {}),
     };
     await write(store);
     return old;
@@ -208,15 +270,44 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
  * Notes how many prompts the chat's session holds after a turn that failed or was stopped there (`saveSession`
  * notes them after one that answered): a message the agent took before then is in the session all the same, and
  * the next turn reads only what comes after it (outside.ts). Null: the count is not known, so the next turn
- * brings nothing in. Only while the chat still has that session; the chat's position stays where it was.
+ * brings nothing in. Only while the chat still has that session. The chat's position there stays where it was,
+ * unless `next` moves it: a stopped turn's message and its "Stopped." stay in the chat (a failed one's do not).
  */
-export function notePrompts(key: string, id: string, prompts: number | null): Promise<void> {
+export function notePrompts(key: string, id: string, prompts: number | null, next?: number): Promise<void> {
   return serial(async () => {
     const store = await read();
     const entry = store[key];
-    if (!entry?.id || entry.id !== id || entry.prompts === (prompts ?? undefined)) return;
+    if (!entry?.id || entry.id !== id || (entry.prompts === (prompts ?? undefined) && (next === undefined || entry.next === next))) return;
     const { prompts: _before, ...rest } = entry;
-    store[key] = typeof prompts === "number" ? { ...rest, prompts } : rest;
+    store[key] = { ...(typeof prompts === "number" ? { ...rest, prompts } : rest), ...(next === undefined ? {} : { next }) };
+    await write(store);
+  });
+}
+
+/**
+ * Notes, before the agent has the message, the session a turn at `position` goes on in (resumed, or new with the id
+ * the agent takes or says as it starts). A runtime that stops mid-turn (this computer restarts) saves nothing after, so
+ * this note is what tells the turn's continuation (`resume: "only"`) and the chat's next turn which session took it
+ * (`lookSession`). The turn's end replaces it (`saveSession`); one that fails or is stopped here takes it back
+ * (`untakeSession`), and the chat's session stays as it was.
+ */
+export function takeSession(key: string, agent: SubscriptionProvider, id: string, instructions: string, options: { position?: number; perTurn?: boolean; folder?: string; keepDays?: number; home?: SessionHome } = {}): Promise<void> {
+  return serial(async () => {
+    const store = await read();
+    const now = Date.now();
+    const taking: Taking = { agent, id, ...(options.position === undefined ? {} : { position: options.position }), at: now, instructions: instructionsHash(instructions), ...(options.perTurn ? {} : { text: instructions }), ...(options.home ? { home: options.home } : {}) };
+    store[key] = { ...(store[key] ?? { agent, id: "", instructions: "", at: now, ...(options.folder ? { folder: options.folder } : {}), ...(options.keepDays ? { keep: options.keepDays } : {}) }), taking };
+    await write(store);
+  });
+}
+
+/** The turn that noted `id` (`takeSession`) ended here without saving it: the chat's session stays as it was. */
+export function untakeSession(key: string, id: string): Promise<void> {
+  return serial(async () => {
+    const store = await read();
+    const entry = store[key];
+    if (!entry || entry.taking?.id !== id) return;
+    store[key] = withoutTaking(entry);
     await write(store);
   });
 }
@@ -232,7 +323,10 @@ export function setNativeDropForTests(drop: Drop | null): void {
 async function dropNative(entries: Array<[string, Entry, boolean]>): Promise<void> {
   const { deleteNativeSession } = dropForTests ? { deleteNativeSession: dropForTests } : await import("../workspace/engines/delete-session.js");
   for (const [key, entry, chat] of entries) {
-    for (const id of [entry.id, ...(entry.retired ?? [])]) if (id) await deleteNativeSession(entry.agent, id, entry.folder ?? ownFolder(key, entry)).catch(() => undefined);
+    const folder = entry.folder ?? ownFolder(key, entry);
+    for (const id of [entry.id, ...(entry.retired ?? [])]) if (id) await deleteNativeSession(entry.agent, id, folder).catch(() => undefined);
+    // A whole chat that goes takes the session a turn of it was cut off in too (`takeSession`).
+    if (chat && entry.taking && entry.taking.id !== entry.id) await deleteNativeSession(entry.taking.agent, entry.taking.id, folder).catch(() => undefined);
     // A group's folder (a node's project) is shared, and a chat that goes on works in its own: only a dropped chat's own folder goes.
     if (chat && !entry.folder) await rm(ownFolder(key, entry), { recursive: true, force: true }).catch(() => undefined);
   }
@@ -280,8 +374,17 @@ export async function dropSession(key: string): Promise<boolean> {
 export function forgetSession(key: string, options: { gone?: boolean } = {}): Promise<void> {
   return serial(async () => {
     const store = await read();
-    const entry = store[key];
-    if (!entry) return;
+    const found = store[key];
+    if (!found) return;
+    const taking = found.taking;
+    const entry = withoutTaking(found);
+    // A turn here was cut off in another session than the chat's (`lookSession`): that one could not be reopened.
+    if (taking && taking.id !== entry.id) {
+      const retired = [...(entry.retired ?? []), ...(options.gone || taking.agent !== entry.agent ? [] : [taking.id])].filter((id, index, all) => id && all.indexOf(id) === index);
+      store[key] = { ...entry, ...(retired.length ? { retired } : {}) };
+      await write(store);
+      return;
+    }
     const retired = [...(entry.retired ?? []), ...(entry.id && !options.gone ? [entry.id] : [])].filter((id, index, all) => id && all.indexOf(id) === index);
     if (retired.length || entry.dir) store[key] = { ...entry, id: "", ...(retired.length ? { retired } : {}) };
     else delete store[key];
@@ -313,7 +416,7 @@ export function chatFolder(key: string, chat: { agent: SubscriptionProvider; tit
   return serial(async () => {
     const store = await read();
     const entry = store[key];
-    if (entry && (entry.id || entry.retired?.length || entry.folder)) return { folder: ownFolder(key, entry), dir: dirOf(key, entry) };
+    if (entry && (entry.id || entry.retired?.length || entry.folder || entry.taking)) return { folder: ownFolder(key, entry), dir: dirOf(key, entry) };
     const root = join(stateDir(), "assistant");
     const current = ownFolder(key, entry);
     const others = new Set(Object.entries(store).flatMap(([other, row]) => (other === key || row.folder ? [] : [row.dir ?? other])));

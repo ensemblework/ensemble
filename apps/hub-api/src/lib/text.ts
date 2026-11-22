@@ -56,16 +56,41 @@ export function truncateText(value: string, maxLength: number): string {
 export function headAndTail(value: string, maxLength: number): string {
   const clean = stripLoneSurrogates(value);
   if (clean.length <= maxLength) return clean;
-  const parts = graphemes(clean);
-  const note = (cut: number) => `\n… [${cut} characters cut] …\n`;
-  const room = Math.max(0, maxLength - note(clean.length).length);
+  const { head, tail } = headAndTailParts(clean, maxLength);
+  return `${head}${cutNote(clean.length - head.length - tail.length)}${tail}`;
+}
+
+const cutNote = (cut: number) => `\n… [${cut} characters cut] …\n`;
+
+/**
+ * The start and end `headAndTail` keeps of a text longer than `maxLength`, without the note between
+ * them: the start ends at `head.length`, the end begins at `value.length - tail.length`.
+ */
+export function headAndTailParts(value: string, maxLength: number): { head: string; tail: string } {
+  if (value.length <= maxLength) return { head: value, tail: "" };
+  const room = Math.max(0, maxLength - cutNote(value.length).length);
   const headRoom = Math.ceil((room * 2) / 3);
-  let head = "";
-  let i = 0;
-  for (; i < parts.length && head.length + parts[i]!.length <= headRoom; i += 1) head += parts[i];
-  let tail = "";
-  for (let j = parts.length - 1; j >= i && tail.length + parts[j]!.length <= room - head.length; j -= 1) tail = parts[j] + tail;
-  return `${head}${note(clean.length - head.length - tail.length)}${tail}`;
+  const tailRoom = room - headRoom;
+  // Graphemes only near the cuts: a long text split whole would cost far more than the parts kept.
+  const head = graphemeStart(value.slice(0, headRoom + 16), headRoom);
+  const tail = graphemeEnd(value.slice(Math.max(head.length, value.length - tailRoom - 16)), tailRoom);
+  return { head, tail };
+}
+
+function graphemeStart(text: string, max: number): string {
+  let out = "";
+  for (const part of graphemes(text)) {
+    if (out.length + part.length > max) break;
+    out += part;
+  }
+  return out;
+}
+
+function graphemeEnd(text: string, max: number): string {
+  const parts = graphemes(text);
+  let out = "";
+  for (let index = parts.length - 1; index >= 0 && out.length + parts[index]!.length <= max; index -= 1) out = parts[index] + out;
+  return out;
 }
 
 /** Stream or display chunks that never stop inside an emoji. */
@@ -94,12 +119,28 @@ export function looksInternal(message: string): boolean {
   return INTERNAL_ERROR.test(message);
 }
 
+/** A data document (a JSON body, an HTML page) rather than a sentence: never shown to people as an error. */
+export function looksLikeData(message: string): boolean {
+  const text = message.trim();
+  if (/^<(?:[a-z!?/])/i.test(text)) return true;
+  if (!/^[[{]/.test(text)) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return /^\{\s*"/.test(text);
+  }
+}
+
 export const GENERIC_SAVE_FAILURE = "The reply could not be saved.";
 
-export function safePublicError(error: unknown, fallback = "Something went wrong. Nothing else was changed."): string {
+const GENERIC_FAILURE = "Something went wrong. Nothing else was changed.";
+
+/** The error's own sentence, or `fallback` when it has none fit for people (empty, internal, or a raw body). */
+export function safePublicError(error: unknown, fallback = GENERIC_FAILURE): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (!message.trim() || looksInternal(message)) return fallback;
-  return truncateText(message, 400);
+  if (message.trim() && !looksInternal(message) && !looksLikeData(message)) return truncateText(message, 400);
+  return fallback.trim() && !looksInternal(fallback) && !looksLikeData(fallback) ? fallback : GENERIC_FAILURE;
 }
 
 /**

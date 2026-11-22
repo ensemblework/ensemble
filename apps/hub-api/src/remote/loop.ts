@@ -22,6 +22,8 @@ import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
 import { workspaceRoot } from "../workspace/guard.js";
 import { removeWorktrees } from "../workspace/worktrees.js";
+import { codeTurnResultOf } from "../workspace/code-turn.js";
+import { runCompletionOf } from "../workspace/completion.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
@@ -46,7 +48,7 @@ import { setAiActivitySink, type AiActivityRow } from "../lib/ai-activity.js";
 import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
-import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_RELAY_API, ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { appPresence, cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSetUp, startSignIn } from "../subscriptions/signin.js";
 import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, PROJECT_DELETE_API, parseClaim, RUNTIME_REPLACED_EVENT, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
@@ -128,6 +130,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     webTerminal: settings.webTerminal,
     // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
     assistantTurns: ASSISTANT_TURNS_API,
+    // A relayed turn's calls carry their own ids and are sent again, with its reply and its end, when the connection drops.
+    assistantRelay: ASSISTANT_RELAY_API,
     assistantSessionDelete: ASSISTANT_SESSION_DELETE_API,
     // A deleted Ensemble project's Codex projects here go too (docs/30, In the agents' own apps).
     projectDelete: PROJECT_DELETE_API,
@@ -146,10 +150,14 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
-    // Chat turns of the web's Code tab agent run here, in a folder Code may use here (the claim's `chat`, `surface`, `codeFolder`).
-    codeAgent: 1,
+    // Chat turns of the web's Code tab agent run here, in a folder Code may use here (the claim's `chat`, `surface`, `codeFolder`);
+    // 2: with their turn packet, forks and handoff records, and the checks run again here (the claim's `packet`, `fork`).
+    codeAgent: 2,
     // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
     runAnswers: 1,
+    // An assigned run's checks (the agent's, and the commands the claim's `acceptance` names) run again here when the
+    // agent says it is done, and its end carries what they showed (`completion`): the web marks the task done only then.
+    runVerification: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
     nodeTools: NODE_TOOLS_API,
     // A node shares a folder (zipped here) and files up to 100 MB, and puts its owner's files (chat attachments) here.
@@ -160,6 +168,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     secretScope: 1,
     // An Ensemble Node build can work in its own git worktree of a shared folder (the claim's `mission.worktree`, B13).
     worktrees: 1,
+    // A worker's report_result takes the current StepReport: partial, uncertain and stopped, what remains, the owner's decision, provenance and evidence strength.
+    reports: 2,
     // The key the web encrypts secrets for, how runs get secrets, and secrets used by reference (B12).
     ...credentialCapabilities(settings),
     // A node's browser and capture tools run here (protocol 7), and what this computer can capture.
@@ -173,6 +183,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // A node's command that needs a sign-in: its code goes to the owner's card, a page it opens to this computer's sign-in browser (C2).
     cliLogins: CLI_LOGINS_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
+    // A node's desktop control tools run here (docs/25 §11), and whether the agent screen and the owner's screen can be used now.
+    ...(await (await import("../desktop/control/readiness.js")).desktopCapabilities().catch(() => ({}))),
   };
 }
 
@@ -193,6 +205,8 @@ export async function stopRemoteWork(app: FastifyInstance, message: string, repo
   stopNodeCommands();
   await endAllTakeovers("stopped").catch(() => undefined);
   await (await import("../logins/requests.js")).endAllLogins(message).catch(() => undefined);
+  // Screen control and the agent screen end with remote work: a node never keeps the owner's desktop past it.
+  await (await import("../desktop/control/index.js")).stopDesktop().catch(() => undefined);
   stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();
@@ -851,6 +865,10 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
   const report = (job.protocol ?? 1) >= 6 ? parseReport(local.report) : null;
+  // A Code tab turn's packet, skills, checks run again and handoff record; older servers ignore it.
+  const codeTurn = current ? await codeTurnResultOf(prisma, local, scrubOutgoing).catch(() => null) : null;
+  // Any other run's checks as Ensemble ran them again here, which decide whether the web marks its task done.
+  const completion = current && !codeTurn ? await runCompletionOf(prisma, local, scrubOutgoing).catch(() => null) : null;
   const send = async () => {
     // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
@@ -860,7 +878,7 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
       app.log.warn({ err: error }, "could not send the run's evidence");
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}), ...(completion ? { completion } : {}) });
   };
   try {
     await send();

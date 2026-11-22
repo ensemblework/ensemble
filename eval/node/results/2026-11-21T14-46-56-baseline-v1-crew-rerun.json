@@ -1,0 +1,243 @@
+{
+ "label": "baseline-v1-crew-rerun",
+ "stamp": "2026-11-21T14-46-56",
+ "commit": "e8232134",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "mid-run-amendment",
+  "stop-with-children"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T14:46:56.434Z",
+ "finishedAt": "2026-11-21T14:52:15.593Z",
+ "results": [
+  {
+   "task": "mid-run-amendment",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "greet.js prints the greeting",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Hello, Mira!"
+    },
+    {
+     "name": "--shout prints it in capitals",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "HELLO, MIRA!"
+    },
+    {
+     "name": "still one file with no dependencies",
+     "pass": true,
+     "kind": "state",
+     "note": "greet.js"
+    },
+    {
+     "name": "its test exists and passes",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ prints a regular greeting for the supplied name (40.604406ms)\n✔ prints an uppercase greeting with --shout (34.245725ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 146.319445\n"
+    },
+    {
+     "name": "the owner heard the result with --shout",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 145978,
+    "turns": 3,
+    "failedTurns": 0,
+    "modelCalls": 17,
+    "tokensIn": 509954,
+    "tokensOut": 4000,
+    "credits": 1.91291,
+    "ensembleCalls": 3,
+    "ensembleTools": 4,
+    "agentTools": 18,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_list_agent_options",
+    "node_session_start",
+    "node_sessions",
+    "node_session_send"
+   ],
+   "agentToolNames": [
+    "glob",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_session_start",
+    "ensemble-node_sessions",
+    "ensemble-node_session_send"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "73044a22-3f4e-4b56-beb6-3293fca28c88",
+    "416fd703-a7d9-4b14-9962-d77ff27af59f"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-crew-rerun/mid-run-amendment--1.jsonl",
+   "startedAt": "2026-11-21T14:47:11.560Z"
+  },
+  {
+   "task": "stop-with-children",
+   "suite": "crew",
+   "category": "crew",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "work had started before the stop",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "every plan ended",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 open"
+    },
+    {
+     "name": "every run ended",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 still live"
+    },
+    {
+     "name": "no turn started after the stop",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "0 started after, 0 running"
+    },
+    {
+     "name": "nothing more was said after the stop",
+     "pass": true,
+     "kind": "trace"
+    },
+    {
+     "name": "the owner was told it stopped",
+     "pass": true,
+     "kind": "reply",
+     "note": "system: Stopped 1 plan. What was already done stays."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 154945,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 6,
+    "tokensIn": 198100,
+    "tokensOut": 2351,
+    "credits": 1.042586,
+    "ensembleCalls": 2,
+    "ensembleTools": 3,
+    "agentTools": 4,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_plan",
+    "hub_list_agent_options",
+    "node_session_start"
+   ],
+   "agentToolNames": [
+    "ensemble-node_plan",
+    "skill",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_session_start"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "1f42e386-797d-4b69-a6d7-e974a9eeca77",
+    "e78367a6-ff9e-4a65-9f55-fe7e5eb5b41e",
+    "94dd1210-20aa-4539-86f0-d71aadbefbd8"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-crew-rerun/stop-with-children--1.jsonl",
+   "startedAt": "2026-11-21T14:49:38.843Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "73044a22-3f4e-4b56-beb6-3293fca28c88",
+   "kind": "coding",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "416fd703-a7d9-4b14-9962-d77ff27af59f",
+   "kind": "node-turn",
+   "task": "mid-run-amendment",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "1f42e386-797d-4b69-a6d7-e974a9eeca77",
+   "kind": "node-turn",
+   "task": "stop-with-children",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "e78367a6-ff9e-4a65-9f55-fe7e5eb5b41e",
+   "kind": "coding",
+   "task": "stop-with-children",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "94dd1210-20aa-4539-86f0-d71aadbefbd8",
+   "kind": "node-turn",
+   "task": "stop-with-children",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in are left and reported.",
+  "The agent CLI runs with this machine's own configuration and sign-in, as on an owner's computer: MCP servers configured for the agent itself (for Copilot, in ~/.copilot) are offered to node turns too."
+ ]
+}

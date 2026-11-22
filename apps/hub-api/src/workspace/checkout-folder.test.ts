@@ -41,7 +41,7 @@ after(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-async function context(title: string, options: { continueFromJobId?: string; externalRoot?: string } = {}): Promise<JobContext> {
+async function context(title: string, options: { continueFromJobId?: string; externalRoot?: string; context?: { chat: true } } = {}): Promise<JobContext> {
   const task = await h.prisma.task.create({ data: { userId: user.id, title, createdBy: "me" } });
   const job = await h.prisma.workspaceJob.create({
     data: { userId: user.id, taskId: task.id, kind: "code", status: "running", provider: "openai", model: "run-selected-model", reasoningEffort: "low", instructions: "Implement and test the shortest-path algorithm.", executionMode: "native", ...options },
@@ -166,6 +166,16 @@ test("prepareFolder suffixes another job's reserved name and continuations reuse
   const continuation = await context("Continue graph task", { continueFromJobId: ctx.job.id });
   assert.deepEqual(await prepareFolder(h.app, continuation, settings), folder);
   assert.equal(requests.length, before);
+});
+
+test("a chat turn's checkout is named from its title, without a naming request on the person's plan", async () => {
+  const before = requests.length;
+  const ctx = await context("Chat: tidy the CSV export", { context: { chat: true } });
+  const folder = await prepareFolder(h.app, ctx, settings);
+  assert.equal(requests.length, before, "no naming request");
+  assert.equal(folder.root, join(workspace, "runs", "chat-tidy-the-csv-export"));
+  const event = await h.prisma.workspaceEvent.findFirstOrThrow({ where: { jobId: ctx.job.id, kind: "checkout_name" } });
+  assert.deepEqual(event.data, { slug: "chat-tidy-the-csv-export", source: "title", reason: "A chat turn's folder is named from its title." });
 });
 
 test("stopping during naming does not fall back into creating a checkout", async () => {

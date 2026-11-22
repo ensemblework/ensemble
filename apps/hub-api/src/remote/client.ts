@@ -7,6 +7,7 @@ import { EVIDENCE_HEADERS, INSTANCE_HEADER, ROUTES, type ActivityPost, type Code
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
+import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
 
 function channelBase(base: string): string {
   const channel = process.env.ENSEMBLE_CLI_CHANNEL;
@@ -61,7 +62,7 @@ export interface HostedClient {
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown; codeTurn?: unknown; completion?: unknown }): Promise<void>;
   /**
    * One file the run's worker attached (protocol 6), its bytes as the body, before complete. "stored" or
    * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.
@@ -122,8 +123,10 @@ export interface HostedClient {
   /** A file attached to the turn's message, at most `maxBytes`; null when the turn ended or the file is gone. */
   assistantFile(turnId: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }): Promise<Uint8Array | null>;
   assistantTool(turnId: string, body: { name: string; input: unknown }): Promise<unknown>;
-  /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
-  assistantStream(turnId: string, body: { seq: number; text: string; status?: string }): Promise<{ stop: boolean }>;
+  /** Asks the node's owner about one of the agent's own calls; the web holds it until they answer, at most 90 seconds. */
+  assistantAsk(turnId: string, body: OwnAsk): Promise<unknown>;
+  /** Reply text in order, with the agent's own calls in a node's turn. `stop`: the person stopped the turn, or it ended. */
+  assistantStream(turnId: string, body: { seq: number; text: string; status?: string; tools?: OwnToolEvent[] }): Promise<{ stop: boolean }>;
   assistantDone(turnId: string, body: unknown): Promise<void>;
   /** Entries of the owner's AI activity log made here. False: a server without the route (they stay on this computer). */
   activity?(body: ActivityPost): Promise<boolean>;
@@ -151,6 +154,11 @@ async function send(base: string, token: string, method: string, path: string, j
   // Either one is final; the loop must not wait for the next heartbeat.
   if (response.status === 401 || response.status === 403) throw authError(response.status, body);
   return { status: response.status, body };
+}
+
+/** A gateway in front of Ensemble on the web that had no answer from it (it restarts, or the connection behind it dropped). */
+export function noAnswer(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
 }
 
 function safeJson(text: string): unknown {
@@ -547,7 +555,16 @@ export function hostedClient(base: string, token: string): HostedClient {
     async assistantTool(turnId, body) {
       const res = await call("POST", ROUTES.assistantTool(turnId), body);
       if (res.status === 404 || res.status === 410) return { text: "This turn has ended.", isError: true };
+      // A gateway with no answer from Ensemble: the call may have run there (remote/assistant.ts sends it again with its id).
+      if (noAnswer(res.status)) throw new RemoteError(res.status, "Ensemble on the web did not answer.");
       if (res.status >= 400) return { text: messageOf(res.body, `Ensemble refused the tool call (${res.status}).`), isError: true };
+      return res.body;
+    },
+    async assistantAsk(turnId, body) {
+      const res = await call("POST", ROUTES.assistantAsk(turnId), body);
+      if (res.status === 404 || res.status === 410) return { decision: "deny", message: "This turn has ended." };
+      if (noAnswer(res.status)) throw new RemoteError(res.status, "Ensemble on the web did not answer.");
+      if (res.status >= 400) return { decision: "deny", message: messageOf(res.body, `Ensemble on the web could not ask your owner (${res.status}), so this call was not run.`) };
       return res.body;
     },
     async assistantStream(turnId, body) {

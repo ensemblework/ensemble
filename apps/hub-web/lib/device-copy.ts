@@ -14,6 +14,15 @@ export function platformLabel(platform: string): string {
   return platform;
 }
 
+/** What a computer reports about desktop control that does not stop it (a Mac where Cua Driver also runs on its own). */
+export function desktopNote(capabilities: unknown): string | null {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
+  const readiness = (capabilities as { desktopReadiness?: unknown }).desktopReadiness;
+  if (!readiness || typeof readiness !== "object") return null;
+  const note = (readiness as { note?: unknown }).note;
+  return typeof note === "string" && note.trim() ? note.trim().slice(0, 300) : null;
+}
+
 export function folderPlace(name?: string | null): string {
   return `A folder on ${computerName(name)}`;
 }
@@ -109,8 +118,9 @@ export type RerunSource = {
   executionMode?: "sandbox" | "native";
   networkAccess?: boolean;
   markDone?: boolean;
-  maxMinutes?: number;
-  maxTurns?: number;
+  /** The owner's limits for the run; null: none. */
+  maxMinutes?: number | null;
+  maxTurns?: number | null;
   maxToolCalls?: number;
   pullRequest?: { base: string; merge: "ask" | "auto" | "never" } | null;
 };
@@ -139,8 +149,8 @@ export function rerunAssignInput(job: RerunSource) {
     sandbox: job.executionMode !== "native",
     network: job.networkAccess,
     markDone: job.markDone,
-    maxMinutes: job.maxMinutes,
-    maxTurns: job.maxTurns,
+    ...(job.maxMinutes ? { maxMinutes: job.maxMinutes } : {}),
+    ...(job.maxTurns ? { maxTurns: job.maxTurns } : {}),
     maxToolCalls: job.maxToolCalls,
     ...(job.pullRequest ? { pullRequest: { base: job.pullRequest.base, merge: job.pullRequest.merge } } : {}),
   };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computerName, confirmCopy, deviceDecisionView, folderPlace, freshCloneHint, interruptedLabel, pairingCodeConsumed, platformLabel, pullRequestNumber, rerunAssignInput, sandboxStay } from "./device-copy";
+import { computerName, confirmCopy, desktopNote, deviceDecisionView, folderPlace, freshCloneHint, interruptedLabel, pairingCodeConsumed, platformLabel, pullRequestNumber, rerunAssignInput, sandboxStay } from "./device-copy";
 
 test("copy uses the device name, or your computer when none is chosen", () => {
   assert.equal(computerName("Studio PC"), "Studio PC");
@@ -115,4 +115,14 @@ test("run again keeps the run's pull request plan", () => {
   const job = { id: "job-3", taskId: "task-1", kind: "code" as const, deviceId: "device-1", delivery: "commit" as const, folderLabel: "ensemble" };
   assert.deepEqual(rerunAssignInput({ ...job, pullRequest: { base: "testing", merge: "auto" } }).pullRequest, { base: "testing", merge: "auto" });
   assert.equal("pullRequest" in rerunAssignInput(job), false);
+});
+
+test("a Mac's desktop note shows only when its readiness carries one", () => {
+  const note = "Cua Driver's own daemon (cua-driver serve) is running on this Mac, started by another program.";
+  assert.equal(desktopNote({ desktopReadiness: { ready: true, note } }), note);
+  assert.equal(desktopNote({ desktopReadiness: { ready: true, note: "  " } }), null);
+  assert.equal(desktopNote({ desktopReadiness: { ready: true } }), null);
+  assert.equal(desktopNote({ desktopReadiness: null }), null);
+  assert.equal(desktopNote(null), null);
+  assert.equal(desktopNote({ desktopReadiness: { note: "x".repeat(400) } })!.length, 300);
 });

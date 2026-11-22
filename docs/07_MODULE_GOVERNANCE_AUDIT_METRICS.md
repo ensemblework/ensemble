@@ -36,7 +36,7 @@ Keep an item by pinning or reopening it before its retention window expires. The
 | --- | --- |
 | `completedRetentionDays` | 60 days (1–365). Once at least 10 unpinned completed items are past it, they get 24 hours' notice and a skill-learning pass ([04](04_MODULE_SKILL_FORGE.md)), then move to Trash; with learning off they move without one. The agent sessions of tasks past it are deleted from the person's agents ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up)) |
 | `retentionDays` | 30 days (1–365). Trash is purged permanently after this |
-| `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, and how runs chose their agent sessions (`session_choices`, [41 §4](41_AGENT_SESSIONS.md#4-choosing-a-session)) |
+| `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, how runs chose their agent sessions (`session_choices`, [41 §4](41_AGENT_SESSIONS.md#4-choosing-a-session)), and Ensemble Node's turn traces and decisions (`node_turn_traces`, `node_decisions`, [35 §5.7](35_ENSEMBLE_NODE.md#57-traces-outcomes-and-decisions)) |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | The AI activity log (`ai_activity`, §1.4) | Fixed 30 days (`AI_ACTIVITY_RETENTION_DAYS`) |
 | MCP OAuth credentials | Consent/code requests: 10 minutes. Access keys: one hour. Refresh tokens: 30 days, rotation by default; confidential persistent linking extends expiry on refresh ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). Daily `purgeMcpOAuth` removes expired consent, refresh/access rows 30 days past expiry and grants 30 days after revocation; account deletion removes them immediately |
@@ -112,7 +112,7 @@ Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §
 
 Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider filters to apply them to every aggregate: reported tokens, daily activity, models, purposes and recent calls. Usage belongs to you, including work in a shared space.
 
-`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing.
+`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 
 Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
 

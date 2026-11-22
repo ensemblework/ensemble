@@ -36,6 +36,7 @@ import {
   Flag,
   FolderGit2,
   GitBranch,
+  GitFork,
   Hand,
   House,
   Laptop,
@@ -100,6 +101,7 @@ import { FileIcon } from "./file-icon";
 import { FolderPicker } from "./folder-picker";
 import { machineState } from "./machine-switcher";
 import { useLinkNavigate } from "./quick-open";
+import { SessionStart, TurnStates } from "./turn-states";
 
 type Mode = "ask" | "review" | "unattended";
 
@@ -213,6 +215,9 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
   const tasks = useMemo(() => linkedTasks(turns.map((turn) => turn.instructions ?? "")), [turns]);
   const [sending, setSending] = useState<{ text: string; steer: boolean } | null>(null);
   const [inject, setInject] = useState<{ text: string; mentions: PageMention[]; nonce: number } | null>(null);
+  // The turn the next message forks from: it goes to a new thread, in a new session with a handoff record.
+  const [forking, setForking] = useState<{ threadId: string; jobId: string } | null>(null);
+  const forkFrom = forking && forking.threadId === threadId ? forking.jobId : null;
   // A deleted thread's tab closes with it.
   const asks = useMemo(() => (threadId ? (thread.data?.asks ?? []) : []), [threadId, thread.data]);
 
@@ -241,12 +246,19 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
     refreshThreads(client, threadId);
   };
 
-  /** Sends one message: a new turn, a steer of the turn at work, or a turn after stopping it. */
+  /** Sends one message: a new turn, a steer of the turn at work, a turn after stopping it, or a fork's first turn. */
   const send = async (shown: string, input: Omit<AssignInput, "taskId">, how: "send" | "steer" | "replace"): Promise<boolean> => {
     setSending({ text: shown, steer: how === "steer" });
     pinnedToEnd.current = true;
     let made: string | null = null;
     try {
+      if (threadId && forkFrom) {
+        const forked = await api.forkCodeThread(threadId, { jobId: forkFrom, turn: input });
+        setForking(null);
+        refreshThreads(client);
+        onThread(forked.thread.id);
+        return true;
+      }
       let id = threadId;
       if (!id) {
         const created = await api.createCodeThread({ folder: place.folder, ...(place.deviceId ? { deviceId: place.deviceId } : {}), title: threadTitle(shown), message: shown });
@@ -332,6 +344,7 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
               onStop={() => void stop()}
               onGrow={() => setContentTick((tick) => tick + 1)}
               onEditing={isLive(turn.status) ? setEditing : null}
+              onFork={viewOnly || isLive(turn.status) || turn.status === "queued" ? null : () => setForking({ threadId: threadId!, jobId: turn.id })}
             />
           ))}
           {sending ? <UserMessage text={sending.text} mentions={[]} steer={sending.steer} pending /> : null}
@@ -353,6 +366,9 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
         sending={sending !== null}
         inject={inject}
         suggestions={!turns.length && !threadId ? (place.folder ? FOLDER_SUGGESTIONS : NO_FOLDER_SUGGESTIONS) : null}
+        lastAgent={last?.provider ?? null}
+        forking={Boolean(forkFrom)}
+        onCancelFork={() => setForking(null)}
         onSend={send}
         onStop={stop}
       />
@@ -423,6 +439,7 @@ function Turn({
   onStop,
   onGrow,
   onEditing,
+  onFork,
 }: {
   turn: CodeTurn;
   threadId: string;
@@ -442,6 +459,7 @@ function Turn({
   onStop: () => void;
   onGrow: () => void;
   onEditing: ((paths: string[]) => void) | null;
+  onFork: (() => void) | null;
 }) {
   const live = isLive(turn.status);
   const [open, setOpen] = useState<boolean | null>(null);
@@ -515,12 +533,14 @@ function Turn({
             reviewHref: turn.files?.length ? reviewHref() : null,
             quote: () => onQuote(reply),
             again: live ? null : () => onAgain(asked.text, asked.mentions),
+            fork: onFork,
             viewOnly,
             go,
           }),
         )
       }
     >
+      <SessionStart turn={turn} />
       <UserMessage text={asked.text} mentions={asked.mentions} steer={turn.steer} />
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-1">
@@ -586,6 +606,7 @@ function Turn({
       ) : null}
       {turn.status === "cancelled" ? <p className="text-[12.5px] text-muted">{turn.steeredBy ? "Stopped for your update below." : "Stopped."}</p> : null}
       {turn.files?.length ? <TurnFiles files={turn.files} href={reviewHref} /> : null}
+      {!live && turn.completion ? <TurnStates completion={turn.completion} /> : null}
       {finished ? <ReplyActions turn={turn} threadId={threadId} title={title} reply={reply} tasks={tasks} viewOnly={viewOnly} /> : null}
       {suggestions.length ? (
         <div className="flex flex-wrap gap-1.5" data-testid="agent-followups">
@@ -1140,6 +1161,9 @@ function Composer({
   sending,
   inject,
   suggestions,
+  lastAgent,
+  forking,
+  onCancelFork,
   onSend,
   onStop,
 }: {
@@ -1158,6 +1182,11 @@ function Composer({
   sending: boolean;
   inject: { text: string; mentions: PageMention[]; nonce: number } | null;
   suggestions: string[] | null;
+  /** The agent of the thread's latest turn: another one starts a new session with a handoff record. */
+  lastAgent: string | null;
+  /** The next message starts a new thread from a turn (Fork from here). */
+  forking: boolean;
+  onCancelFork: () => void;
   onSend: (shown: string, input: Omit<AssignInput, "taskId">, how: "send" | "steer" | "replace") => Promise<boolean>;
   onStop: () => Promise<void>;
 }) {
@@ -1225,7 +1254,12 @@ function Composer({
           ? `${agent.label} is ${agent.note} on ${where}.`
           : null;
   // An offline computer keeps the message queued until it is back: a note, not a stop.
-  const note = !blocker && !online ? `${computerName} is offline. Your message waits until Ensemble runs there again.` : null;
+  const switching = Boolean(threadId && lastAgent && choice && choice.provider !== lastAgent && !forking);
+  const note = !blocker && !online
+    ? `${computerName} is offline. Your message waits until Ensemble runs there again.`
+    : !blocker && switching
+      ? `${agent?.label ?? "This agent"} starts a new session with a handoff record of this thread.`
+      : null;
   const working = Boolean(live) && !sending;
   const canSend = !blocker && !sending && places.length > 0 && Boolean(choice) && Boolean(profile) && text.trim().length > 0 && text.length <= MAX_MESSAGE;
 
@@ -1255,9 +1289,10 @@ function Composer({
       ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
       ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
       ...(toolsOff.length ? { toolsOff } : {}),
+      ...(profile.instructions.trim() ? { profileInstructions: profile.instructions.trim() } : {}),
     };
     setText("");
-    const ok = await onSend(shown, input, live ? how : "send");
+    const ok = await onSend(shown, input, live && !forking ? how : "send");
     if (ok) menu.clear();
     else setText((current) => current || shown);
     box.current?.focus();
@@ -1273,6 +1308,14 @@ function Composer({
                 {suggestion}
               </button>
             ))}
+          </div>
+        ) : null}
+        {forking ? (
+          <div className="mb-1.5 flex items-center gap-1.5 text-[12px] text-muted" data-testid="agent-forking">
+            <GitFork size={12} className="shrink-0" aria-hidden />
+            <span>Your message starts a new thread from that turn, in a new session.</span>
+            <InfoTip label="About forks" text="The new thread works in the same folder. Its agent gets a handoff record of this thread up to that turn, not the whole conversation. This thread stays as it is." />
+            <button type="button" className="btn-ghost h-6 px-1.5 text-[12px]" onClick={onCancelFork}>Cancel</button>
           </div>
         ) : null}
         <div className={cx("agent-composer compound-field", blocker && "opacity-80", working && "is-working")}>

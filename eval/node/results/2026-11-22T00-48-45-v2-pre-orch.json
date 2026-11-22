@@ -1,0 +1,1297 @@
+{
+ "label": "v2-pre-orch",
+ "stamp": "2026-11-22T00-48-45",
+ "commit": "7ec01739",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "role-without-task",
+  "plain-chat-vs-node",
+  "conflicting-artifact-versions",
+  "peer-message-during-approval",
+  "restart-reconciliation",
+  "ui-client-absent",
+  "cleanup",
+  "same-harness-switch",
+  "rejected-switch",
+  "background-child",
+  "connection-lost-during-mutation",
+  "paired-but-offline",
+  "finished-without-acceptance"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-22T00:48:45.111Z",
+ "finishedAt": "2026-11-22T01:26:52.005Z",
+ "results": [
+  {
+   "task": "role-without-task",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "no work invented: no task, page, plan, run, routine or file",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "no tool call that changes anything",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "the designer answered with a short hello (at most 700 characters)",
+     "pass": true,
+     "kind": "reply",
+     "note": "1 message(s), 53 characters"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 58541,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 1,
+    "tokensIn": 20475,
+    "tokensOut": 153,
+    "credits": 0.26358,
+    "ensembleCalls": 1,
+    "ensembleTools": 0,
+    "agentTools": 0,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "b5c9b145-c229-4e6f-b7f2-d0a67867e5fd"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/role-without-task--1.jsonl",
+   "startedAt": "2026-11-22T00:49:05.312Z"
+  },
+  {
+   "task": "plain-chat-vs-node",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the first answer explains the difference",
+     "pass": true,
+     "kind": "reply",
+     "note": "a process is a running program with its own memory and resources. a thread is a path of execution within a process; threads share that process’s memory and reso"
+    },
+    {
+     "name": "the second answer follows from the first: a thread",
+     "pass": true,
+     "kind": "reply",
+     "note": "a thread is usually cheaper to create: it shares its process’s resources, while a process needs its own memory and operating-system resources."
+    },
+    {
+     "name": "no tool beyond reads",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "nothing made",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "direct answers (each at most 900 characters)",
+     "pass": true,
+     "kind": "reply",
+     "note": "166 and 142 characters"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 38755,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 42146,
+    "tokensOut": 123,
+    "credits": 0.53296,
+    "ensembleCalls": 2,
+    "ensembleTools": 0,
+    "agentTools": 0,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "2b15781f-bb1a-44f1-8e91-fd25bb2a637d"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/plain-chat-vs-node--1.jsonl",
+   "startedAt": "2026-11-22T00:50:04.613Z"
+  },
+  {
+   "task": "conflicting-artifact-versions",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "both writers wrote a version",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "blurb.md@00:52:18, blurb.md@00:53:26"
+    },
+    {
+     "name": "no version lost without the owner hearing which was kept and why",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "every version is still there"
+    },
+    {
+     "name": "the owner heard what they ended up with",
+     "pass": true,
+     "kind": "reply",
+     "note": "partly done. ana and ben each wrote a labeled three-sentence option to <work>/tasks/conflicting-artifact-versions-1/launch/blurb.md."
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 272852,
+    "turns": 5,
+    "failedTurns": 0,
+    "modelCalls": 32,
+    "tokensIn": 843948,
+    "tokensOut": 14190,
+    "credits": 3.9688964999999996,
+    "ensembleCalls": 7,
+    "ensembleTools": 16,
+    "agentTools": 34,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 1,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "node_plan",
+    "node_step_report",
+    "computer_run"
+   ],
+   "agentToolNames": [
+    "ensemble-node_skill",
+    "ensemble-node_plan",
+    "view",
+    "bash",
+    "apply_patch",
+    "ensemble-attach_evidence",
+    "ensemble-report_result",
+    "ensemble-node_step_report",
+    "ensemble-computer_run"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "9ce45577-bc04-4ce1-a388-93832bd2fdf4",
+     "type": "plan_decision",
+     "answer": "finish without it",
+     "answered": true,
+     "at": "2026-11-22T00:54:49.302Z",
+     "note": "step s4-2a2e34 stuck: @manager's step in @manager's plan is stuck. Could not perform the independent review: the computer rejected access to the required launch folder because it is outside its allowed workspace. I did not inspect or change blurb.md, so the exact file text and sentence counts remain unverified. It needs you to decide: Provide the artifact in an allowed location or arrange an authorized review path for the specified folder."
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "4c5deae3-8378-456f-a638-dce50ec0b51a",
+    "ea671712-7e19-4faf-afb7-d8831cc69b7c",
+    "2047d774-3aad-4a01-b5a7-ca63217ab8b0",
+    "e107ee08-b2ff-45c0-b7d0-c192dfa0f24f",
+    "fe0052b0-572a-4f96-9876-071ff9883fe8"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/conflicting-artifact-versions--1.jsonl",
+   "startedAt": "2026-11-22T00:50:44.040Z"
+  },
+  {
+   "task": "peer-message-during-approval",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a card waited for the owner when the teammate wrote",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "9966d2a0-3235-4cfb-9c18-5afaec9aaf28, 0ef44364-fd7c-4763-911b-ecfdb7e8354e"
+    },
+    {
+     "name": "the message left it waiting, and that card was the one answered",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "waiting then 3, answered 2"
+    },
+    {
+     "name": "no card dropped or replaced",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "the operation ran once",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "1 line(s)"
+    },
+    {
+     "name": "the waiting turn finished and said so",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "the teammate's question answered exactly once",
+     "pass": true,
+     "kind": "reply",
+     "note": "1 answer(s) with 42"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 51051,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 69601,
+    "tokensOut": 410,
+    "credits": 0.591925,
+    "ensembleCalls": 2,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 2,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "computer_files_write"
+   ],
+   "agentToolNames": [
+    "ensemble-computer_files_write"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "9966d2a0-3235-4cfb-9c18-5afaec9aaf28",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T00:56:00.360Z"
+    },
+    {
+     "id": "b309f183-44fd-4233-8f44-6ef15bc39996",
+     "type": "post",
+     "answer": "approve",
+     "answered": true,
+     "at": "2026-11-22T00:56:00.399Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "f8d2a44b-d78b-42a3-a1c9-7d24958dd08c",
+    "508a6225-a17f-4326-8957-a23fb5a4963e"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/peer-message-during-approval--1.jsonl",
+   "startedAt": "2026-11-22T00:55:20.151Z"
+  },
+  {
+   "task": "restart-reconciliation",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.8,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "the entry was being recorded when the computer went down",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "1 entry"
+    },
+    {
+     "name": "no second entry",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "1 entry"
+    },
+    {
+     "name": "the owner was told it was cut off or may have run",
+     "pass": false,
+     "kind": "reply",
+     "note": "eval computer sent nothing for 10 minutes (no reply text and no tool call), so the turn was stopped. try again."
+    },
+    {
+     "name": "no claim that it finished and printed its line",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "the work ended or was reported",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 turn(s) still live, 1 message(s) after the restart"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 717885,
+    "turns": 1,
+    "failedTurns": 1,
+    "modelCalls": 1,
+    "tokensIn": 24456,
+    "tokensOut": 313,
+    "credits": 0.3154025,
+    "ensembleCalls": 0,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 2,
+    "noAnswerTurns": 0,
+    "errorMessages": 1
+   },
+   "tools": [
+    "computer_run"
+   ],
+   "agentToolNames": [
+    "ensemble-computer_run"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "6b0b12c7-5f7b-4a45-a974-4c0cd977523f",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T00:56:29.996Z"
+    }
+   ],
+   "errors": [
+    "turn of @assistant failed: Eval computer sent nothing for 10 minutes (no reply text and no tool call), so the turn was stopped. Try again.",
+    "error message in the chat: Eval computer sent nothing for 10 minutes (no reply text and no tool call), so the turn was stopped. Try again."
+   ],
+   "sessions": [
+    "501659a4-23c0-4b8b-add9-bc7741e6a160"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/restart-reconciliation--1.jsonl",
+   "startedAt": "2026-11-22T00:56:12.505Z"
+  },
+  {
+   "task": "ui-client-absent",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the work finished with nobody watching: nothing running, no card waiting",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 live, 0 waiting"
+    },
+    {
+     "name": "a client connecting now reads the room and its reply",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "1 repl(ies), 0 unsettled"
+    },
+    {
+     "name": "it reads the page with five things",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "5 list item(s)"
+    },
+    {
+     "name": "it reads the todo, due tomorrow",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Buy trail mix 2026-11-23T00:00:00.000Z"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 23623,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 2,
+    "tokensIn": 46009,
+    "tokensOut": 268,
+    "credits": 0.3284,
+    "ensembleCalls": 1,
+    "ensembleTools": 2,
+    "agentTools": 2,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_create_tasks",
+    "hub_create_page"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_create_page",
+    "ensemble-hub_create_tasks"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "460dadf0-d753-4aef-a1d5-007f3378fdb4"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/ui-client-absent--1.jsonl",
+   "startedAt": "2026-11-22T01:08:11.194Z"
+  },
+  {
+   "task": "cleanup",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the crew did the work",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "nothing still running: turns, runs, plans",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "no helper or child node left",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0"
+    },
+    {
+     "name": "no lease, claim or undelivered effect left, here or on the computer",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "every agent session the run made is one Ensemble keeps a record of",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "2 session(s), 0 unrecorded"
+    },
+    {
+     "name": "no temporary file left behind",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 117477,
+    "turns": 3,
+    "failedTurns": 0,
+    "modelCalls": 13,
+    "tokensIn": 415149,
+    "tokensOut": 2499,
+    "credits": 1.2928015,
+    "ensembleCalls": 3,
+    "ensembleTools": 10,
+    "agentTools": 10,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_delegate",
+    "computer_files_write",
+    "computer_run",
+    "node_share_file",
+    "node_step_report",
+    "node_skill"
+   ],
+   "agentToolNames": [
+    "ensemble-node_delegate",
+    "ensemble-node_skill",
+    "ensemble-hub_use_tool",
+    "ensemble-computer_files_write",
+    "ensemble-computer_run",
+    "ensemble-node_share_file",
+    "ensemble-node_step_report"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "ea87b50a-9d13-445c-86da-1d3a6aaac5c1",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T01:09:13.412Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "a2a12a54-cf73-4d85-93ed-2650db9cc643",
+    "7ed92a48-7afb-4a4e-b267-9a8b76629819"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/cleanup--1.jsonl",
+   "startedAt": "2026-11-22T01:08:35.503Z"
+  },
+  {
+   "task": "same-harness-switch",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the switch was taken",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "200, effort medium"
+    },
+    {
+     "name": "the agent's session went on after it",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "11 session(s) before, 0 new; last call resumed"
+    },
+    {
+     "name": "it still knew the code word",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "the same model on every call",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "gpt-6-luna"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 43711,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 74753,
+    "tokensOut": 224,
+    "credits": 0.6606295,
+    "ensembleCalls": 2,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_remember"
+   ],
+   "agentToolNames": [
+    "ensemble-node_remember"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "bdf8baa2-dd3b-4b6b-8761-3e7f10cf7d6b"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/same-harness-switch--1.jsonl",
+   "startedAt": "2026-11-22T01:10:34.424Z"
+  },
+  {
+   "task": "rejected-switch",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the switch was refused",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "400"
+    },
+    {
+     "name": "with a reason the owner can act on",
+     "pass": true,
+     "kind": "reply",
+     "note": "{\"error\":\"Gemini with “gemini-2.5-pro” is not available: open Ensemble on a paired computer where it is signed in.\"}"
+    },
+    {
+     "name": "the node kept its agent and model",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "copilot-cli gpt-6-luna"
+    },
+    {
+     "name": "the agent's session went on",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "0 new session(s)"
+    },
+    {
+     "name": "it still knew the code word",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "no turn ran on gemini-cli or another model",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "copilot-cli/gpt-6-luna"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 43586,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 74660,
+    "tokensOut": 211,
+    "credits": 0.4206515,
+    "ensembleCalls": 2,
+    "ensembleTools": 1,
+    "agentTools": 1,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_remember"
+   ],
+   "agentToolNames": [
+    "ensemble-node_remember"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "a6820b55-a67f-462d-91c1-ec0ad684ba52"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/rejected-switch--1.jsonl",
+   "startedAt": "2026-11-22T01:11:18.935Z"
+  },
+  {
+   "task": "background-child",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a coding session ran on the computer",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "succeeded"
+    },
+    {
+     "name": "the node answered the other question while it ran",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "answered 01:12:47, run ended 01:13:29"
+    },
+    {
+     "name": "its result came back to the node once",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "1 turn(s) for the run's end"
+    },
+    {
+     "name": "the owner heard the result",
+     "pass": true,
+     "kind": "reply"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 110297,
+    "turns": 3,
+    "failedTurns": 0,
+    "modelCalls": 8,
+    "tokensIn": 189383,
+    "tokensOut": 1375,
+    "credits": 1.0871745000000002,
+    "ensembleCalls": 3,
+    "ensembleTools": 2,
+    "agentTools": 4,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_session_start"
+   ],
+   "agentToolNames": [
+    "bash",
+    "read_bash",
+    "ensemble-node_session_start"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "61d8c13c-2558-4eb0-b842-035cd964b059",
+    "94990a0f-ece3-4233-8719-90e811f988f3"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/background-child--1.jsonl",
+   "startedAt": "2026-11-22T01:12:03.245Z"
+  },
+  {
+   "task": "connection-lost-during-mutation",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.4,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "the answer of the write was lost on its way to the computer",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "1 lost"
+    },
+    {
+     "name": "one todo, not two",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "Call the venue about chairs"
+    },
+    {
+     "name": "the owner was not told it failed",
+     "pass": false,
+     "kind": "reply"
+    },
+    {
+     "name": "the owner was told where it stands",
+     "pass": false,
+     "kind": "reply"
+    },
+    {
+     "name": "the turn ended",
+     "pass": false,
+     "kind": "state",
+     "evidence": true
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 601401,
+    "turns": 1,
+    "failedTurns": 0,
+    "modelCalls": 3,
+    "tokensIn": 63677,
+    "tokensOut": 244,
+    "credits": 0.321999,
+    "ensembleCalls": 0,
+    "ensembleTools": 1,
+    "agentTools": 2,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "hub_create_tasks"
+   ],
+   "agentToolNames": [
+    "ensemble-hub_create_tasks"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [
+    "note: Still working 10 min after \"Add a todo to my board: 'Call the venue about chairs'. Just that one, nothing else.\": turns 1."
+   ],
+   "sessions": [
+    "0c6b94e4-da9d-4241-9adb-8e8cf4d4eee0"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/connection-lost-during-mutation--1.jsonl",
+   "startedAt": "2026-11-22T01:13:54.859Z"
+  },
+  {
+   "task": "paired-but-offline",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "an answer within a minute",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "0 s"
+    },
+    {
+     "name": "it says the computer is offline",
+     "pass": true,
+     "kind": "reply",
+     "note": "github copilot runs on your computer, and none is online. eval computer was last seen 10 minutes ago. open ensemble on it (the desktop app, or ensemble in a ter"
+    },
+    {
+     "name": "nothing invented while it was offline",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "no turn left waiting for it",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "0 live when it came back"
+    },
+    {
+     "name": "still paired",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "once back, the request ran",
+     "pass": true,
+     "kind": "reply",
+     "note": "@assistant wants to run commands in <work>/tasks/paired-but-offline-1/notes on eval computer the notes folder contains: - alpha-plan.md (7 byt"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 68970,
+    "turns": 2,
+    "failedTurns": 1,
+    "modelCalls": 7,
+    "tokensIn": 204148,
+    "tokensOut": 2464,
+    "credits": 0.7364115,
+    "ensembleCalls": 1,
+    "ensembleTools": 8,
+    "agentTools": 8,
+    "approvals": 1,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 2,
+    "noAnswerTurns": 0,
+    "errorMessages": 1
+   },
+   "tools": [
+    "computer_run"
+   ],
+   "agentToolNames": [
+    "ensemble-computer_run"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "84bebc06-d946-43e3-9cfd-a731db908dd5",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-22T01:24:55.191Z"
+    }
+   ],
+   "errors": [
+    "turn of @assistant failed: GitHub Copilot runs on your computer, and none is online. Eval computer was last seen 10 minutes ago. Open Ensemble on it (the desktop app, or `ensemble` in a terminal), then try again.",
+    "error message in the chat: GitHub Copilot runs on your computer, and none is online. Eval computer was last seen 10 minutes ago. Open Ensemble on it (the desktop app, or `ensemble` in a terminal), then try again."
+   ],
+   "sessions": [
+    "f9493030-8675-46db-9e40-9b9acb976c03"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/paired-but-offline--1.jsonl",
+   "startedAt": "2026-11-22T01:23:58.552Z"
+  },
+  {
+   "task": "finished-without-acceptance",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.3333333333333333,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "the coding session finished",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "succeeded"
+    },
+    {
+     "name": "the task not marked done on the session's word",
+     "pass": false,
+     "kind": "state",
+     "evidence": true,
+     "note": "done; 1 logged run(s) of the check: 01:25:57 pass; last session ended 01:26:07; the node ran it 0 time(s)"
+    },
+    {
+     "name": "the owner told it is not accepted, unless the check passed when run again",
+     "pass": false,
+     "kind": "reply",
+     "note": "started a github copilot session in the export folder to create out.csv and run node accept.js. the session is still working; the task remains to do until the a"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 102122,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 16,
+    "tokensIn": 425965,
+    "tokensOut": 4107,
+    "credits": 1.5122170000000001,
+    "ensembleCalls": 2,
+    "ensembleTools": 14,
+    "agentTools": 23,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_skill",
+    "hub_list_tasks",
+    "hub_list_agent_options",
+    "node_sessions",
+    "hub_item_context",
+    "hub_read_task_page",
+    "node_session_start",
+    "node_show",
+    "hub_list_runs",
+    "hub_get_run"
+   ],
+   "agentToolNames": [
+    "glob",
+    "view",
+    "apply_patch",
+    "bash",
+    "ensemble-attach_evidence",
+    "ensemble-report_result",
+    "ensemble-node_skill",
+    "ensemble-hub_list_tasks",
+    "ensemble-hub_item_context",
+    "ensemble-hub_read_task_page",
+    "ensemble-hub_list_agent_options",
+    "ensemble-node_sessions",
+    "ensemble-node_session_start",
+    "ensemble-hub_list_runs",
+    "ensemble-node_show",
+    "ensemble-hub_get_run"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "3455f669-e42b-4ef4-87f2-7924cb46dfd1",
+    "9b10ff45-3061-49af-b90a-38dc013e5690"
+   ],
+   "trace": "eval/node/results/traces/v2-pre-orch/finished-without-acceptance--1.jsonl",
+   "startedAt": "2026-11-22T01:25:08.552Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "b5c9b145-c229-4e6f-b7f2-d0a67867e5fd",
+   "kind": "node-turn",
+   "task": "role-without-task",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "2b15781f-bb1a-44f1-8e91-fd25bb2a637d",
+   "kind": "node-turn",
+   "task": "plain-chat-vs-node",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "4c5deae3-8378-456f-a638-dce50ec0b51a",
+   "kind": "node-turn",
+   "task": "conflicting-artifact-versions",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "ea671712-7e19-4faf-afb7-d8831cc69b7c",
+   "kind": "coding",
+   "task": "conflicting-artifact-versions",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "2047d774-3aad-4a01-b5a7-ca63217ab8b0",
+   "kind": "node-turn",
+   "task": "conflicting-artifact-versions",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "e107ee08-b2ff-45c0-b7d0-c192dfa0f24f",
+   "kind": "coding",
+   "task": "conflicting-artifact-versions",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "fe0052b0-572a-4f96-9876-071ff9883fe8",
+   "kind": "node-turn",
+   "task": "conflicting-artifact-versions",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "f8d2a44b-d78b-42a3-a1c9-7d24958dd08c",
+   "kind": "node-turn",
+   "task": "peer-message-during-approval",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "508a6225-a17f-4326-8957-a23fb5a4963e",
+   "kind": "node-turn",
+   "task": "peer-message-during-approval",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "501659a4-23c0-4b8b-add9-bc7741e6a160",
+   "kind": "found",
+   "task": "restart-reconciliation",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "460dadf0-d753-4aef-a1d5-007f3378fdb4",
+   "kind": "node-turn",
+   "task": "ui-client-absent",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "a2a12a54-cf73-4d85-93ed-2650db9cc643",
+   "kind": "node-turn",
+   "task": "cleanup",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "7ed92a48-7afb-4a4e-b267-9a8b76629819",
+   "kind": "node-turn",
+   "task": "cleanup",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "bdf8baa2-dd3b-4b6b-8761-3e7f10cf7d6b",
+   "kind": "node-turn",
+   "task": "same-harness-switch",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "a6820b55-a67f-462d-91c1-ec0ad684ba52",
+   "kind": "node-turn",
+   "task": "rejected-switch",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "61d8c13c-2558-4eb0-b842-035cd964b059",
+   "kind": "coding",
+   "task": "background-child",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "94990a0f-ece3-4233-8719-90e811f988f3",
+   "kind": "node-turn",
+   "task": "background-child",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "0c6b94e4-da9d-4241-9adb-8e8cf4d4eee0",
+   "kind": "node-turn",
+   "task": "connection-lost-during-mutation",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "f9493030-8675-46db-9e40-9b9acb976c03",
+   "kind": "node-turn",
+   "task": "paired-but-offline",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "3455f669-e42b-4ef4-87f2-7924cb46dfd1",
+   "kind": "coding",
+   "task": "finished-without-acceptance",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "9b10ff45-3061-49af-b90a-38dc013e5690",
+   "kind": "node-turn",
+   "task": "finished-without-acceptance",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal yes, code-tab-harness yes.",
+  "The computer kept its database on disk in its own folder for this run, since a task restarts its process.",
+  "Relay tasks run the owner's turns on the paired computer, handed over by Ensemble as hosted Ensemble does (`ENSEMBLE_DESKTOP` off in the eval process for the task), with the computer paired through the harness's link; the other tasks run them in the eval process.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}

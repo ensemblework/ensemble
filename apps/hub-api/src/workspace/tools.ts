@@ -6,7 +6,7 @@
 import { CONTEXT_TOOL_SPECS, runContextTool } from "./context-tools.js";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
 import { threadAlert } from "../lib/code-watch.js";
 import { decisionBus, waitFor } from "../lib/decisions.js";
@@ -20,8 +20,10 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
-import { expandWord, programArgv } from "./shell-parse.js";
+import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, globRefusal, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { gitParts, gitReadsOnly } from "./git-read.js";
+import { discoverRepository, gitDirNamed, repositorySafe } from "./git-config.js";
+import { expandWord, firstGlobComponent, globRegex, hasGlob, programArgv, type ShellSegment } from "./shell-parse.js";
 import { commandKind, urlKind } from "./command-kind.js";
 import type { RunChanges } from "./outside-changes.js";
 import { ghSandboxRefusal, runTrustedGh, runTrustedGit } from "./git-gate.js";
@@ -469,8 +471,8 @@ export async function outsidePath(
   if (harmlessPath(real)) return { held: null, asked: false };
   // The run's own evidence folder, in Ensemble's data: its screenshots and recordings, to look at, never to change.
   if (!write && ownEvidence(ctx, real)) return { held: null, asked: false };
-  const floor = outsideRefusal(real, write);
-  if (floor) return { held: refusal(`${real}: ${floor}`, "Refused: off limits"), asked: false };
+  const floor = await floorRefusal(real, write);
+  if (floor) return { held: refusal(floor, "Refused: off limits"), asked: false };
   const hold = (asked = false) => (write ? holdFolder(ctx, real, options).then((verdict) => ({ held: verdict.held, asked: asked || verdict.asked })) : Promise.resolve({ held: null, asked }));
   // A folder this run works on in its own copy (another run was changing it): the call is pointed there, nobody asked.
   const copied = write ? copyFor(ctx, real) : null;
@@ -540,6 +542,60 @@ const baseName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.e
 /** Inline code or prose, not a path: a newline, or spaces together with shell or code punctuation. */
 const looksLikeCode = (arg: string) => arg.includes("\n") || (/\s/.test(arg) && /[(){};=<>|&`$"']/.test(arg));
 
+/** The path glued to a short option (`-f/home/x/.aws/credentials`, `-C../repo`, `-o~/out.txt`), else null: it is read or written like any other. */
+export function gluedPath(word: string): string | null {
+  return /^-[A-Za-z]((?:[~./\\]|[A-Za-z]:[\\/]).*)$/.exec(word)?.[1] ?? null;
+}
+
+const decodeUri = (text: string): string => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
+/**
+ * Files a value names after `@` or `<`, as curl reads and sends them: `@body.json`, `x=@photo.jpg;type=image/jpeg`,
+ * `x=<notes.txt`, `x@notes.txt` (`--data-urlencode`), `x=@"a b.txt"`. With a `;` after it, the name up to it too.
+ */
+function filesAfterAt(arg: string): string[] {
+  const out: string[] = [];
+  const equals = arg.indexOf("=");
+  for (let at = 0; at < arg.length; at += 1) {
+    const char = arg[at];
+    if (char !== "@" && char !== "<") continue;
+    if (!(at === 0 || arg[at - 1] === "=" || (char === "@" && (equals < 0 || equals > at)))) continue;
+    const rest = arg.slice(at + 1);
+    const quoted = /^"((?:[^"\\]|\\.)*)"/.exec(rest)?.[1];
+    if (quoted !== undefined) out.push(quoted.replace(/\\(.)/g, "$1"));
+    else {
+      out.push(rest);
+      if (rest.includes(";")) out.push(rest.slice(0, rest.indexOf(";")));
+    }
+  }
+  return out.filter((path) => path && path.length <= 1000);
+}
+
+/**
+ * Values attached to options (`--from-file=.ssh/id_rsa`, `-f.aws/credentials`, `-C../repo`), files named after `@` or
+ * `<` (`-d @.ssh/id_rsa`, `-F 'x=<notes.txt'`) and local files a `file://` URL names: each could name a file in the
+ * folder the program runs in, so the hard floor checks each as it does a separate word. Code and other URLs are not paths.
+ */
+export function attachedValues(argv: string[]): string[] {
+  const out: string[] = [];
+  for (const arg of argv.slice(1)) {
+    out.push(...filesAfterAt(arg).filter((path) => !looksLikeCode(path)));
+    // A local file a URL names (`curl file:///home/x/.ssh/id_rsa`).
+    const local = /^file:\/\/(?:localhost)?(\/[^?#]*)/i.exec(arg)?.[1];
+    if (local) out.push(decodeUri(local));
+    if (!arg.startsWith("-") || arg === "-" || arg === "--") continue;
+    const value = arg.startsWith("--") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg.slice(2).replace(/^=/, "");
+    if (value && !looksLikeCode(value) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value) && !value.startsWith("$") && value.length <= 1000) out.push(value);
+  }
+  return out;
+}
+
 /** Arguments that could be a relative file name: not the program, an option, code, a URL or a variable. */
 export function plainArgs(argv: string[]): string[] {
   return argv.slice(1).filter((arg) => arg && !arg.startsWith("-") && !looksLikeCode(arg) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !arg.startsWith("$") && arg.length <= 1000);
@@ -572,7 +628,7 @@ export function outsideArgs(root: string, args: string[], cwd = root): string[] 
       pattern = false;
       continue;
     }
-    const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : raw;
+    const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : (gluedPath(raw) ?? raw);
     if (!arg || (arg === raw && arg.startsWith("-"))) continue;
     if (looksLikeCode(arg) || /^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) continue;
     const expanded = expandWord(arg);
@@ -592,32 +648,236 @@ const READ_ONLY_PROGRAMS = new Set([
   "jq", "yq", "xxd", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum", "cksum",
   "cd", "pushd", "popd", "pwd", "echo", "printf", "true", "false", "sleep", "test", "[", "which", "type", "whereis", "date", "uname", "whoami", "id", "hostname", "ps", "lsof",
 ]);
-const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "rev-parse", "describe", "grep", "cat-file", "shortlog"]);
+/**
+ * Options with which a read-only program runs another program or writes a file: `fd -x`, `rg --pre`, `ag --pager`,
+ * `tree -o`, `yq -i`, `sort -o` or `--compress-program`, `date -s`, `file -C`, `less -o`, `bat --pager`. Long options
+ * of GNU tools are matched by the shortest prefix that names them, as getopt takes any unique prefix.
+ */
+const RUNS_OR_WRITES: Record<string, RegExp> = {
+  // ripgrep 15 runs a program for --pre (on each file) and --hostname-bin (for hyperlinks); nothing else of its runs or writes.
+  rg: /^--(pre|pre-glob|hostname-bin)(=|$)/,
+  ag: /^--pag/,
+  fd: /^(-[a-zA-Z]*[xX]|--exec)/,
+  // -o writes the listing; -R writes 00Tree.html into each folder.
+  tree: /^-[a-zA-Z]*[oR]/,
+  yq: /^(-[a-zA-Z]*i|--in-?place)/,
+  sort: /^(-[a-zA-Z]*[oT]|--o|--co|--t)/,
+  date: /^(-[Ru]*s|--s)/,
+  file: /^(-[a-zA-Z]*C|--co)/,
+  less: /^(-[a-zA-Z]*[oO]|--log|--LOG)/,
+  bat: /^--pager/,
+};
 
-/** True when a command only reads: a read-only tool, or a git subcommand that only reads. */
+/**
+ * curl options that send local data (`-F`, `-d`, `--json`, `-T`, `--url-query`, `--variable`), write a file (`-o`, `-O`,
+ * `-D`, `-c`, `--trace`, `--stderr`, `--libcurl`, `--etag-save`, `--hsts`, `--alt-svc`, `--ssl-sessions`), read options
+ * from a file (`-K`), send mail or server commands (`--mail-*`, `-Q`). Older curl takes any unique prefix of a long option.
+ */
+const CURL_SENDS_OR_WRITES = /^(-[a-zA-Z0-9#:]*[FdTKoODcQ]|--(fo|da|js|up|url-q|va|ex|o|rem|du|coo|conf|tr|std|lib|et|hs|al|cr|ssl-s|mail|qu))|%output\{/;
+
+/** Whether curl only fetches: none of `CURL_SENDS_OR_WRITES`, no file sent after `@` or `<` (`-H @headers.txt`), and no method but GET or HEAD. */
+function curlReads(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (CURL_SENDS_OR_WRITES.test(arg) || /^[@<]|=[@<]/.test(arg)) return false;
+    const method = arg === "-X" || arg === "--request" ? (args[index + 1] ?? "") : (/^-X(.+)$/.exec(arg)?.[1] ?? /^--request=(.*)$/.exec(arg)?.[1]);
+    if (method !== undefined && !/^(GET|HEAD)$/i.test(method)) return false;
+  }
+  return true;
+}
+/** Their options that take the next word as a value, so that word is not an operand. */
+const VALUE_WORDS: Record<string, ReadonlySet<string>> = {
+  uniq: new Set(["-f", "-s", "-w"]),
+  xxd: new Set(["-c", "-cols", "-g", "-groupsize", "-l", "-len", "-o", "-offset", "-s", "-seek", "-n", "-name"]),
+  date: new Set(["-d", "-f", "-r"]),
+};
+const operandsOf = (program: string, argv: string[]): string[] => {
+  const values = VALUE_WORDS[program] ?? new Set<string>();
+  return argv.slice(1).filter((arg, index, args) => !arg.startsWith("-") && !(index > 0 && values.has(args[index - 1]!)));
+};
+
+/**
+ * One sed command that only prints, deletes, substitutes or transliterates, at line numbers, `$` or `/regex/`: never `w`,
+ * `r` or `e` (nor `s///w` or `s///e`), which write files, read other files into the output or run commands.
+ */
+const SED_COMMAND = /^\s*(?:(?:\d+|\$|\/(?:[^/\\\n]|\\.)*\/I?)(?:\s*,\s*(?:\d+|\$|[+~]\d+|\/(?:[^/\\\n]|\\.)*\/I?))?)?\s*!?\s*([\s\S]*?)\s*$/;
+const SED_SIMPLE = /^[pdqQ=lnNPDhHgGxzF]?$/;
+const SED_SUBSTITUTE = /^s([^\\\n\s\w])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gpiIM0-9]*$/;
+const SED_TRANSLITERATE = /^y([^\\\n\s\w])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1$/;
+const sedCommandReads = (command: string): boolean => {
+  const body = SED_COMMAND.exec(command)?.[1];
+  return body !== undefined && (SED_SIMPLE.test(body) || SED_SUBSTITUTE.test(body) || SED_TRANSLITERATE.test(body));
+};
+const SED_FLAGS = "nErsuz";
+const SED_LONG = ["quiet", "silent", "regexp-extended", "separate", "unbuffered", "null-data", "posix", "debug", "sandbox", "follow-symlinks", "line-length", "expression", "file", "in-place", "zero-terminated", "binary"];
+
+/** Whether a sed command only reads: each command of its scripts reads (`sedCommandReads`), none comes from a file, and nothing is edited in place. */
+function sedReads(argv: string[]): boolean {
+  const scripts: string[] = [];
+  let given = false;
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === "--") {
+      if (!given && argv[index + 1] !== undefined) scripts.push(argv[index + 1]!);
+      break;
+    }
+    if (arg.startsWith("--")) {
+      const name = arg.slice(2).split("=")[0]!;
+      const found = SED_LONG.filter((option) => option.startsWith(name));
+      const option = SED_LONG.includes(name) ? name : found.length === 1 ? found[0] : null;
+      if (!option || option === "file" || option === "in-place") return false;
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : ["expression", "line-length"].includes(option) ? argv[(index += 1)] : undefined;
+      if (option === "expression") {
+        if (value === undefined) return false;
+        scripts.push(value);
+        given = true;
+      }
+      continue;
+    }
+    if (arg.startsWith("-") && arg.length > 1) {
+      for (let at = 1; at < arg.length; at += 1) {
+        const letter = arg[at]!;
+        if (SED_FLAGS.includes(letter)) continue;
+        if (letter !== "e" && letter !== "l") return false;
+        const value = at + 1 < arg.length ? arg.slice(at + 1) : argv[(index += 1)];
+        if (value === undefined) return false;
+        if (letter === "e") {
+          scripts.push(value);
+          given = true;
+        }
+        break;
+      }
+      continue;
+    }
+    if (!given) {
+      scripts.push(arg);
+      given = true;
+    }
+  }
+  return scripts.length > 0 && scripts.every((script) => script.split(/[;\n{}]/).every(sedCommandReads));
+}
+
+/**
+ * True when a command only reads: a read-only tool without an option that runs a program or writes a file
+ * (`RUNS_OR_WRITES`, `uniq in out`, `xxd in out`, a hostname or date to set, a sed script that writes or runs, jq or yq
+ * reading the environment or other files), or a git command that only reads (git-read.ts `gitReadsOnly`). `ack` reads a
+ * project's own `.ackrc`, which can name a pager: never a read.
+ */
 export function readsOnly(argv: string[]): boolean {
   const program = baseName(argv[0] ?? "");
-  if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
-  if (program === "sort") return !argv.some((arg) => /^-[a-zA-Z]*o/.test(arg) || arg.startsWith("--output"));
-  if (program === "sed") return !argv.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith("--in-place"));
-  if (program === "curl") return !argv.some((arg) => /^-[a-zA-Z]*[oOD]/.test(arg) || /^--(output|remote-name|dump-header|cookie-jar)/.test(arg) || arg === "-c");
-  if (READ_ONLY_PROGRAMS.has(program)) return true;
-  if (program === "git") return READ_ONLY_GIT.has(argv.find((arg, index) => index > 0 && !arg.startsWith("-")) ?? "");
+  if (program === "git") return gitReadsOnly(argv);
+  if (!READ_ONLY_PROGRAMS.has(program) && program !== "curl" && program !== "sort" && program !== "sed") return false;
+  const args = argv.slice(1);
+  const runs = RUNS_OR_WRITES[program];
+  if (runs && args.some((arg) => runs.test(arg))) return false;
+  if (program === "find") return !args.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
+  if (program === "curl") return curlReads(args);
+  if (program === "sed") return sedReads(argv);
+  if (program === "ack") return false;
+  // A program from a file (`-f`), the environment or other files: not judged from the words.
+  if (program === "jq") return !args.some((arg) => /\benv\b|\$ENV|^(-[a-zA-Z]*f|--from-file)/.test(arg));
+  if (program === "yq") return !args.some((arg) => /\b(load\w*|env|strenv|envsubst)\b|^(-[a-zA-Z]*s|--split-exp|--from-file)/.test(arg));
+  const operands = operandsOf(program, argv);
+  if (program === "uniq" || program === "xxd") return operands.length <= 1 && !operands.some((arg) => GLOB.test(arg));
+  if (program === "hostname") return operands.length === 0 && !args.some((arg) => /^(-[a-zA-Z]*F|--file)/.test(arg));
+  if (program === "date") return operands.every((arg) => arg.startsWith("+"));
+  return true;
+}
+
+/**
+ * Programs with options that run a program or write a file. A glob that may hand one of them an option, in a folder too
+ * big to list, is taken as doing so.
+ */
+const OPTION_RISK = new Set(["git", "find", "sort", "sed", "curl", "tree", "fd", "rg", "ag", "yq", "jq", "xxd", "uniq", "less", "bat", "file", "date", "hostname", "tar", "zip", "unzip", "rsync", "cp", "mv", "ln"]);
+const MAX_LISTED = 50_000;
+
+/**
+ * Whether a glob of the segment could hand its program an option: a name in the folder its expansion starts in that
+ * begins with `-` and matches it (`git grep TODO *` with a file named `-Osh`). Only words before `--`; any word for
+ * `find`, whose expressions follow its operands. A folder that cannot be listed counts as holding such a name.
+ */
+async function globHandsOption(segment: Pick<ShellSegment, "argv" | "cwd" | "globs">): Promise<boolean> {
+  const program = baseName(segment.argv[0] ?? "");
+  const ends = program === "find" ? -1 : segment.argv.indexOf("--");
+  let names: string[] | null | undefined;
+  for (const { index, pattern } of segment.globs ?? []) {
+    if (index === 0 || (ends >= 0 && index > ends)) continue;
+    // A name it expands to starts with this part; when it holds no glob, the word already shows how it starts.
+    const first = firstGlobComponent(pattern);
+    if (!hasGlob(first)) continue;
+    names ??= await readdir(segment.cwd).catch(() => null);
+    if (names === null) return true;
+    if (names.length > MAX_LISTED) {
+      if (OPTION_RISK.has(program)) return true;
+      continue;
+    }
+    const regex = globRegex(first);
+    if (names.some((name) => name.startsWith("-") && (!regex || regex.test(name)))) return true;
+  }
   return false;
+}
+
+/** jq's, yq's and sed's flags, and their options that take values (how many words); an option in neither is taken as taking one. */
+const CODE_OPTIONS: Record<string, { flags: RegExp; values: Record<string, number> }> = {
+  jq: {
+    flags: /^-[nrjascCMSRbeh0]+$|^--(null-input|raw-output0?|join-output|ascii-output|slurp|compact-output|color-output|monochrome-output|sort-keys|tab|seq|stream|stream-errors|raw-input|exit-status|args|jsonargs|unbuffered|binary)$/,
+    values: { "--arg": 2, "--argjson": 2, "--slurpfile": 2, "--rawfile": 2, "--indent": 1, "-L": 1, "--library-path": 1 },
+  },
+  yq: {
+    flags: /^-[PCMNenjrv0]+$|^--(prettyPrint|colors|no-colors|no-doc|exit-status|null-input|tojson|nul-output|verbose|unwrapScalar|header-preprocess)$/,
+    values: { "-I": 1, "--indent": 1, "-o": 1, "--output-format": 1, "-p": 1, "--input-format": 1, "--expression": 1 },
+  },
+  sed: { flags: /^-[nErsuz]+$|^--(quiet|silent|regexp-extended|separate|unbuffered|null-data|posix|debug|sandbox|follow-symlinks)$/, values: { "-l": 1, "--line-length": 1 } },
+};
+
+/**
+ * The index of the word a program takes as its code or command: git's subcommand, the jq or yq program, sed's script
+ * when no `-e` gives it. A glob at or before it can put a name of the folder there, or push another word there.
+ */
+function codeIndex(program: string, argv: readonly string[]): number {
+  if (program === "git") return gitParts(argv)?.at ?? argv.length;
+  const spec = CODE_OPTIONS[program];
+  if (!spec) return 0;
+  if (program === "sed" && argv.some((arg) => /^(-[a-zA-Z]*[ef]|--(e|f))/.test(arg))) return 0;
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === "--") return index + 1;
+    if (program === "yq" && index === 1 && /^(eval|e|eval-all|ea)$/.test(arg)) continue;
+    if (!arg.startsWith("-") || arg === "-") return index;
+    if (spec.flags.test(arg) || arg.includes("=")) continue;
+    index += spec.values[arg] ?? 1;
+  }
+  return argv.length;
+}
+
+/**
+ * A shell segment that only reads, for both judges (engines/judge.ts, subscriptions/node-own-tools.ts): its program
+ * only reads, nothing is set in front of it (`VAR=value` or `env` can make a reader run anything: `LD_PRELOAD`,
+ * `GIT_EXTERNAL_DIFF`, `GIT_CONFIG_COUNT`), no wrapper feeds it arguments the words do not show (`xargs`, `env -S`),
+ * no word of it is expanded by the shell (`$VAR`, `$(…)`, backticks, braces), no glob can hand it an option (a name
+ * in the folder starting with `-`: `globHandsOption`), and no glob stands where it takes its code (git's subcommand,
+ * jq's program: `codeIndex`). What it is given must be what is judged.
+ */
+export async function segmentReadsOnly(segment: Pick<ShellSegment, "argv" | "cwd" | "assigned" | "fed" | "globs">): Promise<boolean> {
+  if (segment.assigned || segment.fed || !segment.argv.length || segment.argv.some((word) => EXPANDS.test(word)) || !readsOnly(segment.argv)) return false;
+  if (!segment.globs?.length) return true;
+  const code = codeIndex(baseName(segment.argv[0]!), segment.argv);
+  if (segment.globs.some((glob) => glob.index > 0 && glob.index <= code)) return false;
+  return !(await globHandsOption(segment));
 }
 
 /** Read-only programs that still reach the network, run commands of their own (`sed`'s `e`), wait for a keyboard, or read a project config that can set a pager (`bat`, `ack`). */
 const NEVER_QUIET = new Set(["curl", "sed", "less", "more", "lsof", "bat", "ack"]);
 /** Options that make an otherwise read-only program start another program, write a file, or follow links out of the folder. */
 const NOT_QUIET_OPTIONS: Record<string, RegExp> = {
-  rg: /^(--pre(-glob)?(=|$)|-[a-zA-Z]*L|--follow)/,
+  rg: /^(--(pre|pre-glob|hostname-bin)(=|$)|-[a-zA-Z]*L|--follow)/,
   grep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
   egrep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
   fgrep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
   ag: /^(--pager|-f$|--follow)/,
   fd: /^(-x|-X|--exec|--exec-batch|-L|--follow)(=|$)/,
   diff: /^(-[a-zA-Z]*r|--recursive)/,
-  tree: /^(-o|--fromfile)/,
+  tree: /^(-[a-zA-Z]*[oR]|--fromfile)/,
   xxd: /^-r/,
   yq: /^(-[a-zA-Z]*i|--inplace)/,
   sort: /^(--compress-program|-T|--temporary-directory)/,
@@ -655,6 +915,63 @@ export function quietRead(argv: string[]): boolean {
   return true;
 }
 
+/**
+ * The names a path with `*`, `?` or `[` can expand to, every component matched as the shell matches it (in any case,
+ * dot names too, as with dotglob); null when they cannot all be listed (an unreadable folder, too many names).
+ */
+export async function globMatches(path: string): Promise<string[] | null> {
+  const [head, ...parts] = path.split(process.platform === "win32" ? /[\\/]/ : "/");
+  let found = [head ? `${head}${sep}` : sep];
+  let listed = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    if (!GLOB.test(part)) {
+      found = found.map((dir) => join(dir, part));
+      continue;
+    }
+    // The words judged here have lost their quotes: every glob character counts, and a backslash is part of a name.
+    const regex = globRegex(part.replace(/\\/g, "\\\\"));
+    const next: string[] = [];
+    for (const dir of found) {
+      if ((listed += 1) > 200) return null;
+      const names = await readdir(dir).catch((error: NodeJS.ErrnoException) => (error.code === "ENOENT" || error.code === "ENOTDIR" ? [] : null));
+      if (names === null) return null;
+      for (const name of names) {
+        if (regex && !regex.test(name)) continue;
+        next.push(join(dir, name));
+        if (next.length > 5_000) return null;
+      }
+    }
+    found = next;
+  }
+  return found;
+}
+
+/**
+ * The hard floor (`outsideRefusal`) for a path a command names or redirects to, with its glob characters expanded as
+ * the shell expands them (`~/.ss?/id_rsa`): every name it can reach is judged by its real path; when they cannot all be
+ * listed, it is refused if it could reach a protected folder (`globRefusal`). Names in `root` pass. Says why, with the path.
+ */
+export async function floorRefusal(full: string, write: boolean, root?: string): Promise<string | null> {
+  const judge = async (path: string) => {
+    const real = await realOutside(path);
+    if ((root !== undefined && within(root, real)) || harmlessPath(real)) return null;
+    const floor = outsideRefusal(real, write);
+    return floor ? `${real}: ${floor}` : null;
+  };
+  if (!GLOB.test(full)) return judge(full);
+  const matches = await globMatches(full);
+  if (matches === null) {
+    const reach = globRefusal(full, write);
+    return reach ? `${full}: ${reach}` : null;
+  }
+  for (const path of matches.length ? matches : [full]) {
+    const refused = await judge(path);
+    if (refused) return refused;
+  }
+  return null;
+}
+
 /** Whether every name a glob matches in its folder stays in `root`. Globs in a folder name are not followed. */
 async function globInside(realRoot: string, cwd: string, word: string): Promise<boolean> {
   const cut = word.lastIndexOf("/");
@@ -677,18 +994,53 @@ async function globInside(realRoot: string, cwd: string, word: string): Promise<
   return true;
 }
 
-/** The repository a git command in `cwd` uses has no config that starts programs, and is in the folder. */
-async function gitConfigSafe(root: string, cwd: string): Promise<boolean> {
-  for (let dir = cwd; within(root, dir); dir = dirname(dir)) {
-    const info = await stat(join(dir, ".git")).catch(() => null);
-    if (info) {
-      if (!info.isDirectory()) return false;
-      const text = await readFile(join(dir, ".git", "config"), "utf8").catch(() => null);
-      return text !== null && !DANGEROUS_GIT_CONFIG.test(text) && !/^\s*\[include/im.test(text);
-    }
-    if (dir === dirname(dir)) break;
+/**
+ * The repository a git command in `cwd` uses (found as git finds it: git-config.ts `discoverRepository`, a `.git` file
+ * of a linked worktree or submodule followed) is in the folder and starts no program of its own: its settings, hooks
+ * and submodules are read without running anything (git-config.ts `repositorySafe`).
+ */
+async function gitConfigSafe(realRoot: string, cwd: string): Promise<boolean> {
+  const found = await discoverRepository(cwd, (dir) => within(realRoot, dir));
+  return found !== null && found !== "unsure" && repositorySafe(found.gitDir, found.workTree);
+}
+
+/** Where git ends up after `-C` (each relative to the last, links followed as `chdir` follows them); null when one is not there. */
+async function gitPlace(cwd: string, dirs: readonly string[]): Promise<string | null> {
+  let dir = await realpath(cwd).catch(() => null);
+  for (const next of dirs) {
+    if (dir === null) return null;
+    // `-C ""` leaves git where it is.
+    if (!next) continue;
+    const path = expandHome(next);
+    dir = await realpath(isAbsolute(path) ? path : `${dir}/${path}`).catch(() => null);
   }
-  return false;
+  return dir;
+}
+
+/**
+ * For a git read outside a coding run's folder (the node's own-tools judge): the repository it reads starts no program
+ * of its own (git-config.ts `repositorySafe`: its settings, `commondir`'s, hooks, populated submodules). It is the one
+ * `--git-dir` names (relative to where `-C` leaves git) with `--work-tree` or that folder as its work tree, else the one
+ * git finds from there (`discoverRepository`); a `.git` file is followed to the folder it names. Outside any repository
+ * nothing of one is read; where git's rules leave a doubt (a folder git may or may not take as a repository, a `.git`
+ * file git would not follow), it is not safe.
+ */
+export async function gitReadSafeAt(argv: string[], cwd: string): Promise<boolean> {
+  const parts = gitParts(argv);
+  if (!parts) return false;
+  const dir = await gitPlace(cwd, parts.dirs);
+  if (dir === null) return false;
+  const named = async (path: string) => realpath(isAbsolute(expandHome(path)) ? expandHome(path) : `${dir}/${expandHome(path)}`).catch(() => null);
+  const workTree = parts.workTree === null ? null : await named(parts.workTree);
+  if (parts.workTree !== null && workTree === null) return false;
+  if (parts.gitDir !== null) {
+    const given = await named(parts.gitDir);
+    const gitDir = given === null ? null : await gitDirNamed(given);
+    return gitDir !== null && repositorySafe(gitDir, workTree ?? dir);
+  }
+  const found = await discoverRepository(dir);
+  if (found === "unsure") return false;
+  return found === null || repositorySafe(found.gitDir, workTree ?? found.workTree);
 }
 
 /**
@@ -701,7 +1053,8 @@ export async function quietArgs(root: string, argv: string[], cwd: string): Prom
   if (!quietRead(argv) || !within(root, cwd)) return false;
   const realRoot = await realOutside(root);
   for (const arg of argv.slice(1)) {
-    const word = arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg;
+    // An option's attached value (`--from-file=x`, `-fx`) is checked as a name like any word.
+    const word = arg.startsWith("-") ? (attachedValues(["", arg])[0] ?? "") : arg;
     if (!word) continue;
     if (GLOB.test(word)) {
       if (!(await globInside(realRoot, cwd, word))) return false;
@@ -710,7 +1063,7 @@ export async function quietArgs(root: string, argv: string[], cwd: string): Prom
     const real = await realOutside(resolve(cwd, expandHome(word)));
     if (!within(realRoot, real) && !harmlessPath(real)) return false;
   }
-  if (baseName(argv[0]!) === "git" && !(await gitConfigSafe(root, cwd))) return false;
+  if (baseName(argv[0]!) === "git" && !(await gitConfigSafe(realRoot, cwd))) return false;
   return true;
 }
 

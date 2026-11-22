@@ -13,7 +13,7 @@ import { CREDENTIAL_TOOLS, runCredentialTool } from "../credentials/run-tools.js
 import { SecretUseError } from "../credentials/secret-http.js";
 import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
-import { hookCall, judgeFloor } from "../workspace/engines/judge.js";
+import { hookCall } from "../workspace/engines/judge.js";
 import { isChatTurn, isCodeAgentTurn } from "../workspace/trust.js";
 import { CONTEXT_TOOLS, isContextTool, isRunActionTool, isRunAppTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
 import { GraphError } from "../context/graph/neighbors.js";
@@ -51,19 +51,18 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/engine/assistant/tools", async (request, reply) => {
     const found = turnBridge(request);
     if (!found.ok) return reply.code(found.status).send({ error: found.error });
+    found.bridge.listed = true;
     return { tools: found.bridge.tools };
   });
-  // The agent's own tool calls in such a turn (its hook: scripts/ensemble-hook.mjs --chat): the hard floor, nothing else.
+  // The agent's own tool calls in such a turn (its hook: scripts/ensemble-hook.mjs --chat): the turn's judge (own-tools.ts),
+  // which logs a refusal itself. A node's call can wait here for its owner's answer, up to the hook's timeout.
   app.post("/api/engine/assistant/ask", async (request, reply) => {
     const found = turnBridge(request);
     if (!found.ok) return reply.code(found.status).send({ decision: "deny", message: found.error });
-    if (!found.bridge.folder) return { decision: "deny", message: "This turn's agent has only Ensemble's tools." };
+    if (!found.bridge.judge) return { decision: "deny", message: "This turn's agent has only Ensemble's tools." };
     const body = z.object({ tool_name: z.string().max(200).default(""), tool_input: z.record(z.string(), z.unknown()).default({}) }).passthrough().parse(request.body);
     try {
-      const verdict = await judgeFloor(found.bridge.folder, hookCall(body.tool_name, body.tool_input));
-      // Calls that ran are logged with their output by the turn's driver; a refusal is logged here.
-      if (verdict.decision !== "allow") found.bridge.log({ kind: "agent.tool", name: body.tool_name, input: body.tool_input, ok: false, output: verdict.message ?? "Refused.", meta: { refused: true } });
-      return verdict;
+      return await found.bridge.judge([hookCall(body.tool_name, body.tool_input)]);
     } catch (error) {
       request.log.error({ err: error }, "assistant turn tool call could not be judged");
       return { decision: "deny", message: "Ensemble could not check this call, so it was not run." };
@@ -74,7 +73,8 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     if (!found.ok) return reply.code(found.status).send({ text: found.error, isError: true });
     const body = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) }).parse(request.body);
     try {
-      return await callThroughBridge(found.bridge, body.name, body.input);
+      // A desktop screenshot this computer took travels as a picture to the agent's MCP server.
+      return await (await import("../desktop/control/images.js")).withDesktopImages(await callThroughBridge(found.bridge, body.name, body.input));
     } catch (error) {
       request.log.warn({ err: error }, "assistant tool call failed");
       return { text: error instanceof Error ? error.message : "The tool failed.", isError: true };
@@ -93,7 +93,7 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     return { tools: runCaptureToolList() };
   });
 
-  // The person's board for their own agent in Chat, a task run's report and evidence (evidence/run-tools.ts), and its browser and capture tools: the same run secret.
+  // The person's board for their own agent in Chat, a task run's or Code tab turn's report and evidence (evidence/run-tools.ts), and a task run's browser and capture tools: the same run secret.
   app.post("/api/engine/tool", async (request, reply) => {
     const host = request.ip.replace(/^::ffff:/, "");
     if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
@@ -151,7 +151,8 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       }
     }
     if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
-      if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
+      // A Code tab turn reports too: Ensemble runs its checks again when it ends (workspace/completion.ts).
+      if (chat && !codeAgent) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs and Code tab turns, not Chat." });
       try {
         return { text: await runRunTool(run.ctx, body.name as (typeof RUN_TOOLS)[number], body.input) };
       } catch (error) {

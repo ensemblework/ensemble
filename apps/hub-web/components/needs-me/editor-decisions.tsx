@@ -75,6 +75,8 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
   const push = decision.toolName === "git push";
   // A folder outside the run's: allowed for the rest of the run once, never trusted for good.
   const outside = decision.toolName === "outside" || decision.toolName === "outside-read";
+  // A program that changes the computer: once or for this run, never by trusting the folder.
+  const program = decision.toolName.startsWith("program:");
   return (
     <div className="tile rounded-lg bg-panel p-4" data-testid="ensemble-decision">
       <div className="flex flex-wrap items-center gap-2">
@@ -140,7 +142,7 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
               Allow for this run
             </button>
           )}
-          {push || outside ? null : (
+          {push || outside || program ? null : (
             <button
               type="button"
               className="btn"

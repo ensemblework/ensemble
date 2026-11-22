@@ -14,6 +14,9 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import type { StepReport } from "../node/report.js";
+import { keepCodeTurnResult, type CodeTurnResult } from "../workspace/code-turn.js";
+import { saveCompletion, settleTask, taskStatusAfter, taskStatusAtStartOf, verifiedReason, type Completion } from "../workspace/completion.js";
+import { acceptanceChecksFor } from "../workspace/acceptance-checks.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -29,10 +32,16 @@ function redactDeep<T>(value: T): T {
   return value;
 }
 
-function taskStatusFor(outcome: DeviceOutcome, markDone: boolean): "done" | "waiting_approval" | "todo" | "blocked" {
-  if (outcome === "succeeded") return markDone ? "done" : "waiting_approval";
-  if (outcome === "cancelled") return "todo";
-  return "blocked";
+const RUN_END = { succeeded: "success", failed: "failed", cancelled: "cancelled", blocked: "blocked" } as const;
+
+/**
+ * Whether an assigned run had checks: the agent reported one with a command, or its task's or plan
+ * step's acceptance criteria name one. A run that had some is never done on the agent's word.
+ */
+async function hadChecks(db: FinishDb, job: Pick<WorkspaceJob, "id" | "userId" | "taskId">, report: StepReport | null): Promise<boolean> {
+  if (report?.checks?.some((check) => check.rerun)) return true;
+  const task = await db.task.findUnique({ where: { id: job.taskId }, select: { description: true, notes: true } });
+  return (await acceptanceChecksFor(db, { userId: job.userId, jobId: job.id, parts: [task?.description ?? "", task?.notes ?? ""] }).catch(() => [])).length > 0;
 }
 
 function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelled" | "needs_info" {
@@ -45,7 +54,18 @@ function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelle
 export async function finishDeviceJob(
   prisma: PrismaClient,
   job: WorkspaceJob & { task: { id: string; title: string; status: string; owner: string } },
-  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals; report?: StepReport | null },
+  input: {
+    outcome: DeviceOutcome;
+    summary: string;
+    results: DeviceResult[];
+    totals?: RunTotals;
+    report?: StepReport | null;
+    codeTurn?: CodeTurnResult | null;
+    /** Any other run's checks as its computer ran them again. */
+    completion?: Completion | null;
+    /** The computer runs an assigned run's checks again (`capabilities.runVerification`): its task is done only when they pass. */
+    verifies?: boolean;
+  },
 ): Promise<boolean> {
   await requireVerifiedUser(job.userId);
   const summary = redactText(input.summary).slice(0, 20_000);
@@ -113,31 +133,16 @@ export async function finishDeviceJob(
         result: summary || null,
       },
     });
-    const next = taskStatusFor(outcome, job.markDone);
-    const fresh = await tx.task.findUnique({ where: { id: job.taskId }, select: { status: true, owner: true } });
-    if (fresh && fresh.owner === "agent" && fresh.status !== next) {
-      await tx.task.update({
-        where: { id: job.taskId },
-        data: {
-          status: next,
-          completedAt: next === "done" ? now : null,
-          blockedQuestion: next === "blocked" ? ({ question: error ?? "The agent stopped.", options: [] } as Prisma.InputJsonValue) : undefined,
-        },
-      });
-      await tx.taskTransition.create({
-        data: {
-          userId: job.userId,
-          taskId: job.taskId,
-          fromStatus: fresh.status,
-          toStatus: next,
-          fromOwner: "agent",
-          toOwner: "agent",
-          actor: "agent",
-          reason: error ?? "Agent finished",
-          runId,
-        },
-      });
-    }
+    // A Code tab turn: what its packet sent, the checks the computer ran again, and its handoff record.
+    if (input.codeTurn) await keepCodeTurnResult(tx, job, runId, input.codeTurn);
+    else if (input.completion) await saveCompletion(tx, runId, input.completion);
+    // An assigned run on a computer that runs its checks again: its task is done only when they passed.
+    const assigned = job.kind === "code" && !isChatTurn(job.context) && input.verifies === true;
+    const checks = assigned ? (input.completion?.checks ?? null) : null;
+    const ended = taskStatusAfter({ outcome: RUN_END[outcome], markDone: job.markDone, checks, hasChecks: assigned && !checks && outcome === "succeeded" && (await hadChecks(tx, job, input.report ?? null)) });
+    const next = ended.status;
+    // Moved only from the status the claim left it in: one its owner set while the run worked or its checks ran stands.
+    const moved = await settleTask(tx, { userId: job.userId, taskId: job.taskId, jobId: job.id, runId, expected: taskStatusAtStartOf(job.context) ?? "in_progress", status: next, question: ended.question ?? error, reason: error ?? verifiedReason(ended.verified), verified: ended.verified, now });
     // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
     // A node's run reports in its chat, where the node goes on (retries, asks): it does not notify here.
     const nodeRun = await tx.nodeRun.findUnique({ where: { jobId: job.id }, select: { id: true } });
@@ -145,13 +150,13 @@ export async function finishDeviceJob(
     const codeTurn = Boolean(codeTurnOf(job.context));
     if (codeTurn && !nodeRun) {
       if (outcome !== "cancelled") await noticeCodeTurn(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, failed: outcome === "succeeded" ? null : (error ?? summary) });
-    } else if (outcome === "succeeded" && !job.markDone && !nodeRun && !isChatTurn(job.context)) await noticeReadyForReview(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, runId });
-    if (outcome !== "succeeded" && outcome !== "cancelled" && !nodeRun && !codeTurn) await tx.notification.create({
+    } else if (outcome === "succeeded" && moved && next === "waiting_approval" && !nodeRun && !isChatTurn(job.context)) await noticeReadyForReview(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, runId });
+    if ((outcome !== "succeeded" || ended.verified === "failed") && outcome !== "cancelled" && !nodeRun && !codeTurn) await tx.notification.create({
       data: {
         userId: job.userId,
         kind: "agent",
         title: `Agent needs you: ${job.task.title}`,
-        body: (error ?? summary).slice(0, 300),
+        body: (error ?? ended.question ?? summary).slice(0, 300),
         url: `/tasks/${job.taskId}`,
         subject: `task:${job.taskId}`,
       },

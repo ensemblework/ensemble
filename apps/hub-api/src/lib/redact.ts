@@ -65,3 +65,77 @@ export function redactKeys(value: string): string {
     .replace(URL_PASSWORD, "$1[redacted]@")
     .replace(SHAPED, "[redacted]");
 }
+
+/** Words in a name (a key, a variable, a header, a flag, a URL parameter) that make its value a secret, whatever it looks like. */
+const SECRET_WORDS = new Set([
+  "secret", "secrets", "token", "tokens", "password", "passwords", "passwd", "passphrase", "pass", "pwd", "auth", "authorization", "credential",
+  "credentials", "cookie", "cookies", "pin", "otp", "sig", "signature", "apikey", "privatekey", "accesskey", "secretkey",
+]);
+/** Two words in a row that do: `api key`, `X-Api-Key`, `access_key`. */
+const SECRET_PAIRS: ReadonlyArray<readonly [string, string]> = [["api", "key"], ["access", "key"], ["private", "key"], ["secret", "key"], ["session", "token"]];
+/** Endings that do in a name run together: `PGPASSWORD`, `clientsecret`, `csrftoken`. */
+const SECRET_ENDINGS = ["password", "passwd", "passphrase", "secret", "token", "apikey", "credential", "credentials"];
+
+/** Whether a name says its value is a secret: `apiKey`, `X-Api-Key`, `DB_PASSWORD`, `PGPASSWORD`, `pin`, `sig`, `X-Amz-Signature`; not `author`, `pinned`, `key`. */
+export function secretName(name: string): boolean {
+  const words = name.slice(0, 200).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (words.some((word) => SECRET_WORDS.has(word) || SECRET_ENDINGS.some((ending) => word.endsWith(ending)))) return true;
+  return SECRET_PAIRS.some(([first, second]) => words.some((word, index) => word === first && words[index + 1] === second));
+}
+
+// Every pattern below is bounded, so a long line costs time in proportion to its length (no backtracking over it).
+/** `Bearer …`, `Basic …`, `token …` credentials, in a header or anywhere. */
+const CREDENTIAL = /\b(bearer|basic|token)\s{1,8}[A-Za-z0-9._~+/=-]{6,4096}/gi;
+/** `NAME=value`, `NAME: value` and `"name": "value"` whose name says secret (checked by `secretName`). */
+const ASSIGNED = /([A-Za-z_][A-Za-z0-9_.-]{0,63})(["']?\s{0,4}[=:](?!\/\/)\s{0,4})("[^"\n]{0,512}"?|'[^'\n]{0,512}'?|[^\s"'&,;)?#]{1,4096})/g;
+/** `--token value`, `-password value`: a flag whose name says secret, then its value. */
+const FLAG_VALUE = /(--?[A-Za-z][A-Za-z0-9-]{0,40})\s{1,8}([^\s"'-][^\s"']{0,4096})/g;
+/** `-u user:password`, `--user user:password` (curl and the like): the password after the user's name. */
+const USER_PASSWORD = /(\s(?:-u|--user)(?:\s{1,8}|=)["']?)([^\s:'"]{1,256}):[^\s'"]{1,512}/g;
+/** URL parameters that carry a key or a code under a plain name. */
+const URL_SECRET = /([?&;](?:key|code|state|ticket)=)[^&#\s"']{1,4096}/gi;
+const URL_LOGIN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/]{1,256}:)[^\s@/]{1,256}@/gi;
+const KEY_BLOCK = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)/g;
+
+/** A string's secrets replaced, in time linear in its length (see `redactArgs`). */
+function redactString(text: string): string {
+  return hideSecretValues(text)
+    .replace(KEY_BLOCK, "[redacted private key]")
+    .replace(URL_LOGIN, "$1[redacted]@")
+    .replace(CREDENTIAL, "$1 [redacted]")
+    .replace(URL_SECRET, "$1[redacted]")
+    .replace(USER_PASSWORD, "$1$2:[redacted]")
+    // `Authorization: Bearer [redacted]` keeps its scheme: the credential after it is already gone.
+    .replace(ASSIGNED, (all, name: string, between: string, value: string) => (secretName(name) && !/^(?:bearer|basic|token)$/i.test(value) ? `${name}${between}[redacted]` : all))
+    .replace(FLAG_VALUE, (all, flag: string, value: string) => (secretName(flag) && value !== "[redacted]" ? `${flag} [redacted]` : all))
+    .replace(SHAPED, "[redacted]");
+}
+
+/**
+ * Tool arguments as a record or a label may keep them (a failed call's input, a journal's labels), with their secrets
+ * replaced by `[redacted]`. A value under a key whose name says secret (`password`, `pass`, `passphrase`, `auth`, `pin`,
+ * `token`, `apiKey`, `X-Api-Key`, `sig`…: `secretName`) is replaced at any depth, and in a JSON string that holds an object
+ * or a list too. In any other string: `NAME=value`, `NAME: value` and `--name value` whose name says secret (a header
+ * inside a command, an env assignment, a flag), a user's password after `-u` or `--user`, `Bearer`/`Basic` credentials, secret URL parameters (`token=`, `sig=`,
+ * `X-Amz-Signature=`, `key=`), passwords in URLs, private key blocks, known token shapes and the saved run secrets.
+ * Linear in the input's length. Nothing is cut: callers cut after.
+ */
+export function redactArgs(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (depth < 8 && (text.startsWith("{") || text.startsWith("[")) && text.length <= 1_000_000) {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        if (parsed && typeof parsed === "object") return JSON.stringify(redactArgs(parsed, depth + 1));
+      } catch {
+        // Not JSON: a string like any other.
+      }
+    }
+    return redactString(value);
+  }
+  if (depth >= 32 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => redactArgs(item, depth + 1));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, secretName(key) && item !== null && typeof item !== "boolean" ? "[redacted]" : redactArgs(item, depth + 1)]),
+  );
+}

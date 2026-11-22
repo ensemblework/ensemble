@@ -11,7 +11,7 @@
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { LightMyRequestResponse } from "fastify";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
@@ -27,6 +27,8 @@ const { sseHub } = await import("../lib/sse.js");
 const { sweepHelpers, HELPER_IDLE_MS } = await import("./helpers.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
 const { setTurnRetryDelaysForTests } = await import("./queue.js");
+const { createSpaceUser, SPACE_COOKIE } = await import("../spaces/store.js");
+const { resetHeuristicsCache } = await import("./heuristics.js");
 after(() => h.close());
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string; rateLimited?: boolean };
@@ -108,7 +110,8 @@ test("a DM turn acts in the owner's Ensemble with the assistant's tools and repo
   const call = seen[0]!;
   assert.match(call.transcript, /Mira \(your owner\)\] add a task to write the README/);
   assert.match(call.system, /You are Assistant \(@assistant\), an Ensemble Node: a persistent AI teammate that belongs to Mira/);
-  for (const name of ["node_delegate", "node_post", "node_remember", "hub_create_tasks"]) assert.ok(call.tools.includes(name), `${name} is offered`);
+  for (const name of ["node_post", "node_remember", "hub_create_tasks"]) assert.ok(call.tools.includes(name), `${name} is offered`);
+  assert.ok(!call.tools.includes("node_delegate"), "with no crew, helper or other node, the crew's tools wait for that kind of work (node/skills.ts TOOL_TIERS)");
 
   const reply = (await read(mira, room.id)).find((row) => row.authorNodeId === node.id)!;
   assert.match(reply.body, /^Added “Write the README”\./);
@@ -121,6 +124,369 @@ test("a DM turn acts in the owner's Ensemble with the assistant's tools and repo
 
   const dock = json(await mira.inject({ method: "GET", url: "/api/assistant/conversations" })).conversations as Array<{ title: string }>;
   assert.ok(!dock.some((row) => row.title.startsWith("Node ·")), "node conversations stay out of the Hub's chat list");
+});
+
+test("a DM turn keeps its trace, its reply names the turn, its routing is a decision, and only the node's owner reads them", async () => {
+  const columns = await h.prisma.$queryRaw<Array<{ table_name: string; column_name: string }>>`
+    SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN ('node_turns', 'node_turn_traces', 'node_decisions')`;
+  const has = (table: string, column: string) => columns.some((row) => row.table_name === table && row.column_name === column);
+  assert.ok(has("node_turns", "outcome") && has("node_turns", "placement") && has("node_turn_traces", "calls") && has("node_decisions", "config_version"), "the migration applied");
+
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  script = (turn) => (turn.slug === "assistant" ? { calls: [{ name: "hub_create_tasks", arguments: { tasks: [{ title: "Trace the README" }] } }], then: "Added “Trace the README”." } : {});
+  const asked = await say(mira, room.id, "add a task to trace the README");
+
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
+  assert.deepEqual([turn.status, turn.outcome], ["done", "done"]);
+  const placement = turn.placement as { loop: string; inference: string; toolsAt: string | null; conversation: string };
+  assert.equal(placement.loop, "ensemble-api");
+  assert.ok(["included", "owner-key", "local"].includes(placement.inference));
+  assert.deepEqual([placement.toolsAt, placement.conversation], ["server", "ensemble"]);
+
+  const trace = await h.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: turn.id } });
+  const instructions = await h.prisma.metricEvent.findFirstOrThrow({ where: { kind: "node.instructions", payload: { path: ["turnId"], equals: turn.id } } });
+  const logged = instructions.payload as { version: string; hash: string; hashes: Record<string, string> };
+  assert.deepEqual([trace.instructionVersion, trace.instructionHash], [logged.version, logged.hash], "the instructions the turn was given");
+  const sections = trace.sections as { hashes: Record<string, string>; list: Array<{ name: string; tier: string; chars: number; tokens: number }>; dropped: unknown[] };
+  assert.deepEqual(sections.hashes, logged.hashes);
+  assert.ok(sections.list.some((row) => row.name === "node/00-role" && row.tier === "stable" && row.chars > 0 && row.tokens > 0));
+  assert.ok(sections.list.some((row) => row.name === "node/80-packet-new" && row.tier === "volatile"));
+  assert.match(trace.toolSchemaHash ?? "", /^[0-9a-f]{16}$/);
+  assert.ok((trace.toolCount ?? 0) > 10, "every tool the model was offered");
+  const calls = trace.calls as Array<{ name: string; ms: number; state: string; resultChars: number; shownChars: number; offloaded: boolean; readOnly: boolean }>;
+  assert.equal(calls.length, 1);
+  assert.deepEqual([calls[0]!.name, calls[0]!.state, calls[0]!.offloaded, calls[0]!.readOnly], ["hub_create_tasks", "ok", false, false]);
+  assert.ok(calls[0]!.ms >= 0 && calls[0]!.resultChars > 0 && calls[0]!.shownChars > 0, "its time and sizes");
+  assert.ok(trace.modelRequested && trace.modelSent === trace.modelRequested && trace.provider, "the model the node's settings chose was sent");
+  assert.equal(trace.modelReported, "test-model", "and the provider's own name for it");
+  assert.deepEqual([trace.tokensIn, trace.tokensOut], [20, 10], "two model calls");
+  assert.deepEqual(trace.placement, turn.placement);
+  const loop = trace.loop as { kind: string; steps: number; config: string };
+  assert.deepEqual([loop.kind, loop.steps], ["ensemble", 2]);
+  assert.match(loop.config, /:[0-9a-f]{12}$/);
+  assert.deepEqual((trace.verification as { rounds: unknown[] }).rounds, [{ round: 0, problems: null }], "the answer check found nothing missing");
+  assert.equal(trace.error, null);
+
+  const reply = (await read(mira, room.id)).find((row) => row.authorNodeId === node.id)!;
+  assert.equal(reply.data.turnId, turn.id, "the reply opens its turn's trace");
+  assert.deepEqual(trace.report, { kind: "reply", outcome: "done", chars: "Added “Trace the README”.".length, held: 0, messages: [{ id: reply.id, kind: "text" }], artifacts: [], verified: true });
+  assert.equal((trace.verification as { passed: boolean }).passed, true, "the reply it ended with passed the answer check");
+  assert.ok(!JSON.stringify(trace).includes("Trace the README") && !JSON.stringify(trace).includes("trace the README"), "sizes and names, never the words or the tool's input");
+
+  const { DEFAULT_NODE_HEURISTICS, heuristicsVersion } = await import("./heuristics.js");
+  const routed = await h.prisma.nodeDecision.findMany({ where: { kind: "route", inputs: { path: ["messageId"], equals: asked.id } } });
+  assert.equal(routed.length, 1, "one decision for the message");
+  assert.deepEqual([routed[0]!.userId, routed[0]!.nodeId, routed[0]!.turnId, routed[0]!.ambiguous], [mira.id, node.id, turn.id, false]);
+  assert.equal(routed[0]!.configVersion, heuristicsVersion(DEFAULT_NODE_HEURISTICS));
+  assert.deepEqual(routed[0]!.choice, { reason: "dm", woken: [{ nodeId: node.id, private: false, audience: "owner", turnId: turn.id }] });
+  const inputs = routed[0]!.inputs as { roomKind: string; author: unknown; brakes: Record<string, number> };
+  assert.deepEqual([inputs.roomKind, inputs.author, inputs.brakes.botStreak, inputs.brakes.humanFanout], ["dm", { kind: "human" }, 8, 6]);
+
+  const opened = await mira.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace` });
+  assert.equal(opened.statusCode, 200, opened.body);
+  const body = json(opened);
+  assert.deepEqual([body.turn.id, body.turn.outcome, body.turn.placement], [turn.id, "done", turn.placement]);
+  assert.deepEqual([body.trace.instructionVersion, body.trace.calls.length, body.trace.userId], [logged.version, 1, undefined]);
+  assert.deepEqual(body.decisions.map((row: { id: string }) => row.id), [routed[0]!.id]);
+
+  const ben = await person("Ben");
+  assert.equal((await ben.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace` })).statusCode, 404, "another person's node's turn");
+  assert.equal((await mira.inject({ method: "GET", url: `/api/node/turns/${randomUUID()}/trace` })).statusCode, 404);
+  assert.equal((await mira.inject({ method: "GET", url: "/api/node/turns/not-a-turn/trace" })).statusCode, 404);
+  assert.equal((await h.app.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace` })).statusCode, 401);
+
+  // Whichever space is open, a turn's trace is its node's owner's: with a space Ben shares with her open, Mira still reads it.
+  const launch = await createSpaceUser(h.prisma, ben.id, { name: "Launch", icon: null });
+  assert.equal((await ben.inject({ method: "POST", url: `/api/sharing/spaces/${launch}/members`, payload: { personId: mira.id, role: "viewer" } })).statusCode, 201);
+  const inLaunch = (user: HttpUser) => h.app.inject({ method: "GET", url: `/api/node/turns/${turn.id}/trace`, headers: { cookie: `${user.cookie}; ${SPACE_COOKIE}=${launch}` } });
+  const whileShared = await inLaunch(mira);
+  assert.equal(whileShared.statusCode, 200, whileShared.body);
+  assert.equal(json(whileShared).turn.id, turn.id);
+  assert.equal((await inLaunch(ben)).statusCode, 404, "the space's owner, in it, still reads only their own nodes' turns");
+
+  // Traces and decisions are history (`historyRetentionDays`): they go after it, the turn stays; and they go with their node.
+  const { runRetention } = await import("../jobs/retention.js");
+  await runRetention(h.app, mira.id, { deletedDays: 30, completedDays: 60, historyDays: 30, now: new Date(Date.now() + 31 * 86_400_000) });
+  assert.deepEqual([await h.prisma.nodeTurnTrace.count({ where: { userId: mira.id } }), await h.prisma.nodeDecision.count({ where: { userId: mira.id } })], [0, 0]);
+  assert.ok(await h.prisma.nodeTurn.findUnique({ where: { id: turn.id } }), "the turn itself stays");
+  await h.prisma.nodeTurnTrace.create({ data: { turnId: turn.id, userId: mira.id, nodeId: node.id } });
+  await h.prisma.nodeDecision.create({ data: { userId: mira.id, nodeId: node.id, turnId: turn.id, kind: "route", configVersion: "test" } });
+  assert.equal((await mira.inject({ method: "DELETE", url: `/api/node/nodes/${node.id}` })).statusCode, 204);
+  assert.deepEqual([await h.prisma.nodeTurnTrace.count({ where: { turnId: turn.id } }), await h.prisma.nodeDecision.count({ where: { turnId: turn.id } })], [0, 0], "deleting the node takes its turns' traces and decisions");
+});
+
+test("a turn goes on, and answers, when where it runs cannot be written", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  // The database refuses only the turn's placement; every other write goes through.
+  const turns = h.prisma.nodeTurn;
+  const updateMany = turns.updateMany;
+  let refused = 0;
+  const refusing = ((args: { data: { placement?: unknown } }) => {
+    if (args.data.placement === undefined) return updateMany(args as never);
+    refused += 1;
+    return Promise.reject(new Error("Connection lost"));
+  }) as unknown as typeof updateMany;
+  turns.updateMany = refusing;
+  try {
+    assert.equal(h.prisma.nodeTurn.updateMany, refusing, "the stub is the client's");
+    script = () => ({ text: "Here it is." });
+    await say(mira, room.id, "what is next?");
+  } finally {
+    turns.updateMany = updateMany;
+  }
+
+  assert.equal(refused, 1, "its placement could not be written");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
+  assert.deepEqual([turn.status, turn.outcome, turn.placement, turn.error], ["done", "done", null, null]);
+  assert.ok((await read(mira, room.id)).some((row) => row.authorNodeId === node.id && row.body === "Here it is."), "the owner still gets the answer");
+  const trace = await h.prisma.nodeTurnTrace.findUniqueOrThrow({ where: { turnId: turn.id } });
+  assert.equal((trace.placement as { loop: string }).loop, "ensemble-api", "its trace still says where it ran");
+});
+
+test("a turn on its owner's AI plan keeps where it ran: the computer, Ensemble's tool calls, what the agent reported and its session", async () => {
+  const akash = await person("Akash");
+  const key = await h.asToken(akash, "device");
+  const copilot = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true, checkedAt: new Date().toISOString() };
+  const laptop = await h.prisma.device.create({
+    data: { userId: akash.id, name: "Akash's laptop", platform: "linux", appVersion: "cli-0.8.5", tokenId: key.id, lastSeenAt: new Date(), capabilities: { assistantTurns: 3, agents: [copilot] } },
+  });
+  const { node, room } = await createNode(akash, "assistant");
+  await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
+  const failures: unknown[] = [];
+  // The paired computer: the agent calls one of Ensemble's tools, then answers in a new session, after the owner went on in its app.
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${laptop.id}` || frame.event !== "assistant.turn") return;
+    const id = String((frame.data as { id?: unknown }).id);
+    setTimeout(
+      () =>
+        void (async () => {
+          assert.equal((await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).statusCode, 200);
+          const tool = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/tool`, payload: { name: "hub_list_tasks", input: {} } });
+          assert.equal(tool.statusCode, 200, tool.body);
+          const result = { text: "Nothing is due.", model: "gpt-6.1-sol-2026", tokensIn: 100, tokensOut: 2, costUsd: 0.4, resumed: false, restart: { reason: "gone", error: "No conversation found" }, outside: { app: "GitHub Copilot", turns: [{ prompt: "what is due?", answer: "Nothing." }], earlier: 0 } };
+          assert.equal((await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result } })).statusCode, 200);
+        })().catch((error: unknown) => failures.push(error)),
+      5,
+    );
+  });
+  try {
+    await say(akash, room.id, "what is due?");
+  } finally {
+    stop();
+  }
+  assert.deepEqual(failures, []);
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id }, include: { trace: true } });
+  assert.equal(turn.outcome, "done");
+  assert.deepEqual(turn.placement, { loop: "subscription-cli", inference: "owner-subscription", toolsAt: laptop.id, conversation: "agent-app" });
+  const trace = turn.trace!;
+  assert.deepEqual([trace.modelRequested, trace.modelSent, trace.modelReported, trace.provider], ["gpt-6.1-sol", "gpt-6.1-sol", "gpt-6.1-sol-2026", "copilot-cli"]);
+  assert.deepEqual([trace.tokensIn, trace.tokensOut, trace.costUsd], [100, 2, null], "its plan pays: no cost is counted");
+  assert.deepEqual((trace.calls as Array<{ name: string; state: string }>).map((call) => [call.name, call.state]), [["hub_list_tasks", "ok"]]);
+  assert.deepEqual(trace.loop, { kind: "subscription", agent: "copilot-cli", computer: "Akash's laptop", computerId: laptop.id, session: { resumed: false, restart: "gone" }, outside: 1, calls: 1, ownTools: false }, "a computer before assistantTurns 5 ran it with Ensemble's tools only");
+  assert.ok((trace.toolCount ?? 0) > 10 && trace.toolSchemaHash, "the tools its agent was given");
+  assert.ok(!JSON.stringify(trace).includes("No conversation found"), "the agent's own words stay out");
+});
+
+type PlanSpec = { prompt: string; session?: { key: string; position?: number; resume?: string; history?: string } | null; tools?: Array<{ name: string }> };
+type PlanAnswer = { tools?: Array<{ name: string; input: Record<string, unknown> }>; text: string; resumed?: boolean; before?: () => Promise<unknown> };
+type PlanComputer = { laptop: { id: string }; key: Awaited<ReturnType<typeof h.asToken>> };
+
+const COPILOT_AGENT = { id: "copilot-cli", via: "cli", version: "1.0.200", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }], typedModels: true };
+
+/** A paired computer of `owner` with GitHub Copilot, on Ensemble that takes another message of a turn in its session (`assistantTurns` 6). */
+async function pairComputer(owner: HttpUser, name: string, lastSeenAt = new Date()): Promise<PlanComputer> {
+  const key = await h.asToken(owner, "device");
+  const laptop = await h.prisma.device.create({ data: { userId: owner.id, name, platform: "linux", appVersion: "cli-0.9.0", tokenId: key.id, lastSeenAt, capabilities: { assistantTurns: 6, agents: [{ ...COPILOT_AGENT, checkedAt: new Date().toISOString() }] } } });
+  return { laptop, key };
+}
+
+/** A node on its owner's GitHub Copilot plan, on one paired computer. */
+async function onPlan(name: string) {
+  const owner = await person(name);
+  const { laptop, key } = await pairComputer(owner, `${name}'s laptop`);
+  const { node, room } = await createNode(owner, "assistant");
+  await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
+  return { owner, key, laptop, node, room };
+}
+
+/** The owner's agent on a computer: each run the web hands it (in order) calls the tools `answer` names, then answers. */
+function agentOn(plan: PlanComputer, answer: (spec: PlanSpec, index: number) => PlanAnswer) {
+  const specs: PlanSpec[] = [];
+  const failures: unknown[] = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${plan.laptop.id}` || frame.event !== "assistant.turn") return;
+    const id = String((frame.data as { id?: unknown }).id);
+    setTimeout(
+      () =>
+        void (async () => {
+          const spec = (json(await plan.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })) as { spec: PlanSpec }).spec;
+          specs.push(spec);
+          const said = answer(spec, specs.length - 1);
+          for (const tool of said.tools ?? []) assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/tool`, payload: tool })).statusCode, 200);
+          await said.before?.();
+          const result = { text: said.text, model: "gpt-6.1-sol", tokensIn: 10, tokensOut: 2, costUsd: null, resumed: said.resumed ?? specs.length > 1 };
+          assert.equal((await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result } })).statusCode, 200);
+        })().catch((error: unknown) => failures.push(error)),
+      5,
+    );
+  });
+  return { specs, failures, stop };
+}
+
+test("on its owner's plan, an agent that did the work and wrote nothing is asked once in the same session; still nothing, and the reply says what it did, never an error", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Akash");
+  let agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "Added “Pay rent” to your tasks." } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Pay rent" }] } }], text: "", resumed: false }));
+  try {
+    await say(plan.owner, plan.room.id, "add a task to pay rent");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "the turn, then one more message in its session");
+  assert.equal(agent.specs[1]!.prompt, REPLY_PROMPT);
+  assert.equal(agent.specs[1]!.session?.key, agent.specs[0]!.session?.key, "the same native session");
+  assert.equal(agent.specs[0]!.session?.position, 0);
+  assert.deepEqual([agent.specs[1]!.session?.position, agent.specs[1]!.session?.resume, agent.specs[1]!.session?.history], [0, "only", ""], "at the turn's own place, only in the session that took it");
+  let rows = await read(plan.owner, plan.room.id);
+  assert.equal(rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)?.body, "Added “Pay rent” to your tasks.");
+  assert.ok(!rows.some((row) => row.kind === "error"), "no error in the chat");
+  let turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+  assert.equal(turn.outcome, "done");
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["reply"]);
+  assert.equal((turn.trace!.report as { emptyReply?: boolean }).emptyReply, undefined);
+
+  // Asked again it still writes nothing: the reply is what its tools did, and the turn is done.
+  agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "" } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Water the plants" }] } }], text: "" }));
+  try {
+    await say(plan.owner, plan.room.id, "and one to water the plants");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2);
+  rows = await read(plan.owner, plan.room.id);
+  const reply = rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.match(reply.body, /^Done: .*Water the plants/);
+  assert.equal(reply.data.tools[0].name, "hub_create_tasks");
+  assert.ok(!rows.some((row) => row.kind === "error"), "still no error in the chat");
+  turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+  assert.deepEqual([turn.status, turn.outcome, turn.error], ["done", "done", null]);
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.kind, report.outcome, report.emptyReply, report.verified], ["reply", "done", true, null]);
+  assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
+});
+
+test("on its owner's plan, a tool the turn called through hub_use_tool is listed in the message that goes on in its session", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Ama");
+  const listed = (spec: PlanSpec) => (spec.tools ?? []).map((tool) => tool.name);
+  const agent = agentOn(plan, (spec) =>
+    spec.prompt === REPLY_PROMPT ? { text: "You have no routines yet." } : { tools: [{ name: "hub_use_tool", input: { name: "node_routines", input: { action: "list" } } }], text: "", resumed: false },
+  );
+  try {
+    await say(plan.owner, plan.room.id, "anything new?");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "the turn, then the reply asked for in its session");
+  assert.ok(!listed(agent.specs[0]!).includes("node_routines"), "left out of a turn its words did not call for");
+  assert.ok(listed(agent.specs[1]!).includes("node_routines"), "called once, it is shown for the rest of the turn");
+});
+
+test("on its owner's plan, another message of a turn goes only to the computer that ran the turn: never to another one, and not at all once that one is gone", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const plan = await onPlan("Kofi");
+  const desktop = await pairComputer(plan.owner, "Kofi's desktop", new Date(Date.now() - 60_000));
+  const lastSeen = (computer: PlanComputer, at: number) => h.prisma.device.update({ where: { id: computer.laptop.id }, data: { lastSeenAt: new Date(at) } });
+  const other = agentOn(desktop, () => ({ text: "Wrong computer." }));
+  const task = (title: string) => [{ name: "hub_create_tasks", input: { tasks: [{ title }] } }];
+  try {
+    // The turn runs on the laptop, seen last; before it ends the desktop is seen later, so a computer chosen again would be the desktop.
+    let agent = agentOn(plan, (spec) => (spec.prompt === REPLY_PROMPT ? { text: "Added “Call the bank” to your tasks." } : { tools: task("Call the bank"), text: "", resumed: false, before: () => lastSeen(desktop, Date.now() + 1000) }));
+    try {
+      await say(plan.owner, plan.room.id, "add a task to call the bank");
+    } finally {
+      agent.stop();
+    }
+    assert.deepEqual([agent.failures, other.failures], [[], []]);
+    assert.equal(other.specs.length, 0, "nothing went to the desktop");
+    assert.equal(agent.specs.length, 2);
+    assert.deepEqual([agent.specs[1]!.prompt, agent.specs[1]!.session?.key, agent.specs[1]!.session?.position, agent.specs[1]!.session?.resume], [REPLY_PROMPT, agent.specs[0]!.session?.key, 0, "only"]);
+    let reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+    assert.equal(reply.body, "Added “Call the bank” to your tasks.");
+
+    // The laptop goes before its turn ends: the message is sent nowhere, and the reply says what the turn did.
+    await lastSeen(desktop, Date.now() - 60_000);
+    await lastSeen(plan, Date.now());
+    agent = agentOn(plan, () => ({ tools: task("Water the plants"), text: "", before: () => lastSeen(plan, Date.now() - 10 * 60_000) }));
+    try {
+      await say(plan.owner, plan.room.id, "and one to water the plants");
+    } finally {
+      agent.stop();
+    }
+    assert.deepEqual([agent.failures, other.failures], [[], []]);
+    assert.deepEqual([agent.specs.length, other.specs.length], [1, 0], "no second message, on any computer");
+    const rows = await read(plan.owner, plan.room.id);
+    reply = rows.filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+    assert.match(reply.body, /^Done: .*Water the plants/);
+    assert.ok(!rows.some((row) => row.kind === "error"), "no error in the chat");
+    const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, orderBy: { createdAt: "desc" }, include: { trace: true } });
+    assert.deepEqual([turn.outcome, (turn.trace!.report as { emptyReply?: boolean }).emptyReply, (turn.trace!.loop as { followUps?: string[] }).followUps], ["done", true, undefined]);
+  } finally {
+    other.stop();
+  }
+});
+
+test("on its owner's plan, a reply that says a screenshot is attached when none reached the chat goes back once; still false, the claim goes and a plain note says so", async () => {
+  const plan = await onPlan("Mira");
+  const agent = agentOn(plan, (spec, index) => (index === 0 ? { text: "Here is the screenshot of the status page." } : { text: spec.prompt.startsWith("You said the screenshot is attached") ? "Here's the screenshot." : "?" }));
+  try {
+    await say(plan.owner, plan.room.id, "send me a screenshot of the status page");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "one round to attach it or correct the reply");
+  assert.equal(agent.specs[1]!.prompt, "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "No screenshot was attached.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.outcome, report.falseClaims, report.artifacts], ["partial", 1, []]);
+  assert.equal(turn.trace!.verification, null, "no checklist model in this test: the answer check is skipped on the owner's plan");
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
+});
+
+test("on its owner's plan, the answer check runs after the turn when a checklist model is there: what is missing goes back to the same session, and its rounds are in the trace", async () => {
+  const { CHECKLIST_PROMPT } = await import("./deliverables.js");
+  process.env.ENSEMBLE_NODE_CHECKLIST_MODEL = "on";
+  const plan = await onPlan("Ravi");
+  script = (turn) => (turn.system === CHECKLIST_PROMPT ? { text: '{"checks":[{"kind":"screenshots","count":2}]}' } : { text: "ok" });
+  const agent = agentOn(plan, (spec) => (spec.prompt.startsWith("Not done yet:") ? { text: "I could not take the screenshots: the browser on this computer is off." } : { text: "Here are the two pages." }));
+  try {
+    await say(plan.owner, plan.room.id, "send me 2 screenshots: example.com and example.org");
+  } finally {
+    agent.stop();
+    process.env.ENSEMBLE_NODE_CHECKLIST_MODEL = "off";
+    script = () => ({ text: "ok" });
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(seen.filter((row) => row.system === CHECKLIST_PROMPT).length, 1, "one checklist call, to the fast model");
+  assert.equal(agent.specs.length, 2);
+  assert.match(agent.specs[1]!.prompt, /^Not done yet: 2 screenshots were asked for \(example\.com, example\.org\) and none will show with your reply\./);
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "I could not take the screenshots: the browser on this computer is off.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const verification = turn.trace!.verification as { checks: string[]; rounds: Array<{ round: number; problems: string | null }>; passed: boolean };
+  assert.deepEqual(verification.checks, ["screenshots"]);
+  assert.deepEqual(verification.rounds.map((row) => [row.round, Boolean(row.problems)]), [[0, true], [1, false]], "sent back once, then it passed");
+  assert.equal(verification.passed, true);
+  assert.equal((turn.trace!.report as { verified?: boolean }).verified, true);
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["check"]);
 });
 
 /** A paired computer that shares the "ensemble" folder and runs Claude Code and Codex, with Mira's default run profile on it. */
@@ -136,6 +502,15 @@ async function laptopFor(user: HttpUser, name: string) {
 const startCall = (title: string, prompt: string) => ({ calls: [{ name: "node_session_start", arguments: { title, prompt, folder: "ensemble" } }], then: `Started: ${title}.` });
 const sendCall = (session: string, prompt: string, delivery: string, title?: string) => ({ calls: [{ name: "node_session_send", arguments: { session, prompt, delivery, ...(title ? { title } : {}) } }], then: "On it." });
 const working = (jobId: string) => h.prisma.workspaceJob.update({ where: { id: jobId }, data: { status: "running", claimedAt: new Date(), startedAt: new Date() } });
+/** The owner's one-press card for a stuck plan step (docs/35 §6.4): approve tries again, discard finishes without it. */
+async function decideStuck(user: HttpUser, roomId: string, decision: "approve" | "discard") {
+  const card = (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === "plan_decision" && row.data.status === "pending").at(-1);
+  assert.ok(card, "the owner has the card for the stuck step");
+  const answered = await user.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision } });
+  assert.equal(answered.statusCode, 200, answered.body);
+  await settleTurns();
+  return card;
+}
 const cardOf = async (user: HttpUser, roomId: string, jobId: string) => (await read(user, roomId)).find((row) => row.kind === "run" && row.data.jobId === jobId)!;
 
 test("a node runs its owner's own coding agent in a session, off the board, and reports when it ends", async () => {
@@ -612,26 +987,36 @@ test("stopping a crew stops its plan and the runs its steps started; a step whos
   await settleTurns();
   assert.deepEqual(seen.map((row) => row.slug), [], "nobody reports a stopped plan");
 
-  // A step whose runs keep failing: after the cap the session tools refuse and the node reports.
-  script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build kept failing; it needs you." };
-    if (turn.slug === "manager" && turn.transcript.includes("again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
-    if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
-    return { text: "unexpected" };
-  };
-  await say(kofi, crew.id, "try it again");
-  for (let round = 0; round < 6; round += 1) {
-    const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
-    if (!open.length) break;
-    await h.prisma.workspaceJob.updateMany({ where: { id: { in: open.map((row) => row.id) } }, data: { status: "failed", error: "The model refused.", finishedAt: new Date() } });
-    await pollRuns(h.app);
-    await settleTurns();
+  // A step whose runs keep failing: after the cap (config: plans.maxStepFailures) the session tools refuse and the node reports.
+  process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG = JSON.stringify({ plans: { maxStepFailures: 4 } });
+  resetHeuristicsCache();
+  try {
+    script = (turn) => {
+      if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
+      if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build kept failing; it needs you." };
+      if (turn.slug === "manager" && turn.transcript.includes("try it again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
+      if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
+      return { text: "unexpected" };
+    };
+    await say(kofi, crew.id, "try it again");
+    for (let round = 0; round < 6; round += 1) {
+      const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
+      if (!open.length) break;
+      await h.prisma.workspaceJob.updateMany({ where: { id: { in: open.map((row) => row.id) } }, data: { status: "failed", error: "The model refused.", finishedAt: new Date() } });
+      await pollRuns(h.app);
+      await settleTurns();
+    }
+    const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
+    assert.equal(second.data.steps[0].status, "blocked");
+    assert.equal(second.data.steps.length, 1);
+    assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "a step stops after the configured four failed runs");
+    // Stuck: its lead had its re-plan turn; the owner finishes without it on the card, and the lead reports.
+    await decideStuck(kofi, crew.id, "discard");
+    assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
+  } finally {
+    delete process.env.ENSEMBLE_NODE_HEURISTICS_CONFIG;
+    resetHeuristicsCache();
   }
-  const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
-  assert.equal(second.data.steps[0].status, "blocked");
-  assert.equal(second.data.steps.length, 1);
-  assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "a step stops after four failed runs");
-  assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
 });
 
 test("the CLI's Node tab reads a bridge overview; Node routes refuse narrow keys; deleting a node removes its DM", async () => {
@@ -1192,6 +1577,7 @@ test("steps that finish together start the next one once; a declined step card l
   await h.prisma.nodeAgent.update({ where: { id: ids[1] }, data: { autonomy: { computerWork: "ask" } } });
   seen.length = 0;
   script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("one re-plan turn")) return { text: "(no reply)" };
     if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build was not run: you declined it." };
     if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it on the laptop." } }], then: "Planned." };
     if (turn.slug === "builder" && turn.transcript.includes("declined")) return reportCall("blocked", "Nothing was run: my owner declined the build.", { blockedBy: "needs_owner" });
@@ -1205,6 +1591,8 @@ test("steps that finish together start the next one once; a declined step card l
   assert.equal(card.data.plan.id, plan.id);
   assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 200);
   await settleTurns();
+  // The blocked step is stuck: after its lead's re-plan turn, its owner finishes without it on one card.
+  await decideStuck(kofi, crew.id, "discard");
   const after = (await read(kofi, crew.id)).find((row) => row.id === plan.id)!;
   assert.equal(after.data.status, "partially_completed", "a blocked step is not a success");
   assert.match(after.data.steps[0].result, /declined/);

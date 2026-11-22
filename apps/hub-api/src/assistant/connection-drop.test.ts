@@ -10,7 +10,7 @@ import type { FastifyInstance } from "fastify";
 import "../runtime/test-env.js";
 import { DEFAULT_SETTINGS } from "@ensemble/shared-types";
 import { prisma } from "../lib/prisma.js";
-import { setAskRuntimeStreamForTests, type ModelMessage } from "../lib/model-turn.js";
+import { setAskRuntimeStreamForTests, setModelRetryWaitForTests, type ModelMessage } from "../lib/model-turn.js";
 import { setCredentialResolverForTests } from "../runtime/credentials.js";
 import { resetBuckets, setPaceRedisForTests, setRuntimeSleepForTests } from "../runtime/pace.js";
 import { runAssistantTurn } from "./agent.js";
@@ -23,8 +23,10 @@ function containsRaw(text: string): string | null {
   return RAW.find((needle) => lower.includes(needle.toLowerCase())) ?? null;
 }
 
-function dropBeforeHeaders(): Promise<{ port: number; close: () => Promise<void> }> {
+function dropBeforeHeaders(): Promise<{ port: number; requests: () => number; close: () => Promise<void> }> {
+  let requests = 0;
   const server = net.createServer((socket) => {
+    requests += 1;
     socket.resume();
     socket.on("data", () => socket.destroy());
   });
@@ -38,6 +40,7 @@ function dropBeforeHeaders(): Promise<{ port: number; close: () => Promise<void>
       }
       resolve({
         port: address.port,
+        requests: () => requests,
         close: () => new Promise((done) => server.close(() => done())),
       });
     });
@@ -77,7 +80,7 @@ function appWith(saved: Array<{ role: string; content: string; toolCalls: unknow
       sadd: async () => 1,
       srem: async () => 1,
     },
-    log: { error() {}, info() {} },
+    log: { error() {}, info() {}, warn() {} },
   } as unknown as FastifyInstance;
 }
 
@@ -104,6 +107,10 @@ test("a socket closed before response headers is not saved, streamed, or sent ne
   resetBuckets();
   setPaceRedisForTests(null);
   setRuntimeSleepForTests(async () => undefined);
+  const waits: number[] = [];
+  setModelRetryWaitForTests(async (ms) => {
+    waits.push(ms);
+  });
   setCredentialResolverForTests(async (_userId, provider) => ({
     provider,
     secret: "test-key",
@@ -131,6 +138,8 @@ test("a socket closed before response headers is not saved, streamed, or sent ne
       assert.fail(`the turn saved the transport failure instead of the notice: ${message}`);
     }
     assert.equal(result.content, CONNECTION_DROPPED_NOTICE);
+    assert.deepEqual(waits, [5_000, 20_000], "a dropped connection is asked again twice before the notice");
+    assert.equal(drop.requests(), 3);
     const streamed = frames.join("\n");
     assert.equal(containsRaw(result.content), null);
     assert.equal(containsRaw(streamed), null, streamed);
@@ -171,6 +180,7 @@ test("a socket closed before response headers is not saved, streamed, or sent ne
     setAskRuntimeStreamForTests(null);
     setCredentialResolverForTests(null);
     setRuntimeSleepForTests(null);
+    setModelRetryWaitForTests(null);
     setPaceRedisForTests(undefined);
     restoreLedger();
     await drop.close();

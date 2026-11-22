@@ -383,6 +383,7 @@ async function ensembleRule(
 ): Promise<PlannedRule | null> {
   if (row.event === "question" || body.scope === "once") return null;
   if (row.toolName === "git push") throw new AnswerError(400, "A push is confirmed each time. Choose Allow once.");
+  if (row.toolName.startsWith("program:") && body.scope === "always") throw new AnswerError(400, "A program that changes the computer is allowed once or for this run, never always.");
   if ((row.toolName === OUTSIDE_TOOL || row.toolName === OUTSIDE_READ_TOOL) && body.scope === "always") {
     throw new AnswerError(400, "A folder outside the run's is allowed for this run, not always.");
   }

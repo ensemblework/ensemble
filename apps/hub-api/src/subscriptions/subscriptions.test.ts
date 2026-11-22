@@ -1,4 +1,4 @@
-import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_SESSIONS, parseAgentApps } from "@ensemble/shared-types";
+import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_OTHERS, ASSISTANT_TURN_SESSIONS, parseAgentApps } from "@ensemble/shared-types";
 /**
  * The person's own AI subscriptions (docs/30 §8): how each agent is found and read, the command
  * lines that keep an agent to Ensemble's tools, the answers to its own requests, which computer
@@ -7,7 +7,7 @@ import { AGENT_APP_INFO, appWithoutAgent, ASSISTANT_TURN_SESSIONS, parseAgentApp
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
@@ -19,8 +19,8 @@ import { claudeLimits } from "./claude-control.js";
 import { agentEnv, claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS, setupCommand } from "./signin.js";
 import { withoutHostSession } from "./host-session.js";
-import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
-import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings } from "./own-tools.js";
+import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, runSubscriptionTurn, turnFiles, turnSession } from "./turn.js";
+import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings, floorJudge, ownToolShape } from "./own-tools.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
@@ -460,6 +460,7 @@ test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, an
   // Claude Code: its own tools, each through Ensemble's hook; Ensemble's tools from its MCP server.
   const claude = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, ownTools: true, hookCommand: "node hook.mjs --source claude --chat" });
   assert.equal(claude.includes("--tools"), false, "no tool is taken away");
+  assert.ok(claude.includes("--strict-mcp-config") && claude[claude.indexOf("--mcp-config") + 1] === "m", "and no MCP server but Ensemble's");
   assert.deepEqual(JSON.parse(claude[claude.indexOf("--settings") + 1]), claudeChatSettings("node hook.mjs --source claude --chat"));
   assert.equal(claudeChatSettings("h").hooks && (claudeChatSettings("h").hooks as { PreToolUse: Array<{ matcher: string }> }).PreToolUse[0]!.matcher, "*", "the hook sees every tool");
   // GitHub Copilot: every tool, path and URL, with the hook as a per-turn plugin.
@@ -470,26 +471,44 @@ test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, an
   // Codex: commands and file changes go ahead unless the floor refuses them.
   const folder = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
   try {
+    const judge = floorJudge(folder, "codex");
     const changes = new Map([["item-1", [join(folder, "notes.md")]], ["item-2", [join(process.env.HOME ?? "/", ".ssh", "config")]]]);
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: ["bash", "-lc", "printf hi > notes.md"], cwd: folder }, changes), { decision: "accept" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "cat ~/.ssh/id_rsa", cwd: folder }, changes), { decision: "decline" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-1" }, changes), { decision: "accept" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-2" }, changes), { decision: "decline" });
-    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "curl https://example.com", networkApprovalContext: { host: "example.com" } }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: ["bash", "-lc", "printf hi > notes.md"], cwd: folder }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: "cat ~/.ssh/id_rsa", cwd: folder }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/fileChange/requestApproval", { itemId: "item-1" }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/fileChange/requestApproval", { itemId: "item-2" }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(judge, "item/commandExecution/requestApproval", { command: "curl https://example.com", networkApprovalContext: { host: "example.com" } }, changes), { decision: "accept" });
     // Cursor's agent and the ACP agents: allowed once, or refused once by the floor.
     const options = [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }];
-    const ran = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "execute", title: "Run `ls -la`", rawInput: { command: "ls -la" } } });
+    const ran = await answerAcpOwnTools(floorJudge(folder, "acp"), "session/request_permission", { options, toolCall: { kind: "execute", title: "Run `ls -la`", rawInput: { command: "ls -la" } } });
     assert.deepEqual(ran, { outcome: { outcome: "selected", optionId: "allow-once" } });
-    const key = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "read", title: "Read id_rsa", rawInput: { path: join(process.env.HOME ?? "/", ".ssh", "id_rsa") } } });
+    const key = await answerAcpOwnTools(floorJudge(folder, "acp"), "session/request_permission", { options, toolCall: { kind: "read", title: "Read id_rsa", rawInput: { path: join(process.env.HOME ?? "/", ".ssh", "id_rsa") } } });
     assert.deepEqual(key, { outcome: { outcome: "selected", optionId: "reject-once" } });
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
-  // The agent is told what it has, as a suggestion, not a rule; a node's turn keeps reaching the computer through Ensemble.
+  // The agent is told what it has, as a suggestion, not a rule.
   const told = howYouRun("claude-code", { ownTools: true, ownWeb: true });
   assert.match(told, /all your own tools: your shell, files and web search/);
   assert.match(told, /hub_assign_to_agent/);
-  assert.doesNotMatch(howYouRun("claude-code", { ownTools: true, node: true }), /all your own tools/);
+  // A node's turn keeps them too: its own shell and files, and what Ensemble's tools add.
+  const node = howYouRun("claude-code", { ownTools: true, node: true });
+  assert.match(node, /all your own tools: your shell, files and web/);
+  assert.match(node, /this node's own folder/);
+  assert.match(node, /once per folder, on a card in this chat/);
+  for (const tool of ["browser_\\*", "capture_\\*", "node_share_file", "computer_sudo", "node_session_start"]) assert.match(node, new RegExp(tool));
+  assert.match(node, /can go to a coding-agent session when your owner wants to review it/);
+  assert.doesNotMatch(node, /reached only through Ensemble's tools|hub_assign_to_agent/);
+});
+
+test("the agent's own calls reach a node's chat by what they do, the same for every agent", () => {
+  assert.deepEqual(ownToolShape("Bash", { command: "npm   test\n" }), { name: "Shell", summary: "npm test", acts: true });
+  assert.deepEqual(ownToolShape("Edit", { file_path: `${process.env.HOME}/projects/site/index.html` }), { name: "Edit", summary: "~/projects/site/index.html", acts: true });
+  assert.deepEqual(ownToolShape("commandExecution", { command: "ls -la" }), { name: "Shell", summary: "ls -la", acts: true }, "Codex's items");
+  assert.deepEqual(ownToolShape("view", { path: "/srv/app/README.md" }), { name: "Read", summary: "/srv/app/README.md", acts: false }, "Copilot's tools");
+  assert.deepEqual(ownToolShape("web_fetch", { url: "https://example.com/docs" }), { name: "Web page", summary: "https://example.com/docs", acts: false });
+  assert.deepEqual(ownToolShape("Run `ls`", {}, { tool: "Bash", input: { command: "ls" } }), { name: "Shell", summary: "ls", acts: true }, "an ACP agent's call, as its request named it");
+  assert.deepEqual(ownToolShape("TodoWrite", { todos: [] }), { name: "TodoWrite", summary: "", acts: false });
 });
 
 test("Claude Code runs with Ensemble's prompt and tools only, and none of the person's settings", () => {
@@ -517,9 +536,11 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "default", effort: null }).includes("--model"), "the plan's default sends no model");
   const long = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "claude-sonnet-4-6", effort: "high", context: "long_context" });
   assert.equal(long[long.indexOf("--model") + 1], "claude-sonnet-4-6[1m]", "a tier on the 1M window gets it");
+  assert.equal(after("--max-turns"), "28", "a turn limit only when the turn has one");
+  assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", model: null, effort: null }).includes("--max-turns"), "no limit of Ensemble's own");
 });
 
-test("Copilot CLI denies its shell, writes and fetches, and Windows gets a prompt that fits its command line", () => {
+test("Copilot CLI denies its shell, writes and fetches, loads none of the person's own MCP servers, and Windows gets a prompt that fits its command line", () => {
   const args = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: "claude-haiku-5.5", effort: null, platform: "darwin" });
   assert.ok(!args.includes("--session-id"), "a one-off turn names no session");
   const chat = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: null, effort: null, sessionId: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" });
@@ -527,6 +548,11 @@ test("Copilot CLI denies its shell, writes and fetches, and Windows gets a promp
   const denied = args.flatMap((arg, index) => (arg === "--deny-tool" ? [args[index + 1]] : []));
   assert.deepEqual(denied, ["shell", "write", "url"]);
   assert.ok(args.includes("--disable-builtin-mcps"));
+  const servers = ["io.github.wonderwhy-er/desktop-commander", "notion"];
+  const theirs = copilotArgs({ prompt: "hello", mcpFile: "m", model: null, effort: null, serversOff: servers, disableFlag: true });
+  assert.deepEqual(theirs.flatMap((arg, index) => (arg === "--disable-mcp-server" ? [theirs[index + 1]] : [])), servers, "each of the person's own servers off");
+  const older = copilotArgs({ prompt: "hello", mcpFile: "m", model: null, effort: null, serversOff: servers, disableFlag: false });
+  assert.deepEqual(older.flatMap((arg, index) => (arg === "--deny-tool" ? [older[index + 1]] : [])), ["shell", "write", "url", ...servers], "a Copilot without --disable-mcp-server: their tools denied, which wins over allowing all");
   assert.ok(args.includes("--no-ask-user"), "nobody can answer Copilot's own question prompt in an assistant turn");
   assert.ok(!args.includes("--context"), "the model's standard window unless the tier chose the long one");
   assert.equal(args[args.indexOf("--additional-mcp-config") + 1], "@/t/mcp.json");
@@ -607,6 +633,10 @@ test("nothing of Codex's or Cursor's own may run in an assistant turn", async ()
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble: hub_list_tasks" } }), { outcome: { outcome: "selected", optionId: "a" } });
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "`rm -rf ~`", kind: "execute" } }), { outcome: { outcome: "selected", optionId: "r" } });
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "other: tool" } }), { outcome: { outcome: "selected", optionId: "r" } });
+  // A turn someone else can steer names Ensemble's server for itself: only that name's tools run, never an `ensemble` of the person's.
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble-1a2b3c4d: hub_list_tasks" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "a" } });
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble: hub_list_tasks" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "r" } });
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble-1a2b3c4d-x: tool" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "r" } });
 });
 
 test("an agent's failure is read for sign-in and plan limits", () => {
@@ -638,11 +668,13 @@ test("a turn's bridge answers only its own secret, and a changed tool list repla
   assert.equal(bridgeFor(opened.credential), null, "a closed turn is gone");
 });
 
-test("a relayed turn waiting on one long tool call is working, not quiet", async () => {
-  const { quiet } = await import("./relay.js");
-  const longAgo = Date.now() - 6 * 60_000;
-  assert.equal(quiet({ picked: true, busy: 1, heard: longAgo }), false, "a browser task running for minutes keeps the turn");
+test("a relayed turn ends only when the computer goes quiet: a long tool call or ask is working, and working has no time limit", async () => {
+  const { quiet, QUIET_MS } = await import("./relay.js");
+  assert.equal(QUIET_MS, 10 * 60_000);
+  const longAgo = Date.now() - 11 * 60_000;
+  assert.equal(quiet({ picked: true, busy: 1, heard: longAgo }), false, "a browser task or a card waiting for its owner keeps the turn");
   assert.equal(quiet({ picked: true, busy: 0, heard: longAgo }), true);
+  assert.equal(quiet({ picked: true, busy: 0, heard: Date.now() - 9 * 60_000 }), false, "nine minutes without a word is not yet quiet");
   assert.equal(quiet({ picked: false, busy: 0, heard: longAgo }), false, "not picked up yet is the pick-up timer's to judge");
 });
 
@@ -667,10 +699,10 @@ test("the conversation reaches an agent as instructions, the new message, and th
 
 test("a computer that keeps sessions gets the chat as a session; an older one gets the chat folded in front of the message", () => {
   const input = { prompt: "Make a diagram of them.", history: "This chat so far, oldest first:\n\nPerson: hi", sessionKey: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" };
-  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac", deviceId: null }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
   assert.deepEqual(turnSession({ local: false, id: "d", name: "Studio Mac", agent: null, turns: ASSISTANT_TURN_SESSIONS }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
   assert.deepEqual(turnSession({ local: false, id: "d", name: "Old Mac", agent: null, turns: 2 }, input), { prompt: `${input.history}\n\n---\n\n${input.prompt}` });
-  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, { prompt: "Classify this." }), { prompt: "Classify this." }, "a one-off completion keeps no session");
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac", deviceId: null }, { prompt: "Classify this." }), { prompt: "Classify this." }, "a one-off completion keeps no session");
 });
 
 test("a reply's JSON is found inside prose or a fence", () => {
@@ -740,15 +772,47 @@ test("the computer for a turn: online, new enough, with the agent signed in; oth
   }
 });
 
-test("on the desktop runtime the computer is this one", async () => {
+test("a turn someone else can steer goes to no computer whose Ensemble would load the person's own MCP servers (Claude Code never does)", async () => {
   const previous = process.env.ENSEMBLE_DESKTOP;
-  process.env.ENSEMBLE_DESKTOP = "1";
+  delete process.env.ENSEMBLE_DESKTOP;
+  const cursor = { id: "cursor-agent", via: "cli", version: "2026.11.19", signedIn: true, models: [{ id: "default", label: "Default" }], checkedAt: "now" };
+  const codex = { id: "codex", via: "cli", version: "0.163.0", signedIn: true, models: [{ id: "gpt-5.5", label: "GPT-5.5" }], checkedAt: "now" };
+  const computer = (turns: number) => fakePrisma([{ id: "d1", userId: "u1", name: "Studio Mac", lastSeenAt: new Date(), capabilities: { assistantTurns: turns, agents: [cursor, codex, claudeSignedIn] }, revokedAt: null }]);
+  const tier = { provider: "included", model: "fast" };
+  const settings = { models: { computer: null, easy: tier, medium: tier, high: tier, max: tier } } as never;
+  // Stopped from the start: a turn the computer may take ends as soon as it is handed over.
+  const turn = (agent: "cursor-agent" | "codex" | "claude-code", turns: number) =>
+    runSubscriptionTurn({ userId: "u1", settings, agent, model: null, system: "Ensemble", prompt: "Hello from Ben.", tools: [], others: true, prisma: computer(turns), call: async () => ({ text: "{}" }), signal: AbortSignal.abort() });
   try {
-    const computer = await pickComputer(fakePrisma([]), "u1", "claude-code", null);
-    assert.equal(computer.local, true);
+    await assert.rejects(turn("cursor-agent", 6), /Update Ensemble on Studio Mac: the version there would give Cursor your own MCP servers when it answers other people/);
+    await assert.rejects(turn("claude-code", 5), /Stopped/, "Claude Code goes ahead: it never loads them");
+    await assert.rejects(turn("codex", 5), /Update Ensemble on Studio Mac: the version there would give ChatGPT your own MCP servers/);
+    await assert.rejects(turn("codex", 6), /Stopped/, "Codex leaves them out from the follow-ups version on");
+    await assert.rejects(turn("cursor-agent", ASSISTANT_TURN_OTHERS), /Stopped/, "a computer that leaves them out takes it");
   } finally {
     if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;
     else process.env.ENSEMBLE_DESKTOP = previous;
+  }
+});
+
+test("on the desktop runtime the computer is this one, by its Ensemble name and paired id, never the system's host name", async () => {
+  const previous = { desktop: process.env.ENSEMBLE_DESKTOP, state: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  const state = mkdtempSync(join(tmpdir(), "ensemble-this-computer-"));
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
+  try {
+    writeFileSync(join(state, "remote.json"), JSON.stringify({ deviceName: "Mira's laptop", deviceId: "device-7" }));
+    const computer = await pickComputer(fakePrisma([]), "u1", "claude-code", null);
+    assert.deepEqual(computer, { local: true, name: "Mira's laptop", deviceId: "device-7" });
+    assert.notEqual(computer.name, hostname());
+    writeFileSync(join(state, "remote.json"), JSON.stringify({ deviceName: "Studio" }));
+    assert.deepEqual(await pickComputer(fakePrisma([]), "u1", "claude-code", null), { local: true, name: "Studio", deviceId: null }, "not paired: no device id");
+  } finally {
+    for (const [key, value] of [["ENSEMBLE_DESKTOP", previous.desktop], ["ENSEMBLE_REMOTE_STATE_DIR", previous.state]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(state, { recursive: true, force: true });
   }
 });
 
@@ -896,7 +960,7 @@ test("a turn's files are saved under safe, distinct names; one over a limit or t
 
 test("a computer that takes files gets them; an older one gets the fallback note after the message", () => {
   const files = { list: [{ id: "f", name: "a.pdf", mediaType: "application/pdf", kind: "pdf" as const, size: 3 }], read: async () => null, fallback: "a.pdf could not be given to you." };
-  assert.deepEqual(turnFiles({ local: true, name: "Mac" }, "Hi", files), { prompt: "Hi", files: files.list });
+  assert.deepEqual(turnFiles({ local: true, name: "Mac", deviceId: null }, "Hi", files), { prompt: "Hi", files: files.list });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 2 }, "Hi", files), { prompt: "Hi", files: files.list });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", files), { prompt: "Hi\n\na.pdf could not be given to you." });
   assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", undefined), { prompt: "Hi" });

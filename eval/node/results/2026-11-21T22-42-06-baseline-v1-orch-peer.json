@@ -1,0 +1,146 @@
+{
+ "label": "baseline-v1-orch-peer",
+ "stamp": "2026-11-21T22-42-06",
+ "commit": "1720b03a",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "peer-message-during-approval"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T22:42:06.559Z",
+ "finishedAt": "2026-11-21T22:43:18.795Z",
+ "results": [
+  {
+   "task": "peer-message-during-approval",
+   "suite": "orch",
+   "category": "orchestration",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a card waited for the owner when the teammate wrote",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "b7a21aa1-258c-4277-8cae-1c2b0b36e753, cb06acfb-a924-41f8-b123-7ca4fcc9f2bc"
+    },
+    {
+     "name": "the message left it waiting, and that card was the one answered",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "waiting then 3, answered 2"
+    },
+    {
+     "name": "no card dropped or replaced",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "none"
+    },
+    {
+     "name": "the operation ran once",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "1 line(s)"
+    },
+    {
+     "name": "the waiting turn finished and said so",
+     "pass": true,
+     "kind": "reply"
+    },
+    {
+     "name": "the teammate's question answered exactly once",
+     "pass": true,
+     "kind": "reply",
+     "note": "1 answer(s) with 42"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 52605,
+    "turns": 2,
+    "failedTurns": 0,
+    "modelCalls": 4,
+    "tokensIn": 83633,
+    "tokensOut": 282,
+    "credits": 0.33960250000000003,
+    "ensembleCalls": 2,
+    "ensembleTools": 2,
+    "agentTools": 2,
+    "approvals": 2,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [
+    "node_room_history",
+    "computer_files_write"
+   ],
+   "agentToolNames": [
+    "ensemble-node_room_history",
+    "ensemble-computer_files_write"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [
+    {
+     "id": "b7a21aa1-258c-4277-8cae-1c2b0b36e753",
+     "type": "computer",
+     "answer": "This mission",
+     "answered": true,
+     "at": "2026-11-21T22:43:06.327Z"
+    },
+    {
+     "id": "27857bf9-9a5e-4327-8728-811dc2a96325",
+     "type": "post",
+     "answer": "approve",
+     "answered": true,
+     "at": "2026-11-21T22:43:06.419Z"
+    }
+   ],
+   "errors": [],
+   "sessions": [
+    "e6455078-c1c7-4258-9f82-fbf12cad6fd8",
+    "d049a915-0faf-4226-8c06-003706615449"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-orch-peer/peer-message-during-approval--1.jsonl",
+   "startedAt": "2026-11-21T22:42:24.643Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "e6455078-c1c7-4258-9f82-fbf12cad6fd8",
+   "kind": "node-turn",
+   "task": "peer-message-during-approval",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "d049a915-0faf-4226-8c06-003706615449",
+   "kind": "node-turn",
+   "task": "peer-message-during-approval",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal no, code-tab-harness no.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}

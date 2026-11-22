@@ -1,19 +1,26 @@
 /**
  * Pack hub-api, its worker, and a Node binary into the Tauri resources folder.
  * Dev builds skip this and run `node --import tsx` from the workspace.
+ *
+ * On macOS the desktop app's sidecar also carries Cua Driver, the desktop control driver: CuaDriver.app at its
+ * pinned version (scripts/fetch-cua-driver.mjs), and ensemble-disclaim, the launcher that starts it as its own
+ * responsible process (scripts/build-disclaim.mjs). `--no-cua-driver` leaves both out: the CLI's sidecar
+ * (scripts/package-cli.mjs); a runtime the CLI started uses the copy in the installed Ensemble app.
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildDisclaim } from "./build-disclaim.mjs";
 import { buildLandrun } from "./build-landrun.mjs";
+import { fetchCuaDriver } from "./fetch-cua-driver.mjs";
 import { run } from "./desktop-spawn.mjs";
 
 import { checkReleaseVersion } from "./release-version.mjs";
 checkReleaseVersion();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const dest = parseArgs(process.argv.slice(2));
+const { dest, cuaDriver } = parseArgs(process.argv.slice(2));
 const appDir = join(dest, "app");
 
 rmSync(dest, { recursive: true, force: true });
@@ -91,6 +98,18 @@ if (process.platform === "linux") {
   buildLandrun({ out: join(dest, "bin", "landrun"), arch: process.arch });
 }
 
+// macOS: the desktop control driver and its launcher (apps/hub-api/src/desktop/control/index.ts looks for
+// <sidecar>/bin/CuaDriver.app and <sidecar>/bin/ensemble-disclaim).
+if (process.platform === "darwin" && cuaDriver) {
+  try {
+    await fetchCuaDriver({ out: join(dest, "bin") });
+    buildDisclaim({ out: join(dest, "bin", "ensemble-disclaim") });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
+}
+
 checkImports();
 // The OpenSSL 3 engine is the one most Linux computers load. Load it explicitly, since this build
 // machine may pick the 1.1 engine for itself.
@@ -126,6 +145,9 @@ function checkImports(engineLibrary) {
     "await import('fastify');",
     ...prisma,
     "await import('@electric-sql/pglite');",
+    // Instructions come from the generated module, never from the section files at run time.
+    "const { SECTIONS } = await import('@ensemble/prompts');",
+    "if (!SECTIONS['constitution/00-identity']) throw new Error('@ensemble/prompts has no sections.');",
     // A node's terminal screenshots replay the screen in it (capture/screen.ts loads it only then).
     "await import('@xterm/headless');",
     "console.log('sidecar-import-ok')",
@@ -166,8 +188,13 @@ function generatePrismaClient({ engines, rustFree }) {
 function parseArgs(args) {
   const defaultDest = join(root, "apps/desktop/src-tauri/resources/sidecar");
   let output = defaultDest;
+  let cuaDriver = true;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (arg === "--no-cua-driver") {
+      cuaDriver = false;
+      continue;
+    }
     if (arg === "--dest") {
       const value = args[i + 1];
       if (!value) {
@@ -185,7 +212,7 @@ function parseArgs(args) {
     console.error(`Unknown option for assemble-desktop-sidecar.mjs: ${arg}`);
     process.exit(1);
   }
-  return output;
+  return { dest: output, cuaDriver };
 }
 
 function bundleNodeLibraries(nodeSrc, nodeDest) {

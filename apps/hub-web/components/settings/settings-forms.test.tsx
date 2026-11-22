@@ -9,7 +9,7 @@ import { ToastProvider } from "../toast.js";
 import { Segmented } from "../ui.js";
 import { AppearanceSection } from "./appearance.js";
 import { NumberField } from "./number-field.js";
-import { IdentitySection, QuickCaptureSection, RemindersSection } from "./sections.js";
+import { IdentitySection, QuickCaptureSection, RemindersSection, TaskLimitsSection } from "./sections.js";
 import { SettingsTabs } from "./settings-tabs.js";
 import type { SettingsTab } from "./url-state.js";
 
@@ -63,6 +63,52 @@ test("a number setting shows its range, and a value outside it stays with an err
     assert.deepEqual(saved, [12]);
     assert.equal(view.host.querySelector('[role="alert"]'), null);
     assert.equal(input.hasAttribute("aria-invalid"), false);
+  } finally {
+    await view.done();
+  }
+});
+
+test("a limit left empty is no limit: it saves null and shows what empty means", async () => {
+  const saved: Array<number | null> = [];
+  const view = await render(<NumberField label="Minutes per task" value={null} min={5} max={480} unit="min" empty="No limit" onChange={(value) => saved.push(value)} />);
+  try {
+    const input = view.host.querySelector<HTMLInputElement>('input[aria-label="Minutes per task"]')!;
+    assert.equal(input.value, "");
+    assert.equal(input.placeholder, "No limit");
+    await act(async () => typeInput(input, "90"));
+    await act(async () => typeInput(input, ""));
+    assert.deepEqual(saved, [90, null]);
+    assert.equal(view.host.querySelector('[role="alert"]'), null);
+  } finally {
+    await view.done();
+  }
+});
+
+test("task limits: the old saved defaults show as no limit, a limit the owner types is theirs, and clearing it saves none", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  function Harness() {
+    const [settings, setSettings] = useState(() => Settings.parse({ orchestration: { maxMinutes: 60, maxTurns: 40 } }));
+    return (
+      <TaskLimitsSection
+        settings={settings}
+        patch={(value) => {
+          patches.push(value);
+          setSettings((current) => ({ ...current, orchestration: { ...current.orchestration, ...(value.orchestration ?? {}) } }));
+        }}
+      />
+    );
+  }
+  const view = await render(<Harness />);
+  try {
+    const minutes = view.host.querySelector<HTMLInputElement>('input[aria-label="Minutes per task"]')!;
+    const turns = view.host.querySelector<HTMLInputElement>('input[aria-label="Model turns per task"]')!;
+    assert.deepEqual([minutes.value, turns.value], ["", ""], "60 minutes and 40 turns saved before are Ensemble's old defaults, not limits");
+    await act(async () => typeInput(minutes, "60"));
+    assert.deepEqual(patches.at(-1), { orchestration: { maxMinutes: 60, ownLimits: ["maxMinutes"] } });
+    assert.deepEqual([minutes.value, turns.value], ["60", ""], "the owner's own 60 stays");
+    await act(async () => typeInput(minutes, ""));
+    assert.deepEqual(patches.at(-1), { orchestration: { maxMinutes: null, ownLimits: ["maxMinutes"] } });
+    assert.equal(minutes.value, "");
   } finally {
     await view.done();
   }
@@ -244,7 +290,7 @@ test("the app font list is a radio group with the saved font checked, and Reset 
   }
 });
 
-test("on a narrow screen the open settings tab is scrolled into the tab row", async () => {
+test("on a narrow screen the open settings tab is scrolled into the tab row, clear of the fade at its right edge", async () => {
   const rect = Element.prototype.getBoundingClientRect;
   const widths = { scroll: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth"), client: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth") };
   const scrolled = new WeakMap<Element, number>();
@@ -252,20 +298,29 @@ test("on a narrow screen the open settings tab is scrolled into the tab row", as
   Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get() { return this.getAttribute("role") === "tablist" ? 900 : 0; } });
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get() { return this.getAttribute("role") === "tablist" ? 375 : 0; } });
   Object.defineProperty(Element.prototype, "scrollLeft", { configurable: true, get() { return scrolled.get(this) ?? 0; }, set(value: number) { scrolled.set(this, value); } });
+  let at = 0;
   Element.prototype.getBoundingClientRect = function (this: Element) {
     const box = (x: number, width: number) => ({ left: x, right: x + width, top: 0, bottom: 30, width, height: 30, x, y: 0, toJSON() {} }) as DOMRect;
     if (this.getAttribute("role") === "tablist") return box(0, 375);
-    if (this.id === "settings-tab-data") return box(820, 60);
+    if (this.id === "settings-tab-data") return box(at, 60);
     return box(0, 60);
   };
-  try {
+  /** Where the 375-pixel row scrolls to with the open tab, 60 pixels wide, at `x`. */
+  const scrolledFor = async (x: number) => {
+    at = x;
     const view = await render(<SettingsTabs value={"data" as SettingsTab} onChange={() => undefined} />);
     try {
-      const list = view.host.querySelector('[role="tablist"]')!;
-      assert.equal(list.scrollLeft, 820 + 60 - 375 + 12);
+      return view.host.querySelector('[role="tablist"]')!.scrollLeft;
     } finally {
       await view.done();
     }
+  };
+  try {
+    // Past the row's edge, and inside its fade (the last 28 pixels): 36 pixels clear of the edge.
+    assert.equal(await scrolledFor(820), 820 + 60 - 375 + 36);
+    assert.equal(await scrolledFor(300), 300 + 60 - 375 + 36);
+    // Clear of the fade already: the row stays.
+    assert.equal(await scrolledFor(280), 0);
   } finally {
     Element.prototype.getBoundingClientRect = rect;
     if (widths.scroll) Object.defineProperty(HTMLElement.prototype, "scrollWidth", widths.scroll);

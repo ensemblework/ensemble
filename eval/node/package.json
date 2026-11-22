@@ -1,0 +1,6 @@
+{
+  "name": "ensemble-node-eval",
+  "private": true,
+  "type": "module",
+  "description": "The Ensemble Node evaluation harness (README.md). Run it through hub-api's tsx; it has no dependencies of its own."
+}

@@ -52,3 +52,28 @@ test("reports parse strictly; candidates key on commit, then content", () => {
   assert.equal(candidateKey({ contentHash: "f00" }), "f00");
   assert.equal(candidateKey(undefined), null);
 });
+
+test("report v2: partial, uncertain and stopped are taken as reported and never count as done", () => {
+  const value = report({ outcome: "partial", summary: "Two of three pages.", remaining: ["the settings page"], ownerDecision: "Keep the old URL?", provenance: { agent: "codex", modelReported: "gpt-6" } });
+  assert.ok(parseReport(value), "the new fields parse");
+  assert.deepEqual(verdictOf("build", value), { outcome: "partial", problem: null });
+  assert.deepEqual(verdictOf("verify", report({ outcome: "uncertain", checks: [{ name: "renders", verdict: "pass" }] })), { outcome: "uncertain", problem: null });
+  assert.equal(verdictOf("build", report({ outcome: "stopped" })).outcome, "stopped");
+  assert.equal(parseReport({ ...value, provenance: { agent: "codex", invented: true } }), null, "provenance is strict");
+});
+
+test("a review gives a verdict for every criterion it judges, each pass on evidence of strength A or B", () => {
+  const checks = [
+    { id: "a1", name: "reduced motion", verdict: "pass" as const, strength: "A" as const },
+    { id: "a2", name: "setup route", verdict: "pass" as const, strength: "B" as const },
+  ];
+  assert.deepEqual(verdictOf("review", report({ checks }), ["a1"], ["a1", "a2"]), { outcome: "pass", problem: null });
+  const unjudged = verdictOf("review", report({ checks: checks.slice(0, 1) }), ["a1"], ["a1", "a2"]);
+  assert.equal(unjudged.outcome, "blocked");
+  assert.match(unjudged.problem!, /none for “a2”/);
+  const weak = verdictOf("review", report({ checks: [checks[0]!, { ...checks[1]!, strength: "C" as const }] }), [], ["a1", "a2"]);
+  assert.equal(weak.outcome, "blocked");
+  assert.match(weak.problem!, /never C/);
+  assert.equal(verdictOf("verify", report({ checks: [{ ...checks[1]!, strength: "C" as const }] })).outcome, "pass", "a verification keeps its own rules");
+  assert.equal(verdictOf("review", report({ outcome: "fail", checks: [{ id: "a1", name: "reduced motion", verdict: "fail", detail: "still animates" }] }), [], ["a1"]).outcome, "fail");
+});

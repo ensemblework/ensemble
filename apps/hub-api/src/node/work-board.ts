@@ -10,17 +10,24 @@ import { tasksWith } from "./task-assignment.js";
 import { labelStatus } from "../services/tasks.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
-const LIVE_MISSION = ["draft", "running", "reporting"];
+const LIVE_MISSION = ["draft", "running", "replanning", "reporting"];
 
 /**
- * Tools that never change anything (lookups). Every other tool counts as acting: from its first
- * call the turn is not aborted to merge a newer message, and a restart reconciles it.
+ * Tools marked as only looking that still keep what they saw for the owner (evidence, a picture with the reply, a saved
+ * document): a merge would drop it. A tool marked as acting (`readOnly` false) acts whether it is here or not.
  */
-const READS = /^(hub_(list|get|read|search|find|view|diagram_context|explain|validate|repo_read|repo_overview|weekly_recap|how_to)|hub_web_search|node_sessions|node_overview|node_computer_files|node_work_status|computer_git|browser_(tabs|snapshot|console|network_errors|wait)$|capture_(status|apps|check)$)/;
+const KEEPS_WHAT_IT_SAW = new Set(["capture_screenshot", "browser_screenshot", "browser_view", "browser_shop", "browser_fetch", "computer_terminal_screenshot"]);
+/** Looks that keep their screenshot for the owner only when asked to (`share`, desktop/control/tool-specs.ts). */
+const SHARES_WHAT_IT_SAW = new Set(["desktop_observe", "desktop_zoom"]);
 
-export function actsOnTheWorld(name: string, isWrite: boolean | undefined): boolean {
-  if (isWrite) return true;
-  return !READS.test(name);
+/**
+ * Whether a call can change something: a write, any tool not marked as only looking (`readOnly`:
+ * assistant/registry.ts `readsOnly`, from the tool's own flags), or one that keeps what it saw. From
+ * its first such call the turn is not aborted to merge a newer message, and a restart reconciles it.
+ */
+export function actsOnTheWorld(call: { name: string; isWrite: boolean; readOnly?: boolean; input?: unknown }): boolean {
+  const shares = SHARES_WHAT_IT_SAW.has(call.name) && (call.input as { share?: unknown } | null | undefined)?.share === true;
+  return call.isWrite || call.readOnly !== true || KEEPS_WHAT_IT_SAW.has(call.name) || shares;
 }
 
 function ago(date: Date | null | undefined): string {

@@ -16,6 +16,7 @@ import type { Device, NodeAgent, PrismaClient } from "@prisma/client";
 import { pickRunProfile } from "@ensemble/shared-types";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { deviceOnline } from "../devices/constants.js";
+import { folderLabels } from "../devices/labels.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { openToolRun, quietRun, stopRunOnComputer, swapSignInRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -40,6 +41,7 @@ import { requestPark } from "./queue.js";
 import { askSudo } from "./sudo.js";
 import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
 import { liveTools } from "./live-views.js";
+import { desktopTools } from "../desktop/control/node-tools.js";
 import type { NodeScope } from "./tools.js";
 import { postMessage } from "./store.js";
 
@@ -116,7 +118,7 @@ export async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mo
 }
 
 /** What a "This mission" answer covers: the plan the turn works for, else this conversation (its shared or private thread). */
-function missionOf(scope: Pick<NodeScope, "plan" | "room" | "privateTo">): string {
+export function missionOf(scope: Pick<NodeScope, "plan" | "privateTo"> & { room: Pick<NodeScope["room"], "id"> }): string {
   return scope.plan?.planId ?? `conversation:${scope.room.id}:${scope.privateTo ? "private" : "shared"}`;
 }
 
@@ -133,6 +135,7 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
   if (call.tool === "run" || call.tool === "terminal" || call.tool === "sudo") return { folder: call.folder ?? null, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "", ...(call.tool === "sudo" ? { sudo: "yes" } : {}) };
   if (call.tool === "git") return { folder: call.folder ?? null, op: call.op };
   if (call.tool === "run_stop") return { run: call.runId };
+  if (call.tool === "desktop") return { name: call.name };
   return { folder: call.folder ?? null, action: call.action };
 }
 
@@ -178,7 +181,7 @@ export async function callComputer(ctx: ToolContext, scope: NodeScope, computer:
   const mode = await modeFor(prisma, node);
   for (let asks = 0; ; asks += 1) {
     const extra = (await options.before?.(device)) ?? {};
-    const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
+    const grants = await pendingGrants(prisma, node.userId, node.id, device.id, missionOf(scope));
     const operationId = `${scope.turnId}:${randomUUID()}`;
     // Public web pages need no answer on the computer (device-tools/policy.ts) unless the owner asks to be asked, there or here.
     const data = { ...forComputer(device, request), ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
@@ -227,6 +230,7 @@ async function askAndWait(ctx: ToolContext, scope: NodeScope, device: Device, as
     target: ask.target,
     label: ask.label,
     scope: ask.scope,
+    ...(ask.screen ? { screen: ask.screen } : {}),
   };
   const asked = await askOwner(ctx.app, node.userId, tool, options.describe, ask.weak);
   const card = await computerCard(ctx.app, asked.row, {
@@ -328,6 +332,59 @@ function signInLines(body: Record<string, unknown>): string[] {
 /** A call without a folder works in the node's own folder, which older computers do not have. */
 const ownFolder = (folder: string | undefined): Need | undefined => (folder ? undefined : { ownFolder: "work in your own folder there. Until then, name a folder it shares with Ensemble" });
 
+/** An error line of a command that could not find or open something. */
+const NOT_THERE = /no such file or directory|permission denied|operation not permitted/i;
+
+/**
+ * The paths a failed command names (absolute, `~` or `../`) that its own error lines say it could not
+ * find or open, and that lie outside the folder it ran in. `ran`: the node's own folder's name, or the
+ * folder it named (a label or a full path), and the subfolder (`cwd`) it ran in. A path it cannot
+ * place (one under a folder named by its label, `../` from a subfolder) is left out: it may only be missing.
+ */
+export function unseenPaths(command: string, output: string, ran: { own: string; cwd?: string } | { folder: string; cwd?: string }): string[] {
+  const errors = output.split("\n").filter((line) => NOT_THERE.test(line));
+  if (!errors.length) return [];
+  const words = command.split(/[\s"'`;|&()<>=]+/).filter((word) => word === "~" || (word.length > 1 && /^(?:~\/|\/|\.\.(?:\/|$))/.test(word)));
+  const outside = (word: string): boolean => {
+    if (word.startsWith("..")) return !ran.cwd;
+    if ("own" in ran) return !word.includes(`/nodes/${ran.own}/`) && !word.endsWith(`/nodes/${ran.own}`);
+    // Only a path written as the folder was named (both full, or both from `~`) can be placed.
+    const root = ran.folder.replace(/\/+$/, "");
+    return root.length > 1 && root[0] === word[0] && word !== root && !word.startsWith(`${root}/`);
+  };
+  const unseen = words.filter((word) => {
+    if (!outside(word)) return false;
+    // As the program printed it: `~` and `../` resolved.
+    const tail = word.replace(/^~/, "").replace(/^(?:\.\.\/)+/, "/");
+    return errors.some((line) => line.includes(word) || (tail.length > 1 && line.includes(tail)));
+  });
+  return [...new Set(unseen)].slice(0, 3);
+}
+
+/** The computer runs commands under its OS sandbox, which hides the owner's folders but the one a command runs in. */
+function sandboxHides(capabilities: unknown): boolean {
+  const caps = capabilities && typeof capabilities === "object" ? (capabilities as { sandbox?: unknown; sandboxInfo?: { osSandbox?: unknown } }) : {};
+  return typeof caps.sandboxInfo?.osSandbox === "boolean" ? caps.sandboxInfo.osSandbox : caps.sandbox === "strong" || caps.sandbox === "reduced";
+}
+
+/**
+ * What a failed command is told when a path it names cannot be seen from the folder it ran in (null
+ * when none): the folders it may name instead, a helper's own, else those its computer shares by the
+ * label `folder` takes. Computer tools are only in turns only the owner reads: the names are theirs.
+ */
+export function unseenNote(run: { command: string; output: string; folder?: string; cwd?: string }, own: string, device: Pick<Device, "name" | "capabilities">, allowed: readonly string[]): string | null {
+  if (!sandboxHides(device.capabilities)) return null;
+  const paths = unseenPaths(run.command, run.output, run.folder ? { folder: run.folder, cwd: run.cwd } : { own, cwd: run.cwd });
+  if (!paths.length) return null;
+  const shared = (allowed.length ? allowed : folderLabels(device.capabilities)).slice(0, 10).map((label) => `“${label}”`);
+  const instead = allowed.length
+    ? `one you may use (${shared.join(", ")})`
+    : shared.length
+      ? `one ${device.name} shares (${shared.join(", ")}) or its full path`
+      : "its full path";
+  return `${paths.map((path) => `\`${path}\``).join(", ")} cannot be seen from ${run.folder ? `“${run.folder}”` : "your own folder"}: a command sees only the folder it runs in. To work there, name that folder in folder: ${instead}.`;
+}
+
 export function deviceTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   // Only where only the owner reads and the owner started the turn; a helper only with a computer grant.
@@ -343,7 +400,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       description:
         "Run a command on your owner's computer yourself and read what it prints: a quick check, a download, reading a file, a build or tests. " +
         "Examples: download `curl -L -o app.deb https://example.com/app.deb`; read `cat notes.md` or `sed -n 1,80p build.log`; look `ls -la`, `df -h`, `git status`; test `npm test`. " +
-        "One program and its arguments; for pipes, && or > use `bash -c \"…\"`. It runs in the computer's sandbox and changes files only in its folder. Omit folder to work in your own folder on the computer. " +
+        "One program and its arguments; for pipes, && or > use `bash -c \"…\"`. It runs in the computer's sandbox and changes files only in its folder. Without folder it runs in your own folder: to work in a folder of your owner's, name it as folder. " +
         "Up to 900 seconds: a long build or a server, background: true, and you are woken when it ends. Administrator rights (apt install, systemctl): computer_sudo. A screenshot of a terminal: computer_terminal_screenshot. " +
         "A CLI sign-in runs in the background for 15 minutes by itself. Use the browser flow: plain `az login`, `gh auth login --web`, `gcloud auth login`, `aws sso login`: its page opens in your owner's sign-in browser on that computer and they finish it on a card. A device code (`--use-device-code`) only when your owner asks for one or the browser flow failed: the code reaches them on a card. A new attempt replaces the older one; computer_run_stop stops a run. " +
         "Writing or changing code in a repository is an agent session's job (node_session_start).",
@@ -410,14 +467,16 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         if (isResult(done)) return done;
         const signIns = signInLines(done.body);
         if (done.status === 202) {
-          const lines = [`\`${input.command}\` is running in the background on ${done.device.name}${signIn ? ` (up to ${Math.round(timeoutSec / 60)} minutes: it waits for your owner to sign in)` : ""}. You are woken when it ends; do not wait for it.`, ...signIns];
+          const lines = [`\`${input.command}\` is running in the background${input.folder ? "" : " in your own folder"} on ${done.device.name}${signIn ? ` (up to ${Math.round(timeoutSec / 60)} minutes: it waits for your owner to sign in)` : ""}. You are woken when it ends; do not wait for it.`, ...signIns];
           return toolOk(lines.join("\n"), { computer: done.device.name, run: runId, output: done.body.output ?? "" });
         }
         const exit = typeof done.body.exitCode === "number" ? done.body.exitCode : null;
-        return toolOk([`Exit code ${exit ?? "unknown"}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, ...signIns].join("\n"), {
+        const output = typeof done.body.output === "string" ? done.body.output : "";
+        const unseen = exit ? unseenNote({ command: input.command, output, folder: input.folder, cwd: input.cwd }, node.slug, done.device, folders) : null;
+        return toolOk([`Exit code ${exit ?? "unknown"}${input.folder ? "" : ` in your own folder on ${done.device.name}`}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, ...(unseen ? [unseen] : []), ...signIns].join("\n"), {
           computer: done.device.name,
           exitCode: exit,
-          output: typeof done.body.output === "string" ? done.body.output : "",
+          output,
           ms: done.body.ms,
           ...(done.body.clipped ? { run: runId, note: "The output was long: the middle is left out. Read all of it with computer_run_output." } : {}),
         });
@@ -429,6 +488,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       description: "Read the output of a command you ran with computer_run or computer_sudo that ran in the background or printed too much to show (its run id). from: where the last read stopped (its next).",
       input: z.object({ run: z.string().uuid(), from: z.number().int().min(0).max(100_000).optional() }).strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(ctx, input) {
         if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
@@ -479,6 +539,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
+      readOnly: true,
       risk: "low",
       async run(ctx, input) {
         const done = await callComputer(ctx, scope, input.computer, { tool: "git", folder: input.folder, op: input.op, args: input.args }, { timeoutMs: ASK_MS + 30_000, describe: `git ${input.op} ${input.args.join(" ")}`.trim(), again: callText("computer_git", input), need: ownFolder(input.folder) });
@@ -568,6 +629,8 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         })
         .strict(),
       isWrite: false,
+      // It runs any command it is given, so it is never a read: the tool journal holds it, and it runs alone.
+      readOnly: false,
       risk: "medium",
       async run(ctx, input) {
         if (/^\s*sudo\s/.test(input.command)) throw new ToolBlockedError("A terminal screenshot does not run a command as the administrator.", "Run that part with computer_sudo first.");
@@ -699,6 +762,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
     ...liveTools(scope),
+    ...desktopTools(scope),
   ];
   return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
 }
@@ -781,7 +845,7 @@ const DOCUMENTS = new Set(["browser_fetch", "browser_download"]);
  * to share) comes with the node's reply by itself.
  */
 /** `expects`: what the call was meant to bring back (a screenshot, a file), so the node hears plainly when nothing will show. */
-async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
+export async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
   const { prisma, node } = scope;
   const parsed = NodeCaptureAnswer.safeParse(done.body);
   if (!parsed.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
@@ -810,7 +874,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
     answer.ok ? (answer.summary ?? "Done.") : `It did not work: ${answer.error?.message ?? "the tool failed"}`,
     kept.length ? `Kept as your evidence: ${kept.map((item) => `${item.kind} “${item.name}” [${item.id}]${item.local ? " (kept on the computer: evidence upload is off there)" : ""}`).join("; ")}.` : "",
     media.length === 1 ? `This ${NOUNS[media[0]!.kind] ?? "file"} will appear with your reply.` : media.length > 1 ? `These ${media.length} files will appear with your reply (node_show to choose fewer).` : "",
-    held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they release it, and you are told when they do. The card asks them; do not ask in your reply.` : "",
+    held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they send it from the card, and then it shows in this chat by itself. The card asks them; do not ask in your reply.` : "",
     expects && answer.ok && !media.length && !held.length ? `No ${expects} came back, so nothing will show with your reply: never say one is attached or shown. Try again, or tell your owner it did not work.` : "",
     show === "none" && kept.length
       ? `It is in your evidence, not yet in your owner's Ensemble Files: to put it there, call hub_save_file with evidence "${kept[0]!.id}"; to show it in this chat, node_show. Never write a link to it yourself.`
@@ -842,7 +906,7 @@ export function refuseEnsembleApp(name: string, input: Record<string, unknown>):
  */
 export function captureTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
-  const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny }>;
+  const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny; readOnly?: boolean }>;
   return specs.map((spec) =>
     defineTool({
       name: spec.name,
@@ -850,6 +914,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
       description: `On your owner's computer: ${spec.description} Screenshots and videos you capture appear with your reply by themselves; a capture the computer holds waits for your owner's preview.`,
       input: (spec.input as z.AnyZodObject).extend({ computer: Computer }),
       isWrite: false,
+      ...(spec.readOnly ? { readOnly: true } : {}),
       risk: spec.name === "capture_app_start" || spec.name === "browser_type" || spec.name === "browser_upload" ? "medium" : "low",
       async run(ctx, raw) {
         const { computer, ...input } = raw as Record<string, unknown> & { computer?: string };

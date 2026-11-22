@@ -6,10 +6,9 @@
  * computer is this one.
  *
  * For a paired computer running an assistant turn the web handed it (device token only): read
- * the turn and the files attached to the message, call its tools, stream the reply text, say it
- * is done.
+ * the turn and the files attached to the message, call its tools, ask a node's owner about one of
+ * the agent's own calls, stream the reply text (and the agent's own calls), say it is done.
  */
-import { hostname } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AGENT_APP_INFO, ASSISTANT_TURNS_MIN, parseAgentApps, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type AgentApp, type SubscriptionAgent } from "@ensemble/shared-types";
@@ -21,9 +20,10 @@ import { runtimeInstanceOf } from "../remote/contract.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { appPresence, detectAgents } from "./detect.js";
-import { finishTurn, heard, liveTurn, pickTurn, streamInto, turnFor } from "./relay.js";
+import { finishTurn, heard, liveTurn, pickTurn, relayedCall, spoke, streamInto, turnFor } from "./relay.js";
+import { OwnAskShape, OwnToolEventShape } from "./bridge.js";
 import { setUpMessage, startSetUp, startSignIn } from "./signin.js";
-import { computerAgents, deviceOwners } from "./turn.js";
+import { computerAgents, deviceOwners, thisComputer } from "./turn.js";
 import { RESTART_REASONS, type RestartReason } from "../workspace/engines/session-restart.js";
 import { MAX_OUTSIDE_TURNS } from "./outside.js";
 
@@ -60,9 +60,13 @@ const TAKEN = "This turn was picked up by another Ensemble on this computer.";
 /** A plain media type for a turn file's download; anything else goes as bytes. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
-const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
-/** `status`: a line for the chat while the computer waits on something (0.8.0); older computers send none. */
-const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional() });
+/** `callId`: the computer's own id for the call (`assistantRelay` 1); the same call sent again with it never runs twice. */
+const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}), callId: z.string().min(1).max(100).optional() });
+/**
+ * `status`: a line for the chat while the computer waits on something (0.8.0); `tools`: the agent's own calls in a
+ * node's turn (`assistantTurns` 5). Older computers send neither.
+ */
+const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default(""), status: z.string().max(200).optional(), tools: z.array(OwnToolEventShape).max(50).optional() });
 const Done = z.object({
   result: z
     .object({
@@ -108,7 +112,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(prisma, request.userId);
     if (isDesktopRuntime()) {
       const agents = await detectAgents();
-      const computer: SubscriptionComputer = { id: "local", name: hostname().replace(/\.local$/, "") || "This computer", platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents, apps: appPresence() };
+      const computer: SubscriptionComputer = { id: "local", name: thisComputer().name, platform: process.platform, local: true, online: true, lastSeenAt: new Date().toISOString(), appVersion: process.env.ENSEMBLE_APP_VERSION ?? null, ready: true, agents, apps: appPresence() };
       return { computers: [computer], preferred: settings.models.computer };
     }
     const devices = await prisma.device.findMany({ where: { userId: { in: deviceOwners(request.userId) }, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
@@ -188,7 +192,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
       request.log.warn({ userId: device.userId, device: device.id }, `A second Ensemble on ${device.name} asked for an assistant turn another one took`);
       return reply.code(409).send({ error: TAKEN });
     }
-    heard(turn);
+    spoke(turn);
     return { spec: turn.spec };
   });
 
@@ -201,7 +205,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ error: TAKEN });
     const file = turn.spec.files?.find((row) => row.id === params.fileId);
     if (!file || !turn.read) return reply.code(404).send({ error: "That file is not part of this turn." });
-    heard(turn);
+    spoke(turn);
     let bytes: Uint8Array | null = null;
     try {
       bytes = await turn.read(file.id);
@@ -224,12 +228,50 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turn) return reply.code(410).send({ text: "This turn has ended.", isError: true });
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ text: TAKEN, isError: true });
     const body = ToolCall.parse(request.body);
-    heard(turn);
+    spoke(turn);
+    // The same call sent again with its id (its answer was lost) gets the first one's answer. Whether an answer reached the
+    // computer: a request that ended before it means the computer's next identical call is this one again (node/journal.ts).
+    const { answer, delivered } = relayedCall(turn, body.callId, body.name, body.input);
+    reply.raw.once("finish", delivered);
     try {
-      return await turn.call(body.name, body.input);
+      return await answer;
     } catch (error) {
       request.log.warn({ err: error }, "relayed assistant tool failed");
       return { text: JSON.stringify({ error: "The tool failed on Ensemble's side." }), isError: true };
+    } finally {
+      heard(turn);
+    }
+  });
+
+  // One of the agent's own calls in a node's turn needs its owner: their card in the chat, and this request
+  // held until they answer, at most 90 seconds (node/own-tool-asks.ts), so a proxy in front never cuts it.
+  app.post("/api/devices/self/assistant-turns/:id/ask", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const turn = liveTurn((request.params as { id: string }).id, device.id);
+    if (!turn) return reply.code(410).send({ decision: "deny", message: "This turn has ended." });
+    if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ decision: "deny", message: TAKEN });
+    if (!turn.ask) return reply.code(409).send({ decision: "deny", message: "This turn does not ask its owner about the agent's own calls." });
+    const body = OwnAskShape.parse(request.body);
+    spoke(turn);
+    try {
+      const answer = await turn.ask(body);
+      // Not answered in time: the turn parks, and the agent's run stops once this answer has reached the computer.
+      const park = answer.decision === "deny" && answer.waiting ? turn.park : null;
+      if (park) {
+        let parked = false;
+        const after = () => {
+          if (parked) return;
+          parked = true;
+          park();
+        };
+        reply.raw.once("finish", after);
+        reply.raw.once("close", after);
+      }
+      return answer;
+    } catch (error) {
+      request.log.warn({ err: error }, "a node's ask about an agent's own call failed");
+      return { decision: "deny", message: "Ensemble could not ask your owner, so this call was not run. Say what you need." };
     } finally {
       heard(turn);
     }
@@ -242,7 +284,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     if (!turn) return reply.code(410).send({ stop: true });
     if (!turnFor(turn, runtimeInstanceOf(request.headers))) return reply.code(409).send({ stop: true });
     const body = Stream.parse(request.body);
-    streamInto(turn, body.seq, body.text, body.status);
+    streamInto(turn, body.seq, body.text, body.status, body.tools);
     return { stop: false };
   });
 

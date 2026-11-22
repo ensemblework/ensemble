@@ -277,9 +277,14 @@ export function appWithoutAgent(id: SubscriptionProvider, agents: readonly Pick<
 /**
  * The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2
  * also takes the files attached to the person's message, 3 keeps one agent session per chat, 4 lets
- * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor.
+ * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor, 5 lets an
+ * Ensemble Node's turn keep them too (judged by the node's folder policy, with asks relayed to the
+ * owner), reports the agent's own calls, and takes a turn with no turn limit, 6 takes another message
+ * of a turn in the session that took it (`session.resume: "only"`), never starting a new one, 7 runs a
+ * turn someone other than its owner can steer (`others`) with none of the owner's own MCP servers, or
+ * refuses it where the agent cannot leave them out.
  */
-export const ASSISTANT_TURNS_API = 4;
+export const ASSISTANT_TURNS_API = 7;
 /** The oldest `assistantTurns` that runs assistant turns at all. */
 export const ASSISTANT_TURNS_MIN = 1;
 /** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
@@ -288,6 +293,33 @@ export const ASSISTANT_TURN_FILES = 2;
 export const ASSISTANT_TURN_SESSIONS = 3;
 /** The first `assistantTurns` that runs a chat with the agent's own tools; older computers keep only Ensemble's. */
 export const ASSISTANT_TURN_OWN_TOOLS = 4;
+/**
+ * The first `assistantTurns` that runs an Ensemble Node's turn with the agent's own tools and no turn
+ * limit; older computers keep only Ensemble's tools for a node and take at most `ASSISTANT_TURN_MAX_TURNS`.
+ */
+export const ASSISTANT_TURN_NODE_TOOLS = 5;
+/** The most turns a computer before `ASSISTANT_TURN_NODE_TOOLS` takes in one assistant turn. */
+export const ASSISTANT_TURN_MAX_TURNS = 64;
+/**
+ * The first `assistantTurns` that takes another message of a turn (the reply a turn's agent did not write, what
+ * the answer check found missing) in the chat's session that took the turn, or refuses it: never in another
+ * session or a new one. Older computers get none; their turns end with what they had.
+ */
+export const ASSISTANT_TURN_FOLLOW_UPS = 6;
+/**
+ * The first `assistantTurns` that keeps the owner's own MCP servers out of a turn someone else can steer
+ * (`others`) on every agent, or refuses it. Older computers load them on Cursor's agent and the ACP agents,
+ * and before `ASSISTANT_TURN_FOLLOW_UPS` on Codex and Copilot too, so they get no such turn on those
+ * (Claude Code never loads them).
+ */
+export const ASSISTANT_TURN_OTHERS = 7;
+/**
+ * The computer-side protocol that keeps a relayed turn through a lost connection (capabilities `assistantRelay`, a key
+ * of its own apart from `assistantTurns`): 1 keeps each reply batch until the web has it and sends the turn's end again
+ * until the web has it, and where the turn's spec says the web takes call ids (`relay`), sends each of Ensemble's tool
+ * calls with its own id (`callId`) and again with that id until the web answers. Older computers send each once.
+ */
+export const ASSISTANT_RELAY_API = 1;
 /**
  * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
  * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).

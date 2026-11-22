@@ -12,7 +12,7 @@ Settings saved before the sandbox became a beta hold it on by default. At startu
 
 ## 4. Trust and run modes
 
-Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me.
+Choose **Ask**, **Review only** or **Run unattended** in the Assign dialog. You do not need a trusted folder or OS sandbox to choose any mode. The floor in §3, the never-run programs in §6 for Ensemble's own agent and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me. A coding agent's program that runs as the administrator or changes the computer is asked about in every mode, Run unattended too ([30 §1](30_ENGINES.md#1-claude-code-as-the-engine-implementation-reference)). The checks a task's acceptance criteria name, which Ensemble runs again when an assigned run ends, are asked about once per run on one card in Ask and Review only, in trusted folders too, and go ahead only in Run unattended ([16 §9](16_CODE_TAB.md#9-the-agent-implementation-reference)).
 
 | Mode | Behaviour |
 | --- | --- |
@@ -29,7 +29,7 @@ Kimi Code has no file to share: a run in a folder trusted by name gets `KIMI_COD
 
 A run Ensemble starts carries the same trust: in a folder the person trusted by name (for good or for this task), Claude Code loads the folder's own `.claude/` settings and Codex treats it as trusted, as in their own terminal; in folders inside it, the workspace and fresh clones neither does ([30 §1–§2](30_ENGINES.md)).
 
-In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, `git status`…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
+In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, git's read-only subcommands such as `git status` or `git log` in a repository that starts nothing of its own…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
 
 Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)).
 
@@ -101,7 +101,7 @@ Two runs of one Ensemble Node mission (`context.mission.id`) take the first choi
 
 Waiting is not offered when the other run is waiting for a folder this one holds. A job assigned to a held folder, or one inside or around it, waits in the queue ([05](05_MODULE_TASK_ORCHESTRATOR.md)). Reading never takes a folder, and a read-only run holds nothing.
 
-Codex changes the folders its sandbox opens without asking, so folders other runs hold are left out of its writable roots when it starts (changing one goes through its approval, then the above), and each folder it changed on its own (`item/completed` file changes and writing commands) is held for it from then on.
+Codex changes the folders its sandbox opens without asking, so folders other runs hold are left out of its writable roots when it starts (changing one goes through its approval, then the above), and each folder it changed on its own (`item/completed` file changes, and commands that write as the judges read them: `writtenOutside` with `segmentReadsOnly`, git's config files included) is held for it from then on.
 
 Changing one another run took after Codex started is a clash: noted on both runs' logs and sent to the person as a notification.
 
@@ -201,7 +201,7 @@ The hard floor's list of dangerous commands (`device-tools/dangerous.ts`: wiping
 
 Ensemble's agent's `run_command` takes a program and arguments, not a shell string: no pipes, redirects or `&&`; `sh -c` and shell scripts run only in the OS sandbox.
 
-An agent may start any program on the PATH (`checkProgram` in `workspace/guard.ts`; wrappers such as `env`, `nohup` and `timeout` are judged by the program they start) except the never-run list: privilege (`sudo`, `su`, `doas`), persistence and system settings (`crontab`, `launchctl`, `defaults`, `security`, `osascript`…), the machine's power and disks, and killing programs by name (`pkill`, `killall`).
+Ensemble's own agent may start any program on the PATH (`checkProgram` in `workspace/guard.ts`; wrappers such as `env`, `nohup` and `timeout` are judged by the program they start) except the never-run list: privilege (`sudo`, `su`, `doas`), persistence and system settings (`crontab`, `launchctl`, `defaults`, `security`, `osascript`…), the machine's power and disks, and killing programs by name (`pkill`, `killall`). A coding agent's command with one of these programs is asked about on a card instead (`systemProgram` in `workspace/engines/judge.ts`).
 
 The person's terminal keeps its allow-list ([16](16_CODE_TAB.md)). Programs that reach another computer (`ssh`, `scp`, `sftp`, `nc`…) need the internet and follow the mode (§4). Interpreters still run code, so the OS sandbox must contain their subprocesses.
 

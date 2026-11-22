@@ -2,7 +2,8 @@
  * Media in the conversation (ensemble-node docs/design B20, extension §8.5): a node's message can carry
  * the screenshots, videos and files its owner's runs attached (evidence): the owner's own, uploaded (not
  * kept on the computer). What a node's own tools capture in a turn comes with its reply by itself,
- * unless it chose with node_show. A mission's report brings the media of the steps that were done or
+ * unless it chose with node_show; so does what the owner sent from a preview card while the turn ran
+ * (evidence/held.ts). A mission's report brings the media of the steps that were done or
  * passed, so what reaches the chat was checked first. Reading a file follows the message: whoever may
  * read a message that shows it may open it; anyone else, only its owner.
  */

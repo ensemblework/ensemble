@@ -182,6 +182,14 @@ test("4 screenshots asked and 3 taken: the reply goes back once, and the fourth 
     assert.equal(reply.data.media.length, 4);
     assert.deepEqual(device.heard.map((row) => (row.input as { name?: string }).name), ["microsoft", "amazon", "nvidia", "apple"]);
     assert.equal(reply.data.tools.length, 4, "every call is on the reply");
+    const trace = await h.prisma.nodeTurnTrace.findFirstOrThrow({ where: { nodeId: node.id } });
+    const report = trace.report as { outcome: string; verified: boolean; artifacts: Array<{ id: string; kind: string; to: string }> };
+    assert.deepEqual([report.outcome, report.verified], ["done", true], "the reply it ended with passed the check");
+    assert.deepEqual(
+      report.artifacts.map((row) => `${row.id}:${row.kind}:${row.to}`).sort(),
+      reply.data.media.map((row: { evidenceId: string }) => `${row.evidenceId}:screenshot:chat`).sort(),
+      "the screenshots that reached the chat",
+    );
   } finally {
     device.stop();
   }
@@ -240,7 +248,7 @@ test("a link the model made up is sent back; a link to the owner's own file stan
   }
 });
 
-test("a request the reply already meets gets no round; a stubborn model is told at most twice", async () => {
+test("a request the reply already meets gets no round; a stubborn model is told at most twice, then once that its claim is false", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira);
   const { node, room } = await createNode(mira);
@@ -256,9 +264,10 @@ test("a request the reply already meets gets no round; a stubborn model is told 
     script = () => ({ text: "Here are the screenshots." });
     await say(mira, room.id, "send me 3 screenshots of example.com, example.org and example.net");
     assert.equal(feedbacks().length, 2, "two rounds at most");
-    assert.match(feedbacks()[0]!.last, /3 screenshots were asked for \(example\.com, example\.org, example\.net\) and none will show with your reply; your reply says something is attached or shown, but nothing will show with it/);
-    assert.equal(nodeCalls().length, 3);
-    assert.equal((await replies(mira, room.id, node.id)).at(-1)!.body, "Here are the screenshots.", "the last answer is posted as it is");
+    assert.match(feedbacks()[0]!.last, /^Not done yet: 3 screenshots were asked for \(example\.com, example\.org, example\.net\) and none will show with your reply\. Do it now/);
+    assert.equal(nodeCalls().length, 4, "then one round for its claim that they are there");
+    assert.equal(nodeCalls()[3]!.last, "You said the screenshots are attached, but nothing reached the chat. Attach them with the right tool, or correct your reply.");
+    assert.equal((await replies(mira, room.id, node.id)).at(-1)!.body, "No screenshot was attached.", "the last answer is posted without the claim");
   } finally {
     device.stop();
   }

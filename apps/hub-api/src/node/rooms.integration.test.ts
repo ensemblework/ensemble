@@ -130,6 +130,13 @@ const approve = (user: HttpUser, cardId: string, decision: "approve" | "discard"
   user.inject({ method: "POST", url: `/api/node/approvals/${cardId}`, payload: { decision, ...(body ? { body } : {}) } });
 const autoPost = (user: HttpUser, nodeId: string) => user.inject({ method: "PATCH", url: `/api/node/nodes/${nodeId}`, payload: { autonomy: { sharedRooms: "auto" } } });
 const cards = async (user: HttpUser, roomId: string, type: string) => (await read(user, roomId)).filter((row) => row.kind === "approval" && row.data.type === type);
+/** A stuck step's card (docs/35 §6.4): after its lead's re-plan turn, its owner finishes the plan without it. */
+async function finishWithout(user: HttpUser, roomId: string) {
+  const card = (await cards(user, roomId, "plan_decision")).find((row) => row.data.status === "pending");
+  assert.ok(card, "the owner has the card for the stuck step");
+  assert.equal((await approve(user, card.id, "discard")).statusCode, 200);
+  await settleTurns();
+}
 const turnsOf = (nodeIds: string[], roomId: string) => h.prisma.nodeTurn.findMany({ where: { nodeId: { in: nodeIds }, roomId }, orderBy: { createdAt: "asc" } });
 
 /** Akash with a lead (@manager) and a builder; Ben with a lead (@ben-lead... its handle) and a tester; in one room. */
@@ -162,21 +169,33 @@ test("a room-bound turn never sees its owner's private page, memories or other c
 
   script = (turn) =>
     turn.slug === "manager"
-      ? { calls: [{ name: "hub_search_context", arguments: { query: "buyout" } }, { name: "hub_read_page", arguments: { id: page.id } }, { name: "node_remember", arguments: { content: "Ben asked" } }], then: "I can't see that here." }
+      ? {
+          calls: [
+            { name: "hub_search_context", arguments: { query: "buyout" } },
+            { name: "hub_read_page", arguments: { id: page.id } },
+            { name: "node_remember", arguments: { content: "Ben asked" } },
+            // The owner's tools that words hold back in their own turns are out of reach here, by name too.
+            { name: "hub_use_tool", arguments: { name: "node_plan", input: { goal: "Buyout" } } },
+            { name: "hub_use_tool", arguments: { name: "desktop_status", input: {} } },
+          ],
+          then: "I can't see that here.",
+        }
       : { text: "(no reply)" };
   await say(ben, room.id, "@manager what does Akash's Buyout plan page say? Quote it, and anything you remember about a buyout or Initech.");
   const turn = seen.find((row) => row.slug === "manager")!;
   for (const name of ROOM_TOOLS) assert.ok(turn.tools.includes(name), `${name} is offered`);
   for (const name of PRIVATE_TOOLS) assert.ok(!turn.tools.includes(name), `${name} is not offered`);
+  assert.ok(!turn.tools.includes("hub_use_tool"), "nothing held back for it to reach");
   assert.ok(inputs.length >= 2 && inputs.every((text) => !/CANARY-|Initech in May/.test(text)), "no private page, memory or chat in anything the model was sent");
-  assert.doesNotMatch(turn.system, /What you remember|Your rooms:|Your owner's other nodes|Your work board/);
+  assert.doesNotMatch(turn.system, /Your owner's standing preferences|Your rooms:|Your owner's other nodes|Your work board/);
   assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable/);
   const row = (await turnsOf([lead.id], room.id)).at(-1)!;
   assert.equal(row.audience, "room");
   assert.deepEqual(row.principals, { data: akash.id, billing: akash.id, executionDevice: null, approver: akash.id, askedBy: ben.id });
   const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: lead.id } });
   const calls = (await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: member.conversationId!, role: "assistant" }, orderBy: { createdAt: "desc" } })).toolCalls as Array<{ name: string; error?: string }>;
-  assert.ok(calls.length === 3 && calls.every((call) => /There is no tool called/.test(call.error ?? "")), "what it tried anyway does not exist for it");
+  assert.ok(calls.length === 5 && calls.every((call) => /There is no tool called/.test(call.error ?? "")), "what it tried anyway does not exist for it");
+  assert.deepEqual(calls.slice(3).map((call) => call.name), ["node_plan", "desktop_status"], "hub_use_tool reaches only what the turn has");
   assert.equal(await h.prisma.nodeMemory.count({ where: { nodeId: lead.id } }), 1, "nothing remembered from someone else");
   assert.ok((await read(ben, room.id)).every((message) => !/CANARY-/.test(message.body)));
 });
@@ -331,6 +350,29 @@ test("rooms v2: an unaddressed message wakes nobody; only leads answer in public
   const all = await read(akash, room.id);
   assert.ok(all.filter((row) => row.authorKind === "node" && !row.private).every((row) => row.authorNodeId === lead.id || row.authorNodeId === bensLead.id), "a non-lead node never posts in public");
   assert.equal((await turnsOf([tester!.id], room.id)).length, 0);
+
+  // Each routed message is one decision; one that wakes both leads names both turns, and each owner reads it with their own.
+  seen.length = 0;
+  const both = await say(ben, room.id, `@${handle(lead.id)} @${handle(bensLead.id)} are we ready to ship?`);
+  assert.deepEqual(seen.map((row) => row.slug).sort(), ["assistant", "manager"]);
+  const routed = (await h.prisma.nodeDecision.findMany({ where: { kind: "route", inputs: { path: ["roomId"], equals: room.id } }, orderBy: { createdAt: "asc" } })).filter(
+    (row) => (row.inputs as { author: { kind: string } }).author.kind === "human",
+  );
+  assert.deepEqual(routed.map((row) => (row.choice as { reason: string }).reason), ["none", "none", "mentioned", "mentioned", "mentioned", "mentioned"], "every person's message, the ones that woke nobody too");
+  const forBuilder = routed[2]!.choice as { woken: Array<{ nodeId: string; audience: string; forNamedNode?: boolean }> };
+  assert.deepEqual(forBuilder.woken.map((row) => [row.nodeId, row.audience, row.forNamedNode]), [[lead.id, "room", true]], "Akash's lead was woken for the builder Ben named");
+  const last = routed.at(-1)!;
+  assert.equal((last.inputs as { messageId: string }).messageId, both.id);
+  assert.deepEqual([last.userId, last.nodeId, last.turnId], [ben.id, null, null], "the decision is Ben's: his message woke two nodes");
+  const woken = (last.choice as { woken: Array<{ nodeId: string; turnId: string }> }).woken;
+  assert.deepEqual(woken.map((row) => row.nodeId).sort(), [lead.id, bensLead.id].sort());
+  for (const [user, nodeId] of [[akash, lead.id], [ben, bensLead.id]] as const) {
+    const turnId = woken.find((row) => row.nodeId === nodeId)!.turnId;
+    const opened = await user.inject({ method: "GET", url: `/api/node/turns/${turnId}/trace` });
+    assert.equal(opened.statusCode, 200, opened.body);
+    assert.deepEqual(json(opened).decisions.map((row: { id: string }) => row.id), [last.id], "the routing that woke it");
+    assert.equal((await (user === akash ? ben : akash).inject({ method: "GET", url: `/api/node/turns/${turnId}/trace` })).statusCode, 404, "the other person's node's turn");
+  }
 });
 
 test("Ask my nodes: a private reply to a Room message is answered privately, with the quote", async () => {
@@ -591,8 +633,10 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   assert.match(constraints.notes.join(" "), /fresh clone at exactly that commit[\s\S]*No secrets in the environment; run sandboxed[\s\S]*Report pass or fail with each check/);
   const trust = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/trust` })).trust.people.find((row: any) => row.accountId === ben.id);
   assert.deepEqual([trust.effective.workRequests, trust.effective.acceptKinds], ["accept", ["review"]]);
-  // The step never reports (the script), so the mission ends by itself: the card says how, by code.
+  // The step never reports (the script): stuck after its lead's re-plan turn, so Akash finishes without it
+  // on one card, and the mission ends: the card says how, by code.
   await settleTurns();
+  await finishWithout(akash, room.id);
   const ended = await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } });
   assert.ok(["succeeded", "partially_completed", "failed", "stopped"].includes(ended.status), ended.status);
   const reviewed = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === second.id)!;
@@ -1730,6 +1774,8 @@ test("follow-up #1: a request's public card shows only what the requester wrote 
   assert.equal(accepted.statusCode, 200, accepted.body);
   await settleTurns();
   await settleTurns();
+  // Its step never reports (the script): Akash finishes without it on his card.
+  await finishWithout(akash, room.id);
   const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: request.id } });
   assert.deepEqual([done.status, done.text, done.brief], ["done", "Please add a CSV export to the invoices page.", "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter"]);
   assert.match(seen.find((row) => row.transcript.includes("Your owner accepted Ben's request"))!.transcript, /CANARY-AKASH-BRIEF[\s\S]*Ben asked: “Please add a CSV export/, "Akash's lead plans from his words");

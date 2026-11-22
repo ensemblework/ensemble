@@ -295,6 +295,9 @@ importers:
       '@ensemble/ide-theme':
         specifier: workspace:*
         version: link:../../packages/ide-theme
+      '@ensemble/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
       '@ensemble/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -666,7 +669,17 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
-  packages/prompts: {}
+  packages/prompts:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.4
+        version: 22.20.4
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.15
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
 
   packages/shared-types:
     dependencies:

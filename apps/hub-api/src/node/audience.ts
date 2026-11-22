@@ -149,6 +149,8 @@ type BoundCtx = {
   lineage: { rootMessageId: string | null; botDepth: number };
   /** The messages this turn read from people other than the owner that it may act on (node_peer_request `from`). */
   batch: Array<{ seq: number; userId: string }>;
+  /** An independent answer (node/groups.ts): the room as it was when it was asked, up to this message. */
+  snapshotSeq: number | null;
 };
 
 /**
@@ -216,7 +218,7 @@ export async function roomBoundTurn(
     const theirs = request && request.fromAccountId === author ? request : null;
     const askCtx: BoundCtx = {
       app, node, room, members, owner, ownerName: input.ownerName, askerId: author, askerName: nameFor(author),
-      trust: publicTrust(prefs, readers, author), trigger: row ?? trigger, requestId: theirs?.id ?? null, lineage: input.lineage, batch: [],
+      trust: publicTrust(prefs, readers, author), trigger: row ?? trigger, requestId: theirs?.id ?? null, lineage: input.lineage, batch: [], snapshotSeq: turn.snapshotSeq,
     };
     const question = theirs?.text ?? row?.body ?? turn.note ?? "";
     const { card, existing } = await raiseDisclosure(askCtx, { mode: "answer", question: truncateText(question, 1000), need: "" });
@@ -234,7 +236,7 @@ export async function roomBoundTurn(
   const batch = asking.filter((row) => !gated.has(row.userId)).map((row) => ({ seq: row.seq, userId: row.userId }));
   const ctx: BoundCtx = {
     app, node, room, members, owner, ownerName: input.ownerName, askerId, askerName, trust, trigger,
-    requestId: request && !gated.has(request.fromAccountId) ? request.id : null, lineage: input.lineage, batch,
+    requestId: request && !gated.has(request.fromAccountId) ? request.id : null, lineage: input.lineage, batch, snapshotSeq: turn.snapshotSeq,
   };
   await prisma.nodeTurn.update({
     where: { id: turn.id },
@@ -289,6 +291,10 @@ export async function roomBoundTurn(
           withoutTools,
           spaces,
           extraTools: tools,
+          // Only the room's tools: none of the owner's held back for words (node/skills.ts tiers) is within reach here.
+          hiddenTools: undefined,
+          coreTools: undefined,
+          routeBy: undefined,
           extraRefs: [],
           // Files on the owner's messages stay in the owner's Files: a room-bound turn does not open them.
           mentions: undefined,
@@ -368,7 +374,7 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
 
 // ── the tools of a room-bound turn ──────────────────────────────────────────────────────────
 
-/** This room's public history, from when its newest person joined. */
+/** This room's public history, from when its newest person joined; for an independent answer, only up to its question. */
 function historyTool(ctx: BoundCtx): AnyHubTool {
   const { app, room } = ctx;
   const prisma = app.prisma;
@@ -382,6 +388,7 @@ function historyTool(ctx: BoundCtx): AnyHubTool {
       limit: z.number().int().min(1).max(50).optional(),
     }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       const since = await sharedSince(prisma, room.id);
@@ -392,7 +399,7 @@ function historyTool(ctx: BoundCtx): AnyHubTool {
           visibleTo: { isEmpty: true },
           kind: { in: ["text", "status", "request"] },
           createdAt: { gte: since },
-          ...(input.before ? { seq: { lt: input.before } } : {}),
+          ...(input.before || ctx.snapshotSeq !== null ? { seq: { ...(input.before ? { lt: input.before } : {}), ...(ctx.snapshotSeq !== null ? { lte: ctx.snapshotSeq } : {}) } } : {}),
           ...(words.length ? { AND: words.map((word) => ({ body: { contains: word, mode: "insensitive" as const } })) } : {}),
         },
         orderBy: { seq: "desc" },
@@ -418,6 +425,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     description: `${ownerName}'s status card for this room, built from their work for this room, at the detail they chose: what you may say about their status here.`,
     input: z.object({}).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run() {
       const card = await statusCard(prisma, room, owner, { room: true });
@@ -432,6 +440,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     description: `Items ${ownerName} marked shareable in this room: the list, or what one of them says (give its id).`,
     input: z.object({ item: z.string().max(80).optional().describe("The item's id, from the list.") }).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run(_ctx, input) {
       const items = prefsOf(await personIn(prisma, room.id, owner)).shareable ?? [];

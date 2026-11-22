@@ -1,0 +1,15 @@
+{
+  "name": "cua-driver",
+  "licence": "MIT",
+  "version": "0.56.6",
+  "tag": "cua-driver-rs-v0.56.6",
+  "sourceCommit": "53260e000221483c5ab3f49607aae5c66c23e883",
+  "cargoLockSha256": "de0058a6f9ee9445d3f7d79508ed342058d424bb9c113fc8f678dc6666d2e313",
+  "asset": "cua-driver-rs-0.56.6-darwin-universal.tar.gz",
+  "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.56.6/cua-driver-rs-0.56.6-darwin-universal.tar.gz",
+  "sha256": "c800df96571a199042358433fc544eb5a1a250d48076e5979ae94d88d9fb72f9",
+  "bytes": 70174277,
+  "member": "cua-driver-rs-0.56.6-darwin-universal/CuaDriver.app",
+  "bundleId": "com.trycua.driver",
+  "teamId": "YCK386LBJ7"
+}

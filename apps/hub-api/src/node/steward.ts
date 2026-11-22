@@ -116,6 +116,7 @@ export function stewardTools(ctx: StewardCtx): AnyHubTool[] {
     description: `The board of the room's shared space as ${askerName} sees it: each task, its status, who it is with and who asked for it. For suggesting how to tidy it (stale tasks, missing owners, duplicates); people change it themselves.`,
     input: z.object({}).strict(),
     isWrite: false,
+    readOnly: true,
     risk: "low",
     async run() {
       const view = await roomBoard(app, room, askerId);

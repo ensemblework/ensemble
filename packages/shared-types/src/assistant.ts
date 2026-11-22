@@ -241,14 +241,25 @@ export type ModelSettings = z.infer<typeof ModelSettings>;
 export const OutsideAccess = z.enum(["none", "read", "read-write"]);
 export type OutsideAccess = z.infer<typeof OutsideAccess>;
 
+/** Ensemble's own limits on a run before it had none: 40 model turns, 60 minutes. */
+const LEGACY_LIMITS = { maxTurns: 40, maxMinutes: 60 } as const;
+
 export const OrchestrationSettings = z.object({
   dailyHighRiskLimit: z.number().int().min(0).max(500).default(20),
   sandboxNetwork: z.boolean().default(true),
   runWithoutAsking: z.boolean().default(true),
   placeByPriority: z.boolean().default(true),
   maxConcurrentJobs: z.number().int().min(1).max(8).default(3),
-  maxTurns: z.number().int().min(5).max(200).default(40),
-  maxMinutes: z.number().int().min(5).max(480).default(60),
+  /**
+   * The owner's own limits on a coding agent's run; read them through `runLimits`. Null: none. The
+   * defaults are Ensemble's old ones, saved with every owner's settings before runs had no limits of
+   * Ensemble's own, and still written so an older API reads what is saved: they count as none unless
+   * the owner set them (`ownLimits`).
+   */
+  maxTurns: z.number().int().min(5).max(200).nullable().default(LEGACY_LIMITS.maxTurns),
+  maxMinutes: z.number().int().min(5).max(480).nullable().default(LEGACY_LIMITS.maxMinutes),
+  /** The limits above the owner set in Settings, so one equal to an old default is theirs. */
+  ownLimits: z.array(z.enum(["maxTurns", "maxMinutes"])).max(2).default([]),
   planWithTaskModel: z.boolean().default(true),
   requireTestsBeforeCommit: z.boolean().default(true),
   /**
@@ -284,6 +295,18 @@ export const OrchestrationSettings = z.object({
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
 
+/**
+ * A run's minutes and turns as the owner set them; null: no limit. A saved 60 minutes or 40 turns
+ * the owner did not set is Ensemble's old default, so no limit.
+ */
+export function runLimits(orchestration: { maxTurns?: number | null; maxMinutes?: number | null; ownLimits?: readonly string[] }): { maxTurns: number | null; maxMinutes: number | null } {
+  const limit = (key: keyof typeof LEGACY_LIMITS) => {
+    const value = orchestration[key] ?? null;
+    return value === LEGACY_LIMITS[key] && !orchestration.ownLimits?.includes(key) ? null : value;
+  };
+  return { maxTurns: limit("maxTurns"), maxMinutes: limit("maxMinutes") };
+}
+
 /** Ask, Review only (commands run without asking; only decisions reach the person), Run unattended. */
 export const RunMode = z.enum(["ask", "review", "unattended"]);
 export type RunMode = z.infer<typeof RunMode>;
@@ -313,6 +336,24 @@ export function pullRequestHeadRefusal(branch: string, base: string): string | n
   if (base && branch === base) return `A pull request cannot come from ${base} into itself. Name another branch for the run.`;
   return null;
 }
+
+/**
+ * Roles (beta, off by default; docs/35 §8.3): the kinds of work a node hands to an agent run, each of which
+ * may get its own agent and model (`RoleMap`, sparse: a role left out inherits). Ensemble Node resolves a
+ * plan step's run by its role (apps/hub-api/src/node/roles.ts).
+ */
+export const NODE_ROLES = ["architecture", "implementation", "research", "review", "security", "design", "test", "docs", "writing", "general"] as const;
+export type NodeRole = (typeof NODE_ROLES)[number];
+export const RoleChoice = z
+  .object({
+    agent: z.enum(CODE_ENGINES).optional(),
+    model: z.string().trim().max(240).optional(),
+    effort: ReasoningEffort.optional(),
+  })
+  .strict();
+export type RoleChoice = z.infer<typeof RoleChoice>;
+export const RoleMap = z.record(z.enum(NODE_ROLES), RoleChoice);
+export type RoleMap = z.infer<typeof RoleMap>;
 
 /**
  * A saved set of Assign options, picked in one click from the Assign dialog,
@@ -359,6 +400,8 @@ export const RunProfile = z.object({
   secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(20).optional(),
   /** Connected-app tools a run with this profile may not use (tools-off.ts). Empty: every connected one. */
   toolsOff: ToolsOff.optional(),
+  /** Roles (beta): this profile's agent and model per kind of delegated work, over the global ones. Used only while Roles are on. */
+  roles: RoleMap.optional(),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
@@ -551,6 +594,13 @@ export const NodeSettings = z.object({
    * in the Node chat only. Either way, what is answered or closed anywhere leaves everywhere.
    */
   needsInEnsemble: z.boolean().default(true),
+  /** Roles (beta, off by default): an agent and model per kind of work a node hands to an agent run (`global`, sparse). */
+  roles: z
+    .object({
+      enabled: z.boolean().default(false),
+      global: RoleMap.default({}),
+    })
+    .default({}),
 });
 export type NodeSettings = z.infer<typeof NodeSettings>;
 

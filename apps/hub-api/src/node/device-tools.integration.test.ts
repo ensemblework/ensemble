@@ -27,7 +27,7 @@ const { settleTurns } = await import("./queue.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
-const { deviceTools, forComputer, signInWhich } = await import("./device-tools.js");
+const { deviceTools, forComputer, signInWhich, unseenNote, unseenPaths } = await import("./device-tools.js");
 const { postMessage } = await import("./store.js");
 const { ModelTimeoutError } = await import("../lib/model-timeout.js");
 after(() => h.close());
@@ -217,7 +217,8 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
     assert.deepEqual((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [mira.id]);
     assert.equal(card.authorNodeId, node.id);
     const { answeredAt: _answeredAt, ...shape } = card.data;
-    assert.deepEqual(shape, { type: "computer", status: "pending", decisionId: decisions[0]!.id, capability: "git", label: "app", scope: "folder", deviceName: "Mira's laptop", call: "git status", options: ["Once", "This mission", "Always for this folder"], answer: null, private: false });
+    const asking = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
+    assert.deepEqual(shape, { type: "computer", status: "pending", decisionId: decisions[0]!.id, capability: "git", label: "app", scope: "folder", deviceName: "Mira's laptop", call: "git status", options: ["Once", "This mission", "Always for this folder"], answer: null, private: false, turnId: asking.id });
     assert.match(card.body, /@assistant wants to read git in app on Mira's laptop/);
     const notice = await h.prisma.notification.findFirstOrThrow({ where: { userId: mira.id, kind: "decision" } });
     assert.equal(notice.url, `https://node.example.test/r/${room.id}#m-${card.id}`, "the notification opens the card in the Node chat");
@@ -262,6 +263,63 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
   }
 });
 
+test("an answer no call has used yet goes only with a call it covers: Once and This mission with one of the same conversation or plan, Always with any, one about the agent's own calls never", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira);
+  const { node, room } = await createNode(mira);
+  const target = "/home/mira/projects/app";
+  const here = `conversation:${room.id}:shared`;
+  // Answers on cards whose turns parked, before the calls they wake have used them.
+  const answered = async (reason: string, mission: string, own?: { what: string; kind: string }) =>
+    (
+      await h.prisma.agentDecision.create({
+        data: {
+          userId: mira.id, source: "ensemble", event: "question", toolName: "Computer tools", title: "@assistant wants to read git in app on Mira's laptop", status: "decided", decision: "allow", reason, decidedAt: new Date(),
+          expiresAt: new Date(Date.now() + 86_400_000),
+          detail: { options: own ? ["Allow changes and commands", "Allow changes and commands for this run"] : ["Once", "This mission", "Always for this folder"], nodeTool: { nodeId: node.id, nodeSlug: node.slug, roomId: room.id, private: false, planId: null, planStep: null, mission, deviceId: laptop.id, deviceName: "Mira's laptop", capability: "git", target, label: "app", scope: "folder", ...(own ? { own } : {}), parked: [], delivered: false, announced: false } },
+        },
+      })
+    ).id;
+  const elsewhere = "conversation:another-room:private";
+  await answered("Once", elsewhere);
+  await answered("This mission", "plan-7");
+  const always = await answered("Always for this folder", elsewhere);
+  const mission = await answered("This mission", here);
+  await answered("Allow changes and commands for this run", here, { what: "change src/app.ts", kind: "write" });
+  await answered("Allow changes and commands", here, { what: "change src/app.ts", kind: "write" });
+  const device = computer(laptop.id, key, () => ({ status: 200, body: { exitCode: 0, output: "## main\n" } }));
+  try {
+    script = (turn) => (turn.transcript.includes("what changed") ? gitStatus : { text: "ok" });
+    await say(mira, room.id, "what changed in app?");
+    assert.equal(device.heard.length, 1);
+    const sent = (device.heard[0]!.grants as Array<{ id: string; scope: string }>).map((grant) => [grant.id, grant.scope]);
+    assert.deepEqual(sent.sort(), [[always, "always"], [mission, "mission"]].sort(), "another conversation's or a plan's Once and This mission stay for their calls; the agent's own answers go back by its own asks");
+  } finally {
+    device.stop();
+  }
+});
+
+test("an app on the node's own agent screen is asked about as its own screen, not the owner's", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "ask", { nodeTools: 1, desktop: 1 });
+  const { node, room } = await createNode(mira);
+  const ask = { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false, screen: "agent" };
+  const device = askingComputer(laptop.id, key, ask, () => ({ ok: true, summary: "Typed.", evidence: [], refused: [] }));
+  try {
+    script = (turn) => (turn.transcript.includes("terminal") ? { calls: [{ name: "desktop_act", arguments: { screen: "agent", foreground: true, steps: [{ action: "type", text: "ls" }] } }], then: "Typed ls." } : { text: "ok" });
+    await post(mira, room.id, "type ls in a terminal on your own screen");
+    const card = await computerCard(mira, room.id);
+    assert.equal(card.body, `@${node.slug} wants to use Terminal on its own screen on Mira's laptop`);
+    assert.deepEqual([card.data.scope, card.data.screen, card.data.options], ["app", "agent", ["This mission"]]);
+    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${card.data.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "This mission" } });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    await settleTurns();
+    assert.equal(device.heard.length, 2, "the call went again with the answer");
+  } finally {
+    device.stop();
+  }
+});
+
 test("no on the card: the call hears it and the node goes on without it", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira);
@@ -299,6 +357,7 @@ test("not answered in time: the turn parks without a reply, and the answer later
     assert.deepEqual(await replies(mira, room.id, node.id), [], "no reply: nothing like “please approve”");
     const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id } });
     assert.equal(turn.status, "done");
+    assert.equal(turn.outcome, "parked", "its real outcome is kept");
     const conversation = (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: node.id } })).conversationId!;
     const note = await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: conversation, role: "assistant" }, orderBy: { createdAt: "desc" } });
     assert.equal(note.content, "Waiting for Mira to answer the card about git status (in app on Mira's laptop).", "the next turn knows what it waits for");
@@ -676,6 +735,70 @@ test("unattended calls say so; the computer's refusal is the node's answer; an o
   assert.match((await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!, /Update Ensemble on Mira's laptop/);
 });
 
+test("computer_run without a folder runs in the node's own folder and says so; a path it cannot see there brings the folders the computer shares", async () => {
+  const mira = await person("Mira");
+  const folders = [{ label: "notes", kind: "folder", access: "read-write" }, { label: "app", kind: "repo", access: "read-write" }];
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 2, folders, sandbox: "strong", sandboxInfo: { mechanism: "bubblewrap", osSandbox: true } });
+  const { node, room } = await createNode(mira);
+  const device = computer(laptop.id, key, (data) => {
+    if (data.command === "pwd") return { status: 200, body: { exitCode: 0, output: `/home/mira/ensemble-workspace/nodes/${node.slug}\n` } };
+    if (data.folder === "notes") return data.command === "ls" ? { status: 200, body: { exitCode: 0, output: "alpha-plan.md\n" } } : { status: 200, body: { exitCode: 1, output: "cat: /home/mira/notes/missing.md: No such file or directory\n" } };
+    if (data.folder === "app") return { status: 200, body: { exitCode: 1, output: "npm ERR! Missing script: \"test\"\n" } };
+    // The sandbox shows a command only the folder it runs in: the owner's other folders are not there.
+    return { status: 200, body: { exitCode: 2, output: "ls: cannot access '/home/mira/notes': No such file or directory\n" } };
+  });
+  const said = async (body: string, call: Record<string, unknown>) => {
+    script = () => ({ calls: [{ name: "computer_run", arguments: call }], then: "Done." });
+    await say(mira, room.id, body);
+    return (await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!;
+  };
+  try {
+    assert.match(await said("where do you work?", { command: "pwd" }), /^Exit code 0 in your own folder on Mira's laptop\.$/);
+    assert.equal(device.heard[0]!.folder, undefined, "the computer runs it in the node's own folder");
+    const unseen = await said("what is in /home/mira/notes?", { command: "ls -la -- /home/mira/notes" });
+    assert.match(unseen, /^Exit code 2 in your own folder on Mira's laptop\./);
+    assert.match(unseen, /`\/home\/mira\/notes` cannot be seen from your own folder/);
+    assert.match(unseen, /name that folder in folder: one Mira's laptop shares \(“notes”, “app”\) or its full path/);
+    assert.match(await said("and now?", { folder: "notes", command: "ls" }), /^Exit code 0\.$/);
+    assert.match(await said("open the missing one", { folder: "notes", command: "cat /home/mira/notes/missing.md" }), /^Exit code 1\.$/, "a file missing in the folder it named brings no list");
+    assert.match(await said("run the tests", { folder: "app", command: "npm test" }), /^Exit code 1\.$/, "a failure that names no path it cannot see brings no list");
+  } finally {
+    device.stop();
+  }
+  const row = await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: node.id } });
+  const scopeRoom = await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } });
+  const scope = { prisma: h.prisma, node: row, room: scopeRoom, lineage: { rootMessageId: null, botDepth: 0, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis as never, dispatch: async () => undefined, turnId: "t", plan: null };
+  assert.match(deviceTools(scope).find((tool) => tool.name === "computer_run")!.description, /Without folder it runs in your own folder: to work in a folder of your owner's, name it as folder\./);
+});
+
+test("unseenPaths: the paths a failed command could not see, from its own error lines", () => {
+  const own = { own: "assistant" };
+  assert.deepEqual(unseenPaths("ls -la -- /home/mira/notes", "ls: cannot access '/home/mira/notes': No such file or directory\n", own), ["/home/mira/notes"]);
+  assert.deepEqual(unseenPaths('bash -c "cat ~/notes/plan.md | head"', "cat: /home/mira/notes/plan.md: No such file or directory\n", own), ["~/notes/plan.md"]);
+  assert.deepEqual(unseenPaths("python3 ../data/run.py", "python3: can't open file '/w/nodes/data/run.py': [Errno 2] No such file or directory\n", own), ["../data/run.py"], "as the program resolved it");
+  assert.deepEqual(unseenPaths("cat ../data/run.py", "cat: ../data/run.py: Permission denied\n", own), ["../data/run.py"]);
+  assert.deepEqual(unseenPaths("cat ../data/run.py", "cat: ../data/run.py: No such file or directory\n", { ...own, cwd: "src/app" }), [], "../ from a subfolder may still be inside");
+  assert.deepEqual(unseenPaths("/usr/bin/python3 script.py", "python3: can't open file 'script.py': [Errno 2] No such file or directory\n", own), [], "a program's own path is not what was missing");
+  assert.deepEqual(unseenPaths("ls /home/mira/ensemble-workspace/nodes/assistant/out", "ls: cannot access '/home/mira/ensemble-workspace/nodes/assistant/out': No such file or directory\n", own), [], "a path in the node's own folder is visible there");
+  assert.deepEqual(unseenPaths("npm test", "npm ERR! Missing script: \"test\"\n", own), []);
+  const missing = "cat: /home/mira/notes/missing.md: No such file or directory\n";
+  assert.deepEqual(unseenPaths("cat /home/mira/notes/missing.md", missing, { folder: "notes" }), [], "under a folder named by its label it may only be missing");
+  assert.deepEqual(unseenPaths("cat /home/mira/notes/missing.md", missing, { folder: "/home/mira/notes/" }), [], "inside a folder named by its full path");
+  assert.deepEqual(unseenPaths("cat /home/mira/app/plan.md", "cat: /home/mira/app/plan.md: No such file or directory\n", { folder: "/home/mira/notes" }), ["/home/mira/app/plan.md"]);
+  assert.deepEqual(unseenPaths("cat ../app/plan.md", "cat: ../app/plan.md: No such file or directory\n", { folder: "notes" }), ["../app/plan.md"], "../ from a folder's top leaves it");
+});
+
+test("unseenNote: only a computer whose OS sandbox hides the other folders names the ones to use", () => {
+  const run = { command: "ls /home/mira/notes", output: "ls: cannot access '/home/mira/notes': No such file or directory\n" };
+  const folders = [{ label: "notes", kind: "folder", access: "read-write" }];
+  const laptop = (sandboxInfo: { mechanism: string; osSandbox: boolean }) => ({ name: "Mira's laptop", capabilities: { folders, sandbox: sandboxInfo.osSandbox ? "strong" : "advisory", sandboxInfo } });
+  assert.equal(unseenNote(run, "assistant", laptop({ mechanism: "none", osSandbox: false }), []), null, "without one the command sees every folder: the path is only missing");
+  assert.equal(unseenNote(run, "assistant", laptop({ mechanism: "landlock", osSandbox: true }), []), "`/home/mira/notes` cannot be seen from your own folder: a command sees only the folder it runs in. To work there, name that folder in folder: one Mira's laptop shares (“notes”) or its full path.");
+  assert.match(unseenNote(run, "assistant", { name: "Mira's laptop", capabilities: { sandbox: "reduced" } }, [])!, /name that folder in folder: its full path\.$/, "a computer that publishes only its sandbox's strength, and shares nothing");
+  assert.match(unseenNote(run, "assistant", laptop({ mechanism: "bubblewrap", osSandbox: true }), ["app"])!, /name that folder in folder: one you may use \(“app”\)\.$/, "a helper names only its own folders");
+  assert.equal(unseenNote({ ...run, output: "" }, "assistant", laptop({ mechanism: "bubblewrap", osSandbox: true }), []), null);
+});
+
 test("the computer tools are the owner's alone: not in a turn someone else started or that others read", async () => {
   const mira = await person("Mira");
   const { node, room } = await createNode(mira);
@@ -683,6 +806,9 @@ test("the computer tools are the owner's alone: not in a turn someone else start
   const scopeRoom = await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } });
   const scope = { prisma: h.prisma, node: row, room: scopeRoom, lineage: { rootMessageId: null, botDepth: 0, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis as never, dispatch: async () => undefined, turnId: "t", plan: null };
   assert.ok(deviceTools(scope).some((tool) => tool.name === "computer_run"));
+  // Desktop control comes with them; its looks never count as progress for runaway detection (assistant/runaway.ts).
+  const desktop = Object.fromEntries(deviceTools(scope).filter((tool) => tool.name.startsWith("desktop_")).map((tool) => [tool.name, tool.readOnly === true]));
+  assert.deepEqual(desktop, { desktop_status: true, desktop_apps: true, desktop_open: false, desktop_observe: true, desktop_act: false, desktop_zoom: true, desktop_record: false, desktop_handoff: false });
   assert.deepEqual(deviceTools({ ...scope, lineage: { ...scope.lineage, fromNonOwner: true } }), []);
   assert.deepEqual(deviceTools({ ...scope, ownerOnly: false }), []);
 });
@@ -760,8 +886,10 @@ test("a CLI sign-in runs 15 minutes in the background; the code it prints is on 
     const card = cards[0]!;
     assert.equal(card.kind, "text");
     assert.equal(card.authorNodeId, node.id);
+    // The computer here answers in the turn's own process, so its card may name the turn; a real computer's request does not.
+    const { turnId: _turnId, ...shape } = card.data;
     assert.deepEqual(
-      { ...card.data, expiresAt: typeof card.data.expiresAt },
+      { ...shape, expiresAt: typeof card.data.expiresAt },
       { type: "device_code", status: "pending", url, code, command: "az login --use-device-code", computer: "Mira's laptop", deviceId: laptop.id, operation: runId, expiresAt: "string" },
     );
     assert.ok(Math.abs(Date.parse(card.data.expiresAt) - Date.now() - 15 * 60_000) < 60_000, "good for 15 minutes");

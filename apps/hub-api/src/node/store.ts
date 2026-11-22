@@ -7,6 +7,7 @@ import { sseHub } from "../lib/sse.js";
 import { publishTo } from "./events.js";
 import { handleFrom, resolveMentions, uniqueHandle, type DirectoryEntry, type Mention } from "./mentions.js";
 import { nodeTemplate, paletteAvatar, type NodeAvatar } from "./templates.js";
+import { postingTurn } from "./turn-context.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -89,6 +90,9 @@ export async function postMessage(prisma: PrismaClient, input: PostInput): Promi
     const existing = await prisma.nodeMessage.findUnique({ where: { roomId_clientId: { roomId: input.roomId, clientId: input.clientId } } });
     if (existing) return { message: existing, duplicate: true };
   }
+  // What a node's running turn posts names that turn, so its owner can open the turn's trace from it.
+  const turn = input.authorKind === "node" ? postingTurn(input.authorNodeId) : null;
+  const data = turn && input.data?.turnId === undefined ? { ...(input.data ?? {}), turnId: turn.turnId } : (input.data ?? {});
   let message: NodeMessage;
   try {
     message = await prisma.$transaction(async (tx) => {
@@ -102,7 +106,7 @@ export async function postMessage(prisma: PrismaClient, input: PostInput): Promi
           authorNodeId: input.authorNodeId ?? null,
           kind: input.kind ?? "text",
           body: input.body ?? "",
-          data: (input.data ?? {}) as Prisma.InputJsonValue,
+          data: data as Prisma.InputJsonValue,
           visibleTo: input.visibleTo ?? [],
           mentions: (input.mentions ?? []) as Prisma.InputJsonValue,
           rootMessageId: input.rootMessageId ?? null,
@@ -119,6 +123,7 @@ export async function postMessage(prisma: PrismaClient, input: PostInput): Promi
     }
     throw error;
   }
+  turn?.noted({ id: message.id, kind: message.kind, ...(typeof data.type === "string" ? { type: data.type } : {}) });
   await announce(prisma, message, "node.message");
   if (message.kind === "approval") needsMeChanged(message);
   return { message, duplicate: false };

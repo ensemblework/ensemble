@@ -25,7 +25,9 @@ const scratch = homeScratch(".ensemble-node-capture-");
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
-const { settleTurns } = await import("./queue.js");
+const { recoverTurns, settleTurns } = await import("./queue.js");
+const { deliverReleased } = await import("../evidence/held.js");
+const { postMessage } = await import("./store.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
@@ -61,7 +63,8 @@ after(async () => {
 
 type Call = { name: string; arguments: Record<string, unknown> };
 type Seen = { transcript: string; tools: string[] };
-let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string } = () => ({ text: "ok" });
+/** `hold`: the turn waits there, after its tool calls and before its reply, until it settles. */
+let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string; hold?: Promise<void> } = () => ({ text: "ok" });
 const seen: Seen[] = [];
 
 setAskRuntimeStreamForTests(async (args) => {
@@ -72,6 +75,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { transcript, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
   const step = script(current);
+  if (second && step.hold) await step.hold;
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
@@ -189,6 +193,47 @@ async function messages(user: HttpUser, roomId: string): Promise<Row[]> {
   return json(await user.inject({ method: "GET", url: `/api/node/rooms/${roomId}/messages` })).messages as Row[];
 }
 
+/** Files of a node's own captures that its owner already released (uploaded, usable). */
+async function releasedFiles(user: HttpUser, node: { id: string }, count: number): Promise<string[]> {
+  const ids: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const row = await h.prisma.jobEvidence.create({
+      data: { userId: user.id, nodeId: node.id, operation: `node:${node.id}:own`, kind: "screenshot", name: `screen-${index + 1}.png`, mime: "image/png", size: 100, sha256: "b".repeat(64), storageKey: `screen-${randomUUID()}.png` },
+    });
+    ids.push(row.id);
+  }
+  return ids;
+}
+
+/** A node's preview card as its Send leaves it: released, its files still to be shown, for `turnId`'s chain. */
+async function releasedCard(user: HttpUser, node: { id: string }, roomId: string, ids: string[], turnId: string | null) {
+  const { message } = await postMessage(h.prisma, {
+    roomId,
+    userId: user.id,
+    authorKind: "node",
+    authorNodeId: node.id,
+    kind: "approval",
+    body: "Preview before it's used.",
+    visibleTo: [user.id],
+    data: {
+      type: "media_preview",
+      status: "released",
+      evidence: ids.map((id, index) => ({ id, name: `screen-${index + 1}.png` })),
+      operation: `node:${node.id}:own`,
+      nodeCapture: true,
+      ...(turnId ? { turnId, originTurnId: turnId } : {}),
+      delivery: "pending",
+      result: { released: ids, discarded: [] },
+    },
+  });
+  return message;
+}
+
+/** Every file the node's messages show in a room, one entry per showing. */
+async function shownIn(user: HttpUser, roomId: string, nodeId: string): Promise<string[]> {
+  return (await messages(user, roomId)).filter((row) => row.authorNodeId === nodeId && row.kind !== "approval").flatMap((row) => (row.data.media ?? []).map((item) => item.evidenceId));
+}
+
 async function until(check: () => Promise<boolean>, what: string) {
   for (let tries = 0; tries < 100; tries += 1) {
     if (await check()) return;
@@ -285,17 +330,143 @@ test("a capture the computer holds waits for its owner's preview: previewed from
     const other = await person("Ravi");
     assert.equal((await other.inject({ method: "GET", url: `/api/node/evidence/${held.id}` })).statusCode, 404);
 
-    // Approving releases it: uploaded, usable, and the node hears it may show it now.
-    script = (turn) => (turn.transcript.includes("previewed and released") ? { calls: [{ name: "node_show", arguments: { evidence: [held.id] } }], then: "Here it is." } : { text: "ok" });
+    // Sending it releases it (uploaded, usable) and posts it: the turn that took it has ended, so it comes on
+    // its own, and no turn starts for it.
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    const asked = seen.length;
     const approved = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
     assert.equal(approved.statusCode, 200, approved.body);
     const released = await h.prisma.jobEvidence.findUniqueOrThrow({ where: { id: held.id } });
     assert.deepEqual([released.held, released.local, released.holdReason], [false, false, null]);
     assert.equal(computer.db.evidence.find((row) => row.id === held.id)!.held, false, "released on the computer too");
     assert.equal((await mira.inject({ method: "GET", url: `/api/node/evidence/${held.id}` })).headers["cache-control"], "private, no-cache");
-    await until(async () => (await messages(mira, room.id)).some((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id)), "the node to show the released capture");
+    await settleTurns();
+    const shown = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.deepEqual(shown.map((row) => [row.body, row.kind]), [["", "text"]], "posted once, by the release itself");
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns, "no turn for it");
+    assert.equal(seen.length, asked, "the model was not asked anything");
+    assert.ok(!(await messages(mira, room.id)).some((row) => row.body.includes("(no reply)")));
     const settled = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
     assert.equal(settled.data.status, "released");
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a held capture sent while the turn that took it still runs comes with that turn's reply, and nothing else runs", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    let finish!: () => void;
+    const hold = new Promise<void>((resolve) => (finish = resolve));
+    script = (turn) => (turn.transcript.includes("screenshot the page") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Here is the sign-up page.", hold } : { text: "ok" });
+    const sent = await mira.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "test the sign-up page: screenshot the page" } });
+    assert.equal(sent.statusCode, 201, sent.body);
+    let card: Row | undefined;
+    for (let tries = 0; tries < 400 && !card; tries += 1) {
+      card = (await messages(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "media_preview");
+      if (!card) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(card, "the preview card while the turn still runs");
+    const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
+    const approved = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+    assert.equal(approved.statusCode, 200, approved.body);
+    const showing = async () => (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.deepEqual(await showing(), [], "not on its own: the running turn shows it");
+    finish();
+    await settleTurns();
+    assert.deepEqual((await showing()).map((row) => row.body), ["Here is the sign-up page."], "with the turn's own reply, once");
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 0);
+    assert.ok(!seen.some((turn) => /released/.test(turn.transcript)), "no turn was told about it");
+    assert.ok(!(await messages(mira, room.id)).some((row) => row.body.includes("(no reply)")));
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a node's held capture released on its own is posted too, once its card settles", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    script = (turn) => (turn.transcript.includes("screenshot the page") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Taken." } : { text: "ok" });
+    await say(mira, room.id, "test the sign-up page: screenshot the page");
+    const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
+    const one = await mira.inject({ method: "POST", url: `/api/node/evidence/${held.id}/release`, payload: { decision: "approve" } });
+    assert.equal(one.statusCode, 200, one.body);
+    await settleTurns();
+    const shown = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.data.media?.some((item) => item.evidenceId === held.id));
+    assert.equal(shown.length, 1);
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 0);
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a capture sent while its turn ran is shown after a restart cut that turn short", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira);
+  await say(mira, room.id, "screenshot the calculator");
+  const trigger = (await messages(mira, room.id)).filter((row) => row.authorNodeId === null).at(-1)!;
+  const [first] = await releasedFiles(mira, node, 1);
+  const [second] = await releasedFiles(mira, node, 1);
+  // The turn that took the first one had acted and was still running when the process stopped; the
+  // second one's turn was still queued, too old to run after the restart.
+  const cut = await h.prisma.nodeTurn.create({ data: { userId: mira.id, nodeId: node.id, roomId: room.id, reason: "dm", triggerMessageId: trigger.id, status: "running", outcome: "running", sideEffectsAt: new Date() } });
+  const stale = await h.prisma.nodeTurn.create({ data: { userId: mira.id, nodeId: node.id, roomId: room.id, reason: "dm", triggerMessageId: trigger.id, status: "queued", outcome: "queued", createdAt: new Date(Date.now() - 2 * 3_600_000) } });
+  const cards = [await releasedCard(mira, node, room.id, [first!], cut.id), await releasedCard(mira, node, room.id, [second!], stale.id)];
+  await recoverTurns(h.app);
+  await settleTurns();
+  const resumed = await h.prisma.nodeTurn.findFirstOrThrow({ where: { originTurnId: cut.id } });
+  assert.equal(resumed.status, "done", "the cut turn went on under a new id");
+  assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [first, second].sort(), "each shown once");
+  for (const card of cards) assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).data as { delivery?: string }).delivery, "posted");
+});
+
+test("a card with more files than one message holds shows them all, eight to a message, once", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira);
+  const ids = await releasedFiles(mira, node, 11);
+  const card = await releasedCard(mira, node, room.id, ids, null);
+  await Promise.all([deliverReleased(h.app, card), deliverReleased(h.app, card)]);
+  await deliverReleased(h.app, card);
+  const posts = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind !== "approval" && row.data.media?.length);
+  assert.deepEqual(posts.map((row) => row.data.media!.length), [8, 3]);
+  assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [...ids].sort());
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).data as { delivery?: string }).delivery, "posted");
+});
+
+test("files a partly failed Send released are shown once its last file is released on its own", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  const { node, room } = await createNode(mira);
+  try {
+    privacy.previewFirst = ["127.0.0.1"];
+    script = (turn) =>
+      turn.transcript.includes("screenshot both")
+        ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }, { name: "capture_screenshot", arguments: { target: "web", url: `${base}/login` } }], then: "Taken." }
+        : { text: "ok" };
+    await say(mira, room.id, "screenshot both pages");
+    const card = (await messages(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "media_preview")!;
+    const [first, second] = card.data.evidence!.map((item) => item.id);
+    assert.ok(first && second, "both on one card");
+    // The computer cannot send the second one this time: the Send releases only the first.
+    const [kept] = computer.db.evidence.splice(computer.db.evidence.findIndex((row) => row.id === second), 1);
+    const sent = await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+    assert.equal(sent.statusCode, 200, sent.body);
+    let now = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.equal(now.data.status, "pending");
+    // Later it can, and the owner releases that one on its own.
+    computer.db.evidence.push(kept!);
+    const one = await mira.inject({ method: "POST", url: `/api/node/evidence/${second}/release`, payload: { decision: "approve" } });
+    assert.equal(one.statusCode, 200, one.body);
+    await settleTurns();
+    now = (await messages(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.deepEqual([now.data.status, [...((now.data.result as { released: string[] }).released)].sort()], ["released", [first, second].sort()]);
+    assert.deepEqual((await shownIn(mira, room.id, node.id)).sort(), [first, second].sort(), "both shown, once");
   } finally {
     computer.stop();
   }
@@ -347,12 +518,26 @@ test("a computer too old to browse is asked to update; one without a browser is 
 
 test("looking at a page or a capture is not acting; clicking, typing and capturing are", async () => {
   const { actsOnTheWorld } = await import("./work-board.js");
-  for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check"]) {
-    assert.equal(actsOnTheWorld(name, false), false, name);
+  const { BROWSER_TOOLS } = await import("../browser/tool-specs.js");
+  const { CAPTURE_TOOLS } = await import("../capture/tool-specs.js");
+  const { DESKTOP_TOOLS } = await import("../desktop/control/tool-specs.js");
+  // By each tool's own flags, as a turn's calls are (assistant/agent.ts onToolStart).
+  const specs = new Map<string, { readOnly?: boolean }>([...BROWSER_TOOLS, ...CAPTURE_TOOLS, ...DESKTOP_TOOLS].map((spec) => [spec.name, spec as { readOnly?: boolean }]));
+  const acts = (name: string) => actsOnTheWorld({ name, isWrite: false, readOnly: specs.get(name)?.readOnly === true });
+  for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check", "desktop_status", "desktop_apps", "desktop_observe", "desktop_zoom"]) {
+    assert.equal(acts(name), false, name);
   }
-  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start"]) {
-    assert.equal(actsOnTheWorld(name, false), true, name);
+  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start", "browser_screenshot", "browser_view", "browser_shop", "browser_fetch", "desktop_act", "desktop_open"]) {
+    assert.equal(acts(name), true, name);
   }
+  // A desktop look that sends its screenshot to the owner (share) keeps what it saw.
+  for (const name of ["desktop_observe", "desktop_zoom"]) {
+    assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: true } }), true, `${name} with share`);
+    assert.equal(actsOnTheWorld({ name, isWrite: false, readOnly: true, input: { share: false } }), false, `${name} without share`);
+  }
+  // A tool whose flag says it acts acts, kept here or not (computer_terminal_screenshot runs a command).
+  assert.equal(actsOnTheWorld({ name: "computer_terminal_screenshot", isWrite: false, readOnly: false }), true);
+  assert.equal(actsOnTheWorld({ name: "computer_terminal_screenshot", isWrite: false, readOnly: true }), true);
 });
 
 /** A paired computer running one job of Mira's from her node, with its run card in the node's DM (as evidence.integration.test.ts). */

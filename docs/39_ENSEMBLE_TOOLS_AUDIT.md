@@ -140,7 +140,7 @@ A node and its runs act in Ensemble as their owner already. Opening Ensemble's w
 | --- | --- |
 | A node's browser and capture tools, `browser_shop` and `web_task` (`refuseEnsembleApp` in `node/device-tools.ts`, called before anything is sent to the computer) | A `url` (or a store in `browser_shop`) on Ensemble's web app is refused: "… is Ensemble itself, not a website to open or sign in to. Use your Ensemble tools: …", naming the board, task and page tools. A `goto` inside `web_task` is refused the same way |
 | The origins (`lib/ensemble-origins.ts`) | `app.`, `test.`, `api.`, `api-test.`, `node.` and `node-test.ensemblework.com`, and the server's `HUB_WEB_ORIGIN` and `ENSEMBLE_NODE_WEB_ORIGIN` unless they are on the computer's own addresses (a Hub in development on `localhost` is an app being built). The landing page `ensemblework.com` is a website like any other |
-| The node's rules (`node/brain.ts`) | One routing row: the owner's work (tasks, boards, Ensemble links) and apps through its tools, never a sign-in to Ensemble in a browser. The sign-in skill (`node/skills.ts`) says the same |
+| The node's rules (`node/11-owner-work` in `packages/prompts`) | One routing row: the owner's work (tasks, boards, Ensemble links) and apps through its tools, never a sign-in to Ensemble in a browser. The sign-in skill (`node/skills.ts`) says the same |
 | A node's agent run | The run's MCP server tells the agent when it starts (`instructions` in its `initialize` answer, `instructionsFor`): it acts in Ensemble through that server and its brief, and never opens Ensemble's web app to sign in or to read the person's work. Testing Ensemble's web app as a product is a run's work, not a sign-in |
 
 ## 5. Tests
@@ -151,5 +151,5 @@ A node and its runs act in Ensemble as their owner already. Opening Ensemble's w
 | `assistant/spaces.integration.test.ts` | Every board and watcher tool stays in its space |
 | `assistant/skills/skills.test.ts` | Board requests and pasted links route to the `boards` playbook |
 | `node/web-task.integration.test.ts` | Ensemble's web app refused before the computer; the run's MCP instructions |
-| `node/persona.integration.test.ts` | The routing row, within the persona's length budget |
+| `node/persona.integration.test.ts`, `node/instructions.test.ts` | The routing rows as sections chosen by their conditions, each tier within its budget |
 | `browser/broker.integration.test.ts`, `node/web-task.integration.test.ts`, `node/live.integration.test.ts`, `node/skills.test.ts` | A popup reported by the click that opened it, listed, captured, closed and sharing its opener's lease; `web_task` going on in it; a live view following it, ended by `live_view {stop: true}` or by `browser_close`; `browser_tabs` and `browser_close` in every turn with the browser tools |

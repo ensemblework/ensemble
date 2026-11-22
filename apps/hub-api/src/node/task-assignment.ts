@@ -189,7 +189,7 @@ export async function unassignedNote(prisma: PrismaClient, task: Task, node: Nod
   const title = task.title.replace(/[[\]]/g, "");
   const [by, plans, jobs] = await Promise.all([
     change.byAccountId === node.userId ? null : prisma.user.findUnique({ where: { id: change.byAccountId }, select: { name: true } }),
-    prisma.nodeMission.findMany({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "reporting"] } }, select: { id: true } }),
+    prisma.nodeMission.findMany({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "replanning", "reporting"] } }, select: { id: true } }),
     prisma.workspaceJob.findMany({ where: { taskId: task.id, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { id: true } }),
   ]);
   const runs = jobs.length ? await prisma.nodeRun.findMany({ where: { nodeId: node.id, jobId: { in: jobs.map((job) => job.id) } }, select: { sessionId: true, jobId: true } }) : [];
@@ -226,7 +226,7 @@ function showStatus(ownerId: string, roomId: string, nodeId: string, state: "thi
 async function withdraw(app: FastifyInstance, told: NodeTurn[], ownerId: string): Promise<boolean> {
   let started = false;
   for (const turn of told) {
-    const dropped = await app.prisma.nodeTurn.updateMany({ where: { id: turn.id, status: "queued" }, data: { status: "failed", error: "The task was taken away before this turn started.", finishedAt: new Date() } });
+    const dropped = await app.prisma.nodeTurn.updateMany({ where: { id: turn.id, status: "queued" }, data: { status: "failed", outcome: "cancelled", error: "The task was taken away before this turn started.", finishedAt: new Date() } });
     if (dropped.count) {
       if (turn.roomId) showStatus(ownerId, turn.roomId, turn.nodeId, "idle");
       continue;
@@ -256,7 +256,7 @@ export async function taskNodeWork(prisma: PrismaClient, taskId: string): Promis
   const now = Date.now();
   const running = told.some((turn) => turn.status === "running" || (turn.status === "queued" && (!turn.runAfter || turn.runAfter.getTime() <= now)));
   const [plans, jobs] = await Promise.all([
-    prisma.nodeMission.count({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "reporting"] } } }),
+    prisma.nodeMission.count({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "replanning", "reporting"] } } }),
     prisma.workspaceJob.findMany({ where: { taskId, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { id: true } }),
   ]);
   const sessions = jobs.length ? await prisma.nodeRun.count({ where: { nodeId: node.id, jobId: { in: jobs.map((job) => job.id) } } }) : 0;

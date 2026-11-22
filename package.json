@@ -36,6 +36,8 @@
     "desktop:e2e": "pnpm desktop:export && pnpm --filter @ensemble/hub-api test:desktop-ui",
     "brand:build": "node scripts/build-ensemble-brand.mjs",
     "brand:check": "node scripts/build-ensemble-brand.mjs --check",
+    "prompts:build": "pnpm --filter @ensemble/prompts build:sections",
+    "prompts:check": "pnpm --filter @ensemble/prompts check:sections",
     "version:sync": "node scripts/release-version.mjs --sync",
     "version:check": "node scripts/release-version.mjs"
   },

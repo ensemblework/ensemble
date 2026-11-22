@@ -24,7 +24,10 @@ Find the application or package responsible for a change before editing. Start w
 | Live co-editing | `apps/hub-api/src/pages/collab*.ts`, `live.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `components/pages/use-collab.ts`; schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
 | Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
 | Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
+| Desktop control: a private agent screen and the owner's real screen for Ensemble Node and coding runs | `apps/hub-api/src/desktop/control/`, the Linux helper in `apps/hub-api/desktop-helper/linux/`, the macOS driver (Cua Driver) in `apps/hub-api/src/desktop/control/drivers/` with its pin and its launcher's source in `apps/hub-api/desktop-helper/macos/` (`cua-driver.json`, `disclaim.c`) ([25 §11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#11-desktop-control-on-the-computer)) |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
+| What the assistant or a node is told (their instructions) | `packages/prompts/sections/`, then `pnpm prompts:build`; which sections a node turn gets: `apps/hub-api/src/node/instructions.ts` ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)) |
+| Ensemble's bundled skills; what a node turn is given from the workspace, its memories and the skills catalogue | `skills/<name>/SKILL.md`, then `pnpm prompts:build` ([04 §2.1](04_MODULE_SKILL_FORGE.md#21-ensembles-bundled-skills)); `apps/hub-api/src/context/retrieve.ts`, `context/config.ts`, `src/node/memory.ts`, `src/node/skills.ts` ([35 §5.6](35_ENSEMBLE_NODE.md#56-context-db-memory-and-skills-implementation-reference)) |
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
 | Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
@@ -52,7 +55,9 @@ ensemble/
 │   ├── shared-types/      Zod domain types, settings, modules, plots, connectors, files, shortcuts
 │   ├── block-diagrams/    Diagram DSL: parse, layout, SVG, Mermaid (docs/21)
 │   ├── ide-theme/         VS Code theme conversion and built-in Code-tab themes
-│   └── prompts/           Placeholder (README and package.json only)
+│   └── prompts/           The models' instructions as Markdown sections (constitution, node, assistant),
+│                          the bundled skills embedded from skills/, their generated modules and
+│                          assemble() (packages/prompts/README.md)
 ├── infra/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions: vector, pg_trgm, uuid-ossp
@@ -67,14 +72,15 @@ ensemble/
 ├── .github/               workflows/ (ci, deploy, desktop, cli-release), actions/vercel-deploy,
 │                          agents/, skills/ (block-diagrams, ensemble-context), copilot-instructions.md
 ├── data/import/           Git-ignored local import drop zone
-├── eval/, skills/         Empty placeholders (.gitkeep)
+├── eval/node/             Ensemble Node task suite, harness and results (docs/42)
+├── skills/                Ensemble's bundled skills: <name>/SKILL.md, embedded by packages/prompts (docs/04 §2.1)
 ├── private/               Git-ignored operator runbooks; never publish secrets
 ├── release.json           Canonical version for every surface
 ├── AGENTS.md              Instructions for coding agents (CLAUDE.md and .github/copilot-instructions.md point here)
 └── README.md              How to run it
 ```
 
-Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bridge:*`, `brand:*`, `version:*`), `pnpm-workspace.yaml`, `turbo.json` (TypeScript task graph; `pnpm dev` does not use it), `tsconfig.base.json`, `.env.example` (development configuration, [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)), `LICENSE.md`.
+Root files: `package.json` (repo commands: `pnpm dev`, `db:*`, `desktop:*`, `bridge:*`, `brand:*`, `prompts:*`, `version:*`), `pnpm-workspace.yaml`, `turbo.json` (TypeScript task graph; `pnpm dev` does not use it), `tsconfig.base.json`, `.env.example` (development configuration, [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup)), `LICENSE.md`.
 
 ### 2. Applications
 
@@ -163,7 +169,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | `build-brand-logos.mjs` | Connector logo modules from `components/connectors/brands` (`--check` in `full-checks.yml`) |
 | `build-landrun.mjs` | Builds the pinned Landlock helper for the Linux sandbox |
 | `release-version.mjs` | `pnpm version:sync` / `version:check` from `release.json` |
-| `export-desktop-web.mjs`, `assemble-desktop-sidecar.mjs` | `pnpm desktop:export` (static Hub export); `pnpm desktop:sidecar` (Node + hub-api into Tauri resources, `--dest` for the CLI) |
+| `export-desktop-web.mjs`, `assemble-desktop-sidecar.mjs`, `fetch-cua-driver.mjs`, `build-disclaim.mjs` | `pnpm desktop:export` (static Hub export); `pnpm desktop:sidecar` (Node + hub-api into Tauri resources, `--dest` for the CLI; on macOS also Cua Driver and its launcher unless `--no-cua-driver`); the pinned macOS desktop driver, `CuaDriver.app`, checked by its SHA-256 and signature; `ensemble-disclaim`, the launcher that starts it as its own responsible process (built with clang on a Mac) |
 | `desktop-*.mjs`, `build-mac-dmg.sh`, `package-mac-dmg.mjs`, `publish-desktop-recovery.mjs`, `verify-desktop-signatures.*` | Desktop API discovery and process spawning, build matrix, signed update manifest, Mac disk images (`pnpm desktop:dmg`), recovery publishing, signature checks ([DESKTOP](DESKTOP.md)) |
 | `package-cli.mjs`, `smoke-cli-package.mjs`, `smoke-install-ps1.mjs` | `pnpm cli:package --target <t>`; smoke test of an extracted archive; `install.ps1` against a Windows archive ([26 §7](26_CLI.md#7-releases)) |
 | `measure-*.mjs`, `ui-walk.mjs`, `verify-followup.mjs` | Playwright performance and UI probes ([CACHING](CACHING.md)) |

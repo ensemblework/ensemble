@@ -7,7 +7,9 @@
  * - **Preview.** Only the owner opens it: the file comes from the computer on request (`evidence.request`,
  *   action `preview`) and is kept in Redis for five minutes, never in the database or the blob store.
  * - **Release.** The owner's approve: the computer uploads it as any other evidence (`release`); then
- *   `node_show` and a plan's report can show it.
+ *   `node_show` and a plan's report can show it. A node's own capture is shown without a turn of its
+ *   own: with the reply of a turn of the chain that took it while one is queued or running, else
+ *   posted at once (`deliverReleased`), and after a restart (`deliverStranded`).
  * - **Discard.** The computer deletes it, and the web forgets it.
  *
  * Each held capture is announced by one owner-only approval card where its work is followed
@@ -20,7 +22,9 @@ import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { CodeAnswer } from "../remote/contract.js";
-import { postMessage, updateMessageData } from "../node/store.js";
+import { MAX_MEDIA, ownerMedia, type Media } from "../node/media.js";
+import { postMessage, roomPeople, updateMessageData, updateMessageDataIf } from "../node/store.js";
+import { postingTurn } from "../node/turn-context.js";
 import { dropPreview, grantUpload, PREVIEW_MAX_BYTES, previewOf } from "./grants.js";
 import { cardsOf, discardEvidence, refreshRunCard, type CardEvidence } from "./store.js";
 
@@ -126,7 +130,22 @@ export async function settleHeld(app: App, accountId: string, ids: readonly stri
 
 const CARD_TYPE = "media_preview";
 
-type PreviewCardData = { type: typeof CARD_TYPE; status: string; evidence: CardEvidence[]; jobId?: string | null; operation?: string | null; nodeCapture?: boolean };
+type PreviewCardData = {
+  type: typeof CARD_TYPE;
+  status: string;
+  evidence: CardEvidence[];
+  jobId?: string | null;
+  operation?: string | null;
+  nodeCapture?: boolean;
+  private?: boolean;
+  /** The node's turn that put the latest files on it, and the first turn of that turn's chain (a retry or a restart's resumption continues it). */
+  turnId?: string;
+  originTurnId?: string;
+  /** A node capture's released files: `pending` until they are shown in the conversation, then `posted`. */
+  delivery?: "pending" | "posted";
+  result?: { released?: string[]; discarded?: string[] };
+  answers?: Record<string, string>;
+};
 
 /**
  * Pending preview cards that name these files. Each file's answer is kept on its card as it is given
@@ -147,8 +166,9 @@ async function settleCards(app: App, accountId: string, settled: Settled): Promi
     }
     const fresh = await app.prisma.nodeMessage.findUnique({ where: { id: card.id } });
     if (!fresh) continue;
-    const now = fresh.data as PreviewCardData & { answers?: Record<string, string> };
-    const answers = now.answers ?? {};
+    const now = fresh.data as PreviewCardData;
+    // Answers given one by one, and what a Send that went part of the way did (its `result`).
+    const answers: Record<string, string> = { ...Object.fromEntries((now.result?.released ?? []).map((id) => [id, "released"])), ...Object.fromEntries((now.result?.discarded ?? []).map((id) => [id, "discarded"])), ...(now.answers ?? {}) };
     const left = await app.prisma.jobEvidence.count({ where: { id: { in: now.evidence.map((item) => item.id) }, held: true } });
     if (left || now.status !== "pending") {
       // Still waiting for some: the card shows the answers so far.
@@ -157,7 +177,121 @@ async function settleCards(app: App, accountId: string, settled: Settled): Promi
     }
     const released = now.evidence.filter((item) => answers[item.id] === "released").map((item) => item.id);
     const discarded = now.evidence.filter((item) => answers[item.id] === "discarded").map((item) => item.id);
-    await updateMessageData(app.prisma, fresh, { status: released.length ? "released" : "discarded", result: { released, discarded } });
+    const deliver = released.length > 0 && now.nodeCapture === true;
+    const updated = await updateMessageData(app.prisma, fresh, { status: released.length ? "released" : "discarded", result: { released, discarded }, ...(deliver ? { delivery: "pending" } : {}) });
+    if (deliver) await deliverReleased(app, updated);
+  }
+}
+
+/** Cards whose released files are still to be shown; of one turn chain's (`originTurnId`, or `turnId` on a card of the chain's first turn). */
+const delivering = (chain?: string) => ({
+  kind: "approval",
+  AND: [
+    { data: { path: ["type"], equals: CARD_TYPE } },
+    { data: { path: ["delivery"], equals: "pending" } },
+    ...(chain ? [{ OR: [{ data: { path: ["originTurnId"], equals: chain } }, { data: { path: ["turnId"], equals: chain } }] }] : []),
+  ],
+});
+
+const releasedOf = (card: NodeMessage) => (card.data as PreviewCardData).result?.released ?? [];
+
+/** A turn's chain: the first turn it continues (a retry, a restart's resumption), else itself. */
+async function chainOf(prisma: App["prisma"], turnId: string): Promise<string> {
+  return (await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { originTurnId: true } }))?.originTurnId ?? turnId;
+}
+
+/** Whether a turn of this chain is still to answer (queued or running): that turn shows the chain's released files. */
+async function chainLive(prisma: App["prisma"], chain: string): Promise<boolean> {
+  return (await prisma.nodeTurn.count({ where: { status: { in: ["queued", "running"] }, OR: [{ id: chain }, { originTurnId: chain }] } })) > 0;
+}
+
+/** Nothing else shows these cards' files. */
+async function markShown(prisma: App["prisma"], card: NodeMessage): Promise<void> {
+  await updateMessageDataIf(prisma, card, { data: { path: ["delivery"], equals: "pending" } }, { delivery: "posted" });
+}
+
+/**
+ * A card's released files, posted by its node on their own, where only the owner reads (as a node's
+ * reply shows files): eight to a message, each message posted once however often this runs (a restart,
+ * two releases at once), then the card is marked shown.
+ */
+async function postReleased(prisma: App["prisma"], card: NodeMessage): Promise<void> {
+  const fresh = await prisma.nodeMessage.findUnique({ where: { id: card.id } });
+  if (!fresh || (fresh.data as PreviewCardData).delivery !== "pending") return;
+  const ids = releasedOf(fresh);
+  const others = (await roomPeople(prisma, fresh.roomId)).some((id) => id !== fresh.userId);
+  for (let part = 0; part * MAX_MEDIA < ids.length; part += 1) {
+    const { media } = await ownerMedia(prisma, fresh.userId, ids.slice(part * MAX_MEDIA, (part + 1) * MAX_MEDIA));
+    if (!media.length) continue;
+    await postMessage(prisma, {
+      roomId: fresh.roomId,
+      userId: fresh.userId,
+      authorKind: "node",
+      authorNodeId: fresh.authorNodeId,
+      body: "",
+      data: { media },
+      visibleTo: others || (fresh.data as PreviewCardData).private ? [fresh.userId] : [],
+      rootMessageId: fresh.rootMessageId,
+      clientId: `held-media:${fresh.id}:${part}`,
+    });
+  }
+  await markShown(prisma, fresh);
+}
+
+/**
+ * A node capture its owner released reaches the conversation without a turn of its own: while a turn
+ * of the chain that took it is queued or running, that turn shows it with its reply (`releasedForTurn`,
+ * and `deliverAfterTurn` once the chain ends); otherwise it is posted now. It shows once.
+ */
+export async function deliverReleased(app: Pick<App, "prisma">, card: NodeMessage): Promise<void> {
+  const data = card.data as PreviewCardData;
+  if (data.delivery !== "pending") return;
+  const chain = data.originTurnId ?? data.turnId;
+  if (chain && (await chainLive(app.prisma, chain))) return;
+  await postReleased(app.prisma, card);
+}
+
+/**
+ * The released captures of a turn's chain not shown yet, for its reply, up to `limit` files (each card
+ * whole); its cards are in its room. Once the reply is posted, `markRepliedWith` marks them shown.
+ */
+export async function releasedForTurn(prisma: App["prisma"], input: { ownerId: string; nodeId: string; roomId: string; chain: string; limit?: number }): Promise<{ media: Media[]; cards: NodeMessage[] }> {
+  const found = await prisma.nodeMessage.findMany({ where: { roomId: input.roomId, userId: input.ownerId, authorNodeId: input.nodeId, ...delivering(input.chain) }, orderBy: { seq: "asc" }, take: 20 });
+  const media: Media[] = [];
+  const cards: NodeMessage[] = [];
+  for (const card of found) {
+    const ids = releasedOf(card);
+    if (ids.length > (input.limit ?? MAX_MEDIA) - media.length) continue;
+    media.push(...(await ownerMedia(prisma, input.ownerId, ids)).media);
+    cards.push(card);
+  }
+  return { media, cards };
+}
+
+/** The reply showing these cards' files is posted. */
+export async function markRepliedWith(prisma: App["prisma"], cards: readonly NodeMessage[]): Promise<void> {
+  for (const card of cards) await markShown(prisma, card);
+}
+
+/** After a turn ends: released captures of its chain that no reply showed are posted on their own, unless a retry of it is still to answer. */
+export async function deliverAfterTurn(app: Pick<App, "prisma">, turn: { nodeId: string; roomId: string; chain: string }): Promise<void> {
+  const cards = await app.prisma.nodeMessage.findMany({ where: { roomId: turn.roomId, authorNodeId: turn.nodeId, ...delivering(turn.chain) }, take: 20 });
+  if (!cards.length || (await chainLive(app.prisma, turn.chain))) return;
+  for (const card of cards) await postReleased(app.prisma, card);
+}
+
+/**
+ * After a restart (node/queue.ts `recoverTurns`): in the rooms of the turns it cut short or dropped,
+ * released captures whose chain will not answer any more are posted; a resumed turn shows its own.
+ */
+export async function deliverStranded(app: Pick<App, "prisma">, places: ReadonlyArray<{ roomId: string; nodeId: string }>): Promise<void> {
+  const seen = new Set<string>();
+  for (const place of places) {
+    const key = `${place.roomId}|${place.nodeId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const cards = await app.prisma.nodeMessage.findMany({ where: { roomId: place.roomId, authorNodeId: place.nodeId, ...delivering() }, take: 50 });
+    for (const card of cards) await deliverReleased(app, card);
   }
 }
 
@@ -193,10 +327,13 @@ export async function postPreviewCard(app: App, input: PreviewCardInput): Promis
     return data.status === "pending" && (input.jobId ? data.jobId === input.jobId : data.operation === input.operation);
   });
   const body = (items: CardEvidence[]) => `Preview before it's used: ${items.map((item) => `“${item.name}”`).join(", ")}. ${reasons.length ? reasons.join(" ") : "The computer could not check it."} Nothing is sent to a model or shown in a chat until you release it.`;
+  // The turn posting it, and its chain: the turn that shows the files once they are released (deliverReleased).
+  const turnId = postingTurn(input.nodeId)?.turnId;
+  const turn = turnId ? { turnId, originTurnId: await chainOf(prisma, turnId) } : {};
   if (same) {
     const data = same.data as PreviewCardData;
     const evidence = [...data.evidence, ...cards.filter((item) => !data.evidence.some((known) => known.id === item.id))];
-    return updateMessageData(prisma, same, { evidence }, body(evidence));
+    return updateMessageData(prisma, same, { evidence, ...turn }, body(evidence));
   }
   const { message } = await postMessage(prisma, {
     roomId: input.roomId,
@@ -211,6 +348,7 @@ export async function postPreviewCard(app: App, input: PreviewCardInput): Promis
       evidence: cards,
       reasons,
       ...work,
+      ...turn,
       nodeCapture: !input.jobId,
       ...(input.private ? { private: true } : {}),
       // Not under `plan`: a held capture never keeps its step waiting, and outlives the step's other cards.

@@ -306,6 +306,7 @@ export const subscriptionRouteCoverage: Readonly<Record<string, readonly RouteCh
   "GET /api/devices/self/assistant-turns/:id": ["happy-path", "isolation"],
   "GET /api/devices/self/assistant-turns/:id/files/:fileId": ["happy-path", "isolation", "unknown-id"],
   "POST /api/devices/self/assistant-turns/:id/tool": ["happy-path", "isolation"],
+  "POST /api/devices/self/assistant-turns/:id/ask": ["happy-path", "isolation"],
   "POST /api/devices/self/assistant-turns/:id/stream": ["happy-path"],
   "POST /api/devices/self/assistant-turns/:id/done": ["happy-path"],
 };
@@ -409,6 +410,14 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
   "DELETE /api/page-templates/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
+/** A node's memories, its owner's routes (node/memory.integration.test.ts). */
+export const nodeMemoryRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/node/nodes/:id/memory": ["happy-path", "isolation"],
+  "POST /api/node/nodes/:id/memory": ["happy-path", "isolation", "invalid-input"],
+  "PATCH /api/node/nodes/:id/memory/:memoryId": ["happy-path", "isolation", "unknown-id", "invalid-input", "relation-isolation"],
+  "DELETE /api/node/nodes/:id/memory/:memoryId": ["happy-path", "isolation"],
+};
+
 export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/email/inbound": ["happy-path", "invalid-input"],
   "GET /api/docs/session": ["happy-path", "isolation"],
@@ -418,6 +427,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/docs/logout": ["happy-path", "isolation"],
   "POST /api/docs/ask": ["happy-path", "isolation", "invalid-input"],
   "DELETE /api/node/sessions/:id": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/node/turns/:turnId/trace": ["happy-path", "isolation", "unknown-id"],
   "GET /api/boards": ["happy-path", "isolation"],
   "POST /api/boards": ["happy-path", "invalid-input"],
   "GET /api/boards/:id": ["happy-path", "isolation"],
@@ -426,6 +436,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /api/boards/:id/pages": ["happy-path", "isolation", "invalid-input", "relation-isolation"],
   "PUT /api/pages/:kind/:id/board": ["happy-path", "isolation", "relation-isolation"],
   ...pageVersionRouteCoverage,
+  ...nodeMemoryRouteCoverage,
   ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,
   ...resourceRouteCoverage,

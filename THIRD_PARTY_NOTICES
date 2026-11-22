@@ -1,0 +1,118 @@
+THIRD-PARTY NOTICES
+
+Ensemble includes material adapted from the projects below, and one program it redistributes
+unmodified (Cua Driver, cua-driver). Each entry names the files in this repository that adapt or carry
+it, then reproduces the project's licence as its terms require.
+
+
+superpowers
+Source: https://github.com/obra/superpowers (commit 22f0b463e7a5e579904dd6211a520321035526f7, v7.0.2)
+Used in, adapted and rewritten in Ensemble's words:
+- skills/planning/SKILL.md: the step fields and the rule that a plan holds the decisions (skills/writing-plans)
+- skills/verify-before-done/SKILL.md: fresh evidence before a claim, and the claim to evidence list (skills/verification-before-completion)
+- skills/independent-review/SKILL.md: the reviewer's brief, not trusting the report, and what was not judged (skills/requesting-code-review)
+- skills/debugging/SKILL.md: cause before fix, one change at a time, a new approach after three failed fixes (skills/systematic-debugging)
+- skills/delegation/SKILL.md: the brief, and whoever delegates owns the result (skills/dispatching-parallel-agents)
+- skills/clarify-intent/SKILL.md: one question at a time and options with a recommendation (skills/brainstorming)
+
+MIT License
+
+Copyright (c) 2025 Jesse Vincent
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+ecc (Everything Claude Code)
+Source: https://github.com/affaan-m/ECC (commit 4adeee6732a12d1540f49a4d50a38ce8c97f9a53, v2.2.3)
+Used in, adapted and rewritten in Ensemble's words:
+- skills/research/SKILL.md: evidence labels and pages as untrusted information (skills/deep-research, skills/research-ops)
+- skills/stuck-recovery/SKILL.md: capture, match, then the smallest recovery (skills/agent-introspection-debugging)
+- skills/recording/SKILL.md: rehearse first, then record (skills/ui-demo)
+- skills/memory-notes/SKILL.md: one fact per note, merged and never duplicated (skills/growth-log)
+- skills/connected-apps/SKILL.md: the exact item first, draft first, proof from the sent copy (skills/email-ops, skills/google-workspace-ops)
+- skills/clarify-intent/SKILL.md: what done means before the work starts (skills/intent-driven-development)
+- skills/routine-design/SKILL.md: a checkable goal with a boundary, a retry limit and a person on the last switch (skills/loop-design-check)
+- skills/writing/SKILL.md: lead with the concrete thing, and the filler list (skills/article-writing)
+
+MIT License
+
+Copyright (c) 2026 Affaan Mustafa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+cua-driver (Cua Driver)
+Source: https://github.com/trycua/cua/tree/cua-driver-rs-v0.56.6/libs/cua-driver (release cua-driver-rs-v0.56.6, commit 53260e000221483c5ab3f49607aae5c66c23e883)
+Redistributed unmodified, in the Ensemble app for macOS only:
+- sidecar/bin/CuaDriver.app: the CuaDriver.app bundle of the release archive
+  cua-driver-rs-0.56.6-darwin-universal.tar.gz (SHA-256
+  c800df96571a199042358433fc544eb5a1a250d48076e5979ae94d88d9fb72f9), signed and notarized by its
+  publisher, with this licence beside it as CuaDriver.LICENSE and the archive's own notice file as
+  CuaDriver.THIRD_PARTY_NOTICES.md (scripts/fetch-cua-driver.mjs,
+  apps/hub-api/desktop-helper/macos/cua-driver.json)
+- run by apps/hub-api/src/desktop/control/drivers/macos-cua.ts as Ensemble's macOS desktop driver,
+  started through sidecar/bin/ensemble-disclaim, which is Ensemble's own
+  (apps/hub-api/desktop-helper/macos/disclaim.c) and not part of cua-driver
+
+cua-driver includes code derived from these MIT-licensed projects (libs/cua-driver/rust/THIRD_PARTY_NOTICES.md
+at that commit): trope-cua (Copyright (c) 2026 Victor Vannara), Interface-Agent (Copyright (c) 2024
+Francesco Bonacci), yabai (Copyright (c) 2019 Åsmund Vikane), QuickJS-ng (Copyright (c) 2017-2026 Fabrice
+Bellard; (c) 2017-2024 Charlie Gordon; (c) 2023-2026 Ben Noordhuis; (c) 2023-2026 Saúl Ibarra Corretgé),
+rquickjs (Copyright (c) 2020 Mees Delzenne; (c) 2025 Rquickjs Contributors) and T3 Code (Copyright (c) 2026
+T3 Tools Inc.). The Rust crates compiled into the executable keep their own licences; the complete set is
+pinned by libs/cua-driver/rust/Cargo.lock at that commit (SHA-256
+de0058a6f9ee9445d3f7d79508ed342058d424bb9c113fc8f678dc6666d2e313).
+
+MIT License
+
+Copyright (c) 2025 Cua AI, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

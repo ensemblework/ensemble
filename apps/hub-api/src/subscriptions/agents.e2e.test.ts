@@ -6,14 +6,15 @@
  * port (CI); sandboxes without local listening skip it.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import Fastify from "fastify";
 import { engineRoutes } from "../routes/engine.js";
 import { localApiUrl, setLocalPort } from "../workspace/engines/registry.js";
-import { runAgentTurn } from "./agents.js";
+import { PARK_STOP, runAgentTurn } from "./agents.js";
+import type { OwnAsk } from "./bridge.js";
 
 const FAKE_CLAUDE = String.raw`#!/usr/bin/env node
 const { spawn } = require("node:child_process");
@@ -147,6 +148,7 @@ const { readFileSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
 if (args.includes('--help')) { console.log('Copilot'); process.exit(0); }
 if (args.includes('--version')) { console.log('1.0.89'); process.exit(0); }
+if (args[0] === 'mcp') { console.log('{"mcpServers":{}}'); process.exit(0); }
 // Copilot names a new session with --name (refusing one with a double quote); STANDIN_NO_NAME stands for an older one without it.
 if (args[0] === 'help') { console.log(process.env.STANDIN_NO_NAME ? 'Usage: copilot [options]' : '  -n, --name <name>  Set a name for the new session'); process.exit(0); }
 if (args.includes('--name') && args[args.indexOf('--name') + 1].includes('"')) { console.error('Session name must not contain double quotes.'); process.exit(1); }
@@ -159,6 +161,8 @@ if (process.env.STANDIN_SESSIONS) {
 }
 // Copilot keeps each session it saves as a folder in its home's session-state.
 if (process.env.COPILOT_HOME && args.includes('--session-id')) require('node:fs').mkdirSync(require('node:path').join(process.env.COPILOT_HOME, 'session-state', args[args.indexOf('--session-id') + 1]), { recursive: true });
+// An agent still at work when its turn is stopped (STANDIN_HANG in the message).
+if (process.env.STANDIN_HANG && prompt.includes(process.env.STANDIN_HANG)) { setInterval(() => undefined, 1000); return; }
 if (process.env.STANDIN_LOG) {
   const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
   const server = JSON.parse(readFileSync(args[args.indexOf('--additional-mcp-config') + 1].slice(1), 'utf8')).mcpServers.ensemble;
@@ -276,6 +280,102 @@ test("in a chat Claude Code keeps its own tools: its hook asks the turn's runtim
   }
 });
 
+// A stand-in GitHub Copilot CLI 1.0.114 whose person has MCP servers of their own: with its per-turn plugin it runs the
+// plugin's preToolUse hook before a call to one of them, as the real one does.
+const MCP_COPILOT = String.raw`#!/usr/bin/env node
+const { execSync } = require("node:child_process");
+const { readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "help" || args.includes("--help")) { console.log("  --plugin-dir <directory>\n  --disable-mcp-server <server-name>"); process.exit(0); }
+if (args.includes("--version")) { console.log("1.0.114"); process.exit(0); }
+if (args[0] === "mcp") {
+  console.log("! A notice before the list");
+  console.log(JSON.stringify({ mcpServers: {
+    "io.github.wonderwhy-er/desktop-commander": { command: "npx", source: "user", enabled: true },
+    "github-mcp-server": { url: "https://api.individual.githubcopilot.com/mcp/readonly", source: "builtin", enabled: true },
+    "old-notes": { command: "notes-mcp", source: "user", enabled: false },
+  } }));
+  process.exit(0);
+}
+readFileSync(0, "utf8");
+const plugin = args.includes("--plugin-dir") ? args[args.indexOf("--plugin-dir") + 1] : null;
+const hook = plugin ? JSON.parse(readFileSync(join(plugin, "hooks.json"), "utf8")).hooks.preToolUse[0].bash : null;
+const decide = (toolName, toolArgs) => JSON.parse(execSync(hook, { input: JSON.stringify({ toolName, toolArgs: JSON.stringify(toolArgs) }), env: process.env }).toString());
+writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ args, decisions: hook ? {
+  key: decide("io-github-wonderwhy-er-desktop-commander-start_process", { command: "cat ~/.ssh/id_rsa", timeout_ms: 5000 }),
+  readme: decide("github-mcp-server-get_file_contents", { owner: "octo", repo: "site", path: "README.md" }),
+  config: decide("io-github-wonderwhy-er-desktop-commander-set_config_value", { key: "allowedDirectories", value: ["/"] }),
+} : null }));
+console.log(JSON.stringify({ type: "assistant.message", data: { content: "Done." } }));
+console.log(JSON.stringify({ type: "assistant.usage", data: { model: "gpt-copilot-test", inputTokens: 1, outputTokens: 1, cost: 1 } }));
+`;
+
+test("Copilot with Ensemble's tools only loads none of the person's own MCP servers; in their node's own turn it keeps them, and each call to one meets the node's judge", { timeout: 120_000 }, async (t) => {
+  const { forgetMcpServersForTests } = await import("./agent-mcp.js");
+  forgetMcpServersForTests();
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-copilot-mcp-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "copilot"), MCP_COPILOT);
+  chmodSync(join(bin, "copilot"), 0o755);
+  const log = join(root, "standin.json");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_LOG: process.env.STANDIN_LOG, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_LOG = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  const app = Fastify();
+  await app.register(engineRoutes);
+  try {
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("this sandbox does not allow a loopback port");
+      throw error;
+    }
+    setLocalPort((app.server.address() as { port: number }).port);
+    const asked: OwnAsk[] = [];
+    const io = {
+      call: async () => ({ text: "{}" }),
+      onDelta: () => undefined,
+      signal: new AbortController().signal,
+      ask: async (request: OwnAsk) => {
+        asked.push(request);
+        return { decision: "deny" as const, message: "Mira chose not to allow this." };
+      },
+    };
+    const turn = { agent: "copilot-cli" as const, model: null, effort: null, system: "Ensemble", prompt: "What is in my notes?", tools: [], ownWeb: true };
+    const off = (args: string[]) => args.flatMap((arg, index) => (arg === "--disable-mcp-server" ? [args[index + 1]] : []));
+
+    await runAgentTurn(turn, io);
+    const theirs = JSON.parse(readFileSync(log, "utf8")) as { args: string[]; decisions: null };
+    assert.deepEqual(off(theirs.args), ["io.github.wonderwhy-er/desktop-commander"], "a turn someone else started: the person's own server off (the built-in ones go with --disable-builtin-mcps, one already off stays off)");
+    assert.ok(theirs.args.includes("--disable-builtin-mcps"));
+    assert.equal(theirs.args.includes("--plugin-dir"), false);
+
+    await runAgentTurn({ ...turn, ownTools: true, node: { id: "node-1", slug: "ada", mission: "conversation:room-1:shared", attended: true, sudo: true } }, io);
+    const own = JSON.parse(readFileSync(log, "utf8")) as { args: string[]; decisions: Record<"key" | "readme" | "config", { permissionDecision: string; permissionDecisionReason: string }> };
+    assert.deepEqual(off(own.args), [], "the owner's own turn keeps their servers");
+    assert.ok(own.args.includes("--plugin-dir"));
+    assert.equal(own.decisions.key.permissionDecision, "deny", "a command through their server meets the hard floor");
+    assert.match(own.decisions.key.permissionDecisionReason, /keys|sign-ins/);
+    assert.equal(own.decisions.readme.permissionDecision, "allow", "GitHub's server at its read-only address");
+    assert.equal(own.decisions.config.permissionDecision, "deny");
+    assert.deepEqual(asked.map((request) => request.target), ["tool:io.github.wonderwhy-er/desktop-commander/set_config_value"], "any other tool of theirs asks the owner, with its input");
+    assert.match(asked[0]!.operation, /allowedDirectories/);
+  } finally {
+    await app.close();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    forgetMcpServersForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Copilot streams its own JSON events and reports only the token usage for the Ensemble turn", async () => {
   const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP };
   process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
@@ -387,6 +487,94 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
   }
 });
 
+test("another message of a turn goes on in the session that took the turn, at the turn's place, or is not sent: it never starts a session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-follow-up-"));
+  const log = join(root, "calls.jsonl");
+  const { findSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  setNativeDropForTests(async () => undefined);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_SESSIONS = log;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
+  // The turn's MCP config names the local API; this stand-in never calls it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const chat = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
+  const elsewhere = "6d7e8f9a-0b1c-4d2e-8f3a-4b5c6d7e8f9a";
+  const turn = (prompt: string, position: number, key = chat, resume?: "only") =>
+    runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: resume ? "" : "This chat so far, oldest first:\n\nPerson: hi", position, ...(resume ? { resume } : {}) } }, io);
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { session: string | null; prompt: string });
+  try {
+    assert.equal((await turn("Add a task", 0)).resumed, false);
+    const session = calls().at(-1)!.session!;
+    // Asked again within the turn, at the turn's place: the same session, just the message.
+    assert.equal((await turn("Reply now", 0, chat, "only")).resumed, true);
+    assert.deepEqual([calls().at(-1)!.session, calls().at(-1)!.prompt], [session, "Reply now"]);
+    // Its place stays where the turn left it: the next turn goes on in it, and the first turn is then over.
+    assert.equal((await turn("Next", 2)).resumed, true);
+    const sent = calls().length;
+    await assert.rejects(turn("Reply now", 0, chat, "only"), /not on this computer/, "the session took a later turn");
+    await assert.rejects(turn("Reply now", 0, elsewhere, "only"), /not on this computer/, "no session of that chat here");
+    rmSync(join(root, "copilot-home", "session-state", session), { recursive: true, force: true });
+    await assert.rejects(turn("Reply now", 2, chat, "only"), /not on this computer/, "a session Copilot no longer has");
+    assert.equal(calls().length, sent, "none of them reached the agent");
+    assert.equal((await findSession(chat, "copilot-cli", "Instructions.", false, 4))?.id, session, "and no new session took the chat's place");
+    assert.equal(await findSession(elsewhere, "copilot-cli", "Instructions."), null);
+  } finally {
+    setNativeDropForTests(null);
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn stopped because its node parked on its owner's answer keeps its session, so the turn their answer wakes goes on in it; a plain stop does not", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-parked-turn-"));
+  const log = join(root, "calls.jsonl");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, STANDIN_HANG: process.env.STANDIN_HANG, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_SESSIONS = log;
+  process.env.STANDIN_HANG = "Change the blog post";
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
+  const calls = (): Array<{ cwd: string; session: string | null; prompt: string }> => {
+    try {
+      return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    } catch {
+      return [];
+    }
+  };
+  const turn = (prompt: string, key: string, position: number, signal: AbortSignal) =>
+    runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], session: { key, history: "This chat so far, oldest first:\n\nPerson: hi", position } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal });
+  try {
+    for (const [chat, reason, resumes] of [["5d6e7f80-1a2b-4c3d-8e4f-5a6b7c8d9e0f", PARK_STOP, true], ["6e7f8091-2b3c-4d4e-9f50-6b7c8d9e0f1a", undefined, false]] as const) {
+      const stop = new AbortController();
+      const running = turn("Change the blog post", chat, 0, stop.signal);
+      const ran = () => calls().find((row) => row.cwd.endsWith(`chat-${chat.slice(0, 8)}`));
+      for (let wait = 0; wait < 250 && !ran(); wait += 1) await new Promise((done) => setTimeout(done, 20));
+      const started = ran()!.session!;
+      stop.abort(reason);
+      await assert.rejects(running, { name: "AbortError" });
+      const next = await turn("Allowed: change post.md in ~/projects/blog. Do it now.", chat, 2, new AbortController().signal);
+      const last = calls().at(-1)!;
+      if (resumes) {
+        assert.equal(next.resumed, true, "the answer's turn goes on in the parked turn's session");
+        assert.deepEqual([last.session, last.prompt], [started, "Allowed: change post.md in ~/projects/blog. Do it now."]);
+      } else {
+        assert.equal(next.resumed, false, "a turn stopped by its person keeps no session");
+        assert.notEqual(last.session, started);
+      }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Copilot chat is named after the chat in a form Copilot takes; a Copilot without --name gets the title first", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-names-"));
   const log = join(root, "calls.jsonl");
@@ -435,6 +623,8 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (message.method === "session/load") { log({ method: "session/load", cwd: message.params.cwd, session: message.params.sessionId }); return send({ id: message.id, result: {} }); }
   if (message.method === "session/prompt") {
     log({ method: "session/prompt", text: message.params.prompt.map((part) => part.text || "").join("") });
+    // Working on it until the turn is stopped, when the STANDIN_HOLD file is there (taken once).
+    if (process.env.STANDIN_HOLD && require("node:fs").existsSync(process.env.STANDIN_HOLD)) return void require("node:fs").rmSync(process.env.STANDIN_HOLD);
     send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
     return send({ id: message.id, result: { stopReason: "end_turn" } });
   }
@@ -475,12 +665,173 @@ test("an ACP agent's chat session leads with the chat's title, works in the chat
   }
 });
 
+// A stand-in Grok Build that keeps its sessions in its home (`GROK_HOME`, else the home folder's `.grok`), as the real one
+// does: it reopens only a session of the home it runs in, and says "Session not found" for any other.
+const HOMED_GROK = String.raw`#!/usr/bin/env node
+const { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("grok 1.0.20"); process.exit(0); }
+if (args[0] === "models") { console.log("You are logged in as mira@example.com\nAvailable models:\n  - grok-code-fast (default)"); process.exit(0); }
+const home = process.env.GROK_HOME || join(process.env.HOME, ".grok");
+const sessions = join(home, "sessions");
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+const log = (value) => appendFileSync(process.env.STANDIN_ACP, JSON.stringify({ ...value, home }) + "\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [{ id: "cached_token", name: "Cached" }] } });
+  if (message.method === "session/new") {
+    mkdirSync(sessions, { recursive: true });
+    const id = "grok-" + Math.random().toString(16).slice(2, 10);
+    writeFileSync(join(sessions, id), "");
+    log({ method: "session/new", session: id });
+    return send({ id: message.id, result: { sessionId: id } });
+  }
+  if (message.method === "session/load") {
+    const found = existsSync(join(sessions, message.params.sessionId));
+    log({ method: "session/load", session: message.params.sessionId, found });
+    return found ? send({ id: message.id, result: {} }) : send({ id: message.id, error: { code: -32002, message: "Session not found" } });
+  }
+  if (message.method === "session/prompt") {
+    log({ method: "session/prompt", session: message.params.sessionId });
+    send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
+    return send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+  send({ id: message.id, result: {} });
+});
+`;
+
+test("a chat that goes between its owner and others keeps each session in the home it was made in, and deletes both, with the chat or after its keeping days", async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  const { dropSession, setNativeDropForTests } = await import("./turn-sessions.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-two-homes-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "grok"), HOMED_GROK);
+  chmodSync(join(bin, "grok"), 0o755);
+  const log = join(root, "acp.jsonl");
+  const state = join(root, "state");
+  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "GROK_HOME", "GROK_AUTH_PATH"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH ?? ""}`, HOME: join(root, "home"), ENSEMBLE_DESKTOP: "1", STANDIN_ACP: log, ENSEMBLE_REMOTE_STATE_DIR: state });
+  // The turn's MCP config names this computer's local API; the stand-in never calls it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const dropped: string[] = [];
+  setNativeDropForTests(async (_agent, id) => void dropped.push(id));
+  const own = join(root, "home", ".grok");
+  const ensembles = join(state, "agents", "grok-cli", "home", ".grok");
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (key: string, prompt: string, position: number, others: boolean) =>
+    runAgentTurn({ agent: "grok-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, others, session: { key, history: "", position, title: "Launch plan" } }, io);
+  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; session: string; home: string; found?: boolean });
+  const store = () => JSON.parse(readFileSync(join(state, "assistant-sessions.json"), "utf8")) as Record<string, { id: string; home?: string; retired?: string[]; at: number }>;
+  const chat = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  try {
+    // Mira's own message, then Ben's in the room, then Mira's again: each home keeps its own session, and a session of
+    // one is never reopened in the other.
+    assert.equal((await turn(chat, "Mira asks", 0, false)).resumed, false);
+    const ben = await turn(chat, "Ben asks", 2, true);
+    assert.deepEqual([ben.resumed, ben.restart?.reason], [false, "audience"]);
+    const back = await turn(chat, "Mira again", 4, false);
+    assert.deepEqual([back.resumed, back.restart?.reason], [false, "audience"]);
+    assert.equal((await turn(chat, "Mira once more", 6, false)).resumed, true, "the same home goes on in its session");
+    const ran = calls();
+    const made = ran.filter((call) => call.method === "session/new");
+    assert.deepEqual(made.map((call) => call.home), [own, ensembles, own]);
+    assert.deepEqual(ran.filter((call) => call.method === "session/load").map((call) => [call.session, call.home, call.found]), [[made[2]!.session, own, true]]);
+    assert.deepEqual([store()[chat]!.id, store()[chat]!.home, store()[chat]!.retired], [made[2]!.session, "own", [made[0]!.session, made[1]!.session]], "both earlier sessions kept to be deleted");
+    // Deleting the chat deletes every session of it, whichever home holds it.
+    assert.equal(await dropSession(chat), true);
+    assert.deepEqual(dropped.sort(), made.map((call) => call.session).sort());
+
+    // A chat unused for its keeping days goes with its sessions in both homes.
+    const idle = "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e";
+    await turn(idle, "Ben asks", 0, true);
+    await turn(idle, "Mira asks", 2, false);
+    const sessions = [store()[idle]!.id, ...(store()[idle]!.retired ?? [])];
+    assert.equal(sessions.length, 2);
+    const aged = store();
+    aged[idle]!.at = Date.now() - 31 * 86_400_000;
+    writeFileSync(join(state, "assistant-sessions.json"), JSON.stringify(aged));
+    dropped.length = 0;
+    await turn("3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "Another chat", 0, false);
+    assert.deepEqual(dropped.sort(), sessions.sort());
+    assert.equal(store()[idle], undefined);
+
+    // A session the store does not know the home of, which the agent does not have in this one, is kept to be deleted,
+    // not taken as gone.
+    const legacy = "4d5e6f7a-8b9c-4d0e-8f1a-2b3c4d5e6f7a";
+    const before = store();
+    before[legacy] = { agent: "grok-cli", id: "grok-made-for-ben", instructions: "", text: "Instructions.", at: Date.now(), next: 2 } as never;
+    writeFileSync(join(state, "assistant-sessions.json"), JSON.stringify(before));
+    const fresh = await turn(legacy, "Mira asks", 2, false);
+    assert.deepEqual([fresh.resumed, fresh.restart?.reason], [false, "gone"]);
+    assert.deepEqual(store()[legacy]!.retired, ["grok-made-for-ben"]);
+  } finally {
+    setNativeDropForTests(null);
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    forgetExecutablesForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an agent that names its own sessions has a new one noted once it says its id: a runtime that stops mid-turn leaves the note, and the turn goes on in that session", async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-acp-cut-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "grok"), FAKE_GROK);
+  chmodSync(join(bin, "grok"), 0o755);
+  const log = join(root, "acp.jsonl");
+  const store = join(root, "state", "assistant-sessions.json");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_ACP: process.env.STANDIN_ACP, STANDIN_HOLD: process.env.STANDIN_HOLD, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_ACP = log;
+  process.env.STANDIN_HOLD = join(root, "hold");
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  const key = "9d0e1f2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a";
+  const turn = (prompt: string, signal: AbortSignal, resume?: "only") =>
+    runAgentTurn({ agent: "grok-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key, history: "", position: 0, ...(resume ? { resume } : {}) } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal });
+  try {
+    writeFileSync(join(root, "hold"), "");
+    const stop = new AbortController();
+    const first = turn("What's due?", stop.signal);
+    // What this computer has on disk while the agent works on the message: all a runtime that stops now leaves.
+    let left = "";
+    for (const end = Date.now() + 15_000; !left && Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 20))) {
+      const text = existsSync(store) ? readFileSync(store, "utf8") : "{}";
+      if ((JSON.parse(text) as Record<string, { taking?: { id: string } }>)[key]?.taking?.id === "grok-session-1") left = text;
+    }
+    assert.ok(left, "the session Grok named is noted before the turn ends");
+    stop.abort();
+    await assert.rejects(first);
+    assert.equal((JSON.parse(readFileSync(store, "utf8")) as Record<string, { taking?: unknown }>)[key]?.taking, undefined, "a turn stopped here takes its note back");
+    writeFileSync(store, left);
+    assert.equal((await turn("Go on where you were.", new AbortController().signal, "only")).resumed, true);
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; session?: string });
+    assert.deepEqual(calls.map((call) => [call.method, call.session ?? null]), [["session/new", null], ["session/prompt", null], ["session/load", "grok-session-1"], ["session/prompt", null]]);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+    forgetExecutablesForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Codex chat is one thread, and every turn, a resumed one too, runs without Codex's own shell and file tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-codex-turns-"));
   const bin = join(root, "bin");
   mkdirSync(bin);
   const log = join(root, "codex.jsonl");
   writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') { console.log(process.env.STANDIN_CODEX_MCP || '[]'); process.exit(0); }
 const { appendFileSync } = require('node:fs');
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
@@ -525,6 +876,146 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   }
 });
 
+test("Codex turns the person's own MCP servers off, unless a chat keeps all its own tools: their calls have no approval Ensemble could judge", async () => {
+  const { forgetMcpServersForTests } = await import("./agent-mcp.js");
+  forgetMcpServersForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-codex-mcp-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const log = join(root, "codex.jsonl");
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') { console.log(JSON.stringify([{ name: 'desktop-commander', enabled: true }, { name: 'old-notes', enabled: false }])); process.exit(0); }
+const { appendFileSync } = require('node:fs');
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.163.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'model/list') return send({ id: message.id, result: { data: [] } });
+  if (message.method === 'thread/start') {
+    appendFileSync(process.env.STANDIN_CODEX, JSON.stringify(message.params.config.mcp_servers) + "\\n");
+    return send({ id: message.id, result: { thread: { id: 'thread-1' }, model: 'gpt-test' } });
+  }
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Done.', phase: 'final_answer' } } });
+    return send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  chmodSync(join(bin, "codex"), 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_CODEX: process.env.STANDIN_CODEX };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_CODEX = log;
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = { agent: "codex" as const, model: "default", effort: null, system: "Instructions.", prompt: "What's due?", tools: [] };
+  try {
+    await runAgentTurn(turn, io);
+    await runAgentTurn({ ...turn, ownTools: true, node: { id: "node-1", slug: "ada", mission: "conversation:room-1:shared", attended: true, sudo: true } }, io);
+    await runAgentTurn({ ...turn, ownTools: true }, io);
+    const servers = readFileSync(log, "utf8").trim().split("\n").map((line) => Object.keys(JSON.parse(line) as Record<string, unknown>).map((name) => [name, (JSON.parse(line) as Record<string, { enabled?: boolean }>)[name]!.enabled ?? true]));
+    assert.deepEqual(servers[0], [["desktop-commander", false], ["ensemble", true]], "Ensemble's tools only: theirs off");
+    assert.deepEqual(servers[1], [["desktop-commander", false], ["ensemble", true]], "a node's turn: theirs off too");
+    assert.deepEqual(servers[2], [["ensemble", true]], "a chat with all its own tools keeps the servers the person set up");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    forgetMcpServersForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a turn someone else can steer runs on Copilot or Codex only with the agent's own list of its MCP servers; a list read from its settings file is never kept", async () => {
+  const { forgetMcpServersForTests } = await import("./agent-mcp.js");
+  forgetMcpServersForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-mcp-list-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  // Each lists a server its settings file does not hold (a plugin's; one in an inline table), unless listing fails.
+  writeFileSync(join(bin, "copilot"), String.raw`#!/usr/bin/env node
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "help" || args.includes("--help")) { console.log("  --plugin-dir <directory>\n  --disable-mcp-server <server-name>"); process.exit(0); }
+if (args.includes("--version")) { console.log("1.0.114"); process.exit(0); }
+if (args.includes("--headless")) process.exit(1);
+if (args[0] === "mcp") {
+  if (existsSync(process.env.STANDIN_NO_LIST)) process.exit(1);
+  console.log(JSON.stringify({ mcpServers: { "desktop-commander": { command: "npx", source: "user", enabled: true }, "notes-plugin": { command: "notes", source: "plugin", enabled: true } } }));
+  process.exit(0);
+}
+readFileSync(0, "utf8");
+writeFileSync(process.env.STANDIN_LOG, JSON.stringify(args));
+console.log(JSON.stringify({ type: "assistant.message", data: { content: "Done." } }));
+console.log(JSON.stringify({ type: "assistant.usage", data: { model: "gpt-copilot-test", inputTokens: 1, outputTokens: 1, cost: 1 } }));
+`);
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') {
+  if (require('node:fs').existsSync(process.env.STANDIN_NO_LIST)) process.exit(1);
+  console.log(JSON.stringify([{ name: 'desktop-commander', enabled: true }, { name: 'inline-notes', enabled: true }]));
+  process.exit(0);
+}
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.163.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'model/list') return send({ id: message.id, result: { data: [] } });
+  if (message.method === 'thread/start') {
+    require('node:fs').writeFileSync(process.env.STANDIN_CODEX, JSON.stringify(message.params.config.mcp_servers));
+    return send({ id: message.id, result: { thread: { id: 'thread-1' }, model: 'gpt-test' } });
+  }
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Done.', phase: 'final_answer' } } });
+    return send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  for (const name of ["copilot", "codex"]) chmodSync(join(bin, name), 0o755);
+  mkdirSync(join(root, "copilot-home"));
+  writeFileSync(join(root, "copilot-home", "mcp-config.json"), JSON.stringify({ mcpServers: { "desktop-commander": { command: "npx" } } }));
+  mkdirSync(join(root, "codex-home"));
+  writeFileSync(join(root, "codex-home", "config.toml"), '[mcp_servers.desktop-commander]\ncommand = "npx"\n\n[mcp]\nservers = { inline-notes = { command = "notes" } }\n');
+  const noList = join(root, "no-list");
+  writeFileSync(noList, "");
+  const names = ["PATH", "ENSEMBLE_DESKTOP", "STANDIN_LOG", "STANDIN_CODEX", "STANDIN_NO_LIST", "COPILOT_HOME", "CODEX_HOME", "ENSEMBLE_REMOTE_STATE_DIR"] as const;
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH ?? ""}`, ENSEMBLE_DESKTOP: "1", STANDIN_LOG: join(root, "copilot.json"), STANDIN_CODEX: join(root, "codex.json"), STANDIN_NO_LIST: noList, COPILOT_HOME: join(root, "copilot-home"), CODEX_HOME: join(root, "codex-home"), ENSEMBLE_REMOTE_STATE_DIR: join(root, "state") });
+  // The turn's MCP config names this computer's local API; the stand-ins never call it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const copilot = { agent: "copilot-cli" as const, model: null, effort: null, system: "Ensemble", prompt: "What is in my notes?", tools: [] };
+  const codex = { agent: "codex" as const, model: "default", effort: null, system: "Ensemble", prompt: "What is in my notes?", tools: [] };
+  const copilotOff = () => (JSON.parse(readFileSync(join(root, "copilot.json"), "utf8")) as string[]).flatMap((arg, index, args) => (arg === "--disable-mcp-server" ? [args[index + 1]] : []));
+  const codexOff = () => Object.entries(JSON.parse(readFileSync(join(root, "codex.json"), "utf8")) as Record<string, { enabled?: boolean }>).filter(([, server]) => server.enabled === false).map(([name]) => name);
+  try {
+    await assert.rejects(runAgentTurn({ ...copilot, others: true }, io), /GitHub Copilot did not list its MCP servers here \(`copilot mcp list --json` failed or took longer than 15 seconds\), so it does not answer other people/);
+    await assert.rejects(runAgentTurn({ ...codex, others: true }, io), /Codex did not list its MCP servers here/);
+    // The person's own turns go on with the servers their settings files name.
+    await runAgentTurn(copilot, io);
+    assert.deepEqual(copilotOff(), ["desktop-commander"]);
+    await runAgentTurn(codex, io);
+    assert.deepEqual(codexOff(), ["desktop-commander"]);
+    // Those lists were not kept: once the agents list their servers again, every one of them is off, and others' turns run.
+    rmSync(noList);
+    await runAgentTurn({ ...copilot, others: true }, io);
+    assert.deepEqual(copilotOff(), ["desktop-commander", "notes-plugin"]);
+    await runAgentTurn({ ...codex, others: true }, io);
+    assert.deepEqual(codexOff(), ["desktop-commander", "inline-notes"]);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    forgetMcpServersForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Codex chat waits while the ChatGPT app holds its thread, then goes on in it; held too long, it goes on in a new thread and keeps the old one for deletion", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-codex-busy-"));
   const bin = join(root, "bin");
@@ -532,6 +1023,7 @@ test("a Codex chat waits while the ChatGPT app holds its thread, then goes on in
   const log = join(root, "codex.jsonl");
   // Each app-server refuses \`thread/resume\` as the ChatGPT app does while it has the thread open, STANDIN_BUSY times.
   writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') { console.log(process.env.STANDIN_CODEX_MCP || '[]'); process.exit(0); }
 const { appendFileSync } = require('node:fs');
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const busy = process.env.STANDIN_BUSY === 'always' ? Infinity : Number(process.env.STANDIN_BUSY || 0);
@@ -643,6 +1135,7 @@ test("a Codex chat's sub-agent (spawn_agent) reports on the same connection: its
   const bin = join(root, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') { console.log(process.env.STANDIN_CODEX_MCP || '[]'); process.exit(0); }
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
@@ -740,6 +1233,223 @@ process.stdin.on("end", () => {
   } finally {
     await app.close();
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A stand-in for Cursor's agent and each ACP agent, installed under its own command's name: it answers Ensemble's
+ * sign-in checks, and as a session starts it works out the MCP servers the real agent would load from the person's
+ * settings, where that agent reads them (its home, its config variables, Cursor's and Claude Code's files for Grok),
+ * plus the client's. Each prompt logs them, and whether the person's sign-in is reachable.
+ */
+const MCP_ACP_STANDIN = String.raw`#!/usr/bin/env node
+const { spawn } = require("node:child_process");
+const { appendFileSync, existsSync, readFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const name = basename(process.argv[1]);
+const args = process.argv.slice(2);
+const env = process.env;
+const home = env.HOME;
+if (args.includes("--version")) { console.log(name + " 9.9.9"); process.exit(0); }
+if (args[0] === "status") { console.log("Logged in as mira@example.com"); process.exit(0); }
+if (args[0] === "models") { console.log(name === "grok" ? "You are logged in as mira@example.com\nAvailable models:\n  - grok-code-fast (default)" : "default - Default"); process.exit(0); }
+if (args[0] === "auth") { console.log("1 credentials"); process.exit(0); }
+if (args.includes("--help")) { console.log("Usage\n  --acp  Agent Client Protocol mode\n" + (env.STANDIN_NO_ALLOWLIST ? "" : "  --allowed-mcp-server-names  only these MCP servers\n")); process.exit(0); }
+const json = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+const keysOf = (value) => Object.keys(value || {});
+const toml = (file, pattern) => { try { return [...readFileSync(file, "utf8").matchAll(pattern)].map((found) => found[1]); } catch { return []; } };
+function settings(cwd) {
+  switch (name) {
+    case "cursor-agent": {
+      const data = env.CURSOR_DATA_DIR || join(home, ".cursor");
+      const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+      return { servers: keysOf((json(join(home, ".cursor", "mcp.json")) || {}).mcpServers), off: json(join(data, "projects", slug, "mcp-disabled.json")) || [], signedIn: true };
+    }
+    case "grok": {
+      const grokHome = env.GROK_HOME || join(home, ".grok");
+      const servers = [...toml(join(grokHome, "config.toml"), /^\[mcp_servers\.([\w-]+)\]/gm), ...keysOf((json(join(home, ".cursor", "mcp.json")) || {}).mcpServers), ...keysOf((json(join(home, ".claude.json")) || {}).mcpServers)];
+      return { servers, off: [], signedIn: existsSync(env.GROK_AUTH_PATH || join(grokHome, "auth.json")) };
+    }
+    case "opencode": {
+      const files = [join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode", "opencode.json"), join(home, ".opencode", "opencode.json"), env.OPENCODE_CONFIG, env.OPENCODE_CONFIG_DIR && join(env.OPENCODE_CONFIG_DIR, "opencode.json")].filter(Boolean);
+      return { servers: files.flatMap((file) => keysOf((json(file) || {}).mcp)), off: [], signedIn: existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json")) };
+    }
+    case "gemini":
+    case "qwen": {
+      const at = args.indexOf("--allowed-mcp-server-names");
+      return { servers: keysOf((json(join(home, name === "gemini" ? ".gemini" : ".qwen", "settings.json")) || {}).mcpServers), only: at >= 0 ? args[at + 1].split(",") : null, off: [], signedIn: true };
+    }
+    case "vibe-acp": {
+      const vibeHome = env.VIBE_HOME || join(home, ".vibe");
+      return { servers: toml(join(vibeHome, "config.toml"), /^name\s*=\s*"([^"]+)"/gm), off: [], signedIn: existsSync(join(vibeHome, ".env")) };
+    }
+    case "kimi": {
+      const kimiHome = env.KIMI_CODE_HOME || join(home, ".kimi-code");
+      return { servers: keysOf((json(join(kimiHome, "mcp.json")) || {}).mcpServers), off: [], signedIn: existsSync(join(kimiHome, "credentials", "kimi-code.json")) };
+    }
+    default: {
+      return { servers: keysOf((json(join(env.GEMINI_HOME || join(home, ".gemini"), "antigravity", "mcp_config.json")) || {}).mcpServers), off: [], signedIn: true };
+    }
+  }
+}
+// Cursor's agent starts each server the client passes (MCP's initialize); one that is off or does not start is left out, saying
+// nothing, and the person's own server of that name stays (STANDIN_MCP_FAIL: none starts).
+function started(server) {
+  return new Promise((done) => {
+    if (env.STANDIN_MCP_FAIL) return done(false);
+    const child = spawn(server.command, server.args || [], { env: { ...process.env, ...Object.fromEntries((server.env || []).map((row) => [row.name, row.value])) }, stdio: ["pipe", "pipe", "ignore"] });
+    const timer = setTimeout(() => { child.kill(); done(false); }, 10000);
+    child.on("error", () => { clearTimeout(timer); done(false); });
+    require("node:readline").createInterface({ input: child.stdout }).on("line", (line) => {
+      if (JSON.parse(line).id !== 1) return;
+      clearTimeout(timer);
+      child.kill();
+      done(true);
+    });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cursor", version: "1" } } }) + "\n");
+  });
+}
+const sessions = new Map();
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", async (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [] } });
+  if (message.method === "session/new") {
+    const read = settings(message.params.cwd);
+    const passed = message.params.mcpServers || [];
+    const client = [];
+    for (const server of passed) if (name !== "cursor-agent" || (!read.off.includes(server.name) && (await started(server)))) client.push(server.name);
+    const loaded = [...new Set([...read.servers, ...client])].filter((server) => (client.includes(server) || !read.off.includes(server)) && (!read.only || read.only.includes(server))).sort();
+    const id = "session-" + (sessions.size + 1);
+    sessions.set(id, { loaded, signedIn: read.signedIn });
+    return send({ id: message.id, result: { sessionId: id } });
+  }
+  if (message.method === "session/prompt") {
+    appendFileSync(env.STANDIN_ACP, JSON.stringify({ agent: name, ...sessions.get(message.params.sessionId) }) + "\n");
+    send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
+    return send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+  send({ id: message.id, result: {} });
+});
+`;
+
+/** The person's own settings for each agent, every one with a server of theirs that runs commands; their sign-ins beside them. */
+function ownerSettings(home: string): void {
+  const server = { command: "npx", args: ["-y", "@wonderwhy-er/desktop-commander"] };
+  const files: Record<string, string> = {
+    ".cursor/mcp.json": JSON.stringify({ mcpServers: { "desktop-commander": server, ensemble: { command: "ensemble", args: ["mcp"] } } }),
+    ".claude.json": JSON.stringify({ mcpServers: { "claude-notes": server } }),
+    ".grok/config.toml": '[mcp_servers.grok-shell]\ncommand = "npx"\n',
+    ".grok/auth.json": "{}",
+    ".config/opencode/opencode.json": JSON.stringify({ mcp: { "desktop-commander": { type: "local", command: ["npx"] } } }),
+    ".opencode/opencode.json": JSON.stringify({ mcp: { "old-shell": { type: "local", command: ["npx"] } } }),
+    ".local/share/opencode/auth.json": "{}",
+    ".gemini/settings.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".gemini/antigravity/mcp_config.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".qwen/settings.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".vibe/config.toml": '[[mcp_servers]]\nname = "desktop-commander"\ntransport = "stdio"\ncommand = "npx"\n',
+    ".vibe/.env": "MISTRAL_API_KEY=stand-in\n",
+    ".kimi-code/mcp.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".kimi-code/credentials/kimi-code.json": "{}",
+  };
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(join(home, path, ".."), { recursive: true });
+    writeFileSync(join(home, path), text);
+  }
+}
+
+/** Every file under `folder` with its bytes, to tell that nothing of the person's was changed. */
+function snapshot(folder: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else found[path.slice(folder.length)] = readFileSync(path, "utf8");
+    }
+  };
+  walk(folder);
+  return found;
+}
+
+test("a turn someone else can steer loads none of the person's own MCP servers on Cursor's agent or any ACP agent, signed in as them, their settings untouched; an agent that cannot leave them out refuses it", { timeout: 180_000 }, async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  const { antigravityAsset, ANTIGRAVITY_VERSION } = await import("./antigravity.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-others-mcp-"));
+  const bin = join(root, "bin");
+  const home = join(root, "home");
+  const state = join(root, "state");
+  mkdirSync(bin);
+  ownerSettings(home);
+  for (const command of ["cursor-agent", "grok", "opencode", "gemini", "qwen", "vibe-acp", "kimi"]) {
+    writeFileSync(join(bin, command), MCP_ACP_STANDIN);
+    chmodSync(join(bin, command), 0o755);
+  }
+  // Antigravity is the server Ensemble installs in its own folder, signed in there.
+  const asset = antigravityAsset();
+  if (asset) {
+    const installed = join(state, "agents", "antigravity", "versions", ANTIGRAVITY_VERSION);
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(installed, asset.executable), MCP_ACP_STANDIN);
+    chmodSync(join(installed, asset.executable), 0o755);
+    writeFileSync(join(installed, asset.harness), "");
+    mkdirSync(join(state, "agents", "antigravity", "home", "antigravity-acp"), { recursive: true });
+    writeFileSync(join(state, "agents", "antigravity", "home", "antigravity-acp", "acp_token.json"), "{}");
+  }
+  const log = join(root, "acp.jsonl");
+  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "GROK_HOME", "GROK_AUTH_PATH", "VIBE_HOME", "KIMI_CODE_HOME", "OPENCODE_CONFIG", "CURSOR_DATA_DIR", "STANDIN_NO_ALLOWLIST", "STANDIN_MCP_FAIL"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH ?? ""}`, HOME: home, ENSEMBLE_DESKTOP: "1", STANDIN_ACP: log, ENSEMBLE_REMOTE_STATE_DIR: state });
+  // The stand-in Cursor starts Ensemble's MCP server, which lists the turn's tools from this API as it starts.
+  const app = Fastify();
+  await app.register(engineRoutes);
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  setLocalPort((app.server.address() as { port: number }).port);
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (agent: "cursor-agent" | "grok-cli" | "opencode" | "gemini-cli" | "qwen-code" | "mistral-vibe" | "kimi-code" | "antigravity") =>
+    runAgentTurn({ agent, model: "default", effort: null, system: "Instructions.", prompt: "Hello from Ben.", tools: [], others: true }, io);
+  const before = snapshot(home);
+  try {
+    const agents = ["cursor-agent", "grok-cli", "opencode", "gemini-cli", "qwen-code", "mistral-vibe", "kimi-code", ...(asset ? ["antigravity" as const] : [])] as const;
+    for (const agent of agents) await turn(agent);
+    const ran = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { agent: string; loaded: string[]; signedIn: boolean });
+    assert.equal(ran.length, agents.length);
+    for (const run of ran) {
+      // On Cursor's agent Ensemble's server has the turn's own name, and the person's `ensemble` is off with the rest.
+      if (run.agent === "cursor-agent") assert.match(run.loaded.join(","), /^ensemble-[0-9a-f]{8}$/, `${run.agent}: Ensemble's server alone`);
+      else assert.deepEqual(run.loaded, ["ensemble"], `${run.agent}: Ensemble's server alone`);
+      assert.equal(run.signedIn, true, `${run.agent}: signed in as the person`);
+    }
+    assert.deepEqual(snapshot(home), before, "the person's own settings and sign-ins are as they were");
+
+    // A Cursor that could not start the turn's server (its team's MCP policy, its sandbox, a timeout) does not answer.
+    process.env.STANDIN_MCP_FAIL = "1";
+    await assert.rejects(turn("cursor-agent"), /Cursor's agent did not start Ensemble's server for this turn .*, so it does not answer other people/);
+    delete process.env.STANDIN_MCP_FAIL;
+
+    // A Cursor whose MCP settings Ensemble cannot read, and a Gemini CLI without the switch, refuse such a turn.
+    writeFileSync(join(home, ".cursor", "mcp.json"), "{ not json");
+    await assert.rejects(turn("cursor-agent"), /could not read your ~\/\.cursor\/mcp\.json, so it does not answer other people/);
+    const older = join(root, "older");
+    mkdirSync(older);
+    writeFileSync(join(older, "gemini"), MCP_ACP_STANDIN);
+    chmodSync(join(older, "gemini"), 0o755);
+    process.env.PATH = `${older}:${process.env.PATH}`;
+    process.env.STANDIN_NO_ALLOWLIST = "1";
+    forgetExecutablesForTests();
+    await assert.rejects(turn("gemini-cli"), /Gemini on this computer cannot leave out your own MCP servers, so it does not answer other people/);
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, agents.length, "none of them was given the message");
+  } finally {
+    await app.close();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    forgetExecutablesForTests();
     rmSync(root, { recursive: true, force: true });
   }
 });

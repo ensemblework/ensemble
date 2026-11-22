@@ -1,0 +1,246 @@
+{
+ "label": "baseline-v1-code",
+ "stamp": "2026-11-21T22-43-57",
+ "commit": "1720b03a",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "multi-file-change-with-tests",
+  "resume-picks-up-context-delta",
+  "handoff-to-another-agent"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-21T22:43:57.391Z",
+ "finishedAt": "2026-11-21T22:45:48.859Z",
+ "results": [
+  {
+   "task": "multi-file-change-with-tests",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.8333333333333334,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "both modules changed",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "README.md, src/invoice.js, src/money.js, test/invoice.test.js, test/money.test.js"
+    },
+    {
+     "name": "EUR tests in both test files",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "test/money.test.js, test/invoice.test.js"
+    },
+    {
+     "name": "its tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ sums the lines (0.921816ms)\n✔ formats the total in euros (0.177535ms)\n✔ dollars by default (0.892933ms)\n✔ formats euros (0.176037ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 75.927004\n"
+    },
+    {
+     "name": "the hidden acceptance tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ formatMoney: dollars by default, euros on request (0.889993ms)\n✔ invoiceTotal passes the currency on (0.213015ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 67.706114\n"
+    },
+    {
+     "name": "the turn finished",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "succeeded"
+    },
+    {
+     "name": "Ensemble's own verification run passed",
+     "pass": false,
+     "kind": "state",
+     "evidence": true,
+     "note": "no verification run recorded"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 39829,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 6,
+    "tokensIn": 94654,
+    "tokensOut": 1199,
+    "credits": 0.347391,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 10,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [
+    "glob",
+    "bash",
+    "view",
+    "apply_patch"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "006f17ba-4a18-4a00-87c3-c4508b897ea8"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-code/multi-file-change-with-tests--1.jsonl",
+   "startedAt": "2026-11-21T22:44:15.295Z"
+  },
+  {
+   "task": "resume-picks-up-context-delta",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "done",
+   "score": 0.5,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [
+    {
+     "name": "the first turn wrote the label it was given",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "blue-heron"
+    },
+    {
+     "name": "the second turn went on in the same agent session",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "a session then the same; packet not recorded"
+    },
+    {
+     "name": "README names the new label",
+     "pass": false,
+     "kind": "state",
+     "evidence": true,
+     "note": "# labels release tooling. ## release current release label: blue-heron. "
+    },
+    {
+     "name": "and not the old one",
+     "pass": false,
+     "kind": "state",
+     "evidence": true
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 51859,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 8,
+    "tokensIn": 122885,
+    "tokensOut": 844,
+    "credits": 0.2523805,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 9,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [
+    "glob",
+    "bash",
+    "view",
+    "apply_patch"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "4ae11958-1ff3-41aa-b038-9c28dd128380"
+   ],
+   "trace": "eval/node/results/traces/baseline-v1-code/resume-picks-up-context-delta--1.jsonl",
+   "startedAt": "2026-11-21T22:44:56.102Z"
+  },
+  {
+   "task": "handoff-to-another-agent",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "skipped",
+   "score": 0,
+   "pass": false,
+   "verifiedPass": false,
+   "checks": [],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 0,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 0,
+    "tokensIn": 0,
+    "tokensOut": 0,
+    "credits": 0,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 0,
+    "approvals": 0,
+    "unanswered": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [],
+   "models": [],
+   "cards": [],
+   "errors": [],
+   "sessions": [],
+   "trace": "",
+   "startedAt": "2026-11-21T22:45:48.858Z",
+   "skipped": "requires code-tab-harness (the Code tab harness: threads, completion records, turn packets and handoff records (from node-v2/code-tab))"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "006f17ba-4a18-4a00-87c3-c4508b897ea8",
+   "kind": "coding",
+   "task": "multi-file-change-with-tests",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "4ae11958-1ff3-41aa-b038-9c28dd128380",
+   "kind": "coding",
+   "task": "resume-picks-up-context-delta",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal no, code-tab-harness no.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}
