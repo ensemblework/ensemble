@@ -235,10 +235,19 @@ const tools = {
     const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.aumid ? item.launch_path === `shell:appsFolder\\${args.aumid}` : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
     if (!app) return failed(`App not installed: ${args.bundle_id ?? args.name}`, { error: "APP_NOT_INSTALLED", suggestions: [] });
     app.running = true;
-    const windows = world.windows.filter((win) => win.pid === app.pid);
-    return ok({ pid: app.pid, bundle_id: app.bundle_id, name: app.name, windows, launch_state: { requested: true, process_running: true, window_ready: windows.length > 0 }, self_activation_suppressed: true });
+    // `launch_pid`: the process launch_app answers with is not the one whose window shows (a packaged app's host).
+    const pid = app.launch_pid ?? app.pid;
+    const windows = world.windows.filter((win) => win.pid === pid);
+    return ok({ pid, bundle_id: app.bundle_id, name: app.name, windows, launch_state: { requested: true, process_running: true, window_ready: windows.length > 0 }, self_activation_suppressed: true });
   },
-  bring_to_front: (args) => {
+  bring_to_front: (args, live) => {
+    if (WINDOWS) {
+      // Windows' foreground lock can keep another window in front: the window is raised but not activated.
+      const target = args.window_id ?? world.windows.find((win) => win.pid === args.pid)?.window_id ?? 0;
+      if (live.foregroundLocked) return failed(`bring_to_front: exact target hwnd 0x${target.toString(16)} was raised in z-order, but Windows kept foreground on hwnd 0x1; foreground activation failed.`, { code: "foreground_unavailable", effect: "refused", pid: args.pid, window_id: target, landed_on_target: false, raised: true });
+      for (const app of world.apps) app.active = app.pid === args.pid;
+      return ok({ previous_fg_hwnd: "0x1", now_fg_hwnd: `0x${target.toString(16)}`, target_hwnd: `0x${target.toString(16)}`, landed_on_target: true, raised: true, restored: false });
+    }
     for (const app of world.apps) app.active = app.pid === args.pid;
     return ok({ status: "activated", code: "bring_to_front_exact_window_verified", pid: args.pid, window_id: args.window_id ?? null, activated: true });
   },

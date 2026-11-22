@@ -250,9 +250,19 @@ test("background: elements through UI Automation without the owner's pointer or 
   assert.equal(front.steps[0]!.verdict, "confirmed");
   assert.equal(launches(), before);
   assert.ok(h.calls().some((call) => call.tool === "bring_to_front" && call.args.pid === 201));
+  // Windows' foreground lock keeps another window in front: the step says so instead of claiming it.
+  h.set({ foregroundLocked: true });
+  const behind = await h.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
+  assert.deepEqual([behind.steps[0]!.verdict, behind.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(behind.steps[0]!.detail!, /did not come to the front/);
+  h.set({ foregroundLocked: false });
   const closed = pc({ world: { apps: PC.apps.map((app) => (app.pid === 201 ? { ...app, running: false } : app)), windows: PC.windows.filter((win) => win.pid !== 201) } });
   await closed.service.open(caller(), { app: "Notepad", waitSec: 1 });
   assert.ok(closed.calls().some((call) => call.tool === "launch_app" && call.args.launch_path === "C:\\Windows\\System32\\notepad.exe"), "a desktop app that is not running, by its launch path");
+  // The process that started shows nothing; the app's window shows under another of its processes.
+  const hosted = pc({ world: { apps: PC.apps.map((app) => (app.pid === 205 ? { ...app, launch_pid: 905 } : app)), windows: [...PC.windows, { window_id: 51, pid: 205, app_name: "mspaint.exe", title: "Untitled - Paint", bounds: { x: 300, y: 300, width: 900, height: 700 }, is_on_screen: true, z_index: 1, layer: 0, minimized: false }] } });
+  const painted = await hosted.service.open(caller(), { app: "Paint", waitSec: 5 });
+  assert.deepEqual([painted.stages.window, painted.app.name], [true, "Paint"]);
 });
 
 test("the floor: Ensemble's own windows, browsers (minimised too), pages that show Ensemble and Windows' prompts are refused; other web views are not", async () => {

@@ -12,7 +12,7 @@ Sign in to Windows as a standard user (not an administrator) for the checks, so 
 
 ## Readiness
 
-- [ ] **Ready.** Ask a node for `desktop_status` on the PC. The owner's screen is ready: `driver` names Cua Driver 0.56.6 and a Medium integrity level, `session` is working, `uia` answers, `dpi` gives the main monitor's size and scale (try 100% and 150% in Settings → Display), `capture` shows a real screenshot's size, and the agent screen says Windows has none. Nothing asks for a permission.
+- [ ] **Ready.** Ask a node for `desktop_status` on the PC. The owner's screen is ready: `driver` names Cua Driver 0.56.6 (and says so when Ensemble runs as administrator, which it should not), `session` is working, `uia` answers, `dpi` gives the main monitor's size and scale (try 100% and 150% in Settings → Display), `capture` shows a real screenshot's size, and the agent screen says Windows has none. Nothing asks for a permission.
 - [ ] **No ffmpeg.** Without ffmpeg installed, `recorder` is failed with the fix `winget install Gyan.FFmpeg`, and `desktop_record` start answers the same, never a fake video.
 - [ ] **Locked.** Lock the PC (Windows+L) and ask for `desktop_observe`: it is refused as locked. Unlock: it works again.
 - [ ] **Service.** Run `ensemble` as a Windows service, or in session 0 if you have a way to: `desktop_status` says session 0 has no screen, with what to do.

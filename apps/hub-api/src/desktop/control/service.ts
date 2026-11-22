@@ -1107,7 +1107,10 @@ export class DesktopService {
       }
       case "open": {
         const opened = await this.openApp(caller, step.app!, 8_000, deadline, context.allowed, !context.background);
-        return { verdict: opened.stages.window ? "confirmed" : opened.stages.accepted ? "partial" : "no_effect", ran: "yes", detail: `${opened.app.name}: ${Object.entries(opened.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(", ") || "not started"}` };
+        // In the foreground the app is meant to end up in front: open but behind is only part of it.
+        const behind = !context.background && opened.stages.window === true && !opened.focused;
+        const stages = Object.entries(opened.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(", ") || "not started";
+        return { verdict: opened.stages.window ? (behind ? "partial" : "confirmed") : opened.stages.accepted ? "partial" : "no_effect", ran: "yes", detail: `${opened.app.name}: ${stages}${behind ? "; it did not come to the front" : ""}` };
       }
       case "press":
       case "focus":

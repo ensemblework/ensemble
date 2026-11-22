@@ -858,9 +858,11 @@ export abstract class CuaAdapter extends EventEmitter {
   private async bringToFront(params: Record<string, unknown>, ctx: Ctx): Promise<{ focused: boolean; via: string | null }> {
     const app = this.resolve(await this.apps(ctx), params.app);
     if (!app) return { focused: false, via: null };
-    const win = (await this.windows(ctx, app.pid)).filter((item) => item.pid === app.pid && item.layer === 0 && !item.minimized).sort(byFront)[0];
+    const own = (await this.windows(ctx, app.pid)).filter((item) => item.pid === app.pid && item.layer === 0 && !item.minimized).sort(byFront);
+    const win = own.find((item) => item.onScreen) ?? own[0];
     const { data } = await this.tool("bring_to_front", { pid: app.pid, ...(win ? { window_id: win.id } : {}) }, ctx, true);
-    return { focused: data.activated === true, via: "activate" };
+    // macOS says `activated`; Windows `landed_on_target` (the window is the foreground window now).
+    return { focused: data.activated === true || data.landed_on_target === true, via: "activate" };
   }
 
   // ── the owner's pointer and keyboard ─────────────────────────────────────

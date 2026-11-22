@@ -6,7 +6,9 @@
  * types "Ensemble 0.9.1 on Windows" in chunks and reads it back through UI Automation, takes a
  * screenshot (not blank, the main display's size) and keeps it in `--out`, presses keys, records a few seconds
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
- * titled "Ensemble", and closes Notepad without saving through its elements, in the background.
+ * titled "Ensemble", and closes Notepad without saving through its elements, in the background. Every action
+ * cua-driver is asked for is logged with its answer (and any call slower than 3 s), and a failed check lets the
+ * rest run, so one run shows every step that fails; the run fails at the end.
  *
  *   tsx scripts/desktop-windows-smoke.ts --out <dir>
  */
@@ -30,6 +32,8 @@ const { DesktopService } = await import("../src/desktop/control/service.js");
 type Caller = import("../src/desktop/control/service.js").Caller;
 type Observation = import("../src/desktop/control/service.js").Observation;
 type HelperApp = import("../src/desktop/control/protocol.js").HelperApp;
+type HelperElement = import("../src/desktop/control/protocol.js").HelperElement;
+type McpResult = import("../src/desktop/control/drivers/mcp-stdio.js").McpResult;
 
 const TEXT = "Ensemble 0.9.1 on Windows";
 const BEHIND = "Typed behind the other windows. ";
@@ -39,6 +43,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const asked: string[] = [];
 const caller: Caller = { key: "node:smoke:windows", label: "the Windows smoke test", budgetMs: 120_000, gate: async (app) => (asked.push(`${app.category}: ${app.name}`), { allow: true }) };
 const children: ChildProcess[] = [];
+const failures: string[] = [];
+
+/** A check that lets the rest of the smoke run; the run fails at the end. */
+function expect(ok: unknown, message: string): boolean {
+  if (!ok) {
+    failures.push(message);
+    console.log(`  FAILED: ${message}`);
+  }
+  return Boolean(ok);
+}
 
 step("the session probe");
 const probe = new HelperProcess({ spawn: () => windowsProbeCommand(), helloTimeoutMs: 60_000 });
@@ -62,6 +76,7 @@ assert.deepEqual([readiness.checks?.interactive, readiness.checks?.uia, readines
 const log = (message: string) => console.log(`  driver: ${message}`);
 const driver = new WindowsCuaDriver({ spawn: () => helperCommand(), version: windowsCuaDriverPin().version, workDir: join(desktopDataDir(), "cua"), probe: new HelperProcess({ spawn: () => windowsProbeCommand(), log, helloTimeoutMs: 60_000 }), ffmpeg: () => windowsFfmpeg(), log, helloTimeoutMs: 60_000 });
 const service = new DesktopService({ helper: driver, captureDir: join(out, "captures"), platform: "win32", log, secretValues: async () => [] });
+const calls = trace(driver);
 
 try {
   step("status");
@@ -79,19 +94,21 @@ try {
   assert.equal(opened.focused, false, "it opened without taking the front");
 
   step("add text in the background, through UI Automation");
-  const behind = await service.act(caller, { steps: [{ action: "type", element: (await editor()).id, text: BEHIND }], observe: false });
+  const area = await editor();
+  console.log(`  its text area: ${area.id} ${area.role} ${JSON.stringify(area.name)}, actions ${JSON.stringify(area.actions)}, states ${JSON.stringify(area.states)}`);
+  const behind = await service.act(caller, { steps: [{ action: "type", element: area.id, text: BEHIND }], observe: false });
   console.log(`  ${JSON.stringify(behind)}`);
   assert.equal(behind.mode, "background");
   assert.equal(behind.steps[0]!.ran, "yes");
   const added = await notepadText();
   console.log(`  ${JSON.stringify(added)}`);
-  assert.ok(added.includes(BEHIND), `Notepad holds ${JSON.stringify(added)}`);
+  expect(added.includes(BEHIND), `typed in the background, Notepad holds ${JSON.stringify(added)} (${behind.steps[0]!.verdict}: ${behind.steps[0]!.detail ?? ""})`);
 
   step("bring it to the front (asks for the owner's screen once)");
   const front = await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
   console.log(`  ${JSON.stringify(front.steps)}`);
-  assert.equal(front.steps[0]!.verdict, "confirmed");
-  await frontApp("Notepad");
+  console.log(`  in front: ${await frontName()}`);
+  expect(front.steps[0]!.verdict === "confirmed", `the open step brought Notepad to the front (${front.steps[0]!.verdict}: ${front.steps[0]!.detail ?? ""})`);
 
   step("click into its text, by its place on a screenshot, and go to its end");
   const at = await editorPoint();
@@ -99,36 +116,45 @@ try {
   assert.ok(aim.display && aim.scale, "a screenshot to aim at");
   const click = await service.act(caller, { foreground: true, steps: [{ action: "click", x: Math.round(at.x / aim.scale), y: Math.round(at.y / aim.scale), captureId: aim.captureId }, { action: "key", keys: "ctrl+End" }], observe: false });
   console.log(`  at ${at.x},${at.y}, then ctrl+End: ${JSON.stringify(click.steps)}`);
-  assert.ok(click.steps.every((done) => done.ran === "yes"));
+  expect(click.steps.every((done) => done.ran === "yes"), "the click and the keys ran");
+  const inFront = await frontName();
+  console.log(`  in front: ${inFront}`);
 
-  step(`type "${TEXT}" in chunks`);
-  const typed = await service.act(caller, { foreground: true, steps: [{ action: "type", text: TEXT }], observe: false });
-  console.log(`  ${JSON.stringify(typed.steps)}`);
-  assert.equal(typed.steps[0]!.ran, "yes");
-  assert.ok(typed.steps[0]!.verdict === "confirmed" || typed.steps[0]!.verdict === "unknown", `typing: ${typed.steps[0]!.verdict} ${typed.steps[0]!.detail ?? ""}`);
+  if (expect(/notepad/i.test(inFront), `Notepad is in front after the click (${inFront})`)) {
+    step(`type "${TEXT}" in chunks`);
+    const chunksBefore = calls.filter((call) => call.name === "type_text").length;
+    const typed = await service.act(caller, { foreground: true, steps: [{ action: "type", text: TEXT }], observe: false });
+    console.log(`  ${JSON.stringify(typed.steps)}`);
+    const chunks = calls.filter((call) => call.name === "type_text").length - chunksBefore;
+    expect(typed.steps[0]!.ran === "yes", "typing ran");
+    expect(chunks === Math.ceil(TEXT.length / 8), `typed in ${Math.ceil(TEXT.length / 8)} chunks of at most 8 characters (${chunks})`);
 
-  step("read it back through UI Automation");
-  const text = await notepadText();
-  console.log(`  ${JSON.stringify(text)}`);
-  assert.ok(text.includes(TEXT), `Notepad holds ${JSON.stringify(text)}`);
+    step("read it back through UI Automation");
+    const text = await notepadText();
+    console.log(`  ${JSON.stringify(text)}`);
+    expect(text.includes(TEXT), `typed in front, Notepad holds ${JSON.stringify(text)} (${typed.steps[0]!.verdict}: ${typed.steps[0]!.detail ?? ""})`);
+  }
 
   step("screenshot");
   const look = await service.observe(caller, { elements: false });
   assert.ok(look.image?.path && look.display, "a screenshot");
   const pixels = decodePng(readFileSync(look.image.path));
   const scale = Math.min(1, 1568 / Math.max(look.display.width, look.display.height));
-  console.log(`  ${look.display.width}×${look.display.height} display, ${pixels.width}×${pixels.height} picture`);
-  assert.deepEqual([pixels.width, pixels.height], [Math.round(look.display.width * scale), Math.round(look.display.height * scale)]);
-  console.log(`  ${colours(pixels.data)} colours`);
-  assert.ok(colours(pixels.data) > 16, "the picture is not blank");
+  console.log(`  ${look.display.width}×${look.display.height} display, ${pixels.width}×${pixels.height} picture, ${colours(pixels.data)} colours`);
+  expect(pixels.width === Math.round(look.display.width * scale) && pixels.height === Math.round(look.display.height * scale), "the picture is the display's size");
+  expect(colours(pixels.data) > 16, "the picture is not blank");
   copyFileSync(look.image.path, join(out, "screen.png"));
 
-  step("keys: select all and delete");
-  const keys = await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "ctrl+a" }, { action: "key", keys: "BackSpace" }], observe: false });
-  console.log(`  ${JSON.stringify(keys.steps)}`);
-  assert.ok(keys.steps.every((done) => done.ran === "yes"));
-  const cleared = await notepadText();
-  assert.ok(!cleared.includes(TEXT), `after the keys Notepad holds ${JSON.stringify(cleared)}`);
+  if (/notepad/i.test(await frontName())) {
+    step("keys: select all and delete");
+    const keys = await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "ctrl+a" }, { action: "key", keys: "BackSpace" }], observe: false });
+    console.log(`  ${JSON.stringify(keys.steps)}`);
+    expect(keys.steps.every((done) => done.ran === "yes"), "the keys ran");
+    const cleared = await notepadText();
+    expect(!cleared.includes(TEXT) && !cleared.includes(BEHIND), `after the keys Notepad holds ${JSON.stringify(cleared)}`);
+  } else {
+    expect(false, "Notepad is in front for the keys");
+  }
 
   step("recording");
   if (readiness.recorder) {
@@ -136,11 +162,10 @@ try {
     await sleep(3_000);
     const saved = await service.recordSave(caller, { name: "windows smoke" });
     console.log(`  ${saved.width}×${saved.height}, ${saved.durationMs} ms, ${saved.frames} frames`);
-    assert.ok(saved.durationMs > 1_000);
+    expect(saved.durationMs > 1_000, "a recording of more than a second");
   } else {
     const recorder = (await service.status(60_000)).facts.recorder!;
-    assert.equal(recorder.state, "failed");
-    assert.match(String(recorder.detail), /winget install Gyan\.FFmpeg/);
+    expect(recorder.state === "failed" && /winget install Gyan\.FFmpeg/.test(String(recorder.detail)), `without ffmpeg readiness says recording is unavailable, with the fix (${recorder.state}: ${String(recorder.detail).slice(0, 120)})`);
     console.log("  no ffmpeg here: readiness says recording is unavailable, with the fix");
   }
 
@@ -161,45 +186,76 @@ try {
   assert.ok(allow, JSON.stringify(ensemble.tree.elements));
   const pressed = await service.act(caller, { steps: [{ action: "press", element: allow.id }], observe: false });
   console.log(`  ${JSON.stringify(pressed.steps)}`);
-  assert.deepEqual([pressed.steps[0]!.verdict, pressed.steps[0]!.ran, pressed.steps[0]!.rule], ["refused", "no", "ensemble_window"]);
+  expect(pressed.steps[0]!.verdict === "refused" && pressed.steps[0]!.ran === "no" && pressed.steps[0]!.rule === "ensemble_window", "the floor refused the window titled Ensemble");
+  for (const child of children.splice(0)) child.kill();
 
   step("close Notepad without saving");
-  for (const child of children.splice(0)) child.kill();
   const window = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
   const close = window.tree?.elements.find((element) => element.role === "push button" && /^close$/i.test(element.name));
   if (close) {
     console.log(`  its Close button, in the background: ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: close.id }], observe: false })).steps)}`);
   } else {
     console.log(`  no Close button among ${JSON.stringify(window.tree?.elements.map((element) => `${element.role} ${element.name}`))}: alt+F4 in front`);
-    await frontApp("Notepad");
+    await service.act(caller, { foreground: true, steps: [{ action: "open", app: "Notepad" }], observe: false });
     console.log(`  ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "alt+F4" }], observe: false })).steps)}`);
   }
-  for (let tries = 0; tries < 20 && (await running("Notepad")); tries += 1) {
+  // Closed: no window of Notepad's twice in a row; a prompt to save is answered "Don't save".
+  let gone = 0;
+  for (let tries = 0; tries < 30 && gone < 2; tries += 1) {
     await sleep(500);
+    if (!(await running("Notepad"))) {
+      gone += 1;
+      continue;
+    }
+    gone = 0;
     const prompt = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 }).catch((error: unknown) => (console.log(`  ${error instanceof Error ? error.message : String(error)}`), null));
     const dontSave = prompt?.tree?.elements.find((element) => /^don.?t save$/i.test(element.name.replace(/&/g, "").trim()));
-    if (tries === 0 || tries === 10) console.log(`  Notepad's window “${prompt?.tree?.window ?? "?"}”: ${JSON.stringify(prompt?.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`).slice(0, 40))}`);
+    if (tries % 10 === 0) console.log(`  Notepad's window “${prompt?.tree?.window ?? "?"}”: ${JSON.stringify(prompt?.tree?.elements.map((element) => `${element.id} ${element.role} ${element.name}`).slice(0, 40))}`);
     if (dontSave) console.log(`  ${JSON.stringify((await service.act(caller, { steps: [{ action: "press", element: dontSave.id }], observe: false })).steps)}`);
   }
-  assert.equal(await running("Notepad"), false, "Notepad is closed");
+  expect(gone >= 2, "Notepad is closed");
   console.log(`  the owner was asked about: ${JSON.stringify(asked)}`);
-  assert.equal(asked.filter((item) => item.startsWith("screen")).length >= 1, true);
-  writeFileSync(join(out, "result.json"), JSON.stringify({ ok: true, seconds: (Date.now() - started) / 1000, readiness: { checks: readiness.checks, recorder: readiness.recorder } }, null, 2));
-  step("all checks passed");
+  expect(asked.some((item) => item.startsWith("screen")), "the owner's screen was asked for");
+  writeFileSync(join(out, "result.json"), JSON.stringify({ ok: failures.length === 0, failures, seconds: (Date.now() - started) / 1000, readiness: { checks: readiness.checks, recorder: readiness.recorder } }, null, 2));
 } finally {
   for (const child of children) child.kill();
   await service.stop().catch(() => undefined);
   await driver.stop().catch(() => undefined);
 }
+if (failures.length) {
+  console.log(`\n${failures.length} check(s) failed:\n${failures.map((failure) => `  - ${failure}`).join("\n")}`);
+  process.exit(1);
+}
+step("all checks passed");
 
-/** The app in front is `name`: the open step brought it forward. */
-async function frontApp(name: string): Promise<void> {
-  for (let tries = 0; tries < 10; tries += 1) {
-    const look = await service.observe(caller, { screenshot: false, elements: false }).catch(() => null);
-    if (look?.focus?.app?.toLowerCase().includes(name.toLowerCase())) return;
-    await sleep(500);
-  }
-  throw new Error(`${name} did not come to the front.`);
+/** cua-driver's calls: each action with its answer, and any call that failed or took more than 3 s. */
+function trace(target: object): Array<{ name: string; ms: number; error: boolean }> {
+  const seen: Array<{ name: string; ms: number; error: boolean }> = [];
+  const ACTIONS = new Set(["launch_app", "bring_to_front", "type_text", "set_value", "click", "press_key", "hotkey", "scroll"]);
+  const mcp = (target as { mcp: { call(name: string, args: Record<string, unknown>, options: { timeoutMs: number; effects?: boolean }): Promise<McpResult> } }).mcp;
+  const call = mcp.call.bind(mcp);
+  const brief = (value: unknown) => JSON.stringify(value, (key, item: unknown) => (typeof item === "string" && item.length > 80 ? `${item.slice(0, 80)}…` : ["elements", "windows", "apps", "screenshot", "image"].includes(key) ? `[${Array.isArray(item) ? item.length : "…"}]` : item));
+  const said = (result: McpResult) => `${(result?.content ?? []).filter((item) => item.type === "text").map((item) => item.text ?? "").join(" ").replace(/\s+/g, " ").slice(0, 400)} ${brief(result?.structuredContent ?? null).slice(0, 700)}`;
+  mcp.call = async (name, args, options) => {
+    const began = Date.now();
+    try {
+      const result = await call(name, args, options);
+      const ms = Date.now() - began;
+      seen.push({ name, ms, error: result?.isError === true });
+      if (ACTIONS.has(name) || result?.isError || ms > 3_000) console.log(`    cua ${name}(${brief(args).slice(0, 300)}) ${ms} ms${result?.isError ? " ERROR" : ""}: ${said(result)}`);
+      return result;
+    } catch (error) {
+      console.log(`    cua ${name}(${brief(args).slice(0, 300)}) failed after ${Date.now() - began} ms: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
+      throw error;
+    }
+  };
+  return seen;
+}
+
+/** The app in front, as desktop control sees it. */
+async function frontName(): Promise<string> {
+  const look = await service.observe(caller, { screenshot: false, elements: false }).catch((error: unknown) => ({ focus: { app: `(${error instanceof Error ? error.message.slice(0, 120) : "no answer"})`, window: null } }));
+  return `${look.focus?.app ?? "nothing"}${look.focus?.window ? ` “${look.focus.window}”` : ""}`;
 }
 
 /** Notepad's text, read through UI Automation (its editor's value). */
@@ -210,7 +266,7 @@ async function notepadText(): Promise<string> {
 }
 
 /** Notepad's text area, in its latest look. */
-async function editor(): Promise<import("../src/desktop/control/protocol.js").HelperElement> {
+async function editor(): Promise<HelperElement> {
   const look = await service.observe(caller, { app: "Notepad", screenshot: false, maxElements: 200 });
   const editors = (look.tree?.elements ?? []).filter((element) => element.states.includes("editable"));
   const found = editors.find((element) => element.role === "document" || element.role === "text") ?? editors[0];
@@ -241,4 +297,3 @@ function colours(data: Uint8Array | Buffer): number {
   for (let index = 0; index < data.length && seen.size < 1_000; index += 4) seen.add((data[index]! << 16) | (data[index + 1]! << 8) | data[index + 2]!);
   return seen.size;
 }
-
