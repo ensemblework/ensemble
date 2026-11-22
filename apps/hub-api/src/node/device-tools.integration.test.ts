@@ -320,6 +320,30 @@ test("an app on the node's own agent screen is asked about as its own screen, no
   }
 });
 
+test("no to the owner's screen: the node hears that its own screen is ready, only where it is", async () => {
+  const ask = { capability: "desktop", target: "screen:owner", label: "the pointer and keyboard", scope: "app", weak: false, screen: "owner" };
+  const ownScreen = 'Your own screen is ready: use screen "agent" for this.';
+  for (const agentReady of [true, false]) {
+    const mira = await person("Mira");
+    const { laptop, key } = await laptopFor(mira, "ask", { nodeTools: 1, desktop: 1, desktopReadiness: { ready: true, session: "wayland", agentScreen: { ready: agentReady, version: null } } });
+    const { node, room } = await createNode(mira);
+    const device = askingComputer(laptop.id, key, ask, () => ({ ok: true, summary: "Opened.", evidence: [], refused: [] }));
+    try {
+      script = (turn) => (turn.transcript.includes("calculator") ? { calls: [{ name: "desktop_open", arguments: { app: "org.gnome.Calculator", screen: "owner" } }], then: "Not opened." } : { text: "ok" });
+      await post(mira, room.id, "open the calculator on my computer");
+      const card = await computerCard(mira, room.id);
+      const denied = await mira.inject({ method: "POST", url: `/api/decisions/${card.data.decisionId}/decide`, payload: { decision: "deny", scope: "once" } });
+      assert.equal(denied.statusCode, 200, denied.body);
+      await settleTurns();
+      const summary = (await replies(mira, room.id, node.id)).at(-1)!.data.tools[0].summary as string;
+      assert.match(summary, /Your owner chose not to allow this call/);
+      assert.equal(summary.includes(ownScreen), agentReady, summary);
+    } finally {
+      device.stop();
+    }
+  }
+});
+
 test("no on the card: the call hears it and the node goes on without it", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira);

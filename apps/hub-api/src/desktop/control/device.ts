@@ -83,11 +83,14 @@ export async function runNodeDesktop(app: App, client: HostedClient, request: De
   };
   const screens = injected ?? desktops();
   const steps = Array.isArray(input.steps) ? (input.steps as DesktopStep[]) : [];
-  const screen = screens.pick(caller.key, {
-    screen: input.screen as ScreenName | undefined,
-    captureId: (input.captureId as string | undefined) ?? steps.find((step) => step.captureId)?.captureId,
-    recording: request.name === "desktop_record" && input.action !== "start",
-  });
+  const screen =
+    request.name === "desktop_open" && !input.screen
+      ? await screens.opening(caller.key, async () => (await desktopReadiness()).agentScreen.ready)
+      : screens.pick(caller.key, {
+          screen: input.screen as ScreenName | undefined,
+          captureId: (input.captureId as string | undefined) ?? steps.find((step) => step.captureId)?.captureId,
+          recording: request.name === "desktop_record" && input.action !== "start",
+        });
   // Handing over is of the owner's screen only: the agent screen is the agent's own.
   const service = request.name === "desktop_handoff" ? screens.owner : screens.service(screen);
   const ok = (summary: string, extra: Record<string, unknown> = {}) => answer(200, { ok: true, summary, evidence: [], refused: [], ...extra });
