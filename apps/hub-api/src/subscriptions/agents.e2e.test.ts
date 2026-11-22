@@ -6,7 +6,7 @@
  * port (CI); sandboxes without local listening skip it.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
@@ -982,6 +982,192 @@ process.stdin.on("end", () => {
   } finally {
     await app.close();
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A stand-in for Cursor's agent and each ACP agent, installed under its own command's name: it answers Ensemble's
+ * sign-in checks, and as a session starts it works out the MCP servers the real agent would load from the person's
+ * settings, where that agent reads them (its home, its config variables, Cursor's and Claude Code's files for Grok),
+ * plus the client's. Each prompt logs them, and whether the person's sign-in is reachable.
+ */
+const MCP_ACP_STANDIN = String.raw`#!/usr/bin/env node
+const { appendFileSync, existsSync, readFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const name = basename(process.argv[1]);
+const args = process.argv.slice(2);
+const env = process.env;
+const home = env.HOME;
+if (args.includes("--version")) { console.log(name + " 9.9.9"); process.exit(0); }
+if (args[0] === "status") { console.log("Logged in as mira@example.com"); process.exit(0); }
+if (args[0] === "models") { console.log(name === "grok" ? "You are logged in as mira@example.com\nAvailable models:\n  - grok-code-fast (default)" : "default - Default"); process.exit(0); }
+if (args[0] === "auth") { console.log("1 credentials"); process.exit(0); }
+if (args.includes("--help")) { console.log("Usage\n  --acp  Agent Client Protocol mode\n" + (env.STANDIN_NO_ALLOWLIST ? "" : "  --allowed-mcp-server-names  only these MCP servers\n")); process.exit(0); }
+const json = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+const keysOf = (value) => Object.keys(value || {});
+const toml = (file, pattern) => { try { return [...readFileSync(file, "utf8").matchAll(pattern)].map((found) => found[1]); } catch { return []; } };
+function settings(cwd) {
+  switch (name) {
+    case "cursor-agent": {
+      const data = env.CURSOR_DATA_DIR || join(home, ".cursor");
+      const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+      return { servers: keysOf((json(join(home, ".cursor", "mcp.json")) || {}).mcpServers), off: json(join(data, "projects", slug, "mcp-disabled.json")) || [], signedIn: true };
+    }
+    case "grok": {
+      const grokHome = env.GROK_HOME || join(home, ".grok");
+      const servers = [...toml(join(grokHome, "config.toml"), /^\[mcp_servers\.([\w-]+)\]/gm), ...keysOf((json(join(home, ".cursor", "mcp.json")) || {}).mcpServers), ...keysOf((json(join(home, ".claude.json")) || {}).mcpServers)];
+      return { servers, off: [], signedIn: existsSync(env.GROK_AUTH_PATH || join(grokHome, "auth.json")) };
+    }
+    case "opencode": {
+      const files = [join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode", "opencode.json"), join(home, ".opencode", "opencode.json"), env.OPENCODE_CONFIG, env.OPENCODE_CONFIG_DIR && join(env.OPENCODE_CONFIG_DIR, "opencode.json")].filter(Boolean);
+      return { servers: files.flatMap((file) => keysOf((json(file) || {}).mcp)), off: [], signedIn: existsSync(join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json")) };
+    }
+    case "gemini":
+    case "qwen": {
+      const at = args.indexOf("--allowed-mcp-server-names");
+      return { servers: keysOf((json(join(home, name === "gemini" ? ".gemini" : ".qwen", "settings.json")) || {}).mcpServers), only: at >= 0 ? args[at + 1].split(",") : null, off: [], signedIn: true };
+    }
+    case "vibe-acp": {
+      const vibeHome = env.VIBE_HOME || join(home, ".vibe");
+      return { servers: toml(join(vibeHome, "config.toml"), /^name\s*=\s*"([^"]+)"/gm), off: [], signedIn: existsSync(join(vibeHome, ".env")) };
+    }
+    case "kimi": {
+      const kimiHome = env.KIMI_CODE_HOME || join(home, ".kimi-code");
+      return { servers: keysOf((json(join(kimiHome, "mcp.json")) || {}).mcpServers), off: [], signedIn: existsSync(join(kimiHome, "credentials", "kimi-code.json")) };
+    }
+    default: {
+      return { servers: keysOf((json(join(env.GEMINI_HOME || join(home, ".gemini"), "antigravity", "mcp_config.json")) || {}).mcpServers), off: [], signedIn: true };
+    }
+  }
+}
+const sessions = new Map();
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [] } });
+  if (message.method === "session/new") {
+    const read = settings(message.params.cwd);
+    const client = (message.params.mcpServers || []).map((server) => server.name);
+    const loaded = [...new Set([...read.servers, ...client])].filter((server) => !read.off.includes(server) && (!read.only || read.only.includes(server))).sort();
+    const id = "session-" + (sessions.size + 1);
+    sessions.set(id, { loaded, signedIn: read.signedIn });
+    return send({ id: message.id, result: { sessionId: id } });
+  }
+  if (message.method === "session/prompt") {
+    appendFileSync(env.STANDIN_ACP, JSON.stringify({ agent: name, ...sessions.get(message.params.sessionId) }) + "\n");
+    send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } } } });
+    return send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+  send({ id: message.id, result: {} });
+});
+`;
+
+/** The person's own settings for each agent, every one with a server of theirs that runs commands; their sign-ins beside them. */
+function ownerSettings(home: string): void {
+  const server = { command: "npx", args: ["-y", "@wonderwhy-er/desktop-commander"] };
+  const files: Record<string, string> = {
+    ".cursor/mcp.json": JSON.stringify({ mcpServers: { "desktop-commander": server, ensemble: { command: "ensemble", args: ["mcp"] } } }),
+    ".claude.json": JSON.stringify({ mcpServers: { "claude-notes": server } }),
+    ".grok/config.toml": '[mcp_servers.grok-shell]\ncommand = "npx"\n',
+    ".grok/auth.json": "{}",
+    ".config/opencode/opencode.json": JSON.stringify({ mcp: { "desktop-commander": { type: "local", command: ["npx"] } } }),
+    ".opencode/opencode.json": JSON.stringify({ mcp: { "old-shell": { type: "local", command: ["npx"] } } }),
+    ".local/share/opencode/auth.json": "{}",
+    ".gemini/settings.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".gemini/antigravity/mcp_config.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".qwen/settings.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".vibe/config.toml": '[[mcp_servers]]\nname = "desktop-commander"\ntransport = "stdio"\ncommand = "npx"\n',
+    ".vibe/.env": "MISTRAL_API_KEY=stand-in\n",
+    ".kimi-code/mcp.json": JSON.stringify({ mcpServers: { "desktop-commander": server } }),
+    ".kimi-code/credentials/kimi-code.json": "{}",
+  };
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(join(home, path, ".."), { recursive: true });
+    writeFileSync(join(home, path), text);
+  }
+}
+
+/** Every file under `folder` with its bytes, to tell that nothing of the person's was changed. */
+function snapshot(folder: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else found[path.slice(folder.length)] = readFileSync(path, "utf8");
+    }
+  };
+  walk(folder);
+  return found;
+}
+
+test("a turn someone else can steer loads none of the person's own MCP servers on Cursor's agent or any ACP agent, signed in as them, their settings untouched; an agent that cannot leave them out refuses it", { timeout: 180_000 }, async () => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  const { antigravityAsset, ANTIGRAVITY_VERSION } = await import("./antigravity.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-others-mcp-"));
+  const bin = join(root, "bin");
+  const home = join(root, "home");
+  const state = join(root, "state");
+  mkdirSync(bin);
+  ownerSettings(home);
+  for (const command of ["cursor-agent", "grok", "opencode", "gemini", "qwen", "vibe-acp", "kimi"]) {
+    writeFileSync(join(bin, command), MCP_ACP_STANDIN);
+    chmodSync(join(bin, command), 0o755);
+  }
+  // Antigravity is the server Ensemble installs in its own folder, signed in there.
+  const asset = antigravityAsset();
+  if (asset) {
+    const installed = join(state, "agents", "antigravity", "versions", ANTIGRAVITY_VERSION);
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(installed, asset.executable), MCP_ACP_STANDIN);
+    chmodSync(join(installed, asset.executable), 0o755);
+    writeFileSync(join(installed, asset.harness), "");
+    mkdirSync(join(state, "agents", "antigravity", "home", "antigravity-acp"), { recursive: true });
+    writeFileSync(join(state, "agents", "antigravity", "home", "antigravity-acp", "acp_token.json"), "{}");
+  }
+  const log = join(root, "acp.jsonl");
+  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "GROK_HOME", "GROK_AUTH_PATH", "VIBE_HOME", "KIMI_CODE_HOME", "OPENCODE_CONFIG", "CURSOR_DATA_DIR", "STANDIN_NO_ALLOWLIST"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  Object.assign(process.env, { PATH: `${bin}:${saved.PATH ?? ""}`, HOME: home, ENSEMBLE_DESKTOP: "1", STANDIN_ACP: log, ENSEMBLE_REMOTE_STATE_DIR: state });
+  // The stand-ins never start Ensemble's MCP server: no API answers on this port.
+  setLocalPort(9);
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const turn = (agent: "cursor-agent" | "grok-cli" | "opencode" | "gemini-cli" | "qwen-code" | "mistral-vibe" | "kimi-code" | "antigravity") =>
+    runAgentTurn({ agent, model: "default", effort: null, system: "Instructions.", prompt: "Hello from Ben.", tools: [], others: true }, io);
+  const before = snapshot(home);
+  try {
+    const agents = ["cursor-agent", "grok-cli", "opencode", "gemini-cli", "qwen-code", "mistral-vibe", "kimi-code", ...(asset ? ["antigravity" as const] : [])] as const;
+    for (const agent of agents) await turn(agent);
+    const ran = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { agent: string; loaded: string[]; signedIn: boolean });
+    assert.equal(ran.length, agents.length);
+    for (const run of ran) {
+      assert.deepEqual(run.loaded, ["ensemble"], `${run.agent}: Ensemble's server alone`);
+      assert.equal(run.signedIn, true, `${run.agent}: signed in as the person`);
+    }
+    assert.deepEqual(snapshot(home), before, "the person's own settings and sign-ins are as they were");
+
+    // A Cursor whose MCP settings Ensemble cannot read, and a Gemini CLI without the switch, refuse such a turn.
+    writeFileSync(join(home, ".cursor", "mcp.json"), "{ not json");
+    await assert.rejects(turn("cursor-agent"), /could not read your ~\/\.cursor\/mcp\.json, so it does not answer other people/);
+    const older = join(root, "older");
+    mkdirSync(older);
+    writeFileSync(join(older, "gemini"), MCP_ACP_STANDIN);
+    chmodSync(join(older, "gemini"), 0o755);
+    process.env.PATH = `${older}:${process.env.PATH}`;
+    process.env.STANDIN_NO_ALLOWLIST = "1";
+    forgetExecutablesForTests();
+    await assert.rejects(turn("gemini-cli"), /Gemini on this computer cannot leave out your own MCP servers, so it does not answer other people/);
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, agents.length, "neither of them started a session");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    forgetExecutablesForTests();
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -520,6 +520,9 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   // on a card here (node/own-tool-asks.ts). Any other turn (room-bound, another person's, a disclosure draft) can carry
   // another person's instructions, which no check of a command's text can contain: it has Ensemble's tools only.
   const ownTools = ownLoop && ownerOnly && !fromNonOwner && !bound && (!node.parentNodeId || helperGrant(node) === "computer");
+  // A turn other people can steer (their message, a room they read, a room-bound turn, a draft for someone else) runs on the
+  // owner's plan with none of the owner's own MCP servers, or not at all (subscriptions/agents.ts `others`).
+  const othersTurn = fromNonOwner || !ownerOnly || Boolean(bound);
   const plan = turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null;
   const ownPolicy: NodeTurnPolicy | null = ownTools
     ? {
@@ -695,6 +698,7 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
               node: true,
               group: { id: node.id, name: `${node.name} (Ensemble Node)` },
               keepDays: NODE_SESSION_KEEP_DAYS,
+              ...(othersTurn ? { others: true } : {}),
               ...(ownPolicy && given?.withoutOwnTools
                 ? {
                     ownTools: true,

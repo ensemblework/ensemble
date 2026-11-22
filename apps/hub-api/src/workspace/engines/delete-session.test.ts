@@ -307,3 +307,28 @@ process.stdin.on("data", (chunk) => {
     await rm(bin, { recursive: true, force: true });
   }
 });
+
+test("a Mistral Vibe session of a turn someone else could steer is deleted from Ensemble's home for Vibe; the person's own sessions stay", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ensemble-session-delete-vibe-"));
+  const saved = { HOME: process.env.HOME, VIBE_HOME: process.env.VIBE_HOME, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.HOME = home;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(home, "runtime");
+  delete process.env.VIBE_HOME;
+  const id = randomUUID(), other = randomUUID();
+  const session = async (root: string, sessionId: string) => {
+    const folder = join(root, "logs", "session", `session_20261122_${sessionId.slice(0, 8)}`);
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "meta.json"), JSON.stringify({ session_id: sessionId }));
+    return folder;
+  };
+  try {
+    const ensembles = await session(join(home, "runtime", "agents", "mistral-vibe", "home", ".vibe"), id);
+    const theirs = await session(join(home, ".vibe"), other);
+    await deleteNativeSession("mistral-vibe", id, home);
+    await assert.rejects(lstat(ensembles), { code: "ENOENT" });
+    assert.equal(JSON.parse(await readFile(join(theirs, "meta.json"), "utf8")).session_id, other);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(home, { recursive: true, force: true });
+  }
+});

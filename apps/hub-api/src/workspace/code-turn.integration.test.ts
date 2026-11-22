@@ -109,9 +109,11 @@ test("the first turn gets the whole packet; the next turn in the session only th
   const steered = await turn({ continueFrom: second.id, instructions: expanded, context: { steer: { update: words } } });
   const three = await prepareCodeTurn(ctx(steered), { ...base, resume: "session-1" });
   assert.ok(three.prompt.endsWith(steerPrompt(expanded)), "the steer carries the mentioned records' content");
-  // A new day is said again.
+  // A new day is said again, after the steer note and before the message.
   const later = await prepareCodeTurn(ctx(steered), { ...base, resume: "session-1", now: new Date(Date.now() + 2 * 86_400_000) });
   assert.match(later.prompt, /Today is \d{4}-\d{2}-\d{2} \([\w/]+\)/);
+  assert.ok(later.prompt.startsWith(steerPrompt("")), "the steer note leads");
+  assert.ok(later.prompt.endsWith(`The message from Mira:\n\n${expanded}`));
 });
 
 test("the owner's linked skills go into the agent's own skill folder, out of git, and on the run", async () => {

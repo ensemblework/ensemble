@@ -135,13 +135,55 @@ export interface Sidecar {
   stop: (signal?: NodeJS.Signals) => Promise<void>;
 }
 
-export async function bootSidecar(root: string, runtimeUrl: string, extraEnv: Record<string, string> = {}): Promise<Sidecar> {
+/** The variables that move an agent's settings somewhere else: a runtime a test starts gets none of the developer's. */
+const AGENT_SETTINGS = [
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "COPILOT_HOME",
+  "CURSOR_DATA_DIR",
+  "CURSOR_CONFIG_DIR",
+  "GROK_HOME",
+  "GROK_AUTH_PATH",
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  "GEMINI_HOME",
+  "GEMINI_CLI_TRUSTED_FOLDERS_PATH",
+  "QWEN_HOME",
+  "QWEN_CODE_TRUSTED_FOLDERS_PATH",
+  "VIBE_HOME",
+  "KIMI_CODE_HOME",
+];
+
+/**
+ * The environment of a runtime a test starts: the test's own, with `home` as its home folder and every
+ * agent's settings in it. The runtime marks its folders trusted in the agents' settings
+ * (workspace/trust-share.ts), which must never be the developer's own (`~/.codex/config.toml`,
+ * `~/.claude.json`, `~/.cursor/projects`…). PATH stays, so the stand-in agents on it are found.
+ */
+export function homeEnv(home: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  for (const name of AGENT_SETTINGS) delete env[name];
+  return {
+    ...env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    CODEX_HOME: join(home, ".codex"),
+    CLAUDE_CONFIG_DIR: join(home, ".claude"),
+  };
+}
+
+/** The desktop runtime, in `root`, which is also its home folder unless the test gives it another (`home`). */
+export async function bootSidecar(root: string, runtimeUrl: string, extraEnv: Record<string, string> = {}, home = root): Promise<Sidecar> {
   const discovery = join(root, "api.json");
   rmSync(discovery, { force: true });
   const child = spawn(process.execPath, ["--import", "tsx", "src/desktop/main.ts"], {
     cwd: hub,
     env: {
-      ...process.env,
+      ...homeEnv(home),
       NODE_ENV: "development",
       ENSEMBLE_DATA_DIR: join(root, "pglite"),
       ENSEMBLE_BACKUP_DIR: join(root, "backups"),

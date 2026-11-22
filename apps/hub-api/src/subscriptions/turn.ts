@@ -5,7 +5,7 @@
  * computer and turns its problems into words.
  */
 import type { Device } from "@prisma/client";
-import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OTHERS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
@@ -142,6 +142,8 @@ export type SubscriptionTurnInput = {
   ownTools?: boolean;
   /** An Ensemble Node's turn: how its agent's own calls are judged on the computer (node-own-tools.ts). */
   node?: NodeTurnPolicy;
+  /** A turn someone other than the person can steer (agents.ts `others`): none of their own MCP servers on the computer, or no turn. */
+  others?: boolean;
   /** The instructions for a computer too old to keep the agent's own tools (they say it has only Ensemble's). */
   systemWithoutOwnTools?: string;
   tools: ToolSpec[];
@@ -231,6 +233,16 @@ export async function followUpComputer(prisma: Prismaish, userId: string, agent:
 }
 
 /**
+ * The first `assistantTurns` whose Ensemble keeps the person's own MCP servers out of a turn someone else can
+ * steer on `agent`: Claude Code never loads them, Codex and Copilot leave them out from `ASSISTANT_TURN_FOLLOW_UPS`,
+ * Cursor's agent and the ACP agents from `ASSISTANT_TURN_OTHERS`.
+ */
+function othersTurnsFrom(agent: SubscriptionProvider): number {
+  if (agent === "claude-code") return ASSISTANT_TURNS_MIN;
+  return agent === "codex" || agent === "copilot-cli" ? ASSISTANT_TURN_FOLLOW_UPS : ASSISTANT_TURN_OTHERS;
+}
+
+/**
  * `ownTools`: the computer that ran the turn kept the agent's own tools (one too old for them runs it with Ensemble's only).
  * `resumable`: it ran in the chat's session there and takes another message of the same turn in it (`followUp`, assistant/agent.ts).
  */
@@ -238,6 +250,10 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const label = SUBSCRIPTION_INFO[input.agent].label;
   const prisma = input.prisma ?? defaultPrisma;
   const computer = input.followUp ? await followUpComputer(prisma, input.userId, input.agent, input.followUp.computerId) : await pickComputer(prisma, input.userId, input.agent, input.settings.models.computer ?? null);
+  // An older Ensemble there would load the person's own MCP servers in such a turn.
+  if (input.others && !computer.local && computer.turns < othersTurnsFrom(input.agent)) {
+    throw new RuntimeError(`Update Ensemble on ${computer.name}: the version there would give ${label} your own MCP servers when it answers other people or in rooms they read.`, 409);
+  }
   const turn = turnSession(computer, input);
   // A node's turn keeps the agent's own tools only where the computer judges them by the node's policy and asks its owner.
   const capable = computer.local || computer.turns >= ASSISTANT_TURN_NODE_TOOLS;
@@ -256,6 +272,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     ...(input.ownWeb && OWN_WEB_AGENTS.has(input.agent) ? { ownWeb: true } : {}),
     ...(ownTools ? { ownTools: true } : {}),
     ...(ownTools && input.node ? { node: input.node } : {}),
+    ...(input.others ? { others: true } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;

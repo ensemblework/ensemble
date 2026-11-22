@@ -290,7 +290,7 @@ test("the app font list is a radio group with the saved font checked, and Reset 
   }
 });
 
-test("on a narrow screen the open settings tab is scrolled into the tab row", async () => {
+test("on a narrow screen the open settings tab is scrolled into the tab row, clear of the fade at its right edge", async () => {
   const rect = Element.prototype.getBoundingClientRect;
   const widths = { scroll: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth"), client: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth") };
   const scrolled = new WeakMap<Element, number>();
@@ -298,20 +298,29 @@ test("on a narrow screen the open settings tab is scrolled into the tab row", as
   Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get() { return this.getAttribute("role") === "tablist" ? 900 : 0; } });
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get() { return this.getAttribute("role") === "tablist" ? 375 : 0; } });
   Object.defineProperty(Element.prototype, "scrollLeft", { configurable: true, get() { return scrolled.get(this) ?? 0; }, set(value: number) { scrolled.set(this, value); } });
+  let at = 0;
   Element.prototype.getBoundingClientRect = function (this: Element) {
     const box = (x: number, width: number) => ({ left: x, right: x + width, top: 0, bottom: 30, width, height: 30, x, y: 0, toJSON() {} }) as DOMRect;
     if (this.getAttribute("role") === "tablist") return box(0, 375);
-    if (this.id === "settings-tab-data") return box(820, 60);
+    if (this.id === "settings-tab-data") return box(at, 60);
     return box(0, 60);
   };
-  try {
+  /** Where the 375-pixel row scrolls to with the open tab, 60 pixels wide, at `x`. */
+  const scrolledFor = async (x: number) => {
+    at = x;
     const view = await render(<SettingsTabs value={"data" as SettingsTab} onChange={() => undefined} />);
     try {
-      const list = view.host.querySelector('[role="tablist"]')!;
-      assert.equal(list.scrollLeft, 820 + 60 - 375 + 12);
+      return view.host.querySelector('[role="tablist"]')!.scrollLeft;
     } finally {
       await view.done();
     }
+  };
+  try {
+    // Past the row's edge, and inside its fade (the last 28 pixels): 36 pixels clear of the edge.
+    assert.equal(await scrolledFor(820), 820 + 60 - 375 + 36);
+    assert.equal(await scrolledFor(300), 300 + 60 - 375 + 36);
+    // Clear of the fade already: the row stays.
+    assert.equal(await scrolledFor(280), 0);
   } finally {
     Element.prototype.getBoundingClientRect = rect;
     if (widths.scroll) Object.defineProperty(HTMLElement.prototype, "scrollWidth", widths.scroll);

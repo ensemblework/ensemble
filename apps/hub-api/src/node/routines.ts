@@ -21,6 +21,7 @@ import { nodeSpaces } from "./spaces.js";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { updateMessageDataIf } from "./store.js";
 import { loginCardClosed, routineLoginWaitMs } from "./logins.js";
+import { closeComputerQuestion } from "./device-tool-decisions.js";
 import { publishTo } from "./events.js";
 
 /** The owner's site reads its routines again (no content in the event). */
@@ -44,8 +45,9 @@ export async function backgroundJob(prisma: PrismaClient, jobId: string): Promis
 }
 
 /**
- * Cards a routine's work raised (approvals, secrets) that waited longer than `backgroundWaitMs` expire,
- * saying so, and the step's node goes on without the answer or reports what it could not do.
+ * Cards a routine's work raised (approvals, secrets, computer questions) that waited longer than
+ * `backgroundWaitMs` expire, saying so, with a computer card's question: the step's node, or the lead
+ * for a card of its own turn, goes on without the answer or says what it could not do.
  */
 export async function expireBackgroundCards(app: FastifyInstance, now = Date.now()): Promise<number> {
   const prisma = app.prisma;
@@ -71,15 +73,15 @@ export async function expireBackgroundCards(app: FastifyInstance, now = Date.now
         if (typeof step === "string") await answerPlanDecision(app, mission.id, step, Number((card.data as { attempt?: unknown }).attempt ?? 0), "discard");
         continue;
       }
-      if (typeof step === "string" && card.authorNodeId) {
-        await enqueueTurn(app, {
-          nodeId: card.authorNodeId,
-          roomId: card.roomId,
-          reason: "approval",
-          note: `Your owner did not answer within ${minutes} minutes, and this is background work, so the request expired. Finish your step without it, or report it blocked with what it needs.`,
-          planId: mission.id,
-          planStep: step,
-        });
+      // A computer card's question closes with it: asking again makes a new card, not this expired one.
+      await closeComputerQuestion(app, updated);
+      if (!card.authorNodeId) continue;
+      const expiredNote = `Your owner did not answer within ${minutes} minutes, and this is background work, so the request expired.`;
+      if (typeof step === "string") {
+        await enqueueTurn(app, { nodeId: card.authorNodeId, roomId: card.roomId, reason: "approval", note: `${expiredNote} Finish your step without it, or report it blocked with what it needs.`, planId: mission.id, planStep: step });
+      } else {
+        // A card of the lead's own turn on the plan: the lead goes on, in the conversation that asked.
+        await enqueueTurn(app, { nodeId: card.authorNodeId, roomId: card.roomId, reason: "approval", note: `${expiredNote} Go on without it, or say what cannot be done without it.`, planId: mission.id, private: (card.data as { private?: unknown }).private === true });
       }
     }
   }

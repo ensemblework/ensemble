@@ -119,6 +119,7 @@ pnpm typecheck                                  # every TS package
 pnpm --filter @ensemble/hub-api test
 pnpm --filter @ensemble/hub-api test:public        # in-memory API auth/isolation/signup/safety suites
 pnpm --filter @ensemble/hub-api route:inventory:check
+pnpm --filter @ensemble/hub-api test:inventory:check    # every hub-api test file is in a package script
 pnpm --filter @ensemble/hub-web test
 pnpm --filter @ensemble/landing build             # landing page (static export to apps/landing/out)
 pnpm --filter @ensemble/docs build                # public docs (static export to apps/docs/out)

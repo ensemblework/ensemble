@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { homeEnv } from "./e2e-harness.js";
 
 const hub = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -16,7 +17,7 @@ test("the sidecar starts, writes a private discovery file, and stops", { timeout
   const child = spawn(process.execPath, ["--import", "tsx", "src/desktop/main.ts"], {
     cwd: hub,
     env: {
-      ...process.env,
+      ...homeEnv(root),
       NODE_ENV: "development",
       ENSEMBLE_DATA_DIR: join(root, "pglite"),
       ENSEMBLE_BACKUP_DIR: join(root, "backups"),

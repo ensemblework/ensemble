@@ -283,11 +283,14 @@ async function postCard(app: Pick<FastifyInstance, "prisma">, row: AgentDecision
       deviceName: tool?.deviceName ?? null,
       call: input.call.slice(0, 500),
       options,
+      // A question about one of the agent's own calls says which kind (own-tool-asks.ts): what its answers cover.
+      ...(tool?.own ? { own: { kind: tool.own.kind ?? "write" } } : {}),
       answer: null,
       answeredAt: null,
       private: input.private,
-      // The step waits for this answer; it is not nudged or ended meanwhile.
-      ...(input.planId && input.planStep ? { plan: { id: input.planId, step: input.planStep } } : {}),
+      // The plan the turn works for, whose work an answer "for this run" covers (device-tools.ts `missionOf`), and the
+      // step that waits for the answer and is not nudged or ended meanwhile: null on the lead's own turn.
+      ...(input.planId ? { plan: { id: input.planId, step: input.planStep } } : {}),
     },
     visibleTo: [input.node.userId],
     rootMessageId: input.rootMessageId,

@@ -280,9 +280,11 @@ export function appWithoutAgent(id: SubscriptionProvider, agents: readonly Pick<
  * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor, 5 lets an
  * Ensemble Node's turn keep them too (judged by the node's folder policy, with asks relayed to the
  * owner), reports the agent's own calls, and takes a turn with no turn limit, 6 takes another message
- * of a turn in the session that took it (`session.resume: "only"`), never starting a new one.
+ * of a turn in the session that took it (`session.resume: "only"`), never starting a new one, 7 runs a
+ * turn someone other than its owner can steer (`others`) with none of the owner's own MCP servers, or
+ * refuses it where the agent cannot leave them out.
  */
-export const ASSISTANT_TURNS_API = 6;
+export const ASSISTANT_TURNS_API = 7;
 /** The oldest `assistantTurns` that runs assistant turns at all. */
 export const ASSISTANT_TURNS_MIN = 1;
 /** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
@@ -304,6 +306,13 @@ export const ASSISTANT_TURN_MAX_TURNS = 64;
  * session or a new one. Older computers get none; their turns end with what they had.
  */
 export const ASSISTANT_TURN_FOLLOW_UPS = 6;
+/**
+ * The first `assistantTurns` that keeps the owner's own MCP servers out of a turn someone else can steer
+ * (`others`) on every agent, or refuses it. Older computers load them on Cursor's agent and the ACP agents,
+ * and before `ASSISTANT_TURN_FOLLOW_UPS` on Codex and Copilot too, so they get no such turn on those
+ * (Claude Code never loads them).
+ */
+export const ASSISTANT_TURN_OTHERS = 7;
 /**
  * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
  * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).

@@ -98,7 +98,7 @@ File attachments are listed by name and follow the brief as the files themselves
 
 External engines get authorized temporary copies ([38](38_AGENT_READABLE_FILES.md)). Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
 
-Fresh code work in its own checkout gets `<workspace>/runs/<slug>` (`prepareFolder` in `workspace/agent.ts`, `workspace/checkout-folder.ts`). Before creating it, the run's selected model names it from the task title and this attempt's instructions; a coding agent uses its own sign-in on the run's computer for a one-off naming request, without keeping another session.
+Fresh code work in its own checkout gets `<workspace>/runs/<slug>` (`prepareFolder` in `workspace/agent.ts`, `workspace/checkout-folder.ts`). Before creating it, the run's selected model names it from the task title and this attempt's instructions; a coding agent uses its own sign-in on the run's computer for a one-off naming request, without keeping another session. A chat turn (`chat: true`: a message to the person's own agent, the Code tab's included) makes no naming request: its folder is named from the title.
 
 Slugs have 3 to 40 lowercase letters, digits and hyphens, at least one letter and no leading or trailing hyphen; spaces, dots, path separators and `runs`, `files`, `projects`, `worktrees`, `.ensemble` and filesystem-reserved Windows device names are refused. An unavailable model or unsafe reply uses the title, else `task-<short suffix>`, and does not block the run.
 
