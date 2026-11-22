@@ -161,6 +161,8 @@ export type HandoffInput = {
 };
 
 const isDone = (status: string) => status === "succeeded";
+/** A check that exited 0 when Ensemble ran it again but did not show what the agent said it would: neither passed nor failed. */
+const differed = (reason: string | null) => `exited 0 when Ensemble ran it again, but ${reason ? `${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : "its output differed."}`;
 
 /** The record for a new session taking over from the session `sourceJobId` ends; null when that run is not here. */
 export async function buildHandoff(db: Db, input: HandoffInput): Promise<HandoffRecord | null> {
@@ -198,7 +200,7 @@ export async function buildHandoff(db: Db, input: HandoffInput): Promise<Handoff
       if (run.id && !rerunById.has(run.id)) rerunById.set(run.id, run);
       if (seenCommands.has(run.command)) continue;
       seenCommands.add(run.command);
-      const result = run.verdict === "pass" ? "passed when Ensemble ran it again" : run.verdict === "fail" ? `failed when Ensemble ran it again${run.reason ? `: ${run.reason}` : ""}` : `not run again${run.reason ? `: ${run.reason}` : ""}`;
+      const result = run.verdict === "pass" ? "passed when Ensemble ran it again" : run.verdict === "fail" ? `failed when Ensemble ran it again${run.reason ? `: ${run.reason}` : ""}` : run.verdict === "uncertain" ? differed(run.reason) : `not run again${run.reason ? `: ${run.reason}` : ""}`;
       checks.push({ command: clip(run.command, 2000), result: clip(`${run.name}: ${result}`, 600), at: completion!.at });
     }
     for (const check of reports.get(job.id)?.checks ?? []) {
@@ -213,6 +215,7 @@ export async function buildHandoff(db: Db, input: HandoffInput): Promise<Handoff
     const rerun = rerunById.get(criterion.id);
     if (rerun?.verdict === "pass") return { ...criterion, state: "verified" as const, evidence: clip(`${rerun.command} passed when Ensemble ran it again`, 600) };
     if (rerun?.verdict === "fail") return { ...criterion, state: "failed" as const, evidence: clip(`${rerun.command} failed when Ensemble ran it again${rerun.reason ? `: ${rerun.reason}` : ""}`, 600) };
+    if (rerun?.verdict === "uncertain") return { ...criterion, state: "unverified" as const, evidence: clip(`${rerun.command} ${differed(rerun.reason)}`, 600) };
     const claimed = [...jobs].reverse().flatMap((job) => reports.get(job.id)?.checks ?? []).find((check) => check.id === criterion.id);
     return { ...criterion, state: "unverified" as const, evidence: claimed ? clip(`The agent reported ${claimed.verdict} (${claimed.name}); not run again`, 600) : "No check reported." };
   });

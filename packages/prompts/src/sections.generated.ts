@@ -78,9 +78,9 @@ export const SECTIONS = {
   },
   "code/03-report": {
     folder: "code",
-    text: "- When you change code or check something, end with report_result from the ensemble MCP server: the outcome, a one-sentence summary, and each check you ran with its rerun (the command, and expects: exit_0, or the text its output must show). Ensemble runs every rerun again in this folder after you finish and shows {{owner}} which passed: your own word that a check passed is not the result.\n- Report the check for an acceptance criterion under that criterion's id. A check you did not run is not a check: leave it out, or report it as skipped.",
+    text: "- When you change code or check something, end with report_result from the ensemble MCP server: the outcome, a one-sentence summary, and each check you ran with its rerun: the command, and expects: exit_0. Add a line its output must also show only when the exit code cannot tell, never a test runner's summary (`# pass 4` in one reporter is `ℹ pass 4` in another). Ensemble runs every rerun again in this folder after you finish and shows {{owner}} which passed: your own word that a check passed is not the result.\n- Report the check for an acceptance criterion under that criterion's id. A check you did not run is not a check: leave it out, or report it as skipped.",
     vars: ["owner"],
-    sha256: "85b861fdbe7ef87f5b5f7966678a647f5c7cde2ea3888d8ac268114afd30acce",
+    sha256: "6f68e17d088ec9cc1df0971cc6fd4e8ca815bfe6839e10482264a577c6c8f2b9",
   },
   "code/04-done": {
     folder: "code",

@@ -224,7 +224,10 @@ const REPORT_TOOL = {
               properties: {
                 command: { type: "string" },
                 cwd: { type: "string" },
-                expects: { anyOf: [{ type: "string", enum: ["exit_0"] }, { type: "object", properties: { outputMatches: { type: "string" } }, required: ["outputMatches"], additionalProperties: false }] },
+                expects: {
+                  description: "exit_0: the exit code decides; use it for a test runner (npm test, node --test, pytest, cargo test), whose output depends on its reporter. outputMatches: a line the output must also show, compared without colours, reporter marks, spacing or case.",
+                  anyOf: [{ type: "string", enum: ["exit_0"] }, { type: "object", properties: { outputMatches: { type: "string" } }, required: ["outputMatches"], additionalProperties: false }],
+                },
               },
               required: ["command", "expects"],
               additionalProperties: false,

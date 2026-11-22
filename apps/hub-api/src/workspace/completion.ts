@@ -74,14 +74,75 @@ export function outputShows(pattern: string, output: string): boolean {
 
 type Expects = NonNullable<Check["rerun"]>["expects"];
 
+const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
+/** Marks a reporter puts before a line (`# pass 4` in TAP, `ℹ pass 4` in Node's spec reporter, `✔`, `•`, `-`, `>`). */
+const LEAD = /^[\s#ℹ✔✖✓✗×•·▶▸→>*\uFE0F-]+/u;
+
+/** A line as no particular reporter prints it: no colours, no leading marks, one space between words, lower case. */
+export function plainLine(line: string): string {
+  return line.replace(ANSI, "").replace(LEAD, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const quoted = (text: string) => JSON.stringify(text.length > 200 ? `${text.slice(0, 199)}…` : text);
+
+/** `want` in `text`, a number at either end of it whole: `pass 4` is not in `pass 40`. */
+function holds(text: string, want: string): boolean {
+  const digitAt = (index: number) => /\d/.test(text.charAt(index));
+  for (let at = text.indexOf(want); at >= 0; at = text.indexOf(want, at + 1)) {
+    if (/^\d/.test(want) && digitAt(at - 1)) continue;
+    if (/\d$/.test(want) && digitAt(at + want.length)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Characters that make what a check expects a regular expression rather than plain text. */
+const PATTERN = /[\\^$|?*+()[\]{}]/;
+
+/**
+ * Whether the output shows what a check expects, leniently: as plain lines (`plainLine`), numbers whole,
+ * on one line of the output or across them; else, when it is written as one, as a regular expression.
+ * When it does not, the line it comes closest to: the same words with other numbers in it (`pass 3` for
+ * `pass 4`), else the output's last line.
+ */
+export function outputMatch(expected: string, output: string): { shown: true } | { shown: false; saw: string | null } {
+  const want = expected.split(/\r?\n/).map(plainLine).filter(Boolean).join(" ");
+  if (!want) return { shown: true };
+  const lines = output.split(/\r?\n/).map((line) => ({ raw: line.replace(ANSI, "").trim(), plain: plainLine(line) })).filter((line) => line.plain);
+  if (lines.some((line) => holds(line.plain, want)) || holds(lines.map((line) => line.plain).join(" "), want)) return { shown: true };
+  if (PATTERN.test(expected) && outputShows(expected, output)) return { shown: true };
+  const shape = (text: string) => text.replace(/\d+(?:[.,]\d+)*/g, "0");
+  return { shown: false, saw: (lines.find((line) => shape(line.plain).includes(shape(want))) ?? lines.at(-1))?.raw ?? null };
+}
+
+/** A test runner a check's command runs: its output depends on its reporter (TAP, spec, dots), its exit code does not. */
+const TEST_RUNNERS = [
+  /\b(?:node|tsx|bun|deno)\b[^;&|]*\s--test\b/,
+  /\b(?:bun|deno)\s+test\b/,
+  /\b(?:npm|pnpm|yarn|bun)\b(?:\s+--?[\w-]+(?:[= ][^\s;&|-]\S*)?)*\s+(?:run\s+)?(?:test|t)(?:[:-][\w:-]*)?(?=\s|$)/,
+  /\b(?:pytest|py\.test)\b|\bpython3?\s+-m\s+pytest\b/,
+  /\bcargo\s+(?:\+\S+\s+)?(?:test|nextest)\b/,
+  /\bgo\s+test\b/,
+  /\b(?:vitest|jest|mocha)\b/,
+];
+
+export function isTestRunner(command: string): boolean {
+  return command.split(/&&|\|\||[;|\n]/).some((part) => TEST_RUNNERS.some((runner) => runner.test(part)));
+}
+
 /** The shell's line for a program it could not find (`sh: 1: cargo: not found`, PowerShell's "is not recognized"). */
 const NOT_FOUND = /^.*(?:command not found|: not found|is not recognized as (?:the name of )?a cmdlet).*$/m;
 
+export type CheckVerdict = "pass" | "fail" | "not_run" | "uncertain";
+
 /**
- * A rerun's verdict: what it expects, failures a test runner reported, and a time limit that ran out.
- * A program the shell did not find here (exit 127) says nothing about the agent's work: not run.
+ * A rerun's verdict. The exit code decides, with a test runner's own count of failures (a run can exit 0
+ * and still report failures: a pipe into `tee`, `|| true`) and a time limit that ran out. A program the
+ * shell did not find here (exit 127) says nothing about the agent's work: not run. What the output should
+ * show is compared leniently (`outputMatch`), never for a test runner (`isTestRunner`), and a difference
+ * after exit 0 makes the check uncertain, not failed.
  */
-export function rerunVerdict(result: Pick<RunResult, "exitCode" | "timedOut" | "killed" | "output">, expects: Expects): { verdict: "pass" | "fail" | "not_run"; reason: string | null; counts: TestCounts | null } {
+export function rerunVerdict(result: Pick<RunResult, "exitCode" | "timedOut" | "killed" | "output">, expects: Expects, command = ""): { verdict: CheckVerdict; reason: string | null; counts: TestCounts | null } {
   const counts = testCounts(result.output);
   if (result.timedOut) return { verdict: "fail", reason: `It did not finish within ${CHECK_TIMEOUT_MS / 60_000} minutes.`, counts };
   if (result.killed) return { verdict: "fail", reason: "It was stopped before it finished.", counts };
@@ -90,8 +151,12 @@ export function rerunVerdict(result: Pick<RunResult, "exitCode" | "timedOut" | "
   if (result.exitCode === 127 || (process.platform === "win32" && result.exitCode !== 0 && missing)) {
     return { verdict: "not_run", reason: `A program it needs was not found here${missing ? ` (${missing.slice(0, 200)})` : ` (exit ${result.exitCode})`}.`, counts };
   }
-  if (expects === "exit_0") return result.exitCode === 0 ? { verdict: "pass", reason: null, counts } : { verdict: "fail", reason: `It exited ${result.exitCode}.`, counts };
-  return outputShows(expects.outputMatches, result.output) ? { verdict: "pass", reason: null, counts } : { verdict: "fail", reason: "Its output did not show what the check expects.", counts };
+  if (result.exitCode !== 0) return { verdict: "fail", reason: `It exited ${result.exitCode}.`, counts };
+  if (expects === "exit_0") return { verdict: "pass", reason: null, counts };
+  if (isTestRunner(command)) return { verdict: "pass", reason: "Its output was not compared: a test runner's exit code decides.", counts };
+  const match = outputMatch(expects.outputMatches, result.output);
+  if (match.shown) return { verdict: "pass", reason: null, counts };
+  return { verdict: "uncertain", reason: `Output differed: expected ${quoted(expects.outputMatches)}, saw ${match.saw ? quoted(match.saw) : "no output"}.`, counts };
 }
 
 export type CheckRun = {
@@ -102,8 +167,11 @@ export type CheckRun = {
   expects: Expects;
   /** What the agent said. */
   claimed: Check["verdict"];
-  /** What Ensemble's run showed; `not_run` when the run's rules did not let it run (with why). */
-  verdict: "pass" | "fail" | "not_run";
+  /**
+   * What Ensemble's run showed; `not_run` when it could not run here (with why); `uncertain` when it
+   * exited 0 but its output did not show what the agent said it would.
+   */
+  verdict: CheckVerdict;
   reason: string | null;
   exitCode: number | null;
   ms: number;
@@ -249,14 +317,14 @@ export async function rerunChecks(ctx: JobContext, report: StepReport, options: 
       runs.push({ ...base, verdict: "not_run", reason: `Ensemble could not start it here: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000) });
       continue;
     }
-    const verdict = rerunVerdict(result, check.rerun.expects);
+    const verdict = rerunVerdict(result, check.rerun.expects, check.rerun.command);
     runs.push({ ...base, verdict: verdict.verdict, reason: verdict.reason, exitCode: result.exitCode, ms: result.ms, counts: verdict.counts, output: keep(result.output, options.secrets ?? []) });
   }
   return runs;
 }
 
 export type ConversationState = "finished" | "failed" | "stopped" | "interrupted";
-export type ChecksState = "none" | "passed" | "failed" | "unverified";
+export type ChecksState = "none" | "passed" | "failed" | "uncertain" | "unverified";
 export type AcceptedState = "pending" | "accepted" | "rejected";
 export type PullRequestState = "none" | "opened" | "merged";
 
@@ -265,7 +333,7 @@ export type Completion = {
   at: string;
   conversation: { state: ConversationState };
   files: { state: "none" | "changed"; count: number; added: number; removed: number };
-  checks: { state: ChecksState; passed: number; failed: number; notRun: number; claimed: number; runs: CheckRun[] };
+  checks: { state: ChecksState; passed: number; failed: number; notRun: number; uncertain: number; claimed: number; runs: CheckRun[] };
   accepted: { state: AcceptedState; by: "owner" | "reviewer" | null; at: string | null };
   pr: { state: PullRequestState; url: string | null; source: "ensemble" | "observed" | null };
   /** The agent's own report_result outcome, as it said it. */
@@ -279,7 +347,7 @@ const CheckRunSchema = z.object({
   cwd: z.string().max(1000).nullable(),
   expects: z.union([z.literal("exit_0"), z.object({ outputMatches: z.string().max(500) })]),
   claimed: z.enum(["pass", "fail", "blocked", "skipped"]),
-  verdict: z.enum(["pass", "fail", "not_run"]),
+  verdict: z.enum(["pass", "fail", "not_run", "uncertain"]),
   reason: z.string().max(2000).nullable(),
   exitCode: z.number().int().nullable(),
   ms: z.number().min(0),
@@ -293,7 +361,7 @@ export const CompletionSchema = z.object({
   at: z.string().max(40),
   conversation: z.object({ state: z.enum(["finished", "failed", "stopped", "interrupted"]) }),
   files: z.object({ state: z.enum(["none", "changed"]), count: z.number().int().min(0), added: z.number().int().min(0), removed: z.number().int().min(0) }),
-  checks: z.object({ state: z.enum(["none", "passed", "failed", "unverified"]), passed: z.number().int().min(0), failed: z.number().int().min(0), notRun: z.number().int().min(0), claimed: z.number().int().min(0), runs: z.array(CheckRunSchema).max(50) }),
+  checks: z.object({ state: z.enum(["none", "passed", "failed", "uncertain", "unverified"]), passed: z.number().int().min(0), failed: z.number().int().min(0), notRun: z.number().int().min(0), uncertain: z.number().int().min(0).default(0), claimed: z.number().int().min(0), runs: z.array(CheckRunSchema).max(50) }),
   accepted: z.object({ state: z.enum(["pending", "accepted", "rejected"]), by: z.enum(["owner", "reviewer"]).nullable(), at: z.string().max(40).nullable() }),
   pr: z.object({ state: z.enum(["none", "opened", "merged"]), url: z.string().max(2000).nullable(), source: z.enum(["ensemble", "observed"]).nullable() }),
   claim: z.object({ outcome: z.enum(REPORT_OUTCOMES).nullable() }),
@@ -317,9 +385,10 @@ export function completionOf(input: {
   const passed = input.runs.filter((row) => row.verdict === "pass").length;
   const failed = input.runs.filter((row) => row.verdict === "fail").length;
   const notRun = input.runs.filter((row) => row.verdict === "not_run").length;
+  const uncertain = input.runs.filter((row) => row.verdict === "uncertain").length;
   const claimed = input.report?.checks?.length ?? 0;
   const unrunnable = claimed - input.runs.length;
-  const checks: ChecksState = failed ? "failed" : passed && !notRun && !unrunnable ? "passed" : claimed ? "unverified" : "none";
+  const checks: ChecksState = failed ? "failed" : uncertain ? "uncertain" : passed && !notRun && !unrunnable ? "passed" : claimed ? "unverified" : "none";
   return {
     schema: COMPLETION_SCHEMA,
     at: (input.now ?? new Date()).toISOString(),
@@ -330,7 +399,7 @@ export function completionOf(input: {
       added: input.files.reduce((sum, file) => sum + (file.added || 0), 0),
       removed: input.files.reduce((sum, file) => sum + (file.removed || 0), 0),
     },
-    checks: { state: checks, passed, failed, notRun, claimed, runs: input.runs },
+    checks: { state: checks, passed, failed, notRun, uncertain, claimed, runs: input.runs },
     accepted: { state: "pending", by: null, at: null },
     pr: input.pr,
     claim: { outcome: input.report?.outcome ?? null },

@@ -1089,12 +1089,14 @@ export type TurnCompletion = {
   conversation: { state: "finished" | "failed" | "stopped" | "interrupted" };
   files: { state: "none" | "changed"; count: number; added: number; removed: number };
   checks: {
-    state: "none" | "passed" | "failed" | "unverified";
+    state: "none" | "passed" | "failed" | "uncertain" | "unverified";
     passed: number;
     failed: number;
     notRun: number;
+    /** Exited 0 but did not show what the agent said it would; missing from records made before. */
+    uncertain?: number;
     claimed: number;
-    runs: Array<{ name: string; id: string | null; command: string; claimed: "pass" | "fail" | "blocked" | "skipped"; verdict: "pass" | "fail" | "not_run"; reason: string | null; exitCode: number | null; ms: number; output: string }>;
+    runs: Array<{ name: string; id: string | null; command: string; claimed: "pass" | "fail" | "blocked" | "skipped"; verdict: "pass" | "fail" | "not_run" | "uncertain"; reason: string | null; exitCode: number | null; ms: number; output: string }>;
   };
   accepted: { state: "pending" | "accepted" | "rejected"; by: "owner" | "reviewer" | null; at: string | null };
   pr: { state: "none" | "opened" | "merged"; url: string | null; source: "ensemble" | "observed" | null };

@@ -52,6 +52,29 @@ test("a turn's states each stand apart: finished, files, checks Ensemble ran aga
   }
 });
 
+test("a check that exited 0 but showed other output is uncertain: neither passed nor failed", () => {
+  const uncertain = completion({
+    checks: {
+      state: "uncertain",
+      passed: 1,
+      failed: 0,
+      notRun: 0,
+      uncertain: 1,
+      claimed: 2,
+      runs: [
+        { name: "build", id: "AC-1", command: "node build.js", claimed: "pass", verdict: "uncertain", reason: 'Output differed: expected "# Built 3 files", saw "ℹ Built 2 files".', exitCode: 0, ms: 40, output: "ℹ Built 2 files" },
+        { name: "tests", id: null, command: "npm test", claimed: "pass", verdict: "pass", reason: "Its output was not compared: a test runner's exit code decides.", exitCode: 0, ms: 900, output: "" },
+      ],
+    },
+  });
+  const checks = stateParts(uncertain).find((part) => part.text.startsWith("Checks"));
+  assert.deepEqual(checks, { text: "Checks uncertain (1 of 2)", tone: "warn" });
+  assert.deepEqual(checkLines(uncertain), [
+    'AC-1 build: the agent said pass; Ensemble\'s run exited 0. Output differed: expected "# Built 3 files", saw "ℹ Built 2 files".',
+    "tests: the agent said pass; Ensemble's run passed. Its output was not compared: a test runner's exit code decides.",
+  ]);
+});
+
 test("a new session says where it came from; a turn in the same session says nothing", async () => {
   const handed = await render(<SessionStart turn={{ provider: "codex", packet: null, handoff: { id: "hof_20261121_abc123", reason: "agent", from: "claude-code", model: "claude-sonnet-4-5", chars: 2400 } }} />);
   const forked = await render(<SessionStart turn={{ provider: "claude-code", packet: { mode: "full", operation: "fork", version: "v", base: "v", chars: 10, sections: 3, items: { sent: 0, changed: 0, added: 0, removed: 0 }, skills: [], criteria: [] }, handoff: null }} />);

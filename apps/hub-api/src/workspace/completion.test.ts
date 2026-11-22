@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import test, { after } from "node:test";
 import type { StepReport } from "../node/report.js";
-import { agentCommandEnv, completionOf, rerunChecks, rerunVerdict, testCounts } from "./completion.js";
+import { agentCommandEnv, completionOf, isTestRunner, rerunChecks, rerunVerdict, testCounts } from "./completion.js";
 import type { JobContext } from "./tools.js";
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-completion-")));
@@ -35,10 +35,41 @@ test("a test runner's own summary decides: exit 0 with a failing test is a failu
   assert.equal(rerunVerdict(result(0, "ok"), "exit_0").verdict, "pass");
   assert.equal(rerunVerdict(result(2, "boom"), "exit_0").verdict, "fail");
   assert.equal(rerunVerdict(result(0, "Built 3 files"), { outputMatches: "Built \\d+ files" }).verdict, "pass");
-  assert.equal(rerunVerdict(result(0, "Built none"), { outputMatches: "Built \\d+ files" }).verdict, "fail");
+  assert.equal(rerunVerdict(result(0, "Built none"), { outputMatches: "Built \\d+ files" }).verdict, "uncertain");
   // A pattern that could take forever is matched as plain text.
   assert.equal(rerunVerdict(result(0, "(a+)+$ is in the output"), { outputMatches: "(a+)+$" }).verdict, "pass");
   assert.equal(rerunVerdict({ ...result(-1, ""), timedOut: true }, "exit_0").verdict, "fail");
+});
+
+test("the exit code decides; what the output shows is compared leniently, and a difference with exit 0 is uncertain, not a failure", () => {
+  // Node's TAP reporter where the agent ran it, its spec reporter where Ensemble did: the same tests passing.
+  const spec = "\n> fixture@1.0.0 test\n> node --test\n\n✔ sums the lines (0.88ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\n";
+  assert.equal(rerunVerdict(result(0, spec), { outputMatches: "# pass 4" }, "node scripts/report.js").verdict, "pass", "reporter marks, colours and case are set aside");
+  assert.equal(rerunVerdict(result(0, "\u001b[32m✔  Built   3 files\u001b[0m\n"), { outputMatches: "# built 3 FILES" }, "node build.js").verdict, "pass");
+  const fewer = rerunVerdict(result(0, "ℹ Built 2 files\n"), { outputMatches: "# Built 3 files" }, "node build.js");
+  assert.equal(fewer.verdict, "uncertain", "the numbers in it are compared");
+  assert.equal(fewer.reason, 'Output differed: expected "# Built 3 files", saw "ℹ Built 2 files".');
+  assert.equal(rerunVerdict(result(0, "ℹ pass 40\nBuilt 13 files\n"), { outputMatches: "pass 4" }, "node report.js").verdict, "uncertain", "4 is not 40");
+  assert.equal(rerunVerdict(result(0, "Built 13 files\n"), { outputMatches: "3 files" }, "node build.js").verdict, "uncertain");
+  assert.match(rerunVerdict(result(0, ""), { outputMatches: "Built 3 files" }, "node build.js").reason ?? "", /saw no output/);
+  assert.equal(rerunVerdict(result(1, "ℹ Built 3 files\n"), { outputMatches: "Built 3 files" }, "node build.js").verdict, "fail", "a command that failed fails, whatever it printed");
+  assert.equal(rerunVerdict(result(127, "sh: 1: node: not found\n"), { outputMatches: "Built 3 files" }, "node build.js").verdict, "not_run");
+
+  // A test runner's output depends on its reporter: its exit code (and its own count of failures) decides.
+  const runner = rerunVerdict(result(0, spec), { outputMatches: "4 passing" }, "npm test");
+  assert.equal(runner.verdict, "pass");
+  assert.match(runner.reason ?? "", /not compared/);
+  assert.equal(rerunVerdict(result(0, "ℹ pass 3\nℹ fail 1\n"), { outputMatches: "# pass 4" }, "npm test").verdict, "fail");
+  for (const command of ["node --test", "npx tsx --test src/a.test.ts", "cd web && npm test -- export", "npm run test:unit", "pnpm --filter @fieldnote/web test", "yarn test", "pytest -q tests/test_export.py", "python -m pytest", "cargo test --all", "go test ./...", "npx vitest run", "jest --ci", "bun test"]) {
+    assert.ok(isTestRunner(command), command);
+  }
+  for (const command of ["node scripts/build.js", "npm run build", "git diff --check", "echo test", "cat test.txt", "ls tests"]) {
+    assert.ok(!isTestRunner(command), command);
+  }
+
+  const report: StepReport = { outcome: "pass", summary: "Done.", checks: [{ name: "export", verdict: "pass", rerun: { command: "node build.js", expects: { outputMatches: "Built 3 files" } } }] };
+  const uncertain = completionOf({ outcome: "success", files: [], report, runs: [{ name: "export", id: null, command: "node build.js", cwd: null, expects: { outputMatches: "Built 3 files" }, claimed: "pass", verdict: "uncertain", reason: fewer.reason, exitCode: 0, ms: 4, counts: null, output: "ℹ Built 2 files" }], pr: { state: "none", url: null, source: null } });
+  assert.deepEqual([uncertain.checks.state, uncertain.checks.passed, uncertain.checks.failed, uncertain.checks.uncertain], ["uncertain", 0, 0, 1], "not passed, not failed: uncertain");
 });
 
 test("Ensemble runs each reported check again under the run's rules: a claimed pass that fails is a failed check", async () => {
