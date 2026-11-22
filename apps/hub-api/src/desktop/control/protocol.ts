@@ -102,6 +102,12 @@ export type HelperApp = {
   windows: Array<{ index: number; title: string; role: string; active: boolean; showing: boolean; iconified: boolean; box?: [number, number, number, number] | null; z?: number | null }>;
 };
 
+/**
+ * The windows the system itself finds at points (`a11y.apps` with `points`, on Windows): one entry per pixel a point
+ * may land on, null where no window is. `ok: false` when the system could not say: then no point's window is known.
+ */
+export type HitTest = { ok: true; hits: Array<{ app: HelperApp; window: HelperApp["windows"][number] } | null> } | { ok: false; reason?: string };
+
 export type FocusInfo = {
   app: { name: string; toolkit: string; pid: number | null; app_id: string | null } | null;
   window: { index: number | null; title: string; role: string } | null;

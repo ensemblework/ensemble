@@ -9,7 +9,9 @@
 // or with `--embedded` the launching app's (`host_accessibility`, `host_screen_recording`). `noise` writes lines
 // that are not MCP messages before each answer. `frontAfterTypes` brings an app to the front (its windows on top
 // unless `raise` is false) after that many typed chunks; `failAfterTypes` makes one tool fail from then on.
-// FAKE_CUA_LOG gets one JSON line per tool call.
+// FAKE_CUA_LOG gets one JSON line per tool call. With `platform: "windows"` the windows and which app is in front are
+// also written to `<FAKE_CUA_STATE>.screen.json` whenever they change, for the stand-in session probe; a window with
+// `unlisted` (untitled) is not listed, one with `cloaked` is listed on the screen as cua-driver does.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -30,6 +32,11 @@ const world = {
   ...read(),
 };
 const WINDOWS = world.platform === "windows";
+/** The windows and the app in front, for the stand-in session probe (fake-windows-probe.mjs). */
+function publish() {
+  if (WINDOWS && STATE) writeFileSync(`${STATE}.screen.json`, JSON.stringify({ windows: world.windows, apps: world.apps.map(({ pid, name, active, running }) => ({ pid, name, active, running })) }));
+}
+publish();
 const EMBEDDED = process.argv.includes("--embedded") || process.env.CUA_DRIVER_EMBEDDED === "1";
 const granted = EMBEDDED
   ? { accessibility: world.host_accessibility === true, screen_recording: world.host_screen_recording === true }
@@ -173,7 +180,7 @@ const tools = {
   },
   get_screen_size: () => ok({ width: world.screen.width, height: world.screen.height, scale_factor: world.screen.scale }),
   list_apps: () => ok({ apps: world.apps.map(({ pid, name, bundle_id, running, active, launch_path }) => ({ pid: running ? pid : 0, name, ...(bundle_id ? { bundle_id } : {}), running: Boolean(running), active: Boolean(active), ...(launch_path ? { launch_path } : {}), kind: "desktop" })) }),
-  list_windows: (args) => ok({ windows: world.windows.filter((win) => args.pid === undefined || win.pid === args.pid).filter((win) => !args.on_screen_only || win.is_on_screen) }),
+  list_windows: (args) => ok({ windows: world.windows.filter((win) => !win.unlisted && (args.pid === undefined || win.pid === args.pid)).filter((win) => !args.on_screen_only || win.is_on_screen).map(({ unlisted, cloaked, program, ...win }) => win) }),
   get_window_state: (args) => {
     if (!granted.accessibility) return failed("Accessibility permission is not granted: AXIsProcessTrusted() is false.");
     const win = world.windows.find((item) => item.window_id === args.window_id && item.pid === args.pid);
@@ -224,6 +231,7 @@ const tools = {
       for (const app of world.apps) app.active = app.pid === front.pid;
       const top = Math.max(0, ...world.windows.map((win) => win.z_index ?? 0));
       if (front.raise !== false) for (const win of world.windows) if (win.pid === front.pid) win.z_index = top + 1;
+      publish();
     }
     return ok(action(live.effects?.type_text ?? "confirmed", { route: args.element_token ? "accessibility" : "synthetic_events" }));
   },
@@ -243,6 +251,7 @@ const tools = {
     const app = world.apps.find((item) => (args.bundle_id ? item.bundle_id === args.bundle_id : args.aumid ? item.launch_path === `shell:appsFolder\\${args.aumid}` : args.launch_path ? item.launch_path === args.launch_path : args.path ? item.launch_path === args.path : item.name === args.name || item.launch_path === args.name));
     if (!app) return failed(`App not installed: ${args.bundle_id ?? args.name}`, { error: "APP_NOT_INSTALLED", suggestions: [] });
     app.running = true;
+    publish();
     // `launch_pid`: the process launch_app answers with is not the one whose window shows (a packaged app's host).
     const pid = app.launch_pid ?? app.pid;
     const windows = world.windows.filter((win) => win.pid === pid);
@@ -254,6 +263,7 @@ const tools = {
       const target = args.window_id ?? world.windows.find((win) => win.pid === args.pid)?.window_id ?? 0;
       if (live.foregroundLocked) return failed(`bring_to_front: exact target hwnd 0x${target.toString(16)} was raised in z-order, but Windows kept foreground on hwnd 0x1; foreground activation failed.`, { code: "foreground_unavailable", effect: "refused", pid: args.pid, window_id: target, landed_on_target: false, raised: true });
       for (const app of world.apps) app.active = app.pid === args.pid;
+      publish();
       return ok({ previous_fg_hwnd: "0x1", now_fg_hwnd: `0x${target.toString(16)}`, target_hwnd: `0x${target.toString(16)}`, landed_on_target: true, raised: true, restored: false });
     }
     for (const app of world.apps) app.active = app.pid === args.pid;

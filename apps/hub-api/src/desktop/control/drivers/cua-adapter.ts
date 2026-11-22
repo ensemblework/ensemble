@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { isBrowserToolkit, keyboardFloor } from "../floor.js";
 import type { HelperCommand, HelperHealth } from "../helper-process.js";
 import { fit } from "../mapping.js";
-import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperErrorKind, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "../protocol.js";
+import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperErrorKind, type HitTest, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "../protocol.js";
 import { McpStdioClient, type McpResult } from "./mcp-stdio.js";
 import { mp4Facts } from "./mp4.js";
 import { cropPixels, decodePng, encodePng, hashBytes, pngSize, shrinkPixels } from "./png.js";
@@ -70,7 +70,8 @@ type Recording = { id: string; dir: string; path: string; active: boolean; reaso
  * it acted on the desktop yet (so a request cut short says it ran).
  */
 export type Ctx = { until: number; signal?: AbortSignal; stops: number; sent: boolean };
-export type Front = { apps: RunningApp[]; wins: Win[]; app: RunningApp | null; top: Win | null; prompt: { title: string } | null };
+/** `keyboardUnknown`: the system did not say which window has the keyboard (Windows), so nothing is typed. */
+export type Front = { apps: RunningApp[]; wins: Win[]; app: RunningApp | null; top: Win | null; prompt: { title: string } | null; keyboardUnknown?: boolean };
 /** Why typing ended before the end of the text (the service says each in its words). */
 type TypingStop = "focus_moved" | "owner_input" | "out_of_time" | "cancelled";
 export type Shot = { png: Buffer; size: { width: number; height: number }; native: { width: number; height: number } };
@@ -375,7 +376,7 @@ export abstract class CuaAdapter extends EventEmitter {
       case "frame.settle":
         return this.settle(num(params.min_ms) ?? 0, num(params.timeout_ms) ?? 1_000, ctx).then(({ settled, hash }) => ({ settled, hash }));
       case "a11y.apps":
-        return this.appList(ctx);
+        return this.appList(params, ctx);
       case "a11y.focus":
         return this.focus(params, ctx);
       case "a11y.tree":
@@ -655,11 +656,23 @@ export abstract class CuaAdapter extends EventEmitter {
     };
   }
 
-  private async appList(ctx: Ctx): Promise<{ apps: HelperApp[]; units: number }> {
+  /** The running apps with their windows, and with `points` the window the system finds at each (where it says). */
+  private async appList(params: Record<string, unknown>, ctx: Ctx): Promise<{ apps: HelperApp[]; units: number; hit_test?: HitTest }> {
     await this.beforeApps();
     const [apps, wins] = [await this.apps(ctx), await this.windows(ctx)];
-    return { apps: apps.map((app) => this.helperApp(app, wins)), units: apps.length };
+    const listed = apps.map((app) => this.helperApp(app, wins));
+    const points = (Array.isArray(params.points) ? params.points : []).filter((point): point is [number, number] => Array.isArray(point) && point.length === 2 && point.every((value) => typeof value === "number" && Number.isFinite(value)));
+    const hitTest = points.length ? await this.hitTest(points, apps, wins, listed) : undefined;
+    return { apps: listed, units: apps.length, ...(hitTest ? { hit_test: hitTest } : {}) };
   }
+
+  /** The windows the system itself finds at screen points; undefined where the windows' places and order are the answer (macOS). */
+  protected async hitTest(_points: ReadonlyArray<[number, number]>, _apps: readonly RunningApp[], _wins: readonly Win[], _listed: readonly HelperApp[]): Promise<HitTest | undefined> {
+    return undefined;
+  }
+
+  /** Throws when the system cannot say which window keys would go to now (Windows). */
+  protected async keyboardReady(_ctx: Ctx): Promise<void> {}
 
   /** The app in front, its window in front (the top one that shows), and a password prompt of the system if one shows. */
   protected async front(ctx: Ctx): Promise<Front> {
@@ -950,6 +963,7 @@ export abstract class CuaAdapter extends EventEmitter {
 
   private async keys(params: Record<string, unknown>, ctx: Ctx): Promise<Record<string, unknown>> {
     await this.inputReady(ctx);
+    await this.keyboardReady(ctx);
     const { modifiers, key } = this.parseKeys(String(params.keys ?? ""));
     const repeat = Math.min(30, Math.max(1, num(params.repeat) ?? 1));
     let data: Record<string, unknown> = {};
@@ -972,6 +986,7 @@ export abstract class CuaAdapter extends EventEmitter {
     if (params.secret === true && this.recording) throw this.noSecretWhileRecording();
     const chars = [...(typeof params.text === "string" ? params.text : "")];
     const start = await this.front(ctx);
+    if (start.keyboardUnknown) throw new HelperError("input_failed", `${this.system} did not say which window has the keyboard, so nothing was typed. Look again in a moment.`, "no");
     const startTop = topWindow(start.wins);
     const effects: string[] = [];
     let typed = 0;
@@ -1013,7 +1028,7 @@ export abstract class CuaAdapter extends EventEmitter {
    * Whether the keyboard may no longer reach where typing began: another window on top, a password prompt, or the
    * floor refusing the window now (its title can change); with `full`, also another app in front.
    */
-  private async focusMoved(start: Front, startTop: Win | null, full: boolean, ctx: Ctx): Promise<boolean> {
+  protected async focusMoved(start: Front, startTop: Win | null, full: boolean, ctx: Ctx): Promise<boolean> {
     if (full) {
       const now = await this.front(ctx);
       return now.app?.pid !== start.app?.pid || !sameWindow(topWindow(now.wins), startTop) || now.prompt !== null || keyboardFloor(this.focusOf(now, true)) !== null;

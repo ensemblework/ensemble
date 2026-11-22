@@ -10,7 +10,7 @@ on:
     paths:
       - apps/hub-api/src/desktop/control/**
       - apps/hub-api/desktop-helper/windows/**
-      - apps/hub-api/scripts/desktop-windows-smoke.ts
+      - apps/hub-api/scripts/desktop-windows-smoke*
       - scripts/fetch-cua-driver*
       - .github/workflows/desktop-windows-smoke.yml
   workflow_dispatch:

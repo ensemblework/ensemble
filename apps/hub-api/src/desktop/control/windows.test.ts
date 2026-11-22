@@ -21,6 +21,7 @@ type Service = InstanceType<typeof DesktopService>;
 type Driver = InstanceType<typeof WindowsCuaDriver>;
 type Caller = import("./service.js").Caller;
 type GateApp = import("./service.js").GateApp;
+type HelperApp = import("./protocol.js").HelperApp;
 
 const FAKE = fileURLToPath(new URL("./fake-cua-driver.mjs", import.meta.url));
 const PROBE = fileURLToPath(new URL("./fake-windows-probe.mjs", import.meta.url));
@@ -315,6 +316,70 @@ test("the floor: Ensemble's own windows, browsers (minimised too), pages that sh
   assert.equal(programName("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"), "chrome");
 });
 
+test("a click is judged by the window Windows finds at its point: not one cloaked on another virtual desktop, but an untitled popup; when Windows cannot say, refused while Ensemble shows and every sensitive app that shows is asked", async () => {
+  const scale = 1568 / 2880;
+  // This desktop: Explorer in front of Ensemble. Notepad, maximised on another virtual desktop, is cloaked here, and
+  // cua-driver lists it on the screen between them. An untitled popup of Ensemble's, which cua-driver does not list, is over Explorer.
+  const world = {
+    apps: [...PC.apps.map((app) => ({ ...app, active: false })), { pid: 208, name: "File Explorer", bundle_id: "C:\\Windows\\explorer.exe", launch_path: "C:\\Windows\\explorer.exe", running: true, active: true }],
+    windows: [
+      { window_id: 81, pid: 208, app_name: "explorer.exe", title: "Documents", bounds: { x: 0, y: 0, width: 1000, height: 700 }, is_on_screen: true, z_index: 40, layer: 0, minimized: false },
+      { ...PC.windows[0]!, bounds: { x: 0, y: 0, width: 2880, height: 1800 }, z_index: 30, cloaked: true },
+      ...PC.windows.slice(1),
+      { window_id: 22, pid: 202, app_name: "Ensemble.exe", title: "", bounds: { x: 100, y: 100, width: 300, height: 200 }, is_on_screen: true, z_index: 50, layer: 0, minimized: false, unlisted: true },
+    ],
+  };
+  const h = pc({ world });
+  const listed = await h.driver.call<{ apps: HelperApp[] }>("a11y.apps", {}, { timeoutMs: 10_000 });
+  assert.equal(listed.apps.find((app) => app.pid === 201)!.windows[0]!.showing, false, "a cloaked window does not show");
+  for (const [x, y, what] of [[1600, 400, "Ensemble's window, under the cloaked Notepad"], [200, 150, "Ensemble's untitled popup over Explorer"]] as const) {
+    const look = await h.service.observe(caller(), {});
+    const done = await h.service.act(caller(), { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: x * scale, y: y * scale }] });
+    assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.rule], ["refused", "ensemble_window"], `${what}: ${done.steps[0]!.detail}`);
+  }
+  const look = await h.service.observe(caller(), {});
+  const explorer = await h.service.act(caller(), { captureId: look.captureId, foreground: true, steps: [{ action: "click", x: 600 * scale, y: 500 * scale }] });
+  assert.equal(explorer.steps[0]!.ran, "yes", "Explorer, where Windows finds it");
+  assert.equal(h.calls().filter((call) => call.tool === "click").length, 1);
+
+  // Windows cannot say: refused while a window of Ensemble's shows anywhere.
+  h.session({ fail: { windows: "the probe did not answer" } });
+  const blind = await h.service.observe(caller(), {});
+  const refused = await h.service.act(caller(), { captureId: blind.captureId, foreground: true, steps: [{ action: "click", x: 600 * scale, y: 500 * scale }] });
+  assert.deepEqual([refused.steps[0]!.verdict, refused.steps[0]!.rule], ["refused", "ensemble_window"], refused.steps[0]!.detail);
+  // With no Ensemble window or browser, every sensitive app that shows is asked about, not only the one at the point.
+  const quiet = pc({ world: { ...world, windows: world.windows.filter((win) => win.pid !== 202 && win.pid !== 203) }, probe: { fail: { windows: "the probe did not answer" } } });
+  const asked: GateApp[] = [];
+  const owner = caller("node:n1:m1", { gate: async (app) => (asked.push(app), { allow: true }) });
+  const shot = await quiet.service.observe(owner, {});
+  const sent = await quiet.service.act(owner, { captureId: shot.captureId, foreground: true, steps: [{ action: "click", x: 600 * scale, y: 500 * scale }] });
+  assert.equal(sent.steps[0]!.ran, "yes", JSON.stringify(sent.steps[0]));
+  assert.ok(asked.some((app) => app.name === "Windows PowerShell"), JSON.stringify(asked.map((app) => app.name)));
+});
+
+test("browsers Windows has registered are browsers; a browser window titled with a Hub page's title shows Ensemble", async () => {
+  const program = "C:\\Program Files\\AVAST Software\\Browser\\Application\\AvastBrowser.exe";
+  const h = pc({
+    world: {
+      apps: [...PC.apps, { pid: 209, name: "Avast Secure Browser", bundle_id: program, launch_path: program, running: true, active: false }],
+      windows: [...PC.windows, { window_id: 91, pid: 209, app_name: "AvastBrowser.exe", title: "Today · Ensemble - Avast Secure Browser", bounds: { x: 200, y: 200, width: 1000, height: 800 }, is_on_screen: true, z_index: 60, layer: 0, minimized: false }],
+      elements: { ...PC.elements, "91": [{ element_index: 1, role: "Button", label: "Approve", actions: ["invoke"], frame: { x: 300, y: 300, w: 100, h: 30 }, enabled: true }] },
+    },
+    probe: { browsers: [{ name: "AVAST Software Browser", program }] },
+  });
+  const listed = await h.driver.call<{ apps: HelperApp[] }>("a11y.apps", {}, { timeoutMs: 10_000 });
+  assert.equal(listed.apps.find((app) => app.pid === 209)!.toolkit, "Web");
+  await h.service.observe(caller(), { app: "Avast Secure Browser", screenshot: false });
+  const pressed = await h.service.act(caller(), { steps: [{ action: "press", element: "e1" }] });
+  assert.deepEqual([pressed.steps[0]!.verdict, pressed.steps[0]!.rule], ["refused", "ensemble_page"], pressed.steps[0]!.detail);
+  assert.ok(!h.calls().some((call) => call.tool === "click"));
+  const front = (app: { name: string; toolkit: string; app_id: string }, title: string) => ({ app: { ...app, pid: 1 }, window: { index: 0, title, role: "window" }, shell: false, prompt: null, focused: null, documents: [] });
+  for (const [app, title] of [[{ name: "Iron", app_id: "C:\\Program Files\\SRWare Iron\\iron.exe", toolkit: "Web" }, "Today · Ensemble - Iron"], [{ name: "Firefox", app_id: "firefox.exe", toolkit: "Gecko" }, "Inbox · Ensemble Node — Mozilla Firefox"], [{ name: "Edge", app_id: "msedge.exe", toolkit: "Chromium" }, "Today · Ensemble - Personal - Microsoft Edge"]] as const) {
+    assert.equal(keyboardFloor(front(app, title))?.rule, "ensemble_page", title);
+  }
+  assert.equal(keyboardFloor(front({ name: "Notepad", app_id: "notepad.exe", toolkit: "Windows" }, "Today · Ensemble - Notepad")), null, "a file of that name in an app that is not a browser");
+});
+
 test("the keyboard: refused in a prompt or on User Account Control's secure desktop, which the owner is handed; sensitive apps are asked once", async () => {
   const h = pc();
   // The node remembers an answer for the app and mission (device-tools/policy.ts): asked once, by one id.
@@ -407,6 +472,21 @@ test("typing goes in chunks that stop when the window on top changes or the owne
   const cut = await acting;
   assert.deepEqual([cut.steps[0]!.verdict, cut.steps[0]!.ran], ["partial", "yes"]);
   assert.match(cut.steps[0]!.detail!, /the window in front changed/);
+});
+
+test("between typed chunks Windows says which window has the keyboard: a switch to Ensemble is seen at the next chunk though the windows' order stays; nothing is typed or pressed when it does not say", async () => {
+  const text = "abcdefgh".repeat(3);
+  const switched = pc({ world: { frontAfterTypes: { count: 1, pid: 202, raise: false } } });
+  const done = await switched.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(done.steps[0]!.detail!, /Typing stopped after 8 of 24 characters: the window in front changed/);
+  const blind = pc({ probe: { foreground: null } });
+  const typed = await blind.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([typed.steps[0]!.ran, typed.steps[0]!.code], ["no", "input_failed"], typed.steps[0]!.detail);
+  assert.match(typed.steps[0]!.detail!, /did not say which window has the keyboard/);
+  const keys = await blind.service.act(caller(), { foreground: true, steps: [{ action: "key", keys: "ctrl+s" }] });
+  assert.equal(keys.steps[0]!.ran, "no", keys.steps[0]!.detail);
+  assert.ok(!blind.calls().some((call) => call.tool === "type_text" || call.tool === "hotkey" || call.tool === "press_key"), "nothing reached the keyboard");
 });
 
 test("a run that ends stops its typing within a chunk; stopping desktop control kills a chunk not answered; ran stays honest", async () => {

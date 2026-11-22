@@ -8,7 +8,10 @@
  * types "Ensemble 0.9.1 on Windows" in chunks and reads it back through UI Automation, takes a
  * screenshot (not blank, the main display's size) and keeps it in `--out`, presses keys, records a few seconds
  * when ffmpeg is there (else checks that readiness says recording is unavailable), has the floor refuse a window
- * titled "Ensemble", and closes Notepad without saving (alt+F4, then "Don't save" by its element). Every action
+ * titled "Ensemble" (and an untitled popup of Ensemble's over Notepad, a window under a cloaked one, typing that stops at
+ * the next chunk when Ensemble takes the keyboard behind a window on top, and a browser Windows has registered that the
+ * program list does not know, with windows from desktop-windows-smoke-windows.cs), and closes Notepad without saving
+ * (alt+F4, then "Don't save" by its element). Every action
  * cua-driver is asked for is logged with its answer (and any call slower than 3 s), and a failed check lets the
  * rest run, so one run shows every step that fails; the run fails at the end. With `--foreground-may-be-held`, when
  * a window that is no app's keeps the foreground (Windows' first sign-in screen on the arm64 runner), the checks that
@@ -19,7 +22,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 if (process.platform !== "win32") throw new Error("The Windows desktop smoke test runs on Windows only.");
 const at = process.argv.indexOf("--out");
@@ -54,6 +58,30 @@ const heldOk = process.argv.includes("--foreground-may-be-held");
 let held: string | null = null;
 /** The app in front at the latest `frontApp()`. */
 let frontAppName = "";
+/** Run after each cua-driver call (the typing test switches the keyboard to Ensemble after the first chunk). */
+let afterCall: ((name: string) => Promise<void>) | null = null;
+// Windows PowerShell 5.1 with its own modules: PowerShell 7's module path (from the job's shell) breaks them.
+const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
+const powershell = (script: string) => spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: shellEnv, timeout: 120_000 });
+
+// The smoke's own windows (desktop-windows-smoke-windows.cs): Ensemble.exe, and copies under other names. A browser
+// Windows has registered (Clients\StartMenuInternet) that the program list does not know: iron.exe, before the driver
+// reads the registered browsers.
+const floorDir = join(out, "floor");
+mkdirSync(floorDir, { recursive: true });
+const ensembleExe = join(floorDir, "Ensemble.exe");
+const coverExe = join(floorDir, "smoke-cover.exe");
+const ironExe = join(floorDir, "iron.exe");
+const IRON_KEY = "HKCU:\\Software\\Clients\\StartMenuInternet\\EnsembleSmokeIron";
+{
+  const source = join(dirname(fileURLToPath(import.meta.url)), "desktop-windows-smoke-windows.cs");
+  const compiled = powershell(`Add-Type -Path '${source}' -OutputAssembly '${ensembleExe}' -OutputType WindowsApplication -ReferencedAssemblies System.Windows.Forms,System.Drawing`);
+  assert.equal(compiled.status, 0, compiled.stderr);
+  copyFileSync(ensembleExe, coverExe);
+  copyFileSync(ensembleExe, ironExe);
+  const registered = powershell(`New-Item -Path '${IRON_KEY}\\shell\\open\\command' -Force | Out-Null; Set-Item -Path '${IRON_KEY}\\shell\\open\\command' -Value '"${ironExe}"'`);
+  assert.equal(registered.status, 0, registered.stderr);
+}
 
 /** A check that lets the rest of the smoke run; the run fails at the end. */
 function expect(ok: unknown, message: string): boolean {
@@ -79,6 +107,13 @@ const probe = new HelperProcess({ spawn: () => windowsProbeCommand(), helloTimeo
 try {
   const state = await probe.call<Record<string, unknown>>("state", {}, { timeoutMs: 60_000 });
   console.log(`  ${JSON.stringify(state)}`);
+  // What Windows itself says about its windows and browsers, which the floor and typing go by.
+  const view = await probe.call<{ foreground: { title: string | null; program: string | null } | null; cloaked: number[]; at: Array<{ title: string | null; program: string | null } | null> }>("windows", { points: [[5, 5]] }, { timeoutMs: 30_000 });
+  console.log(`  windows: the keyboard's ${JSON.stringify(view.foreground)}, ${view.cloaked.length} cloaked, at (5,5) ${JSON.stringify(view.at[0])}`);
+  expect(Array.isArray(view.cloaked) && view.at.length === 1 && view.at[0] !== null, "the probe says which window is at a point");
+  const { browsers } = await probe.call<{ browsers: Array<{ name: string; program: string }> }>("browsers", {}, { timeoutMs: 30_000 });
+  console.log(`  registered browsers: ${JSON.stringify(browsers.map((item) => `${item.name}: ${item.program}`))}`);
+  expect(browsers.some((item) => item.program.toLowerCase() === ironExe.toLowerCase()), "the probe reads the browsers Windows has registered");
 } catch (error) {
   console.log(`  the probe failed: ${error instanceof Error ? error.message : String(error)}\n  its last output: ${probe.stderr()}`);
   throw error;
@@ -206,27 +241,84 @@ try {
     console.log("  no ffmpeg here: readiness says recording is unavailable, with the fix");
   }
 
-  step('the floor: a window titled "Ensemble"');
-  const exe = join(out, "smoke-window.exe");
-  // Windows PowerShell 5.1 with its own modules: PowerShell 7's module path (from the job's shell) breaks them.
-  const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
-  const compile = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Add-Type -OutputAssembly '${exe}' -OutputType WindowsApplication -ReferencedAssemblies System.Windows.Forms,System.Drawing -TypeDefinition 'using System.Windows.Forms; public static class SmokeWindow { public static void Main() { var form = new Form(); form.Text = "Ensemble"; form.Width = 480; form.Height = 320; var button = new Button(); button.Text = "Allow"; button.Width = 160; button.Height = 60; form.Controls.Add(button); Application.Run(form); } }'`], { encoding: "utf8", env: shellEnv });
-  assert.equal(compile.status, 0, compile.stderr);
-  children.push(spawn(exe, [], { stdio: "ignore", detached: false }));
-  let ensemble: Observation | null = null;
-  for (let tries = 0; tries < 30 && !ensemble?.tree?.elements.length; tries += 1) {
-    await sleep(500);
-    ensemble = await service.observe(caller, { app: "smoke-window", screenshot: false }).catch(() => null);
-  }
-  assert.ok(ensemble?.tree, "the window titled Ensemble can be read");
-  const allow = ensemble.tree.elements.find((element) => element.name === "Allow");
-  assert.ok(allow, JSON.stringify(ensemble.tree.elements));
+  step('the floor: a window titled "Ensemble" and its untitled popup over Notepad');
+  const textArea = (await editorPoint()).at;
+  const trigger = join(floorDir, "take-the-keyboard");
+  const main = { x: 560, y: 360, width: 440, height: 300 };
+  const popup = { x: textArea.x - 100, y: textArea.y - 30, width: 200, height: 60 };
+  launch(ensembleExe, ["ensemble", ...rect(main), ...rect(popup), trigger]);
+  const ensemble = await waitFor("Ensemble", (look) => look.tree?.elements.some((element) => element.name === "Allow") === true);
+  const allow = ensemble.tree!.elements.find((element) => element.name === "Allow")!;
   const pressed = await service.act(caller, { steps: [{ action: "press", element: allow.id }], observe: false });
-  console.log(`  ${JSON.stringify(pressed.steps)}`);
+  console.log(`  Allow, by its element: ${JSON.stringify(pressed.steps)}`);
   expect(pressed.steps[0]!.verdict === "refused" && pressed.steps[0]!.ran === "no" && pressed.steps[0]!.rule === "ensemble_window", "the floor refused the window titled Ensemble");
+  if (onScreen(() => true, "a click on Ensemble's untitled popup over Notepad is refused")) {
+    const hit = await hitAt(center(popup));
+    const clicked = await clickAt(center(popup));
+    console.log(`  Windows finds ${hit} at the popup; the click: ${JSON.stringify(clicked)}`);
+    expect(clicked.verdict === "refused" && clicked.rule === "ensemble_window", "a click on Ensemble's untitled popup over Notepad is refused");
+  }
+
+  step("a window cloaked as on another virtual desktop");
+  launch(coverExe, ["cover", ...rect(main)]);
+  const coverWindow = async () => (await listed()).flatMap((app) => app.windows).find((window) => window.title === "Cover");
+  for (let tries = 0; tries < 40 && !(await coverWindow()); tries += 1) await sleep(500);
+  // It cloaks itself once it shows.
+  await sleep(1_000);
+  const cover = await coverWindow();
+  const rawCover = ((await raw("list_windows", {})).structuredContent?.windows as Array<Record<string, unknown>> | undefined)?.find((window) => window.title === "Cover");
+  console.log(`  cua-driver lists it with is_on_screen ${String(rawCover?.is_on_screen)}; desktop control: ${JSON.stringify(cover)}`);
+  expect(cover && cover.showing === false, "a cloaked window does not show");
+  if (onScreen(() => true, "a click on Ensemble's window under the cloaked one is judged by the window Windows finds there")) {
+    const hit = await hitAt(center(main));
+    const clicked = await clickAt(center(main));
+    console.log(`  Windows finds ${hit} under the cloaked window; the click: ${JSON.stringify(clicked)}`);
+    expect(/ensemble/i.test(hit) ? clicked.verdict === "refused" && clicked.rule === "ensemble_window" : clicked.ran === "yes", `the click is judged by ${hit}`);
+  }
+  stopApp(coverExe);
+
+  step("typing stops at the next chunk when Ensemble takes the keyboard behind a window on top");
+  launch(coverExe, ["overlay", 10, 660, 220, 50]);
+  await sleep(1_500);
+  if (onScreen(() => true, "typing stops at the next chunk when Ensemble takes the keyboard") && expect(await notepadInFront(), "Notepad is in front to type")) {
+    const before = await notepadText();
+    const driverProbe = (driver as unknown as { options: { probe: { call<T>(method: string, params: Record<string, unknown>, options: { timeoutMs: number }): Promise<T> } } }).options.probe;
+    afterCall = async (name) => {
+      if (name !== "type_text") return;
+      afterCall = null;
+      writeFileSync(trigger, "now");
+      for (let tries = 0; tries < 40; tries += 1) {
+        await sleep(50);
+        const view = await driverProbe.call<{ foreground: { title: string | null } | null }>("windows", { points: [] }, { timeoutMs: 5_000 });
+        if (view.foreground?.title === "Ensemble") return;
+      }
+      console.log("  Ensemble did not take the keyboard");
+    };
+    const text = "abcdefgh".repeat(5);
+    const typed = await service.act(caller, { foreground: true, steps: [{ action: "type", text }], observe: false });
+    afterCall = null;
+    console.log(`  ${JSON.stringify(typed.steps)}; in front now: ${(await frontApp()) ?? "no app"}`);
+    expect(typed.steps[0]!.verdict === "partial" && /Typing stopped after 8 of 40 characters: the window in front changed/.test(typed.steps[0]!.detail ?? ""), "typing stopped after the first chunk");
+    const after = await notepadText();
+    expect(after === `${before}abcdefgh`, `Notepad got the first chunk only (${JSON.stringify(after)})`);
+    const notes = (await service.observe(caller, { app: "Ensemble", screenshot: false })).tree?.elements.find((element) => element.name === "Notes");
+    expect(notes && !notes.value, `nothing reached Ensemble's Notes box (${JSON.stringify(notes?.value)})`);
+  }
+  stopApp(coverExe);
+
+  step("a browser Windows has registered that the program list does not know");
+  launch(ironExe, ["browser", 40, 120, 420, 220]);
+  const iron = await waitFor("iron.exe", (look) => look.tree?.elements.some((element) => element.name === "Approve") === true);
+  const ironApp = (await listed()).find((app) => /^iron/i.test(app.name));
+  console.log(`  ${ironApp?.name}: toolkit ${ironApp?.toolkit}`);
+  expect(ironApp?.toolkit === "Web", "a registered browser is a browser");
+  const approve = await service.act(caller, { steps: [{ action: "press", element: iron.tree!.elements.find((element) => element.name === "Approve")!.id }], observe: false });
+  console.log(`  Approve, by its element: ${JSON.stringify(approve.steps)}`);
+  expect(approve.steps[0]!.verdict === "refused" && approve.steps[0]!.rule === "ensemble_page", "its window titled with a Hub page's title is refused as an Ensemble page");
   for (const child of children.splice(0)) child.kill();
 
   step("close Notepad without saving");
+  if (!held && (await notepadText()) && (await notepadInFront())) console.log(`  cleared: ${JSON.stringify((await service.act(caller, { foreground: true, steps: [{ action: "key", keys: "ctrl+a" }, { action: "key", keys: "BackSpace" }], observe: false })).steps)}`);
   // A title bar's Close button is not pressed through UI Automation in the background (cua-driver posts a click that
   // the title bar ignores): alt+F4 goes to Notepad in front, or its File menu's Exit is pressed in the background.
   if (!held && expect(await notepadInFront(), `Notepad is in front for alt+F4 (${(await frontApp()) ?? "no app"})`)) {
@@ -265,6 +357,7 @@ try {
   for (const child of children) child.kill();
   await service.stop().catch(() => undefined);
   await driver.stop().catch(() => undefined);
+  powershell(`Remove-Item -Path '${IRON_KEY}' -Recurse -Force -ErrorAction SilentlyContinue`);
 }
 if (unchecked.length) {
   // Said on the job's page: these need the owner's screen, which this runner does not give.
@@ -293,6 +386,7 @@ function trace(target: object): Array<{ name: string; ms: number; error: boolean
       const ms = Date.now() - began;
       seen.push({ name, ms, error: result?.isError === true });
       if (ACTIONS.has(name) || result?.isError || ms > 3_000) console.log(`    cua ${name}(${brief(args).slice(0, 300)}) ${ms} ms${result?.isError ? " ERROR" : ""}: ${said(result)}`);
+      if (afterCall) await afterCall(name);
       return result;
     } catch (error) {
       console.log(`    cua ${name}(${brief(args).slice(0, 300)}) failed after ${Date.now() - began} ms: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
@@ -300,6 +394,53 @@ function trace(target: object): Array<{ name: string; ms: number; error: boolean
     }
   };
   return seen;
+}
+
+/** A cua-driver tool called directly, for what the smoke shows about the driver itself. */
+async function raw(name: string, args: Record<string, unknown>): Promise<McpResult> {
+  return (driver as unknown as { mcp: { call(name: string, args: Record<string, unknown>, options: { timeoutMs: number }): Promise<McpResult> } }).mcp.call(name, args, { timeoutMs: 15_000 });
+}
+
+function rect(box: { x: number; y: number; width: number; height: number }): number[] {
+  return [box.x, box.y, box.width, box.height];
+}
+
+function center(box: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
+  return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+}
+
+function launch(exe: string, args: Array<string | number>): void {
+  children.push(spawn(exe, args.map(String), { stdio: "ignore", detached: false }));
+}
+
+/** Ends the smoke's windows started from `exe`. */
+function stopApp(exe: string): void {
+  for (const child of children.filter((item) => item.spawnfile === exe)) child.kill();
+}
+
+/** The app's elements once `ready` says they show. */
+async function waitFor(app: string, ready: (look: Observation) => boolean): Promise<Observation> {
+  let look: Observation | null = null;
+  for (let tries = 0; tries < 40 && !(look && ready(look)); tries += 1) {
+    await sleep(500);
+    look = await service.observe(caller, { app, screenshot: false }).catch(() => null);
+  }
+  assert.ok(look && ready(look), `${app}'s window can be read`);
+  return look;
+}
+
+/** The window Windows finds at a point (screen pixels), as desktop control asks for it before a click. */
+async function hitAt(point: { x: number; y: number }): Promise<string> {
+  const answer = await driver.call<{ hit_test?: { ok: boolean; hits?: Array<{ app: HelperApp; window: { title: string } } | null> } }>("a11y.apps", { points: [[point.x, point.y]] }, { timeoutMs: 30_000 });
+  if (!answer.hit_test?.ok) return "nothing Windows could say";
+  return [...new Set((answer.hit_test.hits ?? []).map((hit) => (hit ? `${hit.app.name} “${hit.window.title}”` : "no window")))].join(" or ");
+}
+
+/** A click by position (screen pixels) on a fresh screenshot, in the foreground. */
+async function clickAt(point: { x: number; y: number }): Promise<{ verdict: string; ran: string; rule?: string; detail?: string }> {
+  const aim = await service.observe(caller, { elements: false });
+  const done = await service.act(caller, { foreground: true, captureId: aim.captureId, steps: [{ action: "click", x: Math.round(point.x / aim.scale!), y: Math.round(point.y / aim.scale!) }], observe: false });
+  return done.steps[0]!;
 }
 
 /** Notepad in front: brought there by an open step, else by a click into its text. */
@@ -322,10 +463,8 @@ async function frontApp(): Promise<string | null> {
 
 /** The program and window class of the foreground window, from Windows itself (Windows PowerShell 5.1). */
 function foregroundHolder(): string {
-  const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
   const script = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public static class Fg { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n); }'; $h = [Fg]::GetForegroundWindow(); $p = [uint32]0; [void][Fg]::GetWindowThreadProcessId($h, [ref]$p); $c = New-Object System.Text.StringBuilder 256; [void][Fg]::GetClassName($h, $c, 256); "$((Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName).exe (window class $c)"`;
-  const answer = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: shellEnv, timeout: 60_000 });
-  return answer.stdout.trim().split("\n").pop()?.trim() || "a window Windows did not name";
+  return powershell(script).stdout.trim().split("\n").pop()?.trim() || "a window Windows did not name";
 }
 
 /** Notepad's File menu, then Exit (or Close window), pressed through UI Automation in the background. */
@@ -363,12 +502,13 @@ async function editor(): Promise<HelperElement> {
   return found;
 }
 
-/** The middle of Notepad's text area on the screen, in screen pixels: its window's place plus its place in the window. */
-async function editorPoint(): Promise<{ x: number; y: number }> {
+/** A point in Notepad's text area on the screen, in screen pixels (its window's place plus its place in the window), and the area's middle. */
+async function editorPoint(): Promise<{ x: number; y: number; at: { x: number; y: number } }> {
   const area = await editor();
   const window = (await listed()).find((app) => /notepad/i.test(`${app.name} ${app.app_id ?? ""}`))?.windows.find((item) => item.showing && item.box);
   assert.ok(area.box && window?.box, `where Notepad's text is: ${JSON.stringify({ box: area.box, window })}`);
-  return { x: Math.round(window.box[0] + area.box[0] + area.box[2] / 2), y: Math.round(window.box[1] + area.box[1] + Math.min(area.box[3] / 2, 40)) };
+  const x = Math.round(window.box[0] + area.box[0] + area.box[2] / 2);
+  return { x, y: Math.round(window.box[1] + area.box[1] + Math.min(area.box[3] / 2, 40)), at: { x, y: Math.round(window.box[1] + area.box[1] + area.box[3] / 2) } };
 }
 
 /** The driver's running apps with their windows (boxes in screen pixels). */

@@ -19,9 +19,10 @@
  * show a web document with one. Video goes through ffmpeg (gdigrab), which is not part of Ensemble: without it
  * recording is unavailable and readiness says so.
  */
+import { keyboardFloor } from "../floor.js";
 import type { HelperHealth } from "../helper-process.js";
-import { HelperError, type Fact, type HelperElement, type SessionInfo, type StatusResult } from "../protocol.js";
-import { CuaAdapter, num, obj, str, type CuaAdapterOptions, type Ctx, type IdleState, type RunningApp, type Win } from "./cua-adapter.js";
+import { HelperError, type Fact, type HelperApp, type HelperElement, type HitTest, type SessionInfo, type StatusResult } from "../protocol.js";
+import { byFront, CuaAdapter, num, obj, str, type CuaAdapterOptions, type Ctx, type Front, type IdleState, type RunningApp, type Win } from "./cua-adapter.js";
 import { decodePng } from "./png.js";
 
 /** The session probe (HelperProcess in the runtime, a stand-in in tests). */
@@ -43,6 +44,11 @@ export type ProbeState = ProbeIdle & {
   os?: string;
 };
 
+/** A top-level window as Windows itself names it: its handle, process, program file, title and class. */
+export type ProbeWindow = { window: number; pid: number; program: string | null; title: string | null; class: string | null; cloaked?: boolean };
+/** The probe's `windows`: the window with the keyboard, the windows DWM cloaks (another virtual desktop, a suspended app) and the window at each point asked about. */
+export type ProbeView = { foreground: ProbeWindow | null; cloaked: number[]; at: Array<ProbeWindow | null> };
+
 export type WindowsCuaOptions = CuaAdapterOptions & {
   probe: WindowsProbe;
   /** Where ffmpeg is (cua-driver records video through it), or null when it is not installed. */
@@ -50,6 +56,8 @@ export type WindowsCuaOptions = CuaAdapterOptions & {
 };
 
 const DRIVER = "Cua Driver";
+const BROWSERS_TTL_MS = 10 * 60_000;
+const BROWSERS_RETRY_MS = 60_000;
 export const UAC_PROMPT = "User Account Control";
 export const UAC_TEXT = "A User Account Control prompt is open on Windows' secure desktop: only your owner can answer it (nothing can type or click there). Hand it to them with desktop_handoff, saying what it is for, and wait.";
 export const LOCKED_TEXT = "The computer's screen is locked: only your owner can unlock it. Ask them, or hand it over with desktop_handoff.";
@@ -153,6 +161,8 @@ export class WindowsCuaDriver extends CuaAdapter {
   protected readonly system = "Windows";
   /** The session was seen interactive (UI Automation can work); checked again after the driver restarts. */
   private sessionOk = false;
+  /** Program names (lower case, no `.exe`) of the browsers Windows has registered, and until when they hold. */
+  private browsers: { names: ReadonlySet<string>; at: number } | null = null;
 
   constructor(private readonly options: WindowsCuaOptions) {
     super({ ...options, label: "The Windows desktop driver" });
@@ -259,6 +269,112 @@ export class WindowsCuaDriver extends CuaAdapter {
     return this.options.probe.call<{ shown: boolean }>("notify", { title, body }, { timeoutMs: 5_000 }).catch(() => ({ shown: false }));
   }
 
+  // ── what Windows itself says about its windows ───────────────────────────
+
+  /** The probe's `windows` for `points` (whole screen pixels); null when it did not answer. */
+  private async view(points: ReadonlyArray<[number, number]> = []): Promise<ProbeView | null> {
+    try {
+      const view = await this.options.probe.call<ProbeView>("windows", { points }, { timeoutMs: 5_000 });
+      if (!view || !Array.isArray(view.cloaked) || !Array.isArray(view.at) || view.at.length !== points.length) throw new Error("an answer of another shape");
+      return view;
+    } catch (error) {
+      this.base.log?.(`the Windows session probe did not say which windows show: ${error instanceof Error ? error.message.slice(0, 200) : "unknown error"}`);
+      return null;
+    }
+  }
+
+  /** cua-driver counts a cloaked window (on another virtual desktop, a suspended app's frame) as on the screen: it is not. */
+  protected override async windows(ctx: Ctx, pid?: number, onScreenOnly = false): Promise<Win[]> {
+    const wins = await super.windows(ctx, pid, onScreenOnly);
+    const cloaked = new Set((await this.view())?.cloaked ?? []);
+    const shown = wins.map((win) => (cloaked.has(win.id) ? { ...win, onScreen: false } : win));
+    return onScreenOnly ? shown.filter((win) => win.onScreen) : shown;
+  }
+
+  /** The app and window with the keyboard, as Windows says (`GetForegroundWindow`); unknown when the probe cannot say or none has it. */
+  protected override async front(ctx: Ctx): Promise<Front> {
+    const front = await super.front(ctx);
+    const keyboard = (await this.view())?.foreground;
+    if (!keyboard) return { ...front, top: null, keyboardUnknown: true };
+    const app = front.apps.find((item) => item.pid === keyboard.pid) ?? this.unlistedApp(keyboard);
+    const top = front.wins.find((win) => win.id === keyboard.window && win.pid === keyboard.pid) ?? this.unlistedWin(keyboard);
+    return { ...front, app, top };
+  }
+
+  /** Keys go to the window with the keyboard: not sent when Windows does not say which it is. */
+  protected override async keyboardReady(_ctx: Ctx): Promise<void> {
+    if (!(await this.view())?.foreground) throw new HelperError("input_failed", "Windows did not say which window has the keyboard, so no key was sent. Look again in a moment.", "no");
+  }
+
+  /**
+   * Between typed chunks: the window with the keyboard, from Windows each time (another one, or none known, stops the
+   * typing), a prompt, and the floor on that window as it is now (its title can change); with `full`, the app too.
+   */
+  protected override async focusMoved(start: Front, _startTop: Win | null, full: boolean, ctx: Ctx): Promise<boolean> {
+    const keyboard = (await this.view())?.foreground;
+    if (!keyboard || !start.top || keyboard.window !== start.top.id || keyboard.pid !== start.top.pid) return true;
+    if (full) {
+      const now = await this.front(ctx);
+      return now.keyboardUnknown === true || now.app?.pid !== start.app?.pid || now.prompt !== null || keyboardFloor(this.focusOf(now, true)) !== null;
+    }
+    const wins = await super.windows(ctx, undefined, true);
+    if (await this.promptShown(wins)) return true;
+    const top = wins.find((win) => win.id === keyboard.window && win.pid === keyboard.pid) ?? start.top;
+    return keyboardFloor(this.focusOf({ ...start, wins, top, prompt: null }, true)) !== null;
+  }
+
+  /**
+   * The windows Windows itself finds at the points (`WindowFromPoint`, then the top-level window and its process), as
+   * cua-driver's click does: a window cloaked on another virtual desktop is not one, an untitled popup is. Each point
+   * is asked at the pixel the driver lands on and the one before it (the driver's scaling can fall a hair short).
+   */
+  protected override async hitTest(points: ReadonlyArray<[number, number]>, apps: readonly RunningApp[], wins: readonly Win[], listed: readonly HelperApp[]): Promise<HitTest> {
+    const pixels: Array<[number, number]> = [];
+    for (const [x, y] of points) {
+      for (const px of new Set([Math.floor(x + 1e-6), Math.floor(x - 1e-6)])) for (const py of new Set([Math.floor(y + 1e-6), Math.floor(y - 1e-6)])) pixels.push([px, py]);
+    }
+    const view = await this.view(pixels);
+    if (!view) return { ok: false, reason: "The Windows session probe did not say which window is at that point." };
+    if (view.at.some((hit) => !hit)) return { ok: false, reason: "Windows found no window at that point." };
+    return {
+      ok: true,
+      hits: view.at.map((hit) => {
+        const index = apps.findIndex((app) => app.pid === hit!.pid);
+        if (index < 0) {
+          const app = this.helperApp(this.unlistedApp(hit!), [this.unlistedWin(hit!)]);
+          return { app, window: app.windows[0]! };
+        }
+        const own = wins.filter((win) => win.pid === hit!.pid && win.layer === 0).sort(byFront);
+        const at = own.findIndex((win) => win.id === hit!.window);
+        return { app: listed[index]!, window: at >= 0 ? listed[index]!.windows[at]! : { index: -1, title: hit!.title ?? "", role: "window", active: false, showing: true, iconified: false, box: null, z: null } };
+      }),
+    };
+  }
+
+  /** A process with a window that cua-driver does not list (untitled, or a part of Windows), known by its program file. */
+  private unlistedApp(window: ProbeWindow): RunningApp {
+    return { pid: window.pid, name: programName(window.program) ?? "a part of Windows", bundle: null, active: false, launchPath: window.program && /\.exe$/i.test(window.program) ? window.program : null };
+  }
+
+  private unlistedWin(window: ProbeWindow): Win {
+    return { id: window.window, pid: window.pid, app: window.program?.split(/[\\/]/).pop() ?? "", title: window.title ?? "", bounds: null, onScreen: true, minimized: false, z: null, layer: 0 };
+  }
+
+  /** The browsers Windows has registered (`StartMenuInternet`, the https handler): browsers the program list does not know. Read every ten minutes. */
+  protected override async beforeApps(): Promise<void> {
+    const cached = this.browsers;
+    if (cached && this.now() < cached.at) return;
+    try {
+      const { browsers } = await this.options.probe.call<{ browsers: Array<{ name?: string; program?: string }> }>("browsers", {}, { timeoutMs: 10_000 });
+      if (!Array.isArray(browsers)) throw new Error("not a list");
+      const names = new Set(browsers.map((item) => programName(typeof item?.program === "string" ? item.program : null)).filter((name): name is string => !!name && !PROMPT_APPS.test(name)));
+      this.browsers = { names, at: this.now() + BROWSERS_TTL_MS };
+    } catch (error) {
+      this.base.log?.(`reading the browsers Windows has registered failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown error"}`);
+      this.browsers = { names: cached?.names ?? new Set(), at: this.now() + BROWSERS_RETRY_MS };
+    }
+  }
+
   // ── what Windows says about the screen and apps ──────────────────────────
 
   protected nativeSize(data: Record<string, unknown>, size: { width: number; height: number }): { width: number; height: number } {
@@ -281,11 +397,14 @@ export class WindowsCuaDriver extends CuaAdapter {
     return programName(own?.app) ?? (app.launchPath && /\.exe"?(?:\s|$)/i.test(app.launchPath) ? programName(app.launchPath.replace(/^"([^"]+)".*$/, "$1").replace(/\.exe\s.*$/i, ".exe")) : null) ?? (/\.exe$/i.test(app.name) ? programName(app.name) : null);
   }
 
-  /** A browser's engine, `Prompt` for Windows' own prompts (the floor refuses them), `Windows` for any other app. */
+  /**
+   * A browser's engine (`Web` for one Windows has registered that the list does not know), `Prompt` for Windows' own
+   * prompts (the floor refuses them), `Windows` for any other app.
+   */
   protected toolkitOf(app: RunningApp, wins: readonly Win[]): string {
     const program = this.program(app, wins);
     if (program && PROMPT_APPS.test(program)) return "Prompt";
-    return (program && BROWSERS.find((browser) => browser.pattern.test(program))?.toolkit) ?? "Windows";
+    return (program && BROWSERS.find((browser) => browser.pattern.test(program))?.toolkit) ?? (program && this.browsers?.names.has(program) ? "Web" : "Windows");
   }
 
   /** The id the app's installed entry has (what desktop_apps lists and the asks use), else its program file. */

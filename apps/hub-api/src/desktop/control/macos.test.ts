@@ -338,6 +338,17 @@ test("background: the owner's pointer and keyboard are refused without their scr
   assert.match(String(hotkey.args.element_token), /:2$/);
 });
 
+test("darwin: bringing an app to the front presses no key, so the owner's input just before stays theirs", async () => {
+  const h = mac();
+  const opened = await h.service.act(caller(), { foreground: true, steps: [{ action: "open", app: "Reminders" }], observe: false });
+  assert.equal(opened.steps[0]!.ran, "yes");
+  assert.ok(h.calls().some((call) => call.tool === "bring_to_front"));
+  h.idle.ms = 1_000;
+  const typed = await h.service.act(caller(), { foreground: true, steps: [{ action: "type", text: "x" }], observe: false });
+  assert.deepEqual([typed.steps[0]!.verdict, typed.steps[0]!.code], ["refused", "owner_has_control"], typed.steps[0]!.detail);
+  assert.ok(!h.calls().some((call) => call.tool === "type_text"));
+});
+
 test("foreground: the owner's pointer and keyboard go to screen pixels, a click judged by the window under it", async () => {
   const h = mac();
   const look = await h.service.observe(caller(), { app: "Reminders" });

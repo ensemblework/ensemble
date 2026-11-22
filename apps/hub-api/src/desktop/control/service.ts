@@ -28,12 +28,12 @@ import { constants, createReadStream } from "node:fs";
 import { copyFile, link, mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { hideSecretValues } from "../../lib/redact.js";
-import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, windowAt, type FloorHit, type Point } from "./floor.js";
+import { elementFloor, keyboardFloor, looksSecret, pointerFloor, SECRET_REF, SECRET_TEXT_MESSAGE, windowAt, type FloorHit, type Point, type ShownWindow } from "./floor.js";
 import type { HelperHealth } from "./helper-process.js";
 import { Controllers, LEASE_IDLE_MS, OWNER_INPUT_MARGIN_MS, TakeoverLease, type LeaseView } from "./lease.js";
 import { newCaptureId, ObservationLedger, type Capture, type ScreenRef } from "./ledger.js";
 import { boxToRegion, imageToLogical, MAX_LONG_EDGE, type Region } from "./mapping.js";
-import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
+import { HelperError, type CaptureResult, type Fact, type FocusInfo, type HelperApp, type HelperElement, type HelperEvent, type HitTest, type Ran, type SessionInfo, type StatusResult, type Stream, type TreeResult } from "./protocol.js";
 import { GATE_WORDS, sensitiveApp, type GateCategory } from "./sensitive.js";
 import { sandboxedText } from "./text.js";
 import { typingMs, type DesktopStep, type StepAction } from "./tool-specs.js";
@@ -1018,16 +1018,16 @@ export class DesktopService {
 
   /**
    * The sensitive apps a click by position could land in: where the desktop says which window is at each point
-   * (macOS, Windows), that window's app (the app in front for a point outside every window); else the one in front and
-   * any with a window that shows.
+   * (macOS from the windows' places, Windows from its own hit test `at`), that window's app (the app in front for a
+   * point outside every window); else the one in front and any with a window that shows.
    */
-  private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[], points: readonly Point[] = []): GateApp[] {
+  private sensitiveShowing(focus: FocusInfo, apps: readonly HelperApp[], points: readonly Point[] = [], at?: ReadonlyArray<ShownWindow | null | undefined>): GateApp[] {
     const found = new Map<string, GateApp>();
     const add = (app: { name: string; app_id: string | null } | null) => {
       const gate = app ? this.gateApp(app) : null;
       if (gate) found.set(gate.id, gate);
     };
-    const hits = points.map((point) => windowAt(apps, point));
+    const hits = at ?? points.map((point) => windowAt(apps, point));
     if (hits.length && hits.every((hit) => hit !== undefined)) {
       for (const hit of hits) add(hit ? hit.app : focus.app);
       return [...found.values()];
@@ -1161,16 +1161,18 @@ export class DesktopService {
       node = (session.screens.find((screen) => screen.primary) ?? session.screens[0]!).node;
     }
     if (POINTER_STEPS.has(step.action) || step.action === "scroll") {
+      const points = [at, from, to].filter((point): point is { x: number; y: number } => point !== null);
       const [focus, apps] = await Promise.all([
         this.call<FocusInfo>("a11y.focus", { text: false, documents: true }, deadline, { maxMs: 8_000 }),
-        this.call<{ apps: HelperApp[] }>("a11y.apps", {}, deadline, { maxMs: 8_000 }),
+        this.call<{ apps: HelperApp[]; hit_test?: HitTest }>("a11y.apps", { points: points.map((point) => [point.x, point.y]) }, deadline, { maxMs: 8_000 }),
       ]).catch((error: unknown) => {
         throw new DesktopError("refused", `What is on the screen could not be checked (${fromHelper(error).message}), so the ${step.action === "scroll" ? "scroll" : "click"} was not sent.`, "no");
       });
-      const points = [at, from, to].filter((point): point is { x: number; y: number } => point !== null);
-      if (POINTER_STEPS.has(step.action)) this.refuse(pointerFloor(focus, apps.apps, this.options.env, points));
+      // The windows the system itself finds at the points (Windows); when it could not say, none is known.
+      const hits = apps.hit_test ? (apps.hit_test.ok ? apps.hit_test.hits : points.map(() => undefined)) : undefined;
+      if (POINTER_STEPS.has(step.action)) this.refuse(pointerFloor(focus, apps.apps, this.options.env, points, hits));
       // Where the desktop does not say which window a point is in, every sensitive app that shows may be where it lands.
-      for (const app of this.sensitiveShowing(focus, apps.apps, points)) await this.gate(caller, app, context.allowed);
+      for (const app of this.sensitiveShowing(focus, apps.apps, points, hits)) await this.gate(caller, app, context.allowed);
     }
     if (step.action === "move") {
       await this.call("input.pointer", { display: node, x: at!.x, y: at!.y, action: "move" }, deadline, { effects: true, maxMs: 5_000 });
@@ -1412,8 +1414,9 @@ export class DesktopService {
     let via: string | null = focused ? "launch" : front ? null : "background";
     if (front && !focused && launched.app.running && this.lease.holder === "agent") {
       const moved = await this.call<{ focused: boolean; via: string | null }>("apps.focus", { app: launched.app.running.pid ?? launched.app.name, allow_input: true, search: launched.app.name }, deadline, { effects: true, maxMs: 10_000 }).catch(() => null);
-      // Search types; cua-driver's bring_to_front on Windows passes the foreground lock with a synthetic key, also when Windows refuses it.
-      if (moved?.via === "search" || this.cua) this.lease.agentInput();
+      // Search types; cua-driver's bring_to_front on Windows passes the foreground lock with a synthetic key, also when
+      // Windows refuses it. On macOS it only activates the app: the system's idle time stays the owner's.
+      if (moved?.via === "search" || this.options.platform === "win32") this.lease.agentInput();
       focused = Boolean(moved?.focused);
       via = moved?.via ?? null;
     }
