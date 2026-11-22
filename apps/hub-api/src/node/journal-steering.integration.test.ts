@@ -356,6 +356,39 @@ test("a stop stops every child: turns, helpers' work, commands and recordings; w
   assert.ok(await h.prisma.nodeAgent.findUnique({ where: { id: helper.id } }), "the helper itself stays, with what it did");
 });
 
+test("a stop that comes while a turn is being started stops it: the turn is found from before its row says running", async () => {
+  const { setClaimHookForTests } = await import("./queue.js");
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  plans.set(node.slug, [{ calls: [createTask("Book Thursday")] }, { text: "Booked Thursday." }]);
+  let claimed: (turnId: string) => void = () => undefined;
+  const marked = new Promise<string>((resolve) => (claimed = resolve));
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // Its row says running and the turn has not gone on yet: the stop comes in between.
+  setClaimHookForTests(async (turnId) => {
+    claimed(turnId);
+    await held;
+  });
+  let turnId = "";
+  try {
+    await sayNow(mira, room.id, "book the room for Thursday");
+    turnId = await Promise.race([marked, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("The turn was never started")), 10_000).unref())]);
+    assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } })).status, "running");
+    const response = await mira.inject({ method: "POST", url: `/api/node/rooms/${room.id}/stop`, payload: {} });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(json(response).detail.turns, 1, "the stop found the turn");
+  } finally {
+    setClaimHookForTests(null);
+    release();
+  }
+  await settleTurns();
+  assert.equal(await tasksCalled(mira.id, "Book Thursday"), 0, "the stopped turn did nothing");
+  const turn = await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
+  assert.deepEqual([turn.status, turn.outcome], ["done", "cancelled"]);
+  assert.ok(!(await read(mira, room.id)).some((row) => row.authorNodeId === node.id && row.body === "Booked Thursday."), "it posted no reply");
+});
+
 async function crewOf(user: HttpUser, templates: string[]) {
   const nodes: Array<{ id: string; slug: string }> = [];
   for (const template of templates) nodes.push((await createNode(user, template)).node);
