@@ -374,10 +374,10 @@ async function settle(ctx: JobContext, want: Want, holder: FolderHolder, options
  * and the git config files it writes. A segment is a read only as the judges see one (workspace/tools.ts
  * `segmentReadsOnly`, git-read.ts): what xargs feeds, a variable set in front or a word the shell expands makes it a change.
  */
-export function writtenOutside(root: string, command: string, cwd = root): string[] {
+export async function writtenOutside(root: string, command: string, cwd = root): Promise<string[]> {
   const paths = new Set<string>();
   for (const segment of parseShell(command, cwd)) {
-    const writes = segment.argv.length > 0 && !segmentReadsOnly(segment);
+    const writes = segment.argv.length > 0 && !(await segmentReadsOnly(segment));
     if (writes) {
       for (const path of outsideArgs(root, segment.argv, segment.cwd)) paths.add(resolve(segment.cwd, expandHome(path)));
       if (!within(root, segment.cwd)) paths.add(segment.cwd);

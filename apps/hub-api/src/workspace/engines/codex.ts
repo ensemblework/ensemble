@@ -253,7 +253,7 @@ export async function runCodex(
         // Codex changes the folders its sandbox opens without asking: each one it changed is held for this run from now on.
         // Read when the call is done (an approval it asked for may have declined it, or waited for the folder).
         if (method === "item/completed" && isTool && item.status !== "declined") {
-          const changed = item.type === "fileChange" ? (item.changes ?? []).map((change) => change.path).concat(item.changes ? [] : files.get(item.id ?? "") ?? []) : item.type === "commandExecution" && item.command ? writtenOutside(ctx.root, item.command, item.cwd || ctx.root) : [];
+          const changed = item.type === "fileChange" ? (item.changes ?? []).map((change) => change.path).concat(item.changes ? [] : files.get(item.id ?? "") ?? []) : item.type === "commandExecution" && item.command ? await writtenOutside(ctx.root, item.command, item.cwd || ctx.root) : [];
           if (changed.length) await noteChanges(ctx, changed, held).catch(() => undefined);
         }
         if (method === "item/completed" && isTool) {

@@ -248,8 +248,8 @@ test("Codex's own changes outside its folder hold it from then on; one another r
   const a = await run("Refactor lib");
   const codex = await run("Bump versions", { provider: "codex" });
   await outsidePath(a.ctx, join(lib, "x.ts"), true);
-  assert.deepEqual(writtenOutside(codex.ctx.root, `cd ${lib} && npm version patch`).map((path) => path.replace(ws, "<ws>")), ["<ws>/lib"]);
-  assert.deepEqual(writtenOutside(codex.ctx.root, `ls ${lib} && cat ${lib}/x.ts`), [], "reading takes nothing");
+  assert.deepEqual((await writtenOutside(codex.ctx.root, `cd ${lib} && npm version patch`)).map((path) => path.replace(ws, "<ws>")), ["<ws>/lib"]);
+  assert.deepEqual(await writtenOutside(codex.ctx.root, `ls ${lib} && cat ${lib}/x.ts`), [], "reading takes nothing");
   await noteChanges(codex.ctx, [join(lib, "package.json")], [lib]);
   assert.deepEqual(await keys(codex.job.id), [], "closed to its sandbox when it started: it changed nothing there");
   assert.ok(!(await kinds(codex.job.id)).includes("folder_clash"));
@@ -261,14 +261,19 @@ test("Codex's own changes outside its folder hold it from then on; one another r
   await Promise.all([a.finish(), codex.finish()]);
 });
 
-test("a write is never taken for a read: what xargs feeds, a variable set in front, git's own config files", () => {
+test("a write is never taken for a read: what xargs feeds, a variable set in front, git's own config files, a glob that reaches an option", async () => {
   const root = "/srv/ws/run";
   const lib = "/srv/ws/lib";
-  assert.deepEqual(writtenOutside(root, `printf -- '--output=notes.txt\\n' | xargs git -C ${lib} log -1`), [lib], "xargs can add --output");
-  assert.deepEqual(writtenOutside(root, `GIT_DIR=${lib}/.git git -C ${lib} log`), [lib], "a variable set in front makes any program a change");
-  assert.deepEqual(writtenOutside(root, "git config --global user.name Mira"), [join(homedir(), ".gitconfig")]);
-  assert.deepEqual(writtenOutside(root, `git config --file ${lib}/cfg get k v`), [`${lib}/cfg`]);
-  assert.deepEqual(writtenOutside(root, `git -C ${lib} log --oneline`), [], "a read stays a read");
+  assert.deepEqual(await writtenOutside(root, `printf -- '--output=notes.txt\\n' | xargs git -C ${lib} log -1`), [lib], "xargs can add --output");
+  assert.deepEqual(await writtenOutside(root, `GIT_DIR=${lib}/.git git -C ${lib} log`), [lib], "a variable set in front makes any program a change");
+  assert.deepEqual(await writtenOutside(root, "git config --global user.name Mira"), [join(homedir(), ".gitconfig")]);
+  assert.deepEqual(await writtenOutside(root, `git config --file ${lib}/cfg get k v`), [`${lib}/cfg`]);
+  assert.deepEqual(await writtenOutside(root, `curl -o ${lib}/page.html https://example.test`), [`${lib}/page.html`]);
+  assert.deepEqual(await writtenOutside(root, `git -C ${lib} log --oneline`), [], "a read stays a read");
+  assert.deepEqual(await writtenOutside(root, "curl https://example.test"), [], "a fetch stays a read");
+  const dashed = folder("dashed");
+  writeFileSync(join(dashed, "--output=notes.txt"), "");
+  assert.deepEqual(await writtenOutside(root, `cd ${dashed} && git log *`), [dashed], "the shell expands * to --output=notes.txt");
 });
 
 test("two runs of one Ensemble Node mission take turns without a card, even in Ask; another mission's run is asked as before", async () => {
