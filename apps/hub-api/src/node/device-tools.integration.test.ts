@@ -263,6 +263,27 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
   }
 });
 
+test("an app on the node's own agent screen is asked about as its own screen, not the owner's", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "ask", { nodeTools: 1, desktop: 1 });
+  const { node, room } = await createNode(mira);
+  const ask = { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false, screen: "agent" };
+  const device = askingComputer(laptop.id, key, ask, () => ({ ok: true, summary: "Typed.", evidence: [], refused: [] }));
+  try {
+    script = (turn) => (turn.transcript.includes("terminal") ? { calls: [{ name: "desktop_act", arguments: { screen: "agent", foreground: true, steps: [{ action: "type", text: "ls" }] } }], then: "Typed ls." } : { text: "ok" });
+    await post(mira, room.id, "type ls in a terminal on your own screen");
+    const card = await computerCard(mira, room.id);
+    assert.equal(card.body, `@${node.slug} wants to use Terminal on its own screen on Mira's laptop`);
+    assert.deepEqual([card.data.scope, card.data.screen, card.data.options], ["app", "agent", ["This mission"]]);
+    const allowed = await mira.inject({ method: "POST", url: `/api/decisions/${card.data.decisionId}/decide`, payload: { decision: "allow", scope: "once", reason: "This mission" } });
+    assert.equal(allowed.statusCode, 200, allowed.body);
+    await settleTurns();
+    assert.equal(device.heard.length, 2, "the call went again with the answer");
+  } finally {
+    device.stop();
+  }
+});
+
 test("no on the card: the call hears it and the node goes on without it", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira);

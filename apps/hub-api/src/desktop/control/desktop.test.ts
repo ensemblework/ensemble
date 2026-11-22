@@ -361,10 +361,10 @@ test("the owner's pointer and keyboard, and a sensitive app, are each asked once
 
   const asked = await runNodeDesktop(app, client, request("plan-1"), screens);
   assert.equal(asked.status, 428);
-  assert.deepEqual(asked.body.ask, { capability: "desktop", target: "screen:owner", label: "the pointer and keyboard", scope: "app", weak: false });
+  assert.deepEqual(asked.body.ask, { capability: "desktop", target: "screen:owner", label: "the pointer and keyboard", scope: "app", weak: false, screen: "owner" });
   const terminal = await runNodeDesktop(app, client, request("plan-1", { grants: [screenGrant] }), screens);
   assert.equal(terminal.status, 428);
-  assert.deepEqual(terminal.body.ask, { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false });
+  assert.deepEqual(terminal.body.ask, { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false, screen: "owner" });
   assert.equal((await methods(h, "input.text")).length, 0);
 
   const allowed = await runNodeDesktop(app, client, request("plan-1", { grants: [screenGrant, terminalGrant] }), screens);
@@ -382,6 +382,20 @@ test("the owner's pointer and keyboard, and a sensitive app, are each asked once
   const unattended = await runNodeDesktop(app, client, request("plan-3", { attended: false }), screens);
   assert.equal(unattended.status, 200);
   assert.equal(rules.length, 2);
+});
+
+test("a sensitive app on the agent screen is asked about as the node's own screen", { timeout: 40_000 }, async () => {
+  const owner = harness();
+  const agent = harness({ agent: "up" });
+  const { runNodeDesktop } = await import("./device.js");
+  await agent.set({ focus: { app: { name: "Terminal", toolkit: "GTK", pid: 66, app_id: "org.gnome.Ptyxis" }, window: { index: 0, title: "~", role: "frame" }, shell: false, prompt: null, focused: { role: "terminal", name: "", editable: true }, documents: [] } });
+  const prisma = { decisionRule: { findFirst: async () => null, findMany: async () => [], create: async ({ data }: { data: unknown }) => data } };
+  const screens = new Desktops(owner.service, () => agent.service);
+  const request = { id: "q1", nodeId: "n1", nodeSlug: "helper", mission: "plan-1", attended: true, grants: [], tool: "desktop", name: "desktop_act", input: { screen: "agent", foreground: true, steps: [{ action: "type", text: "ls" }] }, operation: "node:n1:own", inlineImage: false } as never;
+  const asked = await runNodeDesktop({ prisma } as never, {} as never, request, screens);
+  assert.equal(asked.status, 428);
+  assert.deepEqual(asked.body.ask, { capability: "desktop", target: "org.gnome.Ptyxis", label: "Terminal", scope: "app", weak: false, screen: "agent" });
+  assert.equal(owner.helper.health().state, "stopped", "the owner's screen was not touched");
 });
 
 // ── background mode and the agent screen ────────────────────────────────────
