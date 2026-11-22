@@ -185,6 +185,12 @@ const methods = {
     return { ok: true };
   },
   "test.log": () => ({ log, maxActive }),
+  // Lines that are not JSON-RPC messages, before the answer: JSON that is no object, and bytes that are not UTF-8.
+  "test.noise": () => {
+    for (const line of ["null", "[1,2]", "42", '"text"', "true", "{}"]) process.stdout.write(`${line}\n`);
+    process.stdout.write(Buffer.from([0xff, 0xfe, 0x0a]));
+    return { ok: true };
+  },
 };
 
 async function handle(request) {

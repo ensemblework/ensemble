@@ -198,14 +198,28 @@ export function isDesktopTool(name: string): name is DesktopToolName {
 }
 
 /** How long the server waits for a desktop call's answer: what the call may take, plus the way there and back. */
+/** About what typing takes a character, with its checks every 8 (a Mac is the slower; Linux is quicker). */
+const TYPING_MS_PER_CHAR = 45;
+
+/** The time one type step may take: the longest text allowed (5,000 characters) finishes in it. */
+export function typingMs(chars: number): number {
+  return 5_000 + Math.max(0, chars) * TYPING_MS_PER_CHAR;
+}
+
 export function desktopTimeoutMs(name: string, input: Record<string, unknown>): number {
   switch (name) {
     case "desktop_open":
       return 75_000;
     case "desktop_observe":
       return 45_000;
-    case "desktop_act":
-      return 90_000;
+    case "desktop_act": {
+      const steps = Array.isArray(input.steps) ? (input.steps as unknown[]) : [];
+      const typed = steps.reduce<number>((sum, step) => {
+        const { action, text } = (step ?? {}) as { action?: unknown; text?: unknown };
+        return sum + (action === "type" && typeof text === "string" ? text.length : 0);
+      }, 0);
+      return Math.min(270_000, 90_000 + typed * TYPING_MS_PER_CHAR);
+    }
     case "desktop_record":
       return input.action === "save" ? 120_000 : 40_000;
     case "desktop_handoff": {

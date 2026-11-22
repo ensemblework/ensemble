@@ -5,19 +5,23 @@
  * are checked by the helper's `--check` (once in ten minutes), consent by whether a restore token is
  * kept, and the rest by the running helpers, if any.
  *
- * On macOS a short-lived cua-driver proves the permissions: its `check_permissions` and a tiny screenshot
- * (again after a minute while one fails, after ten minutes once all work). Desktop control is ready only when
- * all of it worked; with Accessibility alone it can still read and press elements in the background.
+ * On macOS a short-lived Cua Driver, started the way desktop control starts it, proves its own permissions:
+ * its `check_permissions` and a tiny screenshot (again after a minute while one fails, after ten minutes once
+ * all work). Desktop control is ready only when all of it worked; with Accessibility alone it can still read
+ * and press elements in the background. In the Ensemble app's own runtime a second, read-only check asks
+ * whether the app itself holds Accessibility or Screen Recording: everything it starts would inherit those,
+ * so desktop control is not ready until the owner turns them off for Ensemble.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { DESKTOP_API } from "../../remote/contract.js";
 import { findPython3 } from "../../runtime/python-spawn.js";
-import { accessibilityFix, screenRecordingFix } from "./drivers/macos-cua.js";
+import { accessibilityFix, hostGrantsFix, screenRecordingFix } from "./drivers/macos-cua.js";
 import { McpStdioClient } from "./drivers/mcp-stdio.js";
 import type { HelperCommand } from "./helper-process.js";
-import { cuaDriverCommand, cuaDriverPin, desktopDataDir, desktopSystem, helperEnv, helperScript, macosMajor, NO_AGENT_SCREEN_MAC, runningDesktop, UNSUPPORTED_HERE, WINDOWS_UNSUPPORTED } from "./index.js";
+import { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, desktopDataDir, desktopSystem, findCuaDriver, helperEnv, helperScript, macosMajor, NO_AGENT_SCREEN_MAC, runningDesktop, UNSUPPORTED_HERE, WINDOWS_UNSUPPORTED } from "./index.js";
 
 export type AgentScreenReadiness = { ready: boolean; version: string | null; reason?: string };
 
@@ -32,13 +36,17 @@ export type DesktopReadiness = {
   reason?: string;
   /** The agent's own private screen: a headless GNOME Shell. */
   agentScreen: AgentScreenReadiness;
-  /** macOS: what the probe proved Ensemble holds. */
+  /** macOS: what the probe proved Cua Driver holds. */
   permissions?: { accessibility: boolean; screenRecording: boolean; screenshot: boolean };
   /** macOS: elements can be read and pressed in the background (Accessibility works), even when screenshots cannot be taken. */
   background?: boolean;
+  /** macOS: something the owner should know that does not stop desktop control (Cua Driver's own daemon running). */
+  note?: string;
 };
 
 export type MacProbe = { accessibility: boolean; screenRecording: boolean; screenshot: boolean; error: string | null };
+/** The grants the Ensemble app itself holds (which everything it starts inherits). */
+export type HostGrants = { accessibility: boolean; screenRecording: boolean };
 
 /** One short-lived cua-driver: its permission check, then a tiny screenshot when Screen Recording is on. */
 export async function probeMac(command: HelperCommand, version: string, timeoutMs = 20_000): Promise<MacProbe> {
@@ -64,28 +72,79 @@ export async function probeMac(command: HelperCommand, version: string, timeoutM
   }
 }
 
-let macChecked: { at: number; value: MacProbe } | null = null;
-
-async function macProbe(command: HelperCommand): Promise<MacProbe> {
-  const fresh = macChecked && Date.now() - macChecked.at < (macChecked.value.accessibility && macChecked.value.screenshot ? CHECK_MS : 60_000);
-  if (fresh) return macChecked!.value;
-  const value = await probeMac(command, cuaDriverPin().version);
-  macChecked = { at: Date.now(), value };
-  return value;
+/**
+ * The Ensemble app's own grants: Cua Driver in embedded mode without the launcher answers for the process macOS
+ * holds responsible, the app. Its permission check only reads (it never prompts or captures). Null when it
+ * could not tell.
+ */
+export async function probeHost(command: HelperCommand, version: string, timeoutMs = 20_000): Promise<HostGrants | null> {
+  const client = new McpStdioClient({ spawn: () => command, version, helloTimeoutMs: timeoutMs, stopGraceMs: 2_000 });
+  try {
+    const check = await client.call("check_permissions", {}, { timeoutMs });
+    if (check?.isError) return null;
+    const data = (check?.structuredContent ?? {}) as Record<string, unknown>;
+    return { accessibility: data.accessibility === true, screenRecording: data.screen_recording === true };
+  } catch {
+    return null;
+  } finally {
+    await client.stop().catch(() => undefined);
+  }
 }
 
-/** macOS: ready only when Accessibility, Screen Recording and a real screenshot all worked. */
-export function macReadiness(probe: MacProbe | null, unavailable: string | null, helper: string, major: number | null = macosMajor()): DesktopReadiness {
+let macChecked: { at: number; value: MacProbe; host: HostGrants | null } | null = null;
+
+async function macProbe(command: HelperCommand, host: HelperCommand | null): Promise<{ value: MacProbe; host: HostGrants | null }> {
+  const good = macChecked && macChecked.value.accessibility && macChecked.value.screenshot && !macChecked.host?.accessibility && !macChecked.host?.screenRecording;
+  if (macChecked && Date.now() - macChecked.at < (good ? CHECK_MS : 60_000)) return macChecked;
+  const version = cuaDriverPin().version;
+  const value = await probeMac(command, version);
+  const grants = host ? await probeHost(host, version) : null;
+  macChecked = { at: Date.now(), value, host: grants };
+  return macChecked;
+}
+
+/** Where Cua Driver's own daemon (`cua-driver serve`) listens unless told otherwise. */
+export function cuaDaemonSocket(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = env.HOME?.trim();
+  return home ? join(home, "Library", "Caches", "cua-driver", "cua-driver.sock") : null;
+}
+
+export const CUA_DAEMON_NOTE = "Cua Driver's own daemon (cua-driver serve) is running on this Mac, started by another program: it uses the same grants as desktop control, outside Ensemble's floor and asks.";
+
+/** Whether a process answers on the Unix socket at `path` (the connection is closed at once). */
+export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
+  if (!existsSync(path)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const socket = connect({ path });
+    const done = (answered: boolean) => {
+      socket.destroy();
+      resolve(answered);
+    };
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.setTimeout(timeoutMs, () => done(false));
+  });
+}
+
+/**
+ * macOS: ready only when Cua Driver's Accessibility, Screen Recording and a real screenshot all worked, and the
+ * Ensemble app itself holds neither grant (`host`, null when not known).
+ */
+export function macReadiness(probe: MacProbe | null, unavailable: string | null, helper: string, major: number | null = macosMajor(), host: HostGrants | null = null, appPath: string | null = null): DesktopReadiness {
   const agentScreen = { ready: false, version: null, reason: NO_AGENT_SCREEN_MAC };
   const base = { session: "macos" as const, recorder: major !== null && major >= 15 ? ("mp4" as const) : null, helper, agentScreen };
   if (unavailable || !probe) return { ...base, ready: false, consent: "ask", reason: unavailable ?? "The macOS desktop driver was not checked.", background: false };
   const permissions = { accessibility: probe.accessibility, screenRecording: probe.screenRecording, screenshot: probe.screenshot };
   const consent = probe.accessibility && probe.screenshot ? "remembered" : "ask";
   const shared = { ...base, consent, permissions, background: probe.accessibility } as const;
-  if (!probe.accessibility && probe.error && !probe.screenRecording) return { ...shared, ready: false, reason: `The macOS desktop driver did not answer (${probe.error}).` };
-  if (!probe.accessibility) return { ...shared, ready: false, reason: `Accessibility is off for Ensemble on this Mac. Fix: ${accessibilityFix()}` };
-  if (!probe.screenRecording) return { ...shared, ready: false, reason: `Screen Recording is off for Ensemble (elements still work). Fix: ${screenRecordingFix(major)}` };
-  if (!probe.screenshot) return { ...shared, ready: false, reason: `A test screenshot failed. Fix: ${screenRecordingFix(major)}` };
+  if (host?.accessibility || host?.screenRecording) {
+    const held = host.accessibility && host.screenRecording ? "Accessibility and Screen Recording" : host.accessibility ? "Accessibility" : "Screen Recording";
+    return { ...shared, ready: false, background: false, reason: `Ensemble itself is allowed ${held} on this Mac, so everything it starts (agent commands, coding agents, MCP servers) would inherit it. Fix: ${hostGrantsFix(major)}` };
+  }
+  if (!probe.accessibility && probe.error && !probe.screenRecording) return { ...shared, ready: false, reason: `Cua Driver, the macOS desktop driver, did not answer (${probe.error}).` };
+  if (!probe.accessibility) return { ...shared, ready: false, reason: `Accessibility is off for Cua Driver on this Mac. Fix: ${accessibilityFix(appPath)}` };
+  if (!probe.screenRecording) return { ...shared, ready: false, reason: `Screen Recording is off for Cua Driver (elements still work). Fix: ${screenRecordingFix(major, appPath)}` };
+  if (!probe.screenshot) return { ...shared, ready: false, reason: `A test screenshot failed. Fix: ${screenRecordingFix(major, appPath)}` };
   return { ...shared, ready: true };
 }
 
@@ -158,7 +217,10 @@ export async function desktopReadiness(platform: string = process.platform, env:
   if (platform === "darwin") {
     const command = cuaDriverCommand(env);
     if ("unavailable" in command) return macReadiness(null, command.unavailable, helper);
-    return macReadiness(await macProbe(command), null, helper);
+    const { value, host } = await macProbe(command, cuaDriverHostProbeCommand(env));
+    const readiness = macReadiness(value, null, helper, macosMajor(), host, findCuaDriver(env)?.app ?? null);
+    const socket = cuaDaemonSocket(env);
+    return socket && (await socketAnswers(socket)) ? { ...readiness, note: CUA_DAEMON_NOTE } : readiness;
   }
   if (platform !== "linux") {
     const reason = platform === "win32" ? WINDOWS_UNSUPPORTED : UNSUPPORTED_HERE;
@@ -179,7 +241,7 @@ export async function desktopReadiness(platform: string = process.platform, env:
 export async function desktopAvailability(): Promise<{ screenshot: boolean; video: boolean; reason?: string }> {
   const readiness = await desktopReadiness();
   if (!readiness.ready) return { screenshot: false, video: false, reason: readiness.reason };
-  if (readiness.session === "macos") return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through the Ensemble app with its Screen Recording permission.${readiness.recorder ? "" : " Video needs macOS 15 or later."}` };
+  if (readiness.session === "macos") return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through Cua Driver with its Screen Recording permission.${readiness.recorder ? "" : " Video needs macOS 15 or later."}` };
   const consent = readiness.consent === "remembered" ? "Allowed before: starts without asking." : "Asks the owner at the computer the first time.";
   return { screenshot: true, video: Boolean(readiness.recorder), reason: `Your screen, through the desktop portal (${readiness.session}). ${consent}${readiness.recorder ? "" : " No video encoder works here."}` };
 }
@@ -206,6 +268,7 @@ export async function desktopCapabilities(timeoutMs = 5_000): Promise<Record<str
           ...(readiness.reason ? { reason: readiness.reason.slice(0, 400) } : {}),
           ...(readiness.permissions ? { permissions: readiness.permissions } : {}),
           ...(readiness.background !== undefined ? { background: readiness.background } : {}),
+          ...(readiness.note ? { note: readiness.note.slice(0, 300) } : {}),
           agentScreen: { ready: readiness.agentScreen.ready, version: readiness.agentScreen.version, ...(readiness.agentScreen.reason ? { reason: readiness.agentScreen.reason.slice(0, 300) } : {}) },
         }
       : null,

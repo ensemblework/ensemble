@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,14 +14,18 @@ const { decodePng } = await import("./drivers/png.js");
 const { DesktopError, DesktopService } = await import("./service.js");
 const { HelperProcess } = await import("./helper-process.js");
 const { Desktops } = await import("./screens.js");
-const { cuaDriverCommand, cuaDriverPin, helperCommand, macosMajor, MAC_APP_ONLY, NO_AGENT_SCREEN_MAC, WINDOWS_UNSUPPORTED } = await import("./index.js");
-const { macReadiness, probeMac } = await import("./readiness.js");
+const { cuaDriverCommand, cuaDriverHostProbeCommand, cuaDriverPin, helperCommand, macosMajor, NO_AGENT_SCREEN_MAC, WINDOWS_UNSUPPORTED } = await import("./index.js");
+const { macReadiness, probeHost, probeMac, socketAnswers } = await import("./readiness.js");
+const { DESKTOP_TRANSPORT_MS, desktopTimeoutMs, typingMs } = await import("./tool-specs.js");
+const { ensembleWindow } = await import("./floor.js");
 type Service = InstanceType<typeof DesktopService>;
 type Driver = InstanceType<typeof MacosCuaDriver>;
 type Caller = import("./service.js").Caller;
 type GateApp = import("./service.js").GateApp;
 
 const FAKE = fileURLToPath(new URL("./fake-cua-driver.mjs", import.meta.url));
+/** Where the stand-in Cua Driver app is said to be (fix texts and permission requests name it). */
+const APP = "/Applications/Ensemble.app/Contents/Resources/sidecar/bin/CuaDriver.app";
 
 // A Mac with a 2560×1600 Retina display (1280×800 points): Reminders in front, the Ensemble app beside it,
 // Safari at the bottom, Clock installed but not running.
@@ -57,7 +62,7 @@ const drivers: Driver[] = [];
 const services: Service[] = [];
 let counter = 0;
 
-function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null } = {}) {
+function mac(options: { world?: Record<string, unknown>; macosMajor?: number | null; handlers?: string[]; clock?: boolean; stopGraceMs?: number } = {}) {
   const dir = join(root, `mac-${(counter += 1)}`);
   mkdirSync(dir, { recursive: true });
   const state = join(dir, "state.json");
@@ -71,21 +76,49 @@ function mac(options: { world?: Record<string, unknown>; macosMajor?: number | n
           .filter(Boolean)
           .map((line) => JSON.parse(line))
       : [];
-  const command = () => ({ command: process.execPath, args: [FAKE], env: { PATH: process.env.PATH ?? "", FAKE_CUA_STATE: state, FAKE_CUA_LOG: log } });
-  // The owner last used the computer ten minutes ago, and the screen is not locked.
-  const idle = { ms: 600_000, locked: false };
+  const command = (embedded = false) => ({ command: process.execPath, args: [FAKE, ...(embedded ? ["--embedded"] : [])], env: { PATH: process.env.PATH ?? "", FAKE_CUA_STATE: state, FAKE_CUA_LOG: log } });
+  // The owner last used the computer ten minutes ago, and the screen is not locked; `afterTypes` is input of
+  // theirs once that many chunks were typed.
+  const idle = { ms: 600_000, locked: false, afterTypes: null as null | { count: number; ms: number } };
+  const temp = join(dir, "user-temp");
+  mkdirSync(temp, { recursive: true });
+  const execs: Array<{ program: string; args: string[] }> = [];
+  // With `clock` the driver's time is a stand-in that only its pauses and `ioreg` move, so long typing runs fast.
+  const clock = { now: 1_000_000 };
   const exec = async (program: string, args: string[]) => {
-    if (!program.endsWith("ioreg")) return "";
-    return args.includes("IOHIDSystem") ? `  |   "HIDIdleTime" = ${idle.ms * 1_000_000}\n` : `  "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes${idle.locked ? ',"CGSSessionScreenIsLocked"=Yes' : ""}})\n`;
+    execs.push({ program, args });
+    if (program.endsWith("ioreg")) {
+      if (options.clock) clock.now += 10;
+      const typed = idle.afterTypes ? calls().filter((call) => call.tool === "type_text").length : 0;
+      const ms = idle.afterTypes && typed >= idle.afterTypes.count ? idle.afterTypes.ms : idle.ms;
+      return args.includes("IOHIDSystem") ? `  |   "HIDIdleTime" = ${ms * 1_000_000}\n` : `  "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes${idle.locked ? ',"CGSSessionScreenIsLocked"=Yes' : ""}})\n`;
+    }
+    if (program.endsWith("getconf")) return `${temp}/\n`;
+    if (program.endsWith("osascript") && args.includes("JavaScript")) return `${JSON.stringify(options.handlers ?? ["com.apple.Safari"])}\n`;
+    if (program.endsWith("/open")) {
+      // Cua Driver's permission host writes what it found into the file it was given.
+      const file = args[args.indexOf("--result-file") + 1]!;
+      writeFileSync(file, JSON.stringify({ structuredContent: { accessibility: false, screen_recording: false } }));
+    }
+    return "";
   };
-  const driver = new MacosCuaDriver({ spawn: command, version: "0.56.6", workDir: join(dir, "cua"), macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000 });
+  const timing = options.clock ? { now: () => clock.now, sleep: async (ms: number) => void (clock.now += ms) } : {};
+  const driver = new MacosCuaDriver({ spawn: () => command(), version: "0.56.6", workDir: join(dir, "cua"), appPath: APP, macosMajor: options.macosMajor === undefined ? 15 : options.macosMajor, exec, helloTimeoutMs: 10_000, ...(options.stopGraceMs ? { stopGraceMs: options.stopGraceMs } : {}), ...timing });
   const service = new DesktopService({ helper: driver, captureDir: join(dir, "captures"), platform: "darwin", secretValues: async () => ["saved-value-123"] });
   drivers.push(driver);
   services.push(service);
-  return { driver, service, set, calls, command, idle, dir };
+  return { driver, service, set, calls, command, idle, dir, execs, temp };
 }
 
 const caller = (key = "node:n1:m1", extra: Partial<Caller> = {}): Caller => ({ key, label: `@${key}`, budgetMs: 30_000, gate: async () => ({ allow: true }), ...extra });
+
+async function until(done: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > end) throw new Error("waited too long");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 after(async () => {
   for (const service of services) await service.stop();
@@ -93,38 +126,45 @@ after(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("darwin: the helper is the pinned cua-driver, only in the Ensemble app's runtime, with telemetry off and no secrets", () => {
+test("darwin: Cua Driver runs through the disclaim launcher, as its own process for macOS, with telemetry off and no secrets", () => {
   const bin = join(root, "bin");
-  mkdirSync(bin, { recursive: true });
-  const binary = join(bin, "cua-driver");
-  writeFileSync(binary, "#!/bin/sh\n");
-  chmodSync(binary, 0o755);
+  const executable = join(bin, "CuaDriver.app", "Contents", "MacOS", "cua-driver");
+  const launcher = join(bin, "ensemble-disclaim");
+  mkdirSync(join(bin, "CuaDriver.app", "Contents", "MacOS"), { recursive: true });
+  for (const file of [executable, launcher]) {
+    writeFileSync(file, "#!/bin/sh\n");
+    chmodSync(file, 0o755);
+  }
   const env = {
     HOME: root,
     PATH: "/usr/bin",
     ENSEMBLE_REMOTE_STATE_DIR: join(root, "state"),
-    ENSEMBLE_RUNTIME_OWNER: "desktop",
-    ENSEMBLE_INSTALL_PATH: "/Applications/Ensemble.app/Contents/MacOS/ensemble-desktop",
-    ENSEMBLE_CUA_DRIVER: binary,
+    ENSEMBLE_RUNTIME_OWNER: "cli",
+    ENSEMBLE_INSTALL_PATH: "/opt/homebrew/bin/ensemble",
+    ENSEMBLE_CUA_DRIVER_DIR: bin,
     OPENAI_API_KEY: "sk-not-for-the-driver",
     ANTHROPIC_API_KEY: "not-for-the-driver",
     ENSEMBLE_DESKTOP_TOKEN: "not-for-the-driver",
   };
   const spec = helperCommand(env, "darwin");
   assert.ok(!("unavailable" in spec), JSON.stringify(spec));
-  assert.equal(spec.command, binary);
-  assert.deepEqual(spec.args, ["mcp", "--direct", "--embedded", "--host-bundle-id", "com.ensemblework.desktop"]);
-  for (const [key, value] of Object.entries({ DO_NOT_TRACK: "1", CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0", CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_PERMISSION_MODE: "standard", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1" })) assert.equal(spec.env[key], value, key);
-  for (const key of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_CUA_DRIVER", "ENSEMBLE_REMOTE_STATE_DIR"]) assert.equal(spec.env[key], undefined, key);
+  assert.equal(spec.command, launcher, "the launcher disclaims, so macOS asks about Cua Driver and never Ensemble");
+  assert.deepEqual(spec.args, [executable, "mcp", "--direct"]);
+  for (const [key, value] of Object.entries({ DO_NOT_TRACK: "1", CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0", CUA_DRIVER_PERMISSION_MODE: "standard", CUA_DRIVER_DISABLE_RUN_SCRIPT: "1" })) assert.equal(spec.env[key], value, key);
+  for (const key of ["CUA_DRIVER_EMBEDDED", "CUA_DRIVER_HOST_BUNDLE_ID", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ENSEMBLE_DESKTOP_TOKEN", "ENSEMBLE_CUA_DRIVER_DIR", "ENSEMBLE_REMOTE_STATE_DIR"]) assert.equal(spec.env[key], undefined, key);
+  // Only the Ensemble app's own runtime checks the app's grants: in embedded mode, with no launcher.
+  assert.equal(cuaDriverHostProbeCommand(env), null);
+  const app = { ...env, ENSEMBLE_RUNTIME_OWNER: "desktop", ENSEMBLE_INSTALL_PATH: "/Applications/Ensemble.app/Contents/MacOS/ensemble-desktop" };
+  const host = cuaDriverHostProbeCommand(app)!;
+  assert.deepEqual([host.command, host.args, host.env.CUA_DRIVER_EMBEDDED], [executable, ["mcp", "--direct", "--embedded"], "1"]);
   assert.deepEqual(helperCommand(env, "darwin", "agent"), { unavailable: NO_AGENT_SCREEN_MAC });
-  assert.deepEqual(helperCommand({ ...env, ENSEMBLE_RUNTIME_OWNER: "cli", ENSEMBLE_INSTALL_PATH: "/opt/homebrew/bin/ensemble" }, "darwin"), { unavailable: MAC_APP_ONLY });
-  assert.deepEqual(helperCommand({ ...env, ENSEMBLE_INSTALL_PATH: "/Users/a/code/ensemble/target/debug/ensemble-desktop" }, "darwin"), { unavailable: MAC_APP_ONLY }, "a development build is not the app macOS grants");
-  assert.match((helperCommand({ ...env, ENSEMBLE_CUA_DRIVER: join(bin, "missing") }, "darwin") as { unavailable: string }).unavailable, /update the Ensemble app/);
+  assert.match((helperCommand({ ...env, ENSEMBLE_CUA_DRIVER_DIR: join(root, "missing") }, "darwin") as { unavailable: string }).unavailable, /install or update the Ensemble app/);
   assert.match((cuaDriverCommand(env, process.execPath, "21.6.0") as { unavailable: string }).unavailable, /macOS 13 or later; this Mac runs macOS 12/);
   assert.deepEqual(helperCommand(env, "win32"), { unavailable: WINDOWS_UNSUPPORTED });
   assert.deepEqual([macosMajor("22.6.0"), macosMajor("24.1.0"), macosMajor("25.0.0"), macosMajor("6.8.0-45-generic")], [13, 15, 26, null]);
   const pin = cuaDriverPin();
   assert.equal(pin.version, "0.56.6");
+  assert.equal(pin.member, "cua-driver-rs-0.56.6-darwin-universal/CuaDriver.app");
   assert.match(pin.sha256, /^[0-9a-f]{64}$/);
   assert.equal(pin.url, `https://github.com/trycua/cua/releases/download/${pin.tag}/${pin.asset}`);
 });
@@ -135,43 +175,73 @@ test("a cua-driver of another version is not used", async () => {
   assert.equal(driver.health().state, "unavailable");
 });
 
-test("readiness: cua-driver's permission check and a test screenshot prove it, never ready on a failed probe, with the exact fix", async () => {
+test("readiness: Cua Driver's own permission check and a test screenshot prove it, never ready on a failed probe, with the exact fix", async () => {
   const probe = (world: Record<string, unknown>) => probeMac(mac({ world }).command(), "0.56.6", 10_000);
-  const off = macReadiness(await probe({ accessibility: false, screen_recording: false }), null, "stopped", 15);
+  const off = macReadiness(await probe({ accessibility: false, screen_recording: false }), null, "stopped", 15, null, APP);
   assert.equal(off.ready, false);
   assert.equal(off.background, false);
-  assert.match(off.reason!, /System Settings › Privacy & Security › Accessibility: turn on Ensemble/);
+  assert.match(off.reason!, /System Settings › Privacy & Security › Accessibility: turn on Cua Driver/);
+  assert.ok(off.reason!.includes(APP), "where to find it when macOS does not list it");
   const noScreen = await probe({ accessibility: true, screen_recording: false });
-  const partly = macReadiness(noScreen, null, "stopped", 15);
+  const partly = macReadiness(noScreen, null, "stopped", 15, null, APP);
   assert.equal(partly.ready, false);
   assert.equal(partly.background, true, "elements can still be read and pressed");
-  assert.match(partly.reason!, /System Settings › Privacy & Security › Screen & System Audio Recording: turn on Ensemble/);
-  assert.match(macReadiness(noScreen, null, "stopped", 14).reason!, /Privacy & Security › Screen Recording: turn on Ensemble/);
-  const blank = macReadiness(await probe({ screenshotFails: true }), null, "stopped", 15);
+  assert.match(partly.reason!, /System Settings › Privacy & Security › Screen & System Audio Recording: turn on Cua Driver/);
+  assert.match(macReadiness(noScreen, null, "stopped", 14, null, APP).reason!, /Privacy & Security › Screen Recording: turn on Cua Driver/);
+  const blank = macReadiness(await probe({ screenshotFails: true }), null, "stopped", 15, null, APP);
   assert.equal(blank.ready, false, "Screen Recording on, but the test screenshot failed");
   assert.deepEqual(blank.permissions, { accessibility: true, screenRecording: true, screenshot: false });
-  const on = macReadiness(await probe({}), null, "stopped", 15);
+  const on = macReadiness(await probe({}), null, "stopped", 15, null, APP);
   assert.equal(on.ready, true);
   assert.equal(on.consent, "remembered");
   assert.deepEqual(on.permissions, { accessibility: true, screenRecording: true, screenshot: true });
   assert.equal(on.recorder, "mp4");
   assert.equal(on.agentScreen.ready, false);
   assert.equal(on.agentScreen.reason, NO_AGENT_SCREEN_MAC);
-  assert.equal(macReadiness(await probe({}), null, "stopped", 14).recorder, null, "video needs macOS 15");
-  const cli = macReadiness(null, MAC_APP_ONLY, "stopped", 15);
-  assert.equal(cli.ready, false);
-  assert.equal(cli.reason, MAC_APP_ONLY);
+  assert.equal(macReadiness(await probe({}), null, "stopped", 14, null, APP).recorder, null, "video needs macOS 15");
+  const missing = macReadiness(null, "Desktop control on a Mac needs the Ensemble app.", "stopped", 15, null, APP);
+  assert.equal(missing.ready, false);
 });
 
-test("the service asks for each grant with its fix, and takes it once given (a fresh driver reads it again)", async () => {
+test("readiness: an Ensemble app holding Accessibility or Screen Recording itself is not ready, since everything it starts would inherit them", async () => {
+  const h = mac({ world: { host_screen_recording: true } });
+  const host = await probeHost(h.command(true), "0.56.6", 10_000);
+  assert.deepEqual(host, { accessibility: false, screenRecording: true });
+  const leaking = macReadiness(await probeMac(h.command(), "0.56.6", 10_000), null, "stopped", 15, host, APP);
+  assert.deepEqual([leaking.ready, leaking.background], [false, false]);
+  assert.match(leaking.reason!, /Ensemble itself is allowed/);
+  assert.match(leaking.reason!, /turn Ensemble off under Accessibility and under Screen & System Audio Recording/);
+  assert.equal(macReadiness(await probeMac(h.command(), "0.56.6", 10_000), null, "stopped", 15, { accessibility: false, screenRecording: false }, APP).ready, true);
+});
+
+test("readiness notes Cua Driver's own daemon when something answers on its socket, and not for a file left behind", async () => {
+  const path = join(root, "daemon.sock");
+  assert.equal(await socketAnswers(path), false);
+  const server = createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  assert.equal(await socketAnswers(path), true);
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  rmSync(path, { force: true });
+  writeFileSync(path, "");
+  assert.equal(await socketAnswers(path), false);
+});
+
+test("the service asks for each grant with its fix, has macOS ask for Cua Driver once, and takes the grant once given (a fresh driver reads it again)", async () => {
   const h = mac({ world: { accessibility: false, screen_recording: false } });
   const status = await h.service.status();
   assert.equal(status.facts.accessibility!.state, "needed");
-  assert.match(status.facts.accessibility!.fix!, /^System Settings › Privacy & Security › Accessibility: turn on Ensemble/);
+  assert.match(status.facts.accessibility!.fix!, /^System Settings › Privacy & Security › Accessibility: turn on Cua Driver/);
   assert.equal(status.facts.screen_recording!.state, "needed");
   assert.equal(status.facts.agent_screen!.state, "failed");
-  await assert.rejects(h.service.observe(caller(), {}), (error: unknown) => error instanceof DesktopError && error.code === "consent_needed" && /Screen & System Audio Recording: turn on Ensemble/.test(error.message));
-  await assert.rejects(h.service.observe(caller(), { app: "Reminders", screenshot: false }), (error: unknown) => error instanceof DesktopError && error.code === "consent_needed" && /Accessibility: turn on Ensemble/.test(error.message));
+  await assert.rejects(h.service.observe(caller(), {}), (error: unknown) => error instanceof DesktopError && error.code === "consent_needed" && /Screen & System Audio Recording: turn on Cua Driver/.test(error.message));
+  await assert.rejects(h.service.observe(caller(), { app: "Reminders", screenshot: false }), (error: unknown) => error instanceof DesktopError && error.code === "consent_needed" && /Accessibility: turn on Cua Driver/.test(error.message));
+  // Cua Driver's own permission host asks macOS, under Cua Driver's name, once while the same grants are missing.
+  const asked = h.execs.filter((run) => run.program === "/usr/bin/open");
+  assert.equal(asked.length, 1, JSON.stringify(asked));
+  const [file] = asked[0]!.args.slice(-1);
+  assert.deepEqual(asked[0]!.args.slice(0, -1), ["-n", "-W", "-g", APP, "--args", "__permissions-host-request", "--result-file"]);
+  assert.match(file!, new RegExp(`^${h.temp}/cua-driver-permissions-\\d+-\\d+\\.json$`));
+  assert.equal(existsSync(file!), false, "the result file is removed");
   h.set({ accessibility: true, screen_recording: true });
   const look = await h.service.observe(caller(), { app: "Reminders" });
   assert.equal(look.image?.mime, "image/png");
@@ -290,7 +360,8 @@ test("foreground: the owner's pointer and keyboard go to screen pixels, a click 
   const keys = await h.service.act(caller(), { foreground: true, steps: [{ action: "key", keys: "cmd+s" }, { action: "type", text: "Groceries" }] });
   assert.deepEqual(keys.steps.map((step) => step.verdict), ["confirmed", "confirmed"]);
   assert.deepEqual(h.calls().find((call) => call.tool === "hotkey")!.args, { keys: ["cmd", "s"], scope: "desktop" });
-  assert.deepEqual(h.calls().find((call) => call.tool === "type_text")!.args, { text: "Groceries", scope: "desktop" });
+  const typed = h.calls().filter((call) => call.tool === "type_text");
+  assert.deepEqual(typed.map((call) => call.args), [{ text: "Grocerie", scope: "desktop" }, { text: "s", scope: "desktop" }]);
 });
 
 test("recording: unavailable before macOS 15; from 15 an MP4 through cua-driver, checked and saved without its notes", async () => {
@@ -333,6 +404,173 @@ test("there is no agent screen on macOS: calls go to the owner's screen, and nam
   const screens = new Desktops(h.service, () => agent, "owner");
   assert.equal(screens.pick("node:n1:m1"), "owner");
   await assert.rejects(screens.service("agent").observe(caller(), {}), (error: unknown) => error instanceof DesktopError && error.code === "unavailable" && error.message === NO_AGENT_SCREEN_MAC);
+});
+
+test("every window of a browser is a page that cannot be read, also one minimised, hidden or on another Space", async () => {
+  const away = { window_id: 42, pid: 104, app_name: "Safari", title: "Approvals", bounds: { x: 0, y: 0, width: 900, height: 700 }, is_on_screen: false, z_index: null, layer: 0, minimized: false };
+  const h = mac({ world: { windows: [...MAC.windows.filter((win) => win.pid !== 104), away], elements: { ...MAC.elements, "42": [{ element_index: 1, role: "AXButton", title: "Allow", actions: ["AXPress"], frame: { x: 20, y: 20, w: 60, h: 24 }, enabled: true }] } } });
+  await h.service.observe(caller(), { app: "Safari", screenshot: false });
+  const done = await h.service.act(caller(), { steps: [{ action: "press", element: "e1" }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.rule], ["refused", "unknown_page"]);
+  assert.ok(!h.calls().some((call) => call.tool === "click"));
+});
+
+test("browsers are told apart by LaunchServices (apps that open https links) and web-app bundles, and Ensemble's own windows by their titles", async () => {
+  const button = (x: number) => [{ element_index: 1, role: "AXButton", title: "Allow", actions: ["AXPress"], frame: { x, y: 20, w: 60, h: 24 }, enabled: true }];
+  const h = mac({
+    // Nimbus is a browser no list knows: LaunchServices says it opens https links. DuckDuckGo is known by its bundle.
+    handlers: ["com.apple.Safari", "org.example.Nimbus"],
+    world: {
+      apps: [...MAC.apps, { pid: 105, name: "DuckDuckGo", bundle_id: "com.duckduckgo.macos.browser", running: true, active: false }, { pid: 106, name: "Notes Wrapper", bundle_id: "com.example.wrapper", running: true, active: false }, { pid: 107, name: "Ensemble Hub", bundle_id: "com.apple.Safari.WebApp.1A2B", running: true, active: false }, { pid: 108, name: "Site", bundle_id: "com.example.site", running: true, active: false }, { pid: 109, name: "Nimbus", bundle_id: "org.example.Nimbus", running: true, active: false }],
+      windows: [
+        ...MAC.windows,
+        { window_id: 51, pid: 105, app_name: "DuckDuckGo", title: "Search", bounds: { x: 0, y: 0, width: 400, height: 300 }, is_on_screen: true, z_index: 4, layer: 0, minimized: false },
+        { window_id: 61, pid: 106, app_name: "Notes Wrapper", title: "Today · Ensemble", bounds: { x: 0, y: 0, width: 400, height: 300 }, is_on_screen: true, z_index: 3, layer: 0, minimized: false },
+        { window_id: 71, pid: 107, app_name: "Ensemble Hub", title: "Inbox", bounds: { x: 0, y: 0, width: 400, height: 300 }, is_on_screen: true, z_index: 2, layer: 0, minimized: false },
+        { window_id: 81, pid: 108, app_name: "Site", title: "Ensemble Node", bounds: { x: 0, y: 0, width: 400, height: 300 }, is_on_screen: true, z_index: 1, layer: 0, minimized: false },
+        { window_id: 91, pid: 109, app_name: "Nimbus", title: "Start", bounds: { x: 0, y: 0, width: 400, height: 300 }, is_on_screen: true, z_index: 0, layer: 0, minimized: false },
+      ],
+      elements: { ...MAC.elements, "51": button(10), "61": button(10), "71": button(10), "81": button(10), "91": button(10) },
+    },
+  });
+  for (const [app, rule] of [["Nimbus", "unknown_page"], ["DuckDuckGo", "unknown_page"], ["Notes Wrapper", "ensemble_window"], ["Ensemble Hub", "unknown_page"], ["Site", "ensemble_window"]] as const) {
+    await h.service.observe(caller(), { app, screenshot: false });
+    const done = await h.service.act(caller(), { steps: [{ action: "press", element: "e1" }] });
+    assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.rule], ["refused", rule], app);
+  }
+  assert.ok(!h.calls().some((call) => call.tool === "click"));
+  assert.equal(h.execs.filter((run) => run.program.endsWith("osascript")).length, 1, "the https handlers are read once, not at every look");
+  const plain = { name: "Wrapper", app_id: "com.example.wrapper", toolkit: "macOS" };
+  for (const title of ["Ensemble", "Today · Ensemble", "Ensemble Node", "Inbox · Ensemble Node", "Quick capture"]) assert.ok(ensembleWindow(plain, title), title);
+  for (const title of ["Ensemble Theater", "Ensembles", "Notes"]) assert.equal(ensembleWindow(plain, title), null, title);
+  assert.equal(ensembleWindow({ name: "Orion", app_id: "com.kagi.kagimacOS", toolkit: "Web" }, "Today · Ensemble"), null, "a browser's page is judged by its address");
+});
+
+test("typing goes in short chunks and stops when the window in front changes or the owner types", async () => {
+  const text = "The quick brown fox jumps over the lazy dog";
+  const typedBy = (h: ReturnType<typeof mac>) =>
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => String(call.args.text));
+  // Safari comes to the front with its window on top after two chunks: the window on top is checked after each.
+  const moved = mac({ world: { frontAfterTypes: { count: 2, pid: 104 } } });
+  const first = await moved.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([first.steps[0]!.verdict, first.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(first.steps[0]!.detail!, /Typing stopped after 16 of 43 characters: the window in front changed/);
+  assert.deepEqual(typedBy(moved), ["The quic", "k brown "]);
+
+  // An app with no window to raise takes the front after one chunk: the app in front is checked every fourth.
+  const windowless = mac({ world: { frontAfterTypes: { count: 1, pid: 104, raise: false } } });
+  const quiet = await windowless.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.match(quiet.steps[0]!.detail!, /after 32 of 43 characters: the window in front changed/);
+  assert.equal(typedBy(windowless).length, 4);
+
+  const touched = mac();
+  touched.idle.afterTypes = { count: 1, ms: 20 };
+  const second = await touched.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.equal(second.steps[0]!.verdict, "partial");
+  assert.match(second.steps[0]!.detail!, /your owner used the keyboard or mouse/);
+  assert.equal(typedBy(touched).length, 1);
+  assert.equal(touched.service.lease.holder, "owner");
+
+  const whole = mac();
+  const third = await whole.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.equal(third.steps[0]!.verdict, "confirmed");
+  assert.equal(typedBy(whole).join(""), text);
+});
+
+test("the longest text a type step takes finishes in its time; with less time it stops between chunks and says how much went in", async () => {
+  const text = Array.from({ length: 5_000 }, (_, index) => "abcdefghijklmnopqrstuvwxyz0123456789 "[index % 37]).join("");
+  // The call's time covers typing all of it, with the look after it and the way to the computer and back.
+  assert.ok(typingMs(text.length) + 8_000 + DESKTOP_TRANSPORT_MS <= desktopTimeoutMs("desktop_act", { steps: [{ action: "type", text }] }));
+  const typedBy = (h: ReturnType<typeof mac>) =>
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => String(call.args.text))
+      .join("");
+  const long = mac({ clock: true });
+  const done = await long.service.act(caller("node:n1:m1", { budgetMs: desktopTimeoutMs("desktop_act", { steps: [{ action: "type", text }] }) - DESKTOP_TRANSPORT_MS }), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["confirmed", "yes"]);
+  assert.equal(typedBy(long), text);
+
+  const short = mac({ clock: true });
+  const cut = await short.service.act(caller("node:n1:m1", { budgetMs: 40_000 }), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([cut.steps[0]!.verdict, cut.steps[0]!.ran], ["partial", "yes"]);
+  const told = /Typing stopped after (\d+) of 5000 characters: this call ran out of time, so the rest was not typed\. Look, then type the rest \(from character (\d+)\) in another step\./.exec(cut.steps[0]!.detail!);
+  assert.ok(told, cut.steps[0]!.detail);
+  const count = Number(told[1]);
+  assert.ok(count > 0 && count < 5_000 && count % 8 === 0, String(count));
+  assert.equal(Number(told[2]), count + 1);
+  assert.equal(typedBy(short), text.slice(0, count), "exactly what it says went in");
+});
+
+test("a failure after some chunks went in says the step ran, with how much was typed, so it is not typed again", async () => {
+  const text = "The quick brown fox jumps over the lazy dog";
+  const h = mac({ world: { failAfterTypes: { count: 3, tool: "list_windows" } } });
+  const done = await h.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["unknown", "yes"]);
+  assert.match(done.steps[0]!.detail!, /^Typing stopped after 24 of 43 characters \(the rest was not typed\): list_windows failed/);
+  assert.equal(done.ran, 1);
+  assert.deepEqual(
+    h
+      .calls()
+      .filter((call) => call.tool === "type_text")
+      .map((call) => call.args.text)
+      .join(""),
+    text.slice(0, 24),
+  );
+});
+
+test("a run that ends stops its typing before the next chunk, saying how much went in", async () => {
+  const h = mac();
+  const chunks = () => h.calls().filter((call) => call.tool === "type_text").length;
+  const text = "x".repeat(400);
+  const acting = h.service.act(caller("run:job-1"), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => chunks() >= 3);
+  const before = chunks();
+  await h.service.release("run:job-1");
+  const done = await acting;
+  const after = chunks();
+  assert.ok(after <= before + 1, `${before} chunks when it ended, ${after} after`);
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["partial", "yes"]);
+  assert.equal(done.steps[0]!.detail, `Typing stopped after ${after * 8} of 400 characters: the work it was for ended, or desktop control stopped, so the rest was not typed.`);
+});
+
+test("stopping desktop control during typing returns at once; a call still running after the grace ends with the driver", async () => {
+  const h = mac();
+  const chunks = () => h.calls().filter((call) => call.tool === "type_text").length;
+  const text = "y".repeat(400);
+  const acting = h.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => chunks() >= 2);
+  let started = Date.now();
+  await h.driver.stop();
+  assert.ok(Date.now() - started < 1_000, `stopped in ${Date.now() - started} ms`);
+  const done = await acting;
+  assert.deepEqual([done.steps[0]!.verdict, done.steps[0]!.ran], ["partial", "yes"]);
+  assert.match(done.steps[0]!.detail!, /^Typing stopped after \d+ of 400 characters: the work it was for ended, or desktop control stopped/);
+
+  // The driver does not answer a chunk: after the grace it is killed, and the chunk may have gone in.
+  const hung = mac({ stopGraceMs: 1_000, world: { slow: { type_text: 30_000 } } });
+  const stuck = hung.service.act(caller(), { foreground: true, steps: [{ action: "type", text }] });
+  await until(() => hung.calls().some((call) => call.tool === "type_text"));
+  started = Date.now();
+  await hung.driver.stop();
+  const took = Date.now() - started;
+  assert.ok(took >= 900 && took < 3_000, `stopped in ${took} ms`);
+  const cut = await stuck;
+  assert.deepEqual([cut.steps[0]!.verdict, cut.steps[0]!.ran], ["unknown", "maybe"]);
+  assert.equal(hung.driver.health().crashes, 0, "killed on purpose, not counted as a crash");
+});
+
+test("lines from cua-driver that are not MCP messages are ignored: null, arrays, numbers, a 10 MB line, bytes that are not UTF-8", async () => {
+  const h = mac({ world: { noise: true } });
+  const listed = await h.driver.call<{ apps: unknown[] }>("a11y.apps", {}, { timeoutMs: 30_000 });
+  assert.ok(listed.apps.length > 0);
+  assert.equal(h.driver.health().state, "ready");
+  const again = await h.driver.call<{ apps: unknown[] }>("a11y.apps", {}, { timeoutMs: 30_000 });
+  assert.equal(again.apps.length, listed.apps.length);
 });
 
 test("key names: Linux-style combinations in cua-driver's words", () => {

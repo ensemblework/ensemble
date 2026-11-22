@@ -149,13 +149,25 @@ export class HelperProcess extends EventEmitter {
     }
   }
 
+  /** Nothing the helper writes may throw out of here: a throw in a stream listener would end this runtime. */
   private onLine(line: string): void {
-    let message: { id?: unknown; result?: unknown; error?: unknown; method?: unknown; params?: unknown };
     try {
-      message = JSON.parse(line) as typeof message;
+      this.handleLine(line);
+    } catch (error) {
+      this.options.log?.(`desktop helper: a message was ignored (${error instanceof Error ? error.message.slice(0, 120) : "unreadable"})`);
+    }
+  }
+
+  private handleLine(line: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
     } catch {
       return;
     }
+    // Only an object is a JSON-RPC message: `null`, arrays, numbers and strings are not.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    const message = parsed as { id?: unknown; result?: unknown; error?: unknown; method?: unknown; params?: unknown };
     if (message.method === "event" && message.params && typeof message.params === "object") {
       this.emit("event", message.params as HelperEvent);
       return;

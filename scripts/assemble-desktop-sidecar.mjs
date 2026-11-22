@@ -2,14 +2,16 @@
  * Pack hub-api, its worker, and a Node binary into the Tauri resources folder.
  * Dev builds skip this and run `node --import tsx` from the workspace.
  *
- * On macOS the desktop app's sidecar also carries cua-driver, the desktop control driver, at its pinned
- * version (scripts/fetch-cua-driver.mjs). `--no-cua-driver` leaves it out: the CLI's sidecar
- * (scripts/package-cli.mjs), whose runtime never drives a Mac's desktop.
+ * On macOS the desktop app's sidecar also carries Cua Driver, the desktop control driver: CuaDriver.app at its
+ * pinned version (scripts/fetch-cua-driver.mjs), and ensemble-disclaim, the launcher that starts it as its own
+ * responsible process (scripts/build-disclaim.mjs). `--no-cua-driver` leaves both out: the CLI's sidecar
+ * (scripts/package-cli.mjs); a runtime the CLI started uses the copy in the installed Ensemble app.
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildDisclaim } from "./build-disclaim.mjs";
 import { buildLandrun } from "./build-landrun.mjs";
 import { fetchCuaDriver } from "./fetch-cua-driver.mjs";
 import { run } from "./desktop-spawn.mjs";
@@ -96,10 +98,12 @@ if (process.platform === "linux") {
   buildLandrun({ out: join(dest, "bin", "landrun"), arch: process.arch });
 }
 
-// macOS: the desktop control driver (apps/hub-api/src/desktop/control/index.ts looks for <sidecar>/bin/cua-driver).
+// macOS: the desktop control driver and its launcher (apps/hub-api/src/desktop/control/index.ts looks for
+// <sidecar>/bin/CuaDriver.app and <sidecar>/bin/ensemble-disclaim).
 if (process.platform === "darwin" && cuaDriver) {
   try {
-    await fetchCuaDriver({ out: join(dest, "bin", "cua-driver") });
+    await fetchCuaDriver({ out: join(dest, "bin") });
+    buildDisclaim({ out: join(dest, "bin", "ensemble-disclaim") });
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);

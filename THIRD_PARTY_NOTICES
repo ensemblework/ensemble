@@ -1,8 +1,8 @@
 THIRD-PARTY NOTICES
 
 Ensemble includes material adapted from the projects below, and one program it redistributes
-unmodified (cua-driver). Each entry names the files in this repository that adapt or carry it, then
-reproduces the project's licence as its terms require.
+unmodified (Cua Driver, cua-driver). Each entry names the files in this repository that adapt or carry
+it, then reproduces the project's licence as its terms require.
 
 
 superpowers
@@ -73,15 +73,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-cua-driver
+cua-driver (Cua Driver)
 Source: https://github.com/trycua/cua/tree/cua-driver-rs-v0.56.6/libs/cua-driver (release cua-driver-rs-v0.56.6, commit 53260e000221483c5ab3f49607aae5c66c23e883)
 Redistributed unmodified, in the Ensemble app for macOS only:
-- sidecar/bin/cua-driver: the `cua-driver` executable of the release archive
-  cua-driver-rs-0.56.6-darwin-universal-binary.tar.gz (SHA-256
-  09cca6c3b10b171dc30a3a83772a4b51221749e74f8056910a8a379431b4a174), signed by its publisher, with
-  this licence beside it as cua-driver.LICENSE (scripts/fetch-cua-driver.mjs,
+- sidecar/bin/CuaDriver.app: the CuaDriver.app bundle of the release archive
+  cua-driver-rs-0.56.6-darwin-universal.tar.gz (SHA-256
+  c800df96571a199042358433fc544eb5a1a250d48076e5979ae94d88d9fb72f9), signed and notarized by its
+  publisher, with this licence beside it as CuaDriver.LICENSE and the archive's own notice file as
+  CuaDriver.THIRD_PARTY_NOTICES.md (scripts/fetch-cua-driver.mjs,
   apps/hub-api/desktop-helper/macos/cua-driver.json)
-- run by apps/hub-api/src/desktop/control/drivers/macos-cua.ts as Ensemble's macOS desktop driver
+- run by apps/hub-api/src/desktop/control/drivers/macos-cua.ts as Ensemble's macOS desktop driver,
+  started through sidecar/bin/ensemble-disclaim, which is Ensemble's own
+  (apps/hub-api/desktop-helper/macos/disclaim.c) and not part of cua-driver
 
 cua-driver includes code derived from these MIT-licensed projects (libs/cua-driver/rust/THIRD_PARTY_NOTICES.md
 at that commit): trope-cua (Copyright (c) 2026 Victor Vannara), Interface-Agent (Copyright (c) 2024

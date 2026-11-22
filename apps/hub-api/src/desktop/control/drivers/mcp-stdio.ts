@@ -164,16 +164,28 @@ export class McpStdioClient extends EventEmitter {
     }
   }
 
+  /** Nothing the server writes may throw out of here: a throw in a stream listener would end this runtime. */
   private onLine(child: ChildProcess, line: string): void {
-    let message: { id?: unknown; result?: unknown; error?: { code?: unknown; message?: unknown } | null; method?: unknown };
     try {
-      message = JSON.parse(line) as typeof message;
+      this.handleLine(child, line);
+    } catch (error) {
+      this.options.log?.(`macOS desktop driver: a message was ignored (${error instanceof Error ? error.message.slice(0, 120) : "unreadable"})`);
+    }
+  }
+
+  private handleLine(child: ChildProcess, line: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
     } catch {
       return;
     }
+    // Only an object is a JSON-RPC message: `null`, arrays, numbers and strings are not.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    const message = parsed as { id?: unknown; result?: unknown; error?: unknown; method?: unknown };
     if (typeof message.method === "string") {
       // A request of the server's own: only ping is answered, as this client offers nothing else.
-      if (message.id !== undefined && message.id !== null) {
+      if (typeof message.id === "number" || typeof message.id === "string") {
         const reply = message.method === "ping" ? { result: {} } : { error: { code: -32601, message: "Method not found" } };
         child.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, ...reply })}\n`);
       }
@@ -185,8 +197,9 @@ export class McpStdioClient extends EventEmitter {
     this.pending.delete(message.id);
     clearTimeout(waiting.timer);
     if (message.error) {
-      const code = typeof message.error.code === "number" ? message.error.code : 0;
-      const text = typeof message.error.message === "string" ? message.error.message.slice(0, 500) : "The macOS desktop driver failed.";
+      const error = (typeof message.error === "object" ? message.error : {}) as { code?: unknown; message?: unknown };
+      const code = typeof error.code === "number" ? error.code : 0;
+      const text = typeof error.message === "string" ? error.message.slice(0, 500) : "The macOS desktop driver failed.";
       waiting.reject(new HelperError(code === -32602 ? "invalid_params" : code === -32601 ? "method_not_found" : "internal", text, "no"));
     } else waiting.resolve(message.result);
   }
@@ -243,6 +256,23 @@ export class McpStdioClient extends EventEmitter {
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer, effects: options.effects });
       child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
+  }
+
+  /** Ends the server at once, a call of its still running (it fails as `gone`); the next call starts it again. */
+  async kill(): Promise<void> {
+    const child = this.child;
+    if (!child) return;
+    this.stopping = true;
+    const ended = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2_000);
+      timer.unref?.();
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    child.kill("SIGKILL");
+    await ended;
   }
 
   async stop(): Promise<void> {
