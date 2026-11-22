@@ -67,6 +67,12 @@ export const sessionFolder = (key: string) => join(stateDir(), "assistant", key)
 const dirOf = (key: string, entry?: Pick<Entry, "dir">) => (entry?.dir && /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/.test(entry.dir) ? entry.dir : key);
 const ownFolder = (key: string, entry?: Pick<Entry, "dir">) => join(stateDir(), "assistant", dirOf(key, entry));
 const keepMs = (entry: Pick<Entry, "keep">) => (entry.keep ?? KEEP_DAYS) * DAY_MS;
+/**
+ * When the chat last used a session here: its last turn's end, or a turn's start noted since (`takeSession`), which
+ * may run in a new session while the entry still has the expired one's time. The entry's own time stays its last
+ * turn's, so a turn that takes its note back leaves an expired session as old as it was.
+ */
+const usedAt = (entry: Pick<Entry, "at" | "taking">) => Math.max(entry.at, entry.taking?.at ?? 0);
 
 /** A short fingerprint of the instructions a session began with. */
 export const instructionsHash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 24);
@@ -221,7 +227,7 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
     const now = Date.now();
     const old: Array<[string, Entry, boolean]> = [];
     for (const [other, entry] of Object.entries(store)) {
-      if (other !== key && now - entry.at >= keepMs(entry)) {
+      if (other !== key && now - usedAt(entry) >= keepMs(entry)) {
         delete store[other];
         old.push([other, entry, true]);
       }
