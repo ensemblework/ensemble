@@ -1,0 +1,321 @@
+{
+ "label": "v2-final-code",
+ "stamp": "2026-11-22T07-23-19",
+ "commit": "1ea3823d",
+ "agent": "copilot-cli",
+ "model": "gpt-6-luna",
+ "judgeModel": "gpt-6-luna",
+ "tasks": [
+  "multi-file-change-with-tests",
+  "resume-picks-up-context-delta",
+  "handoff-to-another-agent"
+ ],
+ "repeat": 1,
+ "startedAt": "2026-11-22T07:23:19.270Z",
+ "finishedAt": "2026-11-22T07:27:23.094Z",
+ "results": [
+  {
+   "task": "multi-file-change-with-tests",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "both modules changed",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "src/invoice.js, src/money.js, test/invoice.test.js, test/money.test.js"
+    },
+    {
+     "name": "EUR tests in both test files",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "test/money.test.js, test/invoice.test.js"
+    },
+    {
+     "name": "its tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ sums the lines (0.895366ms)\n✔ formats the total in euros (0.148298ms)\n✔ dollars by default (1.01543ms)\n✔ formats euros (0.204387ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 72.994131\n"
+    },
+    {
+     "name": "the hidden acceptance tests pass",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "✔ formatMoney: dollars by default, euros on request (0.842517ms)\n✔ invoiceTotal passes the currency on (0.192094ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 63.870408\n"
+    },
+    {
+     "name": "the turn finished",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "succeeded"
+    },
+    {
+     "name": "Ensemble's own verification run passed",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "checks passed: 2 passed, 0 failed, 0 not run"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 68202,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 10,
+    "tokensIn": 201898,
+    "tokensOut": 2992,
+    "credits": 0.622992,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 16,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [
+    "skill",
+    "glob",
+    "rg",
+    "bash",
+    "view",
+    "apply_patch",
+    "ensemble-report_result"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "ebdbb2c9-ed0c-424e-9823-4f9777ab0a9e"
+   ],
+   "trace": "eval/node/results/traces/v2-final-code/multi-file-change-with-tests--1.jsonl",
+   "startedAt": "2026-11-22T07:23:33.478Z"
+  },
+  {
+   "task": "resume-picks-up-context-delta",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "the first turn wrote the label it was given",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "blue-heron"
+    },
+    {
+     "name": "the second turn went on in the same agent session",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true,
+     "note": "a session then the same; packet delta"
+    },
+    {
+     "name": "README names the new label",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "# labels release tooling. ## release current release label: green-otter "
+    },
+    {
+     "name": "and not the old one",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 71007,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 13,
+    "tokensIn": 257715,
+    "tokensOut": 2042,
+    "credits": 0.5545125,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 16,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [
+    "skill",
+    "glob",
+    "view",
+    "rg",
+    "apply_patch",
+    "ensemble-report_result",
+    "ensemble-ensemble_context",
+    "bash"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "9e1795f7-b5df-4cf5-bb7c-491b16dcea66"
+   ],
+   "trace": "eval/node/results/traces/v2-final-code/resume-picks-up-context-delta--1.jsonl",
+   "startedAt": "2026-11-22T07:24:42.521Z"
+  },
+  {
+   "task": "handoff-to-another-agent",
+   "suite": "code",
+   "category": "code",
+   "repeat": 0,
+   "status": "done",
+   "score": 1,
+   "pass": true,
+   "verifiedPass": true,
+   "checks": [
+    {
+     "name": "a handoff record went with the new session",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "reason fork"
+    },
+    {
+     "name": "a new agent session took over",
+     "pass": true,
+     "kind": "trace",
+     "evidence": true
+    },
+    {
+     "name": "the record carried the owner's words with the codename",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the record says what it does not carry",
+     "pass": true,
+     "kind": "state",
+     "evidence": true
+    },
+    {
+     "name": "the new session used it",
+     "pass": true,
+     "kind": "state",
+     "evidence": true,
+     "note": "maple-4417 "
+    },
+    {
+     "name": "nobody called it lossless or a full history",
+     "pass": true,
+     "kind": "reply",
+     "note": "created [release.txt](release.txt) with only maple-4417. i got the codename from your earlier instruction summarized in the handoff record. verified the file co"
+    }
+   ],
+   "falseClaims": [],
+   "metrics": {
+    "wallMs": 87694,
+    "turns": 0,
+    "failedTurns": 0,
+    "modelCalls": 14,
+    "tokensIn": 277551,
+    "tokensOut": 3141,
+    "credits": 0.6845395000000001,
+    "ensembleCalls": 0,
+    "ensembleTools": 0,
+    "agentTools": 19,
+    "approvals": 0,
+    "unanswered": 0,
+    "stuckSteps": 0,
+    "errors": 0,
+    "noAnswerTurns": 0,
+    "errorMessages": 0
+   },
+   "tools": [],
+   "agentToolNames": [
+    "skill",
+    "glob",
+    "view",
+    "bash",
+    "apply_patch",
+    "ensemble-report_result",
+    "rg"
+   ],
+   "models": [
+    "gpt-6-luna"
+   ],
+   "cards": [],
+   "errors": [],
+   "sessions": [
+    "fa80e1c9-d48e-418b-b9db-f023bb4503a9",
+    "aef4ece6-3fdc-4b44-89e0-ea09649ff638"
+   ],
+   "trace": "eval/node/results/traces/v2-final-code/handoff-to-another-agent--1.jsonl",
+   "startedAt": "2026-11-22T07:25:54.197Z"
+  }
+ ],
+ "cleanup": [
+  {
+   "agent": "copilot-cli",
+   "id": "ebdbb2c9-ed0c-424e-9823-4f9777ab0a9e",
+   "kind": "coding",
+   "task": "multi-file-change-with-tests",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "9e1795f7-b5df-4cf5-bb7c-491b16dcea66",
+   "kind": "coding",
+   "task": "resume-picks-up-context-delta",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "fa80e1c9-d48e-418b-b9db-f023bb4503a9",
+   "kind": "coding",
+   "task": "handoff-to-another-agent",
+   "deleted": true
+  },
+  {
+   "agent": "copilot-cli",
+   "id": "aef4ece6-3fdc-4b44-89e0-ea09649ff638",
+   "kind": "coding",
+   "task": "handoff-to-another-agent",
+   "deleted": true
+  }
+ ],
+ "notes": [
+  "The API runs in the eval process on an in-memory PGlite database. The owner's computer is a second process with its own in-memory database (lib/computer-main.ts), paired to each task's owner through the real remote loop (src/remote/loop.ts); it runs device tools, coding sessions and the browser on this machine.",
+  "Subscription turns run in this process (ENSEMBLE_DESKTOP=1, as on a computer's own runtime), not relayed from a hosted API: the relay's limits (20 minutes per turn, 64 turns per spec) do not apply here.",
+  "No agent runtime and no included models: Ensemble's own model calls (the turn checklist, picture checks, Ensemble's own agent) fail at once and cost nothing; the checklist model is off as in the HTTP test harness.",
+  "Owner cards are answered by the harness: computer questions with This mission, questions about the agent's own calls with their answer for this run (else Allow once), coding-run permissions for the run, held writes and sessions approved; never Always. Cards that need a password, a secret or a sign-in, and any request for the owner's own screen, are declined and reported.",
+  "The agent CLI runs with this machine's sign-in but a home of the run's own (COPILOT_HOME in the scratch folder, holding only the signed-in account): no MCP server, skill, plugin or setting of this machine reaches node turns, coding sessions or the judge, and the agent's sessions never reach ~/.copilot.",
+  "Nothing the run starts can reach the owner's screen: no display variables, a private XDG_RUNTIME_DIR (no Wayland or PulseAudio socket; the computer's links only this user's PipeWire, for an agent screen's frames), a systemd-run that runs its command in place, and no session bus beyond the keyring. Cards asking for the owner's own screen, or its pointer and keyboard, are never approved; a desktop task uses the agent's own screen or fails.",
+  "What this checkout has that some tasks require: tool-journal yes, code-tab-harness yes.",
+  "The session bus is a copy filtered by xdg-dbus-proxy to the keyring (org.freedesktop.secrets), where Copilot keeps its sign-in: no desktop portal, notification or app activation gets through.",
+  "The owner's time zone is Asia/Calcutta, the eval process's (TZ)."
+ ]
+}
