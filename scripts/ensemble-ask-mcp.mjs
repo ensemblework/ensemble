@@ -44,8 +44,9 @@
  *
  * For an assistant turn run on the person's own subscription
  * (ENSEMBLE_ASSISTANT_TURN set, docs/30 §8) it offers that turn's Ensemble
- * tools instead, listed and called through /api/engine/assistant/*; when a
- * call changes the list (a playbook loaded) it tells the agent to list again.
+ * tools instead, listed (first as it starts, so Ensemble knows the agent
+ * started it) and called through /api/engine/assistant/*; when a call changes
+ * the list (a playbook loaded) it tells the agent to list again.
  */
 import { request as httpRequest } from "node:http";
 import { resolve } from "node:path";
@@ -437,6 +438,9 @@ async function assistantTools() {
 
 async function handleAssistant(message) {
   if (message.method === "initialize") {
+    // The turn's tools are listed before the answer, so Ensemble knows the agent started this server (a turn someone
+    // else can steer runs on Cursor's agent only then), whether or not the agent lists them before its first prompt.
+    await Promise.race([assistantTools(), new Promise((done) => setTimeout(done, 5000))]);
     send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "ensemble", version: "1" }, instructions: instructionsFor() } });
   } else if (message.method === "tools/list") {
     send({ id: message.id, result: { tools: await assistantTools() } });

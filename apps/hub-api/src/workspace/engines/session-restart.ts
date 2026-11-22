@@ -11,14 +11,15 @@
  * `busy`: the agent's app held the session (Codex: the ChatGPT app); `gone`: the agent could not reopen it;
  * `instructions`: most of Ensemble's instructions changed; `rotated`: the chat carried `ROTATE_MESSAGES`
  * messages in it; `moved`: the chat went on elsewhere (another model or computer) since its last turn;
- * `expired`: unused for its keeping days. A session someone used in the agent's own app goes on, what they
- * said brought in first (subscriptions/outside.ts).
+ * `expired`: unused for its keeping days; `audience`: the session was made in the other home (a turn someone else
+ * can steer runs Grok Build, Kimi Code and Mistral Vibe in Ensemble's home for them, subscriptions/turn-sessions.ts).
+ * A session someone used in the agent's own app goes on, what they said brought in first (subscriptions/outside.ts).
  */
-export type RestartReason = "busy" | "gone" | "instructions" | "rotated" | "moved" | "expired";
+export type RestartReason = "busy" | "gone" | "instructions" | "rotated" | "moved" | "expired" | "audience";
 /** A new agent session started in place of one that could have continued: why, and what the agent said. */
 export type Restart = { reason: RestartReason; error?: string };
 
-export const RESTART_REASONS: readonly RestartReason[] = ["busy", "gone", "instructions", "rotated", "moved", "expired"];
+export const RESTART_REASONS: readonly RestartReason[] = ["busy", "gone", "instructions", "rotated", "moved", "expired", "audience"];
 
 /** What a restart records: the agent's words, one line, short. */
 export const restartOf = (reason: RestartReason, error?: unknown): Restart => {
