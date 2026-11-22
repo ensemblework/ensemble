@@ -1095,12 +1095,19 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
   // too old to load a plugin, too), and on Codex in a node's turn as well; in a node's own turn on Copilot they stay and
   // its judge knows their tools by name. A chat with all of its own tools keeps them as the person set them up.
   const restricted = !spec.ownTools || Boolean(spec.node);
-  const servers =
+  const listing =
     spec.agent === "copilot-cli" && (restricted || !(await copilotTakesPlugins(found_.path)))
       ? await copilotMcpServers(found_.path, folder, copilotEnv({}))
       : spec.agent === "codex" && restricted
         ? await codexMcpServers(found_.path, folder, codexEnv({}))
-        : [];
+        : null;
+  // Read from a settings file the list can miss servers (a plugin's, a folder's): a turn someone else can steer needs the agent's own.
+  if (spec.others && listing && !listing.listed) {
+    if (!key) await rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    const [name, program] = spec.agent === "codex" ? ["Codex", "codex"] : ["GitHub Copilot", "copilot"];
+    throw othersRefused(spec.agent, `${name} did not list its MCP servers here (\`${program} mcp list --json\` failed or took longer than 15 seconds)`);
+  }
+  const servers = listing?.servers ?? [];
   // With its own tools, each of the agent's calls is judged from the turn's folder: by the hard floor, or a node's folder
   // policy (loaded only for a node's turn: it reads this computer's own settings and rules).
   // A node's turn keeps how each of the agent's own calls was answered, for its trace.

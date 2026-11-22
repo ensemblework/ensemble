@@ -765,6 +765,95 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   }
 });
 
+test("a turn someone else can steer runs on Copilot or Codex only with the agent's own list of its MCP servers; a list read from its settings file is never kept", async () => {
+  const { forgetMcpServersForTests } = await import("./agent-mcp.js");
+  forgetMcpServersForTests();
+  const root = mkdtempSync(join(tmpdir(), "ensemble-mcp-list-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  // Each lists a server its settings file does not hold (a plugin's; one in an inline table), unless listing fails.
+  writeFileSync(join(bin, "copilot"), String.raw`#!/usr/bin/env node
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "help" || args.includes("--help")) { console.log("  --plugin-dir <directory>\n  --disable-mcp-server <server-name>"); process.exit(0); }
+if (args.includes("--version")) { console.log("1.0.114"); process.exit(0); }
+if (args.includes("--headless")) process.exit(1);
+if (args[0] === "mcp") {
+  if (existsSync(process.env.STANDIN_NO_LIST)) process.exit(1);
+  console.log(JSON.stringify({ mcpServers: { "desktop-commander": { command: "npx", source: "user", enabled: true }, "notes-plugin": { command: "notes", source: "plugin", enabled: true } } }));
+  process.exit(0);
+}
+readFileSync(0, "utf8");
+writeFileSync(process.env.STANDIN_LOG, JSON.stringify(args));
+console.log(JSON.stringify({ type: "assistant.message", data: { content: "Done." } }));
+console.log(JSON.stringify({ type: "assistant.usage", data: { model: "gpt-copilot-test", inputTokens: 1, outputTokens: 1, cost: 1 } }));
+`);
+  writeFileSync(join(bin, "codex"), `#!/usr/bin/env node
+if (process.argv[2] === 'mcp') {
+  if (require('node:fs').existsSync(process.env.STANDIN_NO_LIST)) process.exit(1);
+  console.log(JSON.stringify([{ name: 'desktop-commander', enabled: true }, { name: 'inline-notes', enabled: true }]));
+  process.exit(0);
+}
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === 'initialize') return send({ id: message.id, result: { userAgent: 'codex_cli_rs/0.163.0' } });
+  if (message.method === 'account/read') return send({ id: message.id, result: { account: { type: 'chatgpt', planType: 'plus' }, requiresOpenaiAuth: true } });
+  if (message.method === 'model/list') return send({ id: message.id, result: { data: [] } });
+  if (message.method === 'thread/start') {
+    require('node:fs').writeFileSync(process.env.STANDIN_CODEX, JSON.stringify(message.params.config.mcp_servers));
+    return send({ id: message.id, result: { thread: { id: 'thread-1' }, model: 'gpt-test' } });
+  }
+  if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'Done.', phase: 'final_answer' } } });
+    return send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+  }
+  send({ id: message.id, result: {} });
+});
+`);
+  for (const name of ["copilot", "codex"]) chmodSync(join(bin, name), 0o755);
+  mkdirSync(join(root, "copilot-home"));
+  writeFileSync(join(root, "copilot-home", "mcp-config.json"), JSON.stringify({ mcpServers: { "desktop-commander": { command: "npx" } } }));
+  mkdirSync(join(root, "codex-home"));
+  writeFileSync(join(root, "codex-home", "config.toml"), '[mcp_servers.desktop-commander]\ncommand = "npx"\n\n[mcp]\nservers = { inline-notes = { command = "notes" } }\n');
+  const noList = join(root, "no-list");
+  writeFileSync(noList, "");
+  const names = ["PATH", "ENSEMBLE_DESKTOP", "STANDIN_LOG", "STANDIN_CODEX", "STANDIN_NO_LIST", "COPILOT_HOME", "CODEX_HOME", "ENSEMBLE_REMOTE_STATE_DIR"] as const;
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH ?? ""}`, ENSEMBLE_DESKTOP: "1", STANDIN_LOG: join(root, "copilot.json"), STANDIN_CODEX: join(root, "codex.json"), STANDIN_NO_LIST: noList, COPILOT_HOME: join(root, "copilot-home"), CODEX_HOME: join(root, "codex-home"), ENSEMBLE_REMOTE_STATE_DIR: join(root, "state") });
+  // The turn's MCP config names this computer's local API; the stand-ins never call it.
+  try { localApiUrl(); } catch { setLocalPort(9); }
+  const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
+  const copilot = { agent: "copilot-cli" as const, model: null, effort: null, system: "Ensemble", prompt: "What is in my notes?", tools: [] };
+  const codex = { agent: "codex" as const, model: "default", effort: null, system: "Ensemble", prompt: "What is in my notes?", tools: [] };
+  const copilotOff = () => (JSON.parse(readFileSync(join(root, "copilot.json"), "utf8")) as string[]).flatMap((arg, index, args) => (arg === "--disable-mcp-server" ? [args[index + 1]] : []));
+  const codexOff = () => Object.entries(JSON.parse(readFileSync(join(root, "codex.json"), "utf8")) as Record<string, { enabled?: boolean }>).filter(([, server]) => server.enabled === false).map(([name]) => name);
+  try {
+    await assert.rejects(runAgentTurn({ ...copilot, others: true }, io), /GitHub Copilot did not list its MCP servers here \(`copilot mcp list --json` failed or took longer than 15 seconds\), so it does not answer other people/);
+    await assert.rejects(runAgentTurn({ ...codex, others: true }, io), /Codex did not list its MCP servers here/);
+    // The person's own turns go on with the servers their settings files name.
+    await runAgentTurn(copilot, io);
+    assert.deepEqual(copilotOff(), ["desktop-commander"]);
+    await runAgentTurn(codex, io);
+    assert.deepEqual(codexOff(), ["desktop-commander"]);
+    // Those lists were not kept: once the agents list their servers again, every one of them is off, and others' turns run.
+    rmSync(noList);
+    await runAgentTurn({ ...copilot, others: true }, io);
+    assert.deepEqual(copilotOff(), ["desktop-commander", "notes-plugin"]);
+    await runAgentTurn({ ...codex, others: true }, io);
+    assert.deepEqual(codexOff(), ["desktop-commander", "inline-notes"]);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    forgetMcpServersForTests();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a Codex chat waits while the ChatGPT app holds its thread, then goes on in it; held too long, it goes on in a new thread and keeps the old one for deletion", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-codex-busy-"));
   const bin = join(root, "bin");

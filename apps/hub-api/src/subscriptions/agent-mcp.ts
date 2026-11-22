@@ -6,7 +6,10 @@
  * turns each of them off (agents.ts); in the owner's own node turn Copilot keeps them, and the node's judge
  * knows their tools by name (node-own-tools.ts). Listing takes Copilot a few seconds, so a listing is kept
  * for ten minutes per program and folder (one for every fresh temporary folder, where no folder's own
- * servers load), and read again as soon as the person's own settings change.
+ * servers load), and read again as soon as the person's own settings change. When the agent cannot list
+ * them (its listing fails or takes longer than 15 seconds), they are read from its settings file, which can
+ * miss some (a plugin's, a folder's, a Codex inline table): such a list is never kept, and a turn someone
+ * other than the person can steer does not run on it (agents.ts).
  *
  * In a turn someone other than the person can steer (`AgentTurnSpec.others`), Cursor's agent and the ACP
  * agents without a switch for it leave the person's servers out through folders of Ensemble's own: Cursor's
@@ -22,9 +25,11 @@ import { stateDir } from "../remote/store.js";
 
 /** `readOnly`: the server says it only reads (GitHub's built-in server at its read-only address). */
 export type AgentMcpServer = { name: string; source: string; readOnly: boolean };
+/** The servers, and whether the agent listed them itself (`mcp list --json`), else they were read from its settings file. */
+export type AgentMcpListing = { servers: AgentMcpServer[]; listed: boolean };
 
 const CACHE_MS = 10 * 60_000;
-const cache = new Map<string, { at: number; servers: Promise<AgentMcpServer[]> }>();
+const cache = new Map<string, { at: number; listing: Promise<AgentMcpListing> }>();
 
 /** A listing's key: the program, the folder (one for every temporary folder) and when the person's settings files last changed. */
 async function keyOf(program: string, bin: string, folder: string, settings: string[]): Promise<string> {
@@ -65,46 +70,52 @@ function listed(text: string): unknown {
   }
 }
 
-function remembered(key: string, read: () => Promise<AgentMcpServer[]>): Promise<AgentMcpServer[]> {
+/** A listing kept for ten minutes; one read from a settings file is dropped once it is known, so the next turn lists again. */
+function remembered(key: string, read: () => Promise<AgentMcpListing>): Promise<AgentMcpListing> {
   const known = cache.get(key);
-  if (known && Date.now() - known.at < CACHE_MS) return known.servers;
-  const servers = read().catch(() => []);
-  cache.set(key, { at: Date.now(), servers });
-  return servers;
+  if (known && Date.now() - known.at < CACHE_MS) return known.listing;
+  const listing = read().catch(() => ({ servers: [], listed: false }));
+  cache.set(key, { at: Date.now(), listing });
+  void listing.then((found) => {
+    if (!found.listed && cache.get(key)?.listing === listing) cache.delete(key);
+  });
+  return listing;
 }
 
 /** Copilot's MCP servers for a turn in `folder`, enabled ones only; from its own config file when it cannot list them. */
-export async function copilotMcpServers(bin: string, folder: string, env: NodeJS.ProcessEnv): Promise<AgentMcpServer[]> {
+export async function copilotMcpServers(bin: string, folder: string, env: NodeJS.ProcessEnv): Promise<AgentMcpListing> {
   const home = env.COPILOT_HOME || join(env.HOME || homedir(), ".copilot");
   return remembered(await keyOf("copilot", bin, folder, ["mcp-config.json", "config.json", "settings.json"].map((name) => join(home, name))), async () => {
     const found = listed(await printed(bin, ["mcp", "list", "--json"], folder, env)) as { mcpServers?: Record<string, { source?: unknown; enabled?: unknown; url?: unknown }> } | null;
     if (found?.mcpServers && typeof found.mcpServers === "object") {
-      return Object.entries(found.mcpServers)
+      const servers = Object.entries(found.mcpServers)
         .filter(([, server]) => server?.enabled !== false)
         .map(([name, server]) => {
           const source = typeof server?.source === "string" ? server.source : "user";
           return { name, source, readOnly: source === "builtin" && typeof server?.url === "string" && /\/readonly\/?$/.test(server.url) };
         });
+      return { servers, listed: true };
     }
     const own = JSON.parse(await readFile(join(home, "mcp-config.json"), "utf8").catch(() => "{}")) as { mcpServers?: Record<string, unknown> };
-    return Object.keys(own.mcpServers ?? {}).map((name) => ({ name, source: "user", readOnly: false }));
+    return { servers: Object.keys(own.mcpServers ?? {}).map((name) => ({ name, source: "user", readOnly: false })), listed: false };
   });
 }
 
 /** Codex's MCP servers for a turn in `folder`; from its `config.toml` when it cannot list them. */
-export async function codexMcpServers(bin: string, folder: string, env: NodeJS.ProcessEnv): Promise<AgentMcpServer[]> {
+export async function codexMcpServers(bin: string, folder: string, env: NodeJS.ProcessEnv): Promise<AgentMcpListing> {
   const home = env.CODEX_HOME || join(env.HOME || homedir(), ".codex");
   return remembered(await keyOf("codex", bin, folder, [join(home, "config.toml")]), async () => {
     const found = listed(await printed(bin, ["mcp", "list", "--json"], folder, env));
     if (Array.isArray(found)) {
-      return found
+      const servers = found
         .filter((server): server is { name: string; enabled?: unknown } => typeof (server as { name?: unknown })?.name === "string")
         .filter((server) => server.enabled !== false)
         .map((server) => ({ name: server.name, source: "user", readOnly: false }));
+      return { servers, listed: true };
     }
     const text = await readFile(join(home, "config.toml"), "utf8").catch(() => "");
     const names = [...text.matchAll(/^\s*\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm)].map((match) => match[1] ?? match[2]!);
-    return [...new Set(names)].map((name) => ({ name, source: "user", readOnly: false }));
+    return { servers: [...new Set(names)].map((name) => ({ name, source: "user", readOnly: false })), listed: false };
   });
 }
 
