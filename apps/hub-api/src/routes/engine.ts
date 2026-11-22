@@ -51,6 +51,7 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/engine/assistant/tools", async (request, reply) => {
     const found = turnBridge(request);
     if (!found.ok) return reply.code(found.status).send({ error: found.error });
+    found.bridge.listed = true;
     return { tools: found.bridge.tools };
   });
   // The agent's own tool calls in such a turn (its hook: scripts/ensemble-hook.mjs --chat): the turn's judge (own-tools.ts),

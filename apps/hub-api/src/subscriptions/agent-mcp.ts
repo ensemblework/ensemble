@@ -184,10 +184,10 @@ function cursorProjectRoot(folder: string): string {
 /**
  * Cursor's agent with none of the person's own MCP servers (a turn someone else can steer, agents.ts): its data folder
  * (`CURSOR_DATA_DIR`), where it keeps per project which servers are approved and which are off, is Ensemble's own, and
- * every server in the person's `~/.cursor/mcp.json` is off there for the turn's folder. A folder's own servers stay out,
- * waiting for an approval Ensemble's data folder never has. One of theirs named `ensemble` (their own Ensemble
- * connection) cannot be turned off without the turn's server of that name, which Cursor puts in its place. Null when
- * their `mcp.json` cannot be read: the turn does not run.
+ * every server in the person's `~/.cursor/mcp.json` is off there for the turn's folder, with `ensemble` (their own
+ * Ensemble connection, which `ensemble editors` writes) whether it is there or not. The turn's own server has a name of
+ * its own, which Cursor would otherwise not load in place of theirs when it fails. A folder's own servers stay out,
+ * waiting for an approval Ensemble's data folder never has. Null when their `mcp.json` cannot be read: the turn does not run.
  */
 export async function cursorWithoutOwnMcp(folder: string): Promise<{ CURSOR_DATA_DIR: string } | null> {
   const text = await readFile(join(homedir(), ".cursor", "mcp.json"), "utf8").catch((error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? "" : null));
@@ -195,7 +195,7 @@ export async function cursorWithoutOwnMcp(folder: string): Promise<{ CURSOR_DATA
   const config = text.trim() ? settingsJson(text) : {};
   const servers = config && typeof config === "object" && !Array.isArray(config) ? (config as { mcpServers?: unknown }).mcpServers : null;
   if (servers === null || (servers !== undefined && (typeof servers !== "object" || Array.isArray(servers)))) return null;
-  const off = Object.keys((servers ?? {}) as Record<string, unknown>).filter((name) => name !== "ensemble");
+  const off = [...new Set([...Object.keys((servers ?? {}) as Record<string, unknown>), "ensemble"])];
   const data = join(stateDir(), "agents", "cursor-agent", "data");
   // Cursor names the project after the folder it was given, which a symlinked temporary folder may reach as its real path.
   const roots = new Set([folder, await realpath(folder).catch(() => folder)].map(cursorProjectRoot));

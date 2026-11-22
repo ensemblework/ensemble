@@ -30,7 +30,7 @@
  * as a per-turn plugin; Cursor without its sandbox; every permission request judged.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,8 +168,9 @@ type DriverResult = AgentTurnResult & { session?: string | null; oneOff?: string
 /**
  * `judge`: how the agent's own calls are answered, when it keeps its own tools (`spec.ownTools`). `servers`: the
  * MCP servers the agent loads by itself here (Copilot's and Codex's, agent-mcp.ts), for the driver to turn off.
+ * `listed`: whether the agent started the turn's MCP server (it lists the turn's tools as it starts).
  */
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[]; verdicts?: OwnVerdicts }) => Promise<DriverResult>;
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession; judge?: OwnJudge; servers?: AgentMcpServer[]; verdicts?: OwnVerdicts; listed?: () => boolean }) => Promise<DriverResult>;
 
 /**
  * The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one.
@@ -612,13 +613,13 @@ async function reopen(rpc: RpcConnection, method: "session/load" | "session/resu
  */
 export const OWN_WEB_AGENTS: ReadonlySet<SubscriptionProvider> = new Set(["claude-code", "codex", "copilot-cli"]);
 
-/** Cursor's own requests during an assistant turn: only Ensemble's tools may run. */
-export function answerCursorTurn(method: string, params: Record<string, unknown>): unknown {
+/** Cursor's own requests during an assistant turn: only the tools of Ensemble's server, by its name in the turn (`server`), may run. */
+export function answerCursorTurn(method: string, params: Record<string, unknown>, server = "ensemble"): unknown {
   if (method === "session/request_permission") {
     const options = (Array.isArray(params.options) ? params.options : []) as Array<{ optionId: string; kind?: string }>;
     const title = String((params.toolCall as { title?: string } | undefined)?.title ?? "");
     // MCP tools are titled "<server>: <tool>".
-    const ours = /^ensemble:\s*\S/.test(title);
+    const ours = title.startsWith(`${server}:`) && /^\s*\S/.test(title.slice(server.length + 1));
     const wanted = ours ? "allow_once" : "reject_once";
     const option = options.find((item) => item.kind === wanted) ?? options.find((item) => item.optionId === (ours ? "allow-once" : "reject-once"));
     return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
@@ -627,10 +628,12 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, judge, verdicts, listed }) => {
   const model = chosen(spec.model);
   const env = agentEnv(mcp.env);
-  // A turn someone else can steer: Cursor's data folder is Ensemble's, with each of the person's own MCP servers off there.
+  // A turn someone else can steer: Cursor's data folder is Ensemble's, with each of the person's own MCP servers off there
+  // (an `ensemble` of theirs too), and Ensemble's server has a name of this turn's own, the only one whose tools may run.
+  const server = spec.others ? `ensemble-${randomBytes(4).toString("hex")}` : "ensemble";
   if (spec.others) {
     const off = await cursorWithoutOwnMcp(folder);
     if (!off) throw othersRefused("cursor-agent", "Cursor's agent could not read your ~/.cursor/mcp.json");
@@ -662,7 +665,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, j
   /** The message this turn sent to the agent, which the session holds however the turn then ends. */
   let sent = 0;
   const tools = new OwnToolLog("cursor-agent", io.onOwnTool, verdicts);
-  rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerCursorTurn(method, params));
+  rpc.onRequest = async (method, params) => (judge ? answerAcpOwnTools(judge, method, params) : answerCursorTurn(method, params, server));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update") return;
     if (replaying) {
@@ -690,11 +693,13 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session, j
     const init = await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
     const caps = acpPromptCaps(init);
     await rpc.request("authenticate", { methodId: "cursor_login" }).catch(() => undefined);
-    const mcpServers = [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }];
+    const mcpServers = [{ name: server, command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }];
     if (session && !loadsSessions(init)) throw new SessionUnsupported("Cursor's agent cannot reopen a session");
     const started = session?.resume ? await reopen(rpc, "session/load", session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
     sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
+    // Cursor goes on without a server it could not start, saying nothing (a team's MCP policy, its sandbox, a timeout).
+    if (spec.others && !listed?.()) throw othersRefused("cursor-agent", "Cursor's agent did not start Ensemble's server for this turn (a team MCP policy, its sandbox or a timeout can stop it)");
     // ACP has no system prompt: Ensemble's instructions lead a session's first message, after the chat's title.
     sent = 1;
     const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(titledOpening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
@@ -1180,6 +1185,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null,
           session,
           own,
           servers,
+          listed: bridge.listed,
           ...(judge ? { judge } : {}),
           ...(verdicts ? { verdicts } : {}),
         });

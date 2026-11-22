@@ -1082,6 +1082,7 @@ process.stdin.on("end", () => {
  * plus the client's. Each prompt logs them, and whether the person's sign-in is reachable.
  */
 const MCP_ACP_STANDIN = String.raw`#!/usr/bin/env node
+const { spawn } = require("node:child_process");
 const { appendFileSync, existsSync, readFileSync } = require("node:fs");
 const { basename, join } = require("node:path");
 const name = basename(process.argv[1]);
@@ -1130,16 +1131,35 @@ function settings(cwd) {
     }
   }
 }
+// Cursor's agent starts each server the client passes (MCP's initialize); one that is off or does not start is left out, saying
+// nothing, and the person's own server of that name stays (STANDIN_MCP_FAIL: none starts).
+function started(server) {
+  return new Promise((done) => {
+    if (env.STANDIN_MCP_FAIL) return done(false);
+    const child = spawn(server.command, server.args || [], { env: { ...process.env, ...Object.fromEntries((server.env || []).map((row) => [row.name, row.value])) }, stdio: ["pipe", "pipe", "ignore"] });
+    const timer = setTimeout(() => { child.kill(); done(false); }, 10000);
+    child.on("error", () => { clearTimeout(timer); done(false); });
+    require("node:readline").createInterface({ input: child.stdout }).on("line", (line) => {
+      if (JSON.parse(line).id !== 1) return;
+      clearTimeout(timer);
+      child.kill();
+      done(true);
+    });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cursor", version: "1" } } }) + "\n");
+  });
+}
 const sessions = new Map();
 const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
-require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+require("node:readline").createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
   if (message.id === undefined) return;
   if (message.method === "initialize") return send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, authMethods: [] } });
   if (message.method === "session/new") {
     const read = settings(message.params.cwd);
-    const client = (message.params.mcpServers || []).map((server) => server.name);
-    const loaded = [...new Set([...read.servers, ...client])].filter((server) => !read.off.includes(server) && (!read.only || read.only.includes(server))).sort();
+    const passed = message.params.mcpServers || [];
+    const client = [];
+    for (const server of passed) if (name !== "cursor-agent" || (!read.off.includes(server.name) && (await started(server)))) client.push(server.name);
+    const loaded = [...new Set([...read.servers, ...client])].filter((server) => (client.includes(server) || !read.off.includes(server)) && (!read.only || read.only.includes(server))).sort();
     const id = "session-" + (sessions.size + 1);
     sessions.set(id, { loaded, signedIn: read.signedIn });
     return send({ id: message.id, result: { sessionId: id } });
@@ -1218,12 +1238,15 @@ test("a turn someone else can steer loads none of the person's own MCP servers o
     writeFileSync(join(state, "agents", "antigravity", "home", "antigravity-acp", "acp_token.json"), "{}");
   }
   const log = join(root, "acp.jsonl");
-  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "GROK_HOME", "GROK_AUTH_PATH", "VIBE_HOME", "KIMI_CODE_HOME", "OPENCODE_CONFIG", "CURSOR_DATA_DIR", "STANDIN_NO_ALLOWLIST"];
+  const keys = ["PATH", "HOME", "ENSEMBLE_DESKTOP", "STANDIN_ACP", "ENSEMBLE_REMOTE_STATE_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "GROK_HOME", "GROK_AUTH_PATH", "VIBE_HOME", "KIMI_CODE_HOME", "OPENCODE_CONFIG", "CURSOR_DATA_DIR", "STANDIN_NO_ALLOWLIST", "STANDIN_MCP_FAIL"];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) delete process.env[key];
   Object.assign(process.env, { PATH: `${bin}:${saved.PATH ?? ""}`, HOME: home, ENSEMBLE_DESKTOP: "1", STANDIN_ACP: log, ENSEMBLE_REMOTE_STATE_DIR: state });
-  // The stand-ins never start Ensemble's MCP server: no API answers on this port.
-  setLocalPort(9);
+  // The stand-in Cursor starts Ensemble's MCP server, which lists the turn's tools from this API as it starts.
+  const app = Fastify();
+  await app.register(engineRoutes);
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  setLocalPort((app.server.address() as { port: number }).port);
   const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
   const turn = (agent: "cursor-agent" | "grok-cli" | "opencode" | "gemini-cli" | "qwen-code" | "mistral-vibe" | "kimi-code" | "antigravity") =>
     runAgentTurn({ agent, model: "default", effort: null, system: "Instructions.", prompt: "Hello from Ben.", tools: [], others: true }, io);
@@ -1234,10 +1257,17 @@ test("a turn someone else can steer loads none of the person's own MCP servers o
     const ran = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { agent: string; loaded: string[]; signedIn: boolean });
     assert.equal(ran.length, agents.length);
     for (const run of ran) {
-      assert.deepEqual(run.loaded, ["ensemble"], `${run.agent}: Ensemble's server alone`);
+      // On Cursor's agent Ensemble's server has the turn's own name, and the person's `ensemble` is off with the rest.
+      if (run.agent === "cursor-agent") assert.match(run.loaded.join(","), /^ensemble-[0-9a-f]{8}$/, `${run.agent}: Ensemble's server alone`);
+      else assert.deepEqual(run.loaded, ["ensemble"], `${run.agent}: Ensemble's server alone`);
       assert.equal(run.signedIn, true, `${run.agent}: signed in as the person`);
     }
     assert.deepEqual(snapshot(home), before, "the person's own settings and sign-ins are as they were");
+
+    // A Cursor that could not start the turn's server (its team's MCP policy, its sandbox, a timeout) does not answer.
+    process.env.STANDIN_MCP_FAIL = "1";
+    await assert.rejects(turn("cursor-agent"), /Cursor's agent did not start Ensemble's server for this turn .*, so it does not answer other people/);
+    delete process.env.STANDIN_MCP_FAIL;
 
     // A Cursor whose MCP settings Ensemble cannot read, and a Gemini CLI without the switch, refuse such a turn.
     writeFileSync(join(home, ".cursor", "mcp.json"), "{ not json");
@@ -1250,8 +1280,9 @@ test("a turn someone else can steer loads none of the person's own MCP servers o
     process.env.STANDIN_NO_ALLOWLIST = "1";
     forgetExecutablesForTests();
     await assert.rejects(turn("gemini-cli"), /Gemini on this computer cannot leave out your own MCP servers, so it does not answer other people/);
-    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, agents.length, "neither of them started a session");
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, agents.length, "none of them was given the message");
   } finally {
+    await app.close();
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

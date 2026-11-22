@@ -85,11 +85,13 @@ type Bridge = {
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
   /** How the agent's own calls are judged, when it keeps its own tools; absent: it has only Ensemble's. */
   judge?: OwnJudge;
+  /** The turn's MCP server listed its tools: the agent started it (it lists them as it starts, scripts/ensemble-ask-mcp.mjs). */
+  listed?: boolean;
 };
 
 const bridges = new Map<string, Bridge>();
 
-export function openBridge(tools: ToolSpec[], call: Bridge["call"], options: { judge?: OwnJudge } = {}): { credential: string; close: () => void } {
+export function openBridge(tools: ToolSpec[], call: Bridge["call"], options: { judge?: OwnJudge } = {}): { credential: string; close: () => void; listed: () => boolean } {
   const id = randomUUID();
   const secret = randomBytes(24).toString("hex");
   // The judge runs in the turn's AI context: a refusal is logged under its chat, whichever request asked.
@@ -100,6 +102,7 @@ export function openBridge(tools: ToolSpec[], call: Bridge["call"], options: { j
     close: () => {
       if (bridges.get(id) === bridge) bridges.delete(id);
     },
+    listed: () => bridge.listed === true,
   };
 }
 

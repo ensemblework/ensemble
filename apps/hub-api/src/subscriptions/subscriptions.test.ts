@@ -633,6 +633,10 @@ test("nothing of Codex's or Cursor's own may run in an assistant turn", async ()
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble: hub_list_tasks" } }), { outcome: { outcome: "selected", optionId: "a" } });
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "`rm -rf ~`", kind: "execute" } }), { outcome: { outcome: "selected", optionId: "r" } });
   assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "other: tool" } }), { outcome: { outcome: "selected", optionId: "r" } });
+  // A turn someone else can steer names Ensemble's server for itself: only that name's tools run, never an `ensemble` of the person's.
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble-1a2b3c4d: hub_list_tasks" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "a" } });
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble: hub_list_tasks" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "r" } });
+  assert.deepEqual(answerCursorTurn("session/request_permission", { options, toolCall: { title: "ensemble-1a2b3c4d-x: tool" } }, "ensemble-1a2b3c4d"), { outcome: { outcome: "selected", optionId: "r" } });
 });
 
 test("an agent's failure is read for sign-in and plan limits", () => {
