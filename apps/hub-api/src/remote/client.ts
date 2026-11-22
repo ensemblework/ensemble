@@ -156,6 +156,11 @@ async function send(base: string, token: string, method: string, path: string, j
   return { status: response.status, body };
 }
 
+/** A gateway in front of Ensemble on the web that had no answer from it (it restarts, or the connection behind it dropped). */
+export function noAnswer(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
@@ -550,12 +555,15 @@ export function hostedClient(base: string, token: string): HostedClient {
     async assistantTool(turnId, body) {
       const res = await call("POST", ROUTES.assistantTool(turnId), body);
       if (res.status === 404 || res.status === 410) return { text: "This turn has ended.", isError: true };
+      // A gateway with no answer from Ensemble: the call may have run there (remote/assistant.ts sends it again with its id).
+      if (noAnswer(res.status)) throw new RemoteError(res.status, "Ensemble on the web did not answer.");
       if (res.status >= 400) return { text: messageOf(res.body, `Ensemble refused the tool call (${res.status}).`), isError: true };
       return res.body;
     },
     async assistantAsk(turnId, body) {
       const res = await call("POST", ROUTES.assistantAsk(turnId), body);
       if (res.status === 404 || res.status === 410) return { decision: "deny", message: "This turn has ended." };
+      if (noAnswer(res.status)) throw new RemoteError(res.status, "Ensemble on the web did not answer.");
       if (res.status >= 400) return { decision: "deny", message: messageOf(res.body, `Ensemble on the web could not ask your owner (${res.status}), so this call was not run.`) };
       return res.body;
     },

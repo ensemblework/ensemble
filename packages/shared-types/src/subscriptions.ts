@@ -305,6 +305,13 @@ export const ASSISTANT_TURN_MAX_TURNS = 64;
  */
 export const ASSISTANT_TURN_FOLLOW_UPS = 6;
 /**
+ * The computer-side protocol that keeps a relayed turn through a lost connection (capabilities `assistantRelay`, a key
+ * of its own apart from `assistantTurns`): 1 keeps each reply batch until the web has it and sends the turn's end again
+ * until the web has it, and where the turn's spec says the web takes call ids (`relay`), sends each of Ensemble's tool
+ * calls with its own id (`callId`) and again with that id until the web answers. Older computers send each once.
+ */
+export const ASSISTANT_RELAY_API = 1;
+/**
  * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
  * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).
  */

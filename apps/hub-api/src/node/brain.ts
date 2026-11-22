@@ -30,7 +30,7 @@ import { codeBuiltLog, nodeInstructions, packetSections, packetText, type NodeIn
 import { recordMetric } from "../lib/metrics.js";
 import { helperFolders, helperGrant } from "./helpers.js";
 import { RuntimeError } from "../lib/runtime-error.js";
-import { addReceipt, allowSteering, closeSteering, markActed, mayRetry, parkedFor, parkIfAsked, RESTART_NOTE, takeOffers, type DispatchOutcome } from "./queue.js";
+import { addReceipt, allowSteering, closeSteering, CUT_OFF_NOTE, markActed, mayRetry, parkedFor, parkIfAsked, takeOffers, type CutOff, type DispatchOutcome } from "./queue.js";
 import { missionOf, modeFor } from "./device-tools.js";
 import { ownToolAsker } from "./own-tool-asks.js";
 import { afterReport, beginPlanTurn, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans } from "./plans.js";
@@ -48,7 +48,8 @@ import type { OwnToolEvent } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 import { saveTrace, setPlacement, TurnTrace } from "./trace.js";
 import { inTurn } from "./turn-context.js";
-import { turnJournal } from "./journal.js";
+import { turnJournal, uncertainCallsOf } from "./journal.js";
+import { TurnCutOff, type OpenOwnCall } from "../subscriptions/relay.js";
 import { settleSteers, steersHanded } from "./steering.js";
 import { activeHeuristics } from "./heuristics.js";
 import { botStreak } from "./router.js";
@@ -93,7 +94,17 @@ export const NODE_CORE_TOOLS = ["hub_list_pages", "hub_read_page", "hub_create_p
 /** coalesced: a newer message from the owner came before this turn acted; the next turn answers both. */
 /** parked: the turn waits for its owner's answer on a card; it ended without a reply, and the answer wakes the node. */
 /** cancelled: its owner stopped it (Stop, a pause, a plan's Stop) while it ran. */
-export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked" | "cancelled"; model?: string; credits?: number | null; error?: string };
+/**
+ * `interrupted`: the computer running the owner's agent was cut off (subscriptions/relay.ts `TurnCutOff`) after the turn
+ * started acting; node/queue.ts resumes it with `resume`. `requeue`: cut off before it did anything; it runs again as it was.
+ */
+export type TurnOutcome = {
+  status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked" | "cancelled" | "interrupted" | "requeue";
+  model?: string;
+  credits?: number | null;
+  error?: string;
+  resume?: { cut: CutOff; mayHaveRun: Array<{ tool: string; label: string | null }>; ownCalls: OpenOwnCall[] };
+};
 export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<DispatchOutcome | void>; signal?: AbortSignal };
 
 /** Background turns call Ensemble's own routes as the owner, like a signed-in request would. */
@@ -370,12 +381,12 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
   }
   // A lead's report or re-plan turn carries the results it reads once: they are marked delivered as it starts, and
   // its update is written from the plan as it is now. Null: the plan no longer waits for its lead. A lead turn that
-  // carries on that work (an answer to its card) takes its place and keeps its own note. One resumed after a restart
-  // also keeps what may already have run (node/queue.ts `recoverTurns`), ahead of the plan's update.
+  // carries on that work (an answer to its card) takes its place and keeps its own note. One resumed after it was cut
+  // off also keeps what may already have run (node/queue.ts `resumeTurn`), ahead of the plan's update.
   const planTurn = turn.reason === "plan";
   const leadPlan = turn.planId && !turn.planStep ? await beginPlanTurn(app, turn.planId, turn.id, { carry: planTurn }) : undefined;
   if (leadPlan === null && planTurn) return { status: "skipped" };
-  const resumed = leadPlan && planTurn && turn.note?.startsWith(RESTART_NOTE) ? turn.note : null;
+  const resumed = leadPlan && planTurn && turn.note?.startsWith(CUT_OFF_NOTE) ? turn.note : null;
   const note = planTurn ? ([resumed, leadPlan?.note].filter(Boolean).join("\n\n") || turn.note) : turn.note;
   const privateTo = thread.privateTo;
   const lineage: Lineage = {
@@ -831,6 +842,22 @@ async function takeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps, tr
       if (made?.data.status === "draft") await startPlan(app, made.message.id, null);
     }
     return { status: "parked", model: done?.model, credits: done?.credits ?? null };
+  }
+  if (failure instanceof TurnCutOff && !deps.signal?.aborted) {
+    // The computer running the owner's agent restarted, or Ensemble lost touch with it: resumed as after a restart
+    // here (node/queue.ts `resumeTurn`). Calls that started and never answered may have acted: they are never run again blindly.
+    const mayHaveRun = await uncertainCallsOf(app, turn.id);
+    const acted = Boolean((await prisma.nodeTurn.findUnique({ where: { id: turn.id }, select: { sideEffectsAt: true } }))?.sideEffectsAt) || mayHaveRun.length > 0 || failure.ownCalls.some((call) => call.acts);
+    trace.error = failure.message;
+    if (!acted) {
+      // Nothing happened yet: the same turn runs again from the start, and this try leaves no trace in the conversation.
+      await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
+      return { status: "requeue", error: failure.message };
+    }
+    await prisma.assistantMessage.create({ data: { conversationId: conversationId!, userId: spaceId, role: "assistant", content: `(Cut off here: ${failure.message})` } });
+    await prisma.assistantConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+    await saveCursor(readUpTo);
+    return { status: "interrupted", error: failure.message, resume: { cut: { by: `when ${failure.what}`, error: failure.message }, mayHaveRun, ownCalls: failure.ownCalls.filter((call) => call.acts) } };
   }
   if (failure) {
     const error = failure;

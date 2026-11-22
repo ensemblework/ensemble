@@ -47,7 +47,7 @@ import { setAiActivitySink, type AiActivityRow } from "../lib/ai-activity.js";
 import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
-import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_RELAY_API, ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { appPresence, cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSetUp, startSignIn } from "../subscriptions/signin.js";
 import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, PROJECT_DELETE_API, parseClaim, RUNTIME_REPLACED_EVENT, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
@@ -129,6 +129,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     webTerminal: settings.webTerminal,
     // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
     assistantTurns: ASSISTANT_TURNS_API,
+    // A relayed turn's calls carry their own ids and are sent again, with its reply and its end, when the connection drops.
+    assistantRelay: ASSISTANT_RELAY_API,
     assistantSessionDelete: ASSISTANT_SESSION_DELETE_API,
     // A deleted Ensemble project's Codex projects here go too (docs/30, In the agents' own apps).
     projectDelete: PROJECT_DELETE_API,

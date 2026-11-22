@@ -68,6 +68,8 @@ import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ens
 import type { OwnAnswer, OwnAsk, OwnToolEvent, OwnVerdict, ToolAnswer } from "../subscriptions/bridge.js";
 import type { NodeTurnPolicy } from "../subscriptions/node-own-tools.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL, type SubscriptionTurnInput } from "../subscriptions/turn.js";
+import { TurnCutOff } from "../subscriptions/relay.js";
+import { RuntimeError } from "../lib/runtime-error.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
@@ -844,20 +846,35 @@ async function drive(
       };
       // How many messages of the chat its session took part in before this one; another message of this turn keeps it.
       const position = args.subscription?.sessionKey ? undefined : await sessionPosition(app.prisma, args.conversationId, args.messageId);
-      const done = await runSubscriptionTurn({
-        ...base,
-        prompt: conversation.prompt,
-        ...(position === undefined ? {} : { position }),
-        ...(attached?.files.length
-          ? {
-              files: {
-                list: await turnFilesFor(app.prisma, attached.files, userId),
-                read: async (id: string) => (await fileOriginal(app.prisma, userId, id))?.bytes ?? null,
-                fallback: EXTRACTED_TEXT_TO_MODELS ? attached.text : filesNotReceived(attached.files),
-              },
-            }
-          : {}),
-      });
+      let done: Awaited<ReturnType<typeof runSubscriptionTurn>>;
+      try {
+        done = await runSubscriptionTurn({
+          ...base,
+          prompt: conversation.prompt,
+          ...(position === undefined ? {} : { position }),
+          ...(attached?.files.length
+            ? {
+                files: {
+                  list: await turnFilesFor(app.prisma, attached.files, userId),
+                  read: async (id: string) => (await fileOriginal(app.prisma, userId, id))?.bytes ?? null,
+                  fallback: EXTRACTED_TEXT_TO_MODELS ? attached.text : filesNotReceived(attached.files),
+                },
+              }
+            : {}),
+        });
+      } catch (error) {
+        // Its computer restarted, or Ensemble lost touch with it, while the agent worked (subscriptions/relay.ts): a chat goes on
+        // in the same session there, told what may already have run. A node's turn is resumed by its queue (node/brain.ts).
+        if (!(error instanceof TurnCutOff) || node || stop.signal.aborted) throw error;
+        args.emit({ type: "status", text: `${error.what}: going on where it left off.` });
+        try {
+          done = await runSubscriptionTurn({ ...base, tools: toolSpecs(), prompt: cutOffPrompt(error, calls), ...(position === undefined ? {} : { position }), followUp: { computerId: error.computer.id } });
+        } catch (problem) {
+          if (stop.signal.aborted) throw problem;
+          app.log.warn({ err: problem, agent }, "A chat cut off by its computer could not go on in its session");
+          throw new RuntimeError(cutOffMessage(error, calls), 503);
+        }
+      }
       credentialSource = `${SUBSCRIPTION_INFO[agent].label} subscription · ${done.computer}`;
       // What the person said in the agent's own app since Ensemble's last turn comes into the chat before this message.
       if (done.outside?.turns.length) {
@@ -2010,3 +2027,23 @@ export { randomUUID as newId };
 
 /** For callers outside a turn (the Context Bridge, bridge/actions.ts): the same error wording. */
 export { describe as describeToolError };
+
+/** What the agent is told when its chat goes on in the same session after its computer cut the turn off (subscriptions/relay.ts). */
+function cutOffPrompt(cut: TurnCutOff, made: readonly AssistantToolCall[]): string {
+  const ran = made.map((call) => `- ${call.name} (${call.state})${call.summary ? `: ${truncateText(call.summary.replace(/\s+/g, " "), 200)}` : ""}`).join("\n");
+  const running = cut.running.map((line) => `- ${line}`).join("\n");
+  const own = cut.ownCalls.map((call) => `- ${call.name}${call.summary ? `: ${call.summary}` : ""}`).join("\n");
+  return [
+    `Your answer was cut off when ${cut.what}. Go on from where you were, without doing again what already happened.`,
+    ran ? `Ensemble's calls you made, and what they returned:\n${ran}` : "",
+    running ? `These Ensemble calls had started and their answer never reached you, so they may already have happened. Check before you call one again:\n${running}` : "",
+    own ? `Your own calls that started and never ended may have run in part or in full. Check before you run one again:\n${own}` : "",
+    "Then finish what was asked.",
+  ].filter(Boolean).join("\n");
+}
+
+/** What the person reads when a chat cut off by its computer cannot go on in its session there. */
+function cutOffMessage(cut: TurnCutOff, made: readonly AssistantToolCall[]): string {
+  const done = made.filter((call) => call.state === "ok").map((call) => truncateText((call.summary || call.name).replace(/\s+/g, " "), 120));
+  return `${cut.message} ${done.length ? `What it had done stays: ${done.join("; ")}. ` : ""}Anything else it had started may already have happened: check before asking again.`;
+}

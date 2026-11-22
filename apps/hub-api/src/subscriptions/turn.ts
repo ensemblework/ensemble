@@ -5,7 +5,7 @@
  * computer and turns its problems into words.
  */
 import type { Device } from "@prisma/client";
-import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_RELAY_API, ASSISTANT_TURN_FILES, ASSISTANT_TURN_FOLLOW_UPS, ASSISTANT_TURN_MAX_TURNS, ASSISTANT_TURN_NODE_TOOLS, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
@@ -24,7 +24,7 @@ type Prismaish = Pick<typeof defaultPrisma, "device">;
  * The computer that runs a turn: this one (desktop runtime) or a paired one, by its Ensemble name; this one's
  * paired device id when it has one. Never the system's host name: records and cards name a computer as Ensemble does.
  */
-export type TurnComputer = { local: true; name: string; deviceId: string | null } | { local: false; id: string; name: string; agent: SubscriptionAgent | null; turns: number };
+export type TurnComputer = { local: true; name: string; deviceId: string | null } | { local: false; id: string; name: string; agent: SubscriptionAgent | null; turns: number; relay?: number };
 
 /** This computer as Ensemble knows it: the name it pairs with and its device id once paired (remote/store.ts). */
 export function thisComputer(): Extract<TurnComputer, { local: true }> {
@@ -34,9 +34,13 @@ export function thisComputer(): Extract<TurnComputer, { local: true }> {
 
 const isDesktopRuntime = () => process.env.ENSEMBLE_DESKTOP === "1";
 
-export function computerAgents(device: Pick<Device, "capabilities">): { turns: number; agents: SubscriptionAgent[] } {
-  const caps = (device.capabilities ?? {}) as { assistantTurns?: unknown; agents?: unknown };
-  return { turns: typeof caps.assistantTurns === "number" ? caps.assistantTurns : 0, agents: parseSubscriptionAgents(caps.agents) };
+export function computerAgents(device: Pick<Device, "capabilities">): { turns: number; relay: number; agents: SubscriptionAgent[] } {
+  const caps = (device.capabilities ?? {}) as { assistantTurns?: unknown; assistantRelay?: unknown; agents?: unknown };
+  return {
+    turns: typeof caps.assistantTurns === "number" ? caps.assistantTurns : 0,
+    relay: typeof caps.assistantRelay === "number" ? caps.assistantRelay : 0,
+    agents: parseSubscriptionAgents(caps.agents),
+  };
 }
 
 /**
@@ -82,7 +86,7 @@ export async function pickComputer(prisma: Prismaish, userId: string, agent: Sub
   }
   const withAgent = able.map((device) => ({ device, found: computerAgents(device).agents.find((row) => row.id === agent) ?? null })).filter((row) => row.found);
   const ready = withAgent.find((row) => row.found!.signedIn !== false);
-  if (ready) return { local: false, id: ready.device.id, name: ready.device.name, agent: ready.found, turns: computerAgents(ready.device).turns };
+  if (ready) return { local: false, id: ready.device.id, name: ready.device.name, agent: ready.found, turns: computerAgents(ready.device).turns, relay: computerAgents(ready.device).relay };
   if (withAgent.length) {
     throw new RuntimeError(`${label} is not signed in on ${withAgent[0]!.device.name}. Open Settings → Models → Your AI subscriptions and press Sign in next to ${label}.`, 409);
   }
@@ -224,10 +228,10 @@ export async function followUpComputer(prisma: Prismaish, userId: string, agent:
   if (!computerId) throw new FollowUpUnavailable("The computer that ran this turn");
   const device = await prisma.device.findFirst({ where: { id: computerId, userId: { in: deviceOwners(userId) }, revokedAt: null } });
   if (!device) throw new FollowUpUnavailable("The computer that ran this turn");
-  const { turns, agents } = computerAgents(device);
+  const { turns, relay, agents } = computerAgents(device);
   const found = agents.find((row) => row.id === agent) ?? null;
   if (!deviceOnline(device.lastSeenAt) || turns < ASSISTANT_TURN_FOLLOW_UPS || !found || found.signedIn === false) throw new FollowUpUnavailable(device.name);
-  return { local: false, id: device.id, name: device.name, agent: found, turns };
+  return { local: false, id: device.id, name: device.name, agent: found, turns, relay };
 }
 
 /**
@@ -257,6 +261,8 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     ...(ownTools ? { ownTools: true } : {}),
     ...(ownTools && input.node ? { node: input.node } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
+    // A computer that sends a call again with its id when the answer was lost (subscriptions/relay.ts takes it once).
+    ...(!computer.local && (computer.relay ?? 0) >= ASSISTANT_RELAY_API ? { relay: ASSISTANT_RELAY_API } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
   const onDelta = input.onDelta ?? (() => undefined);

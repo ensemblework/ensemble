@@ -44,6 +44,7 @@ import { folderLabels, rejectPathLabels } from "./labels.js";
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { publishRuntimeStream } from "./revoke-notify.js";
+import { runtimeConnected, runtimeDisconnected } from "../subscriptions/relay.js";
 import { revokePairedDevice } from "./revoke.js";
 import { codeTurnOf, contextTierOf, fastOf, outsideAccessOf, steerOf } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
@@ -1005,7 +1006,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const instance = runtimeInstanceOf(request.headers);
     const runtime = instance ? { instance, openedAt: Date.now() } : null;
     await sseHandler(request, reply, `device:${device.id}`, runtime ? { runtime } : {});
+    if (!runtime) return;
+    // Turns relayed to this computer that a runtime of it took and that is gone (it restarted) are cut off and resumed now;
+    // a runtime whose stream ends and that says nothing more loses its turns after a grace (subscriptions/relay.ts).
+    const streams = (other: string) => sseHub.runtimeOpen(`device:${device.id}`, other);
+    runtimeConnected(device.id, runtime.instance, streams);
+    reply.raw.once("close", () => runtimeDisconnected(device.id, runtime.instance, streams));
     // Two runtimes of one computer with one pairing: the newer stream stays and the older is closed, so one runtime does the work.
-    if (runtime) publishRuntimeStream({ deviceId: device.id, userId: device.userId, name: device.name, ...runtime });
+    publishRuntimeStream({ deviceId: device.id, userId: device.userId, name: device.name, ...runtime });
   });
 }

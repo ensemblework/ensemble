@@ -152,6 +152,15 @@ class SseHub {
     return closed;
   }
 
+  /** Whether a computer's runtime (`INSTANCE_HEADER`) has its event stream open on a device's channel in this process. */
+  runtimeOpen(channel: string, instance: string): boolean {
+    for (const subscriber of this.channels.get(channel) ?? []) {
+      const socket = subscriber.reply.raw;
+      if (subscriber.listener.runtime?.instance === instance && !socket.destroyed && !socket.writableEnded) return true;
+    }
+    return false;
+  }
+
   /** How many streams are open on a channel. */
   listeners(userId: string): number {
     return this.channels.get(userId)?.size ?? 0;

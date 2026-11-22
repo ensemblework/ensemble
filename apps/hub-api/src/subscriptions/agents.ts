@@ -92,6 +92,11 @@ export type AgentTurnSpec = {
   ownTools?: boolean;
   /** An Ensemble Node's turn with the agent's own tools (`assistantTurns` 5): how they are judged here (node-own-tools.ts). */
   node?: NodeTurnPolicy;
+  /**
+   * The web takes this turn's tool calls with their own ids (`ASSISTANT_RELAY_API`): a call sent again with its id never
+   * runs twice, so the computer sends one again when its answer was lost. Older servers omit it.
+   */
+  relay?: number;
 };
 
 /**
