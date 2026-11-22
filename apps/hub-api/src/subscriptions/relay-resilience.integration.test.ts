@@ -19,7 +19,7 @@ import { makeTestDirectory } from "../test/temporary.js";
 const h = await createHttpHarness();
 const { sseHub } = await import("../lib/sse.js");
 const relay = await import("./relay.js");
-const { settleTurns } = await import("../node/queue.js");
+const { settleTurns, setTurnRetryDelaysForTests } = await import("../node/queue.js");
 const { turnJournal } = await import("../node/journal.js");
 const computerSide = await import("../remote/assistant.js");
 const { hostedClient } = await import("../remote/client.js");
@@ -204,6 +204,76 @@ test("a computer that restarts before the turn did anything: the same turn runs 
   } finally {
     frames.stop();
     before.close();
+    relay.stopComputerTurns(plan.laptop.id);
+    await settleTurns();
+  }
+});
+
+test("an agent that exits with nothing said before anything acted: the turn runs once more, quietly; a second exit is the turn's error", async () => {
+  const plan = await onPlan("Lena");
+  const frames = handed(plan.laptop.id);
+  const instance = randomUUID();
+  const live = await runtime(plan.key, instance);
+  setTurnRetryDelaysForTests([5, 5, 5]);
+  const exited = (turnId: string) => plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${turnId}/done`, headers: { "x-ensemble-instance": instance }, payload: { error: { problem: "exited", message: "GitHub Copilot stopped: exit 1" } } });
+  try {
+    assert.equal((await post(plan.owner, plan.room.id, "when does Acme renew?")).statusCode, 201);
+    const firstId = await until(async () => frames.turns[0], "the turn handed to the computer");
+    const spec = await as(plan.key, instance, firstId).read();
+    assert.equal((await exited(firstId)).statusCode, 200);
+    const againId = await until(async () => frames.turns[1], "the turn handed to the computer again", 3_000);
+    const again = as(plan.key, instance, againId);
+    assert.equal((await again.read()).prompt, spec.prompt, "the same message, with no note: nothing had acted");
+    assert.equal((await again.done("Acme renews on 15 March 2027.")).statusCode, 200);
+    await settleTurns();
+    assert.deepEqual((await replies(plan.owner, plan.room.id, plan.node.id)).map((row) => [row.kind, row.body]), [["text", "Acme renews on 15 March 2027."]], "one answer, no error");
+
+    assert.equal((await post(plan.owner, plan.room.id, "and Globex?")).statusCode, 201);
+    const thirdId = await until(async () => frames.turns[2], "the next turn handed to the computer");
+    await as(plan.key, instance, thirdId).read();
+    assert.equal((await exited(thirdId)).statusCode, 200);
+    const fourthId = await until(async () => frames.turns[3], "that turn handed to the computer again", 3_000);
+    await as(plan.key, instance, fourthId).read();
+    assert.equal((await exited(fourthId)).statusCode, 200);
+    await settleTurns();
+    assert.equal(frames.turns.length, 4, "tried once more, not again");
+    const said = await replies(plan.owner, plan.room.id, plan.node.id);
+    assert.equal(said.length, 2);
+    assert.match(said[1]!.body, /GitHub Copilot stopped: exit 1/);
+  } finally {
+    setTurnRetryDelaysForTests(null);
+    frames.stop();
+    live.close();
+    relay.stopComputerTurns(plan.laptop.id);
+    await settleTurns();
+  }
+});
+
+test("an agent that exits with nothing said after a call that may have run: the turn resumes once, told to check first", async () => {
+  const plan = await onPlan("Omar");
+  const frames = handed(plan.laptop.id);
+  const instance = randomUUID();
+  const live = await runtime(plan.key, instance);
+  try {
+    assert.equal((await post(plan.owner, plan.room.id, "add the deposit task")).statusCode, 201);
+    const firstId = await until(async () => frames.turns[0], "the turn handed to the computer");
+    await as(plan.key, instance, firstId).read();
+    const cut = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id, status: "running" } });
+    const started = await turnJournal(h.app, cut).begin({ name: "hub_create_tasks", arguments: JSON.stringify({ tasks: [{ title: "Pay the deposit" }] }), sideEffect: true });
+    assert.ok("ticket" in started);
+    await started.ticket.dispatched();
+    const ended = await plan.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${firstId}/done`, headers: { "x-ensemble-instance": instance }, payload: { error: { problem: "exited", message: "GitHub Copilot stopped: exit 1" } } });
+    assert.equal(ended.statusCode, 200);
+    const resumedId = await until(async () => frames.turns[1], "the resumed turn handed to the computer", 3_000);
+    const resumed = as(plan.key, instance, resumedId);
+    assert.match((await resumed.read()).prompt, /cut off when its agent stopped \(GitHub Copilot stopped: exit 1\)[\s\S]*check first[\s\S]*may already have happened[\s\S]*Pay the deposit/);
+    assert.equal((await resumed.done("The deposit task may have been added before the agent stopped: I checked, and it is not there.")).statusCode, 200);
+    await settleTurns();
+    assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: cut.id } })).outcome, "interrupted");
+    assert.deepEqual((await replies(plan.owner, plan.room.id, plan.node.id)).map((row) => row.kind), ["text"], "one reply, no error");
+  } finally {
+    frames.stop();
+    live.close();
     relay.stopComputerTurns(plan.laptop.id);
     await settleTurns();
   }

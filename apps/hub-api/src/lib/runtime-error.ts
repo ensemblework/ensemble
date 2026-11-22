@@ -17,3 +17,6 @@ export class RuntimeError extends Error {
     super(message);
   }
 }
+
+/** `kind` of a turn whose agent on the owner's computer exited with nothing said, or was killed (subscriptions/agents.ts `exited`). */
+export const AGENT_EXIT = "agent_exit";

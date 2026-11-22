@@ -532,7 +532,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
-        // The model's rate limit: the same turn again a little later, without a message in the room.
+        // The model's rate limit, or the owner's agent exiting before anything acted: the same turn again a little later, without a message in the room.
         await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "failed", outcome: "retry", error: truncateText(outcome.error ?? "Rate limited.", 500), finishedAt: new Date() } });
         await retryLater(app, turn);
         return;
@@ -555,7 +555,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
           where: { id: turnId },
           data: { status: "failed", outcome: "interrupted", model: outcome.model ?? null, credits: outcome.credits ?? null, error: truncateText(outcome.error ?? "Interrupted.", 500), finishedAt: new Date() },
         });
-        continues = await resumeTurn(app, turn, outcome.resume.cut, outcome.resume.mayHaveRun, outcome.resume.ownCalls);
+        continues = await resumeTurn(app, turn, outcome.resume.cut, outcome.resume.mayHaveRun, outcome.resume.ownCalls, outcome.resume.attempt);
         return;
       }
       await prisma.nodeTurn.update({
@@ -712,6 +712,7 @@ export async function resumeTurn(
   cut: CutOff,
   mayHaveRun: ReadonlyArray<{ tool: string; label: string | null }>,
   ownCalls: ReadonlyArray<{ name: string; summary: string }> = [],
+  attempt?: number,
 ): Promise<boolean> {
   const receipts = (Array.isArray(turn.receipts) ? (turn.receipts as Array<{ name?: string; state?: string; summary?: string | null }>) : [])
     .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
@@ -744,6 +745,7 @@ export async function resumeTurn(
         spaceId: turn.spaceId,
         snapshotSeq: turn.snapshotSeq,
         deadlineAt: turn.deadlineAt,
+        ...(attempt ? { attempt } : {}),
       })
     : false;
   if (!resumed) await planTurnEnded(app, turn, cut.error).catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
