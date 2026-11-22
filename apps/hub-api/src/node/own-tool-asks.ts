@@ -3,17 +3,20 @@
  * AI plan (docs/35 §8.13). The computer judged the call by the node's folder policy and asks here
  * (subscriptions/node-own-tools.ts, `POST /api/devices/self/assistant-turns/:id/ask`). An answer the
  * owner already gave about the agent's own calls of the same kind for that folder (from then on, or for
- * this run) settles it at once, a no for this run too, as does an Allow once given after this very call
- * stopped waiting (used once); never an answer given to the node's computer tools. Otherwise one owner-only card in the chat where the node is talking (node/device-tool-decisions.ts:
- * one question per node, computer, folder, kind and run, answered with one press) and the call waits for it, at
- * most 90 seconds, so a proxy in front of the web never cuts the request. Not answered by then: the call
+ * this run: the plan the turn works for, else its conversation) in the last `OWN_ANSWER_DAYS` settles it at
+ * once, a no for this run too, as does an Allow once given after this very call stopped waiting (used once);
+ * never an answer given to the node's computer tools. An answer for this run goes to the computer with when it
+ * lapses (`until`), so the computer's rule for it ends when Ensemble stops answering from it. Otherwise one
+ * owner-only card in the chat where the node is talking (node/device-tool-decisions.ts: one question per node,
+ * computer, folder, kind and run, answered with one press) and the call waits for it, at most 90 seconds, so a
+ * proxy in front of the web never cuts the request. Not answered by then: the call
  * is refused with a note to stop, and once that has reached the computer the turn parks and the agent's
  * run there is stopped, keeping its session (subscriptions/routes.ts, relay.ts). The answer wakes the same
  * conversation in that session ("Allowed: … Do it now.").
  */
 import type { AgentDecision, NodeAgent, NodeRoom, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import { ownAskKind, type OwnAnswer, type OwnAsk } from "../subscriptions/bridge.js";
+import { OWN_ANSWER_DAYS, ownAskKind, type OwnAnswer, type OwnAsk } from "../subscriptions/bridge.js";
 import { askOwner, awaitAnswer, claimGrant, computerCard, grantScope, markGrantsUsed, NODE_TOOL_DECISION, noticeAsked, ownerName, ownPlace, permissionWaitMs, waitForOwner, watchDecision, type NodeToolCard } from "./device-tool-decisions.js";
 import { holdForCard, markActed, requestPark } from "./queue.js";
 import { missionOf } from "./device-tools.js";
@@ -21,8 +24,7 @@ import type { Lineage } from "./tools.js";
 
 /** The longest a call waits for its owner's answer in one request: a proxy in front of the web cuts a request at 100 seconds. */
 export const OWN_ASK_MS = 90_000;
-/** Answers older than this are not used for a new call (as the computer's answers, device-tool-decisions.ts). */
-const ANSWER_DAYS = 30;
+const DAY_MS = 86_400_000;
 
 export function ownAskWaitMs(): number {
   return Math.min(permissionWaitMs(), OWN_ASK_MS);
@@ -57,7 +59,7 @@ function covers(known: string, target: string): boolean {
 async function knownAnswer(prisma: Pick<PrismaClient, "agentDecision">, scope: OwnAskScope, deviceId: string, request: OwnAsk, mission: string): Promise<{ row: AgentDecision; card: NodeToolCard } | null> {
   const kind = ownAskKind(request);
   const rows = await prisma.agentDecision.findMany({
-    where: { userId: scope.node.userId, toolName: NODE_TOOL_DECISION, status: "decided", decidedAt: { gte: new Date(Date.now() - ANSWER_DAYS * 86_400_000) } },
+    where: { userId: scope.node.userId, toolName: NODE_TOOL_DECISION, status: "decided", decidedAt: { gte: new Date(Date.now() - OWN_ANSWER_DAYS * DAY_MS) } },
     orderBy: { decidedAt: "desc" },
     take: 200,
   });
@@ -85,7 +87,10 @@ export function ownToolAsker(app: FastifyInstance, scope: OwnAskScope): (request
   const allowed = async (row: AgentDecision, card: NodeToolCard): Promise<OwnAnswer> => {
     await markGrantsUsed(app.prisma, [row.id]);
     await markActed(app, scope.turnId);
-    return { decision: "allow", grant: { id: row.id, scope: grantScope(row) ?? "once", target: card.target } };
+    const given = grantScope(row) ?? "once";
+    // For this run: the computer keeps it until Ensemble stops answering from it.
+    const until = given === "mission" ? new Date((row.decidedAt ?? new Date()).getTime() + OWN_ANSWER_DAYS * DAY_MS).toISOString() : null;
+    return { decision: "allow", grant: { id: row.id, scope: given, target: card.target, ...(until ? { until } : {}) } };
   };
   return async (request, computer) => {
     const what = `${request.what}${ownPlace(request)}`;

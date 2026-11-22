@@ -180,7 +180,7 @@ export async function callComputer(ctx: ToolContext, scope: NodeScope, computer:
   const mode = await modeFor(prisma, node);
   for (let asks = 0; ; asks += 1) {
     const extra = (await options.before?.(device)) ?? {};
-    const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
+    const grants = await pendingGrants(prisma, node.userId, node.id, device.id, missionOf(scope));
     const operationId = `${scope.turnId}:${randomUUID()}`;
     // Public web pages need no answer on the computer (device-tools/policy.ts) unless the owner asks to be asked, there or here.
     const data = { ...forComputer(device, request), ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
