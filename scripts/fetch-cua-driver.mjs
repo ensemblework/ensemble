@@ -181,7 +181,9 @@ export async function fetchWindowsCuaDriver({ out, arch = process.arch }) {
 /** On Windows: the program's Authenticode signature is valid and its publisher's (the pinned organisation). */
 function verifyAuthenticode(path, publisher) {
   const script = "$s = Get-AuthenticodeSignature -LiteralPath $env:ENSEMBLE_SIGNED_FILE; Write-Output $s.Status; Write-Output $s.SignerCertificate.Subject";
-  const shown = spawnSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: { ...process.env, ENSEMBLE_SIGNED_FILE: path } });
+  // PowerShell 7's module path (inherited from a pwsh step) breaks Windows PowerShell 5.1's own modules.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"));
+  const shown = spawnSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: { ...env, ENSEMBLE_SIGNED_FILE: path } });
   const [status, subject] = `${shown.stdout ?? ""}`.trim().split(/\r?\n/);
   if (shown.status !== 0 || status?.trim() !== "Valid") throw new Error(`cua-driver.exe's Authenticode signature does not verify (${status?.trim() || shown.stderr?.trim() || "no answer"}).`);
   if (!subject?.includes(`O=${publisher}`) && !subject?.includes(`CN=${publisher}`)) throw new Error(`cua-driver.exe is signed by ${subject?.trim() || "nobody"}; the pin says ${publisher}.`);
