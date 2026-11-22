@@ -4,7 +4,8 @@ import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import test, { after } from "node:test";
 import type { StepReport } from "../node/report.js";
-import { agentCommandEnv, completionOf, isTestRunner, rerunChecks, rerunVerdict, testCounts } from "./completion.js";
+import { acceptanceCommands } from "./acceptance-checks.js";
+import { agentCommandEnv, completionOf, isTestRunner, rerunChecks, rerunVerdict, taskStatusAfter, testCounts, verifiedReport, type CheckRun } from "./completion.js";
 import type { JobContext } from "./tools.js";
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-completion-")));
@@ -203,4 +204,131 @@ test("no check runs after the owner discards the turn's changes", async () => {
   });
   assert.deepEqual(ran, ["npm test"]);
   assert.deepEqual(runs.map((row) => [row.name, row.verdict, row.reason]), [["unit", "pass", null], ["e2e", "not_run", "The owner discarded the turn's changes."]]);
+});
+
+test("the commands acceptance criteria name are checks: `X` passes, run `X`, or a known program; never a file or a word", () => {
+  const checks = acceptanceCommands([
+    { id: "AC-1", text: "`node accept.js` passes in the export folder." },
+    { id: "AC-2", text: "`out.csv` has the header row, and the `export` button works." },
+    { id: "AC-3", text: "Run `./scripts/check.sh` before handing it over" },
+    { id: "AC-4", text: "pytest: `pytest -q tests/test_export.py`" },
+    { id: "AC-5", text: "`formatMoney(5, 'EUR')` returns '€5.00' and `--verbose` prints the total" },
+    { id: "AC-6", text: "`npm run build` and `npm test` pass in `web/`" },
+    { id: "AC-7", text: "`node accept.js` passes" },
+  ]);
+  assert.deepEqual(checks.map((check) => [check.id, check.command, check.folder]), [
+    ["AC-1", "node accept.js", "export"],
+    ["AC-3", "./scripts/check.sh", null],
+    ["AC-4", "pytest -q tests/test_export.py", null],
+    ["AC-6", "npm run build", "web"],
+    ["AC-6", "npm test", "web"],
+  ], "each command once, the folder a criterion names kept");
+});
+
+test("a criterion's command runs again only when it checks: never one that pushes, publishes, deploys or installs, an unknown program, or a program named alone", () => {
+  const checks = acceptanceCommands([
+    { id: "AC-1", text: "Run `git commit -am done` when finished" },
+    { id: "AC-2", text: "`npm publish` succeeds" },
+    { id: "AC-3", text: "`git push origin main` passes" },
+    { id: "AC-4", text: "Run `npm run deploy` after the build" },
+    { id: "AC-5", text: "It uses `git` and `node` only" },
+    { id: "AC-6", text: "Run `rm -rf dist` first, and `vercel --prod` succeeds" },
+    { id: "AC-7", text: "`git diff --exit-code` passes and `make` succeeds" },
+    { id: "AC-8", text: "`cargo build --release` succeeds; run `npm install` once" },
+  ]);
+  assert.deepEqual(checks.map((check) => [check.id, check.command]), [
+    ["AC-7", "git diff --exit-code"],
+    ["AC-7", "make"],
+    ["AC-8", "cargo build --release"],
+  ]);
+});
+
+test("a check without a command to run again stays the agent's word: it neither holds back nor confirms the task or its step", () => {
+  const report: StepReport = {
+    outcome: "done",
+    summary: "Exported.",
+    checks: [
+      { id: "AC-1", name: "acceptance", verdict: "pass", rerun: { command: "node accept.js", expects: "exit_0" } },
+      { id: "AC-2", name: "looked at the CSV", verdict: "pass", strength: "A" },
+    ],
+  };
+  const run: CheckRun = { name: "acceptance", id: "AC-1", command: "node accept.js", cwd: null, expects: "exit_0", claimed: "pass", verdict: "pass", reason: null, exitCode: 0, ms: 5, counts: null, output: "" };
+  const none = { state: "none" as const, url: null, source: null };
+  const completion = completionOf({ outcome: "success", files: [], report, runs: [run], pr: none });
+  assert.equal(completion.checks.state, "unverified", "the turn's own line still says one check rests on the agent's word");
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: completion.checks }), { status: "done", verified: "passed", question: null });
+  assert.equal(verifiedReport(report, completion).outcome, "done", "the step ends as reported when every check Ensemble ran passed");
+  const claims = completionOf({ outcome: "success", files: [], report: { ...report, checks: report.checks!.slice(1) }, runs: [], pr: none });
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: claims.checks }), { status: "done", verified: null, question: null }, "nothing to run again: as before");
+});
+
+test("an assigned run's acceptance commands run again with its reported checks, each once, where the criterion says", async () => {
+  const report: StepReport = { outcome: "done", summary: "Done.", checks: [{ id: "AC-1", name: "acceptance script", verdict: "pass", rerun: { command: "node  accept.js", expects: "exit_0" } }, { id: "AC-2", name: "looked at the CSV", verdict: "pass" }] };
+  const acceptance = [
+    { id: "AC-1", text: "`node accept.js` passes in the export folder.", command: "node accept.js", folder: "export" },
+    { id: "AC-2", text: "`npm test` passes in the missing folder.", command: "npm test", folder: "missing" },
+    { id: "AC-3", text: "`npm run lint` passes", command: "npm run lint", folder: null },
+  ];
+  const ran: Array<{ command: string; cwd: string }> = [];
+  const runs = await rerunChecks(ctx(), report, {
+    signal,
+    judge: allow,
+    acceptance,
+    run: async (options) => {
+      ran.push({ command: options.argv.at(-1)!, cwd: options.cwd });
+      return result(options.argv.at(-1) === "npm run lint" ? 1 : 0, "");
+    },
+  });
+  assert.deepEqual(ran, [
+    { command: "node  accept.js", cwd: fieldnote },
+    { command: "npm test", cwd: fieldnote },
+    { command: "npm run lint", cwd: fieldnote },
+  ], "the reported run of the same command in the same folder is not run twice; a folder that is not there is the run's own");
+  assert.deepEqual(runs.map((row) => [row.id, row.from ?? "report", row.claimed, row.verdict]), [
+    ["AC-1", "report", "pass", "pass"],
+    ["AC-2", "acceptance", "pass", "pass"],
+    ["AC-3", "acceptance", "skipped", "fail"],
+  ]);
+  const completion = completionOf({ outcome: "success", files: [], report, runs, pr: { state: "none", url: null, source: null } });
+  assert.deepEqual([completion.checks.state, completion.checks.claimed, completion.checks.failed], ["failed", 3, 1], "the task's own commands count with the agent's");
+  const passing = completionOf({ outcome: "success", files: [], report, runs: runs.map((row) => ({ ...row, verdict: "pass" as const })), pr: { state: "none", url: null, source: null } });
+  assert.equal(passing.checks.state, "passed", "AC-2's claim is covered by the task's own command");
+  // With nothing reported, the task's commands are the checks.
+  const only = await rerunChecks(ctx(), null, { signal, judge: allow, acceptance: acceptance.slice(2), run: async () => result(0, "") });
+  assert.deepEqual(only.map((row) => [row.id, row.verdict]), [["AC-3", "pass"]]);
+  assert.equal(completionOf({ outcome: "success", files: [], report: null, runs: only, pr: { state: "none", url: null, source: null } }).checks.state, "passed");
+});
+
+test("a task is done only when the checks Ensemble ran again passed; failed is not done, uncertain or not run is finished, not verified", () => {
+  const run = (verdict: CheckRun["verdict"], reason: string | null = null): CheckRun => ({ name: "AC-1 `node accept.js` passes", id: "AC-1", command: "node accept.js", cwd: null, expects: "exit_0", claimed: "pass", verdict, reason, exitCode: verdict === "fail" ? 1 : 0, ms: 5, counts: null, output: "" });
+  const checks = (verdict: CheckRun["verdict"], reason?: string) => completionOf({ outcome: "success", files: [], report: null, runs: [run(verdict, reason)], pr: { state: "none", url: null, source: null } }).checks;
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: checks("pass") }), { status: "done", verified: "passed", question: null });
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: false, checks: checks("pass") }), { status: "waiting_approval", verified: "passed", question: null });
+  const failed = taskStatusAfter({ outcome: "success", markDone: true, checks: checks("fail", "It exited 1.") });
+  assert.deepEqual([failed.status, failed.verified], ["blocked", "failed"]);
+  assert.equal(failed.question, "Its checks failed when Ensemble ran them again: AC-1 node accept.js: It exited 1.");
+  for (const verdict of ["uncertain", "not_run"] as const) {
+    const end = taskStatusAfter({ outcome: "success", markDone: true, checks: checks(verdict, "A program it needs was not found here (exit 127).") });
+    assert.deepEqual([end.status, end.verified], ["waiting_approval", "not_verified"], verdict);
+  }
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: null, hasChecks: true }), { status: "waiting_approval", verified: "not_verified", question: null }, "checks no one ran again are not passed");
+  // Without checks, as before.
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: completionOf({ outcome: "success", files: [], report: null, runs: [], pr: { state: "none", url: null, source: null } }).checks }), { status: "done", verified: null, question: null });
+  assert.deepEqual(taskStatusAfter({ outcome: "success", markDone: true, checks: null }), { status: "done", verified: null, question: null });
+  assert.equal(taskStatusAfter({ outcome: "cancelled", markDone: true, checks: null }).status, "todo");
+  assert.equal(taskStatusAfter({ outcome: "failed", markDone: true, checks: null }).status, "blocked");
+});
+
+test("a plan step's report carries Ensemble's own runs of its checks, not the worker's word", () => {
+  const report: StepReport = { outcome: "done", summary: "Exported.", checks: [{ id: "AC-1", name: "acceptance", verdict: "pass", rerun: { command: "node accept.js", expects: "exit_0" } }] };
+  const base = { id: "AC-1", command: "node accept.js", cwd: null, expects: "exit_0" as const, claimed: "pass" as const, exitCode: 1, ms: 5, counts: null, output: "" };
+  const failed = completionOf({ outcome: "success", files: [], report, runs: [{ ...base, name: "acceptance", verdict: "fail", reason: "It exited 1." }], pr: { state: "none", url: null, source: null } });
+  const verified = verifiedReport(report, failed);
+  assert.equal(verified.outcome, "fail");
+  assert.deepEqual(verified.checks?.map((check) => [check.id, check.verdict, check.detail]), [["AC-1", "fail", "Ensemble ran it again: It exited 1."]]);
+  const extra = completionOf({ outcome: "success", files: [], report, runs: [{ ...base, name: "acceptance", verdict: "pass", reason: null, exitCode: 0 }, { ...base, id: "AC-2", name: "AC-2 `npm test` passes", command: "npm test", claimed: "skipped", verdict: "not_run", reason: "A program it needs was not found here (exit 127).", from: "acceptance" }], pr: { state: "none", url: null, source: null } });
+  const uncertain = verifiedReport(report, extra);
+  assert.equal(uncertain.outcome, "uncertain");
+  assert.deepEqual(uncertain.checks?.map((check) => [check.id, check.verdict]), [["AC-1", "pass"], ["AC-2", "skipped"]]);
+  assert.equal(verifiedReport(report, null), report, "nothing ran again: the report as it was");
 });

@@ -29,6 +29,7 @@ async function until<T>(what: string, probe: () => Promise<T | undefined | null 
 
 type Card = {
   id: string;
+  taskId: string;
   title: string;
   status: string;
   origin?: "local" | "web";
@@ -287,6 +288,52 @@ test("with web approvals on, a push the computer asks about goes ahead on an all
     const done = await waitJob(side, title, "web", ["succeeded"]);
     assert.equal(git(source, "rev-parse", "refs/heads/feature-phone"), git(done.folder, "rev-parse", "HEAD"), "the phone's allow pushed the run's branch");
     await until("the hosted push completes", async () => host.job(hosted).complete?.outcome === "succeeded");
+  } catch (error) {
+    console.error(side.logs().slice(-8000));
+    throw error;
+  }
+});
+
+test("an assigned run's acceptance command runs again here when the agent finishes: it failed, so its task is not done, and the web gets what it showed", { timeout: 180_000 }, async (t) => {
+  const root = makeTestDirectory("ensemble-remote-checks-");
+  const stub = await startStubRuntime();
+  const host = await startFakeHost();
+  const source = makeSourceRepo(root);
+  const side = await bootSidecar(root, stub.url, {
+    ENSEMBLE_REMOTE_API: host.origin,
+    ENSEMBLE_REMOTE_HEARTBEAT_MS: "400",
+    ENSEMBLE_REMOTE_POLL_MS: "300",
+    ENSEMBLE_REMOTE_SYNC_MS: "200",
+  });
+  t.after(async () => {
+    await side.stop("SIGKILL");
+    await host.close();
+    await stub.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  try {
+    await prepareAccount(side);
+    const shared = await side.api("/api/remote/folders", { json: { label: "source", path: source, kind: "repo", access: "read-write" } });
+    assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    const paired = await side.api("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
+    assert.equal(paired.status, 200, JSON.stringify(paired.body));
+    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
+    assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+    await until("the computer says it runs a run's checks again", async () => host.capabilities()?.runVerification === 1);
+
+    const title = "Export the Q3 numbers";
+    const command = 'node -e "process.exit(3)"';
+    const hosted = host.enqueue(spec(title, { mode: "review", markDone: true, acceptance: [{ id: "AC-1", text: `AC-1 \`${command}\` passes.`, command, folder: null }] }));
+    await until("the hosted job completes", async () => host.job(hosted).complete?.outcome === "succeeded");
+    const completion = host.job(hosted).complete!.completion as { conversation: { state: string }; checks: { state: string; runs: Array<{ id: string; from?: string; verdict: string; exitCode: number | null }> } };
+    assert.equal(completion.conversation.state, "finished");
+    assert.equal(completion.checks.state, "failed");
+    assert.deepEqual(completion.checks.runs.map((run) => [run.id, run.from, run.verdict, run.exitCode]), [["AC-1", "acceptance", "fail", 3]]);
+    const card = await waitJob(side, title, "web", ["succeeded"]);
+    const task = await side.api<{ task: { status: string; blockedQuestion: { question: string } | null } }>(`/api/tasks/${card.taskId}`);
+    assert.equal(task.body.task.status, "blocked", "not done here either: its check failed");
+    assert.match(task.body.task.blockedQuestion?.question ?? "", /Its checks failed when Ensemble ran them again: AC-1 node -e "process\.exit\(3\)": It exited 3\./);
   } catch (error) {
     console.error(side.logs().slice(-8000));
     throw error;

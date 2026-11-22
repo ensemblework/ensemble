@@ -22,7 +22,7 @@ type Job = {
   seenSeq: Set<number>;
   /** The run's steps as the device sent them, by index (the last version of each). */
   steps: Map<number, UploadedStep>;
-  complete: { outcome: string; summary: string; totals: RunTotals | null } | null;
+  complete: { outcome: string; summary: string; totals: RunTotals | null; completion: unknown } | null;
   cancel: boolean;
 };
 
@@ -46,6 +46,8 @@ export interface FakeHost {
   deviceId: string | null;
   enqueue(spec: Record<string, unknown>): string;
   job(id: string): Job;
+  /** What the computer said it can do in its last heartbeat. */
+  capabilities(): Record<string, unknown> | null;
   asks(): Decision[];
   answer(decisionId: string, body: { decision?: "allow" | "deny"; scope?: string; reason?: string | null; actionHash?: string | null; id?: string }): void;
   rogue(decisionId: string, body: Record<string, unknown>): void;
@@ -94,6 +96,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
   let refuseNextEvents = false;
   let deviceId: string | null = null;
   let deviceName: string | null = null;
+  let capabilities: Record<string, unknown> | null = null;
   const jobs = new Map<string, Job>();
   const decisions = new Map<string, Decision>();
   const listeners = new Set<ServerResponse>();
@@ -185,6 +188,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
     if (!authed(req, res)) return;
 
     if (req.method === "POST" && path === "/api/devices/self/heartbeat") {
+      if (body.capabilities && typeof body.capabilities === "object") capabilities = body.capabilities as Record<string, unknown>;
       const ids = Array.isArray(body.runningJobIds) ? body.runningJobIds.filter((id): id is string => typeof id === "string") : [];
       const cancel: string[] = [];
       for (const id of ids) {
@@ -294,7 +298,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       const totals = body.totals === undefined ? { success: true as const, data: null } : RunTotals.safeParse(body.totals);
       if (!totals.success) return send(res, 400, { error: "totals are not valid.", issues: totals.error.issues.slice(0, 3) });
       job.status = outcome;
-      job.complete = { outcome, summary: typeof body.summary === "string" ? body.summary : "", totals: totals.data };
+      job.complete = { outcome, summary: typeof body.summary === "string" ? body.summary : "", totals: totals.data, completion: body.completion ?? null };
       return send(res, 204);
     }
 
@@ -335,6 +339,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       if (!job) throw new Error(`no hosted job ${id}`);
       return job;
     },
+    capabilities: () => capabilities,
     asks: () => [...decisions.values()],
     answer(decisionId, patch) {
       const row = decisions.get(decisionId);

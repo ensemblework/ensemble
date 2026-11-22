@@ -7,8 +7,13 @@ export const RUN_OUTCOME: Record<string, { label: string; tone: RunTone }> = {
   waiting_approval: { label: "Waiting for you", tone: "yellow" },
 };
 
-/** Observing an unfinished job does not mean that it is currently executing. */
-export function runPresentation({ outcome, endedAt, jobStatus }: { outcome?: string | null; endedAt?: string | null; jobStatus?: string | null }): { label: string; tone: RunTone; active: boolean } {
+/**
+ * Observing an unfinished job does not mean that it is currently executing. A finished run whose checks
+ * Ensemble ran again is done only when they passed: failed, or finished, not verified.
+ */
+export function runPresentation({ outcome, endedAt, jobStatus, verified }: { outcome?: string | null; endedAt?: string | null; jobStatus?: string | null; verified?: string | null }): { label: string; tone: RunTone; active: boolean } {
+  if (outcome === "success" && verified === "failed") return { label: "Checks failed", tone: "red", active: false };
+  if (outcome === "success" && verified === "not_verified") return { label: "Not verified", tone: "yellow", active: false };
   if (outcome) return { ...(RUN_OUTCOME[outcome] ?? { label: outcome, tone: "gray" }), active: false };
   if (endedAt) return { label: "Ended", tone: "gray", active: false };
   if (jobStatus === "queued") return { label: "Queued", tone: "gray", active: false };

@@ -713,6 +713,8 @@ export type RunSummary = {
   where?: RunJob["where"] | null;
   deviceName?: string | null;
   jobStatus?: AgentJob["status"] | null;
+  /** What Ensemble's own runs of the run's checks showed; null when none ran. */
+  verified?: RunVerified | null;
   toolCalls?: number | null;
   tokens?: number | null;
   startedAt: string;
@@ -767,7 +769,13 @@ export type RunDetail = {
   task: { id: string; title: string };
   steps: RunStep[];
   approvals?: Array<{ id: string; title: string; kind: string; decision: string | null; requestedAt: string; decidedAt: string | null; stepIndex: number | null }>;
+  /** How it ended, each state apart (hub-api workspace/completion.ts); null for runs without a record. */
+  completion?: TurnCompletion | null;
+  verified?: RunVerified | null;
 };
+
+/** What Ensemble's own runs of a run's checks showed (hub-api workspace/completion.ts `verifiedOf`). */
+export type RunVerified = "passed" | "failed" | "not_verified";
 
 /** The agent job behind a run: harness, models, where it ran, its limits and what it cost. */
 export type RunJob = {

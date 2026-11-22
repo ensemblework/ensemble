@@ -15,6 +15,7 @@ import { z } from "zod";
 import { parseReport, REPORT_OUTCOMES, type Check, type StepReport } from "../node/report.js";
 import { redactText } from "../lib/redact.js";
 import { agentEnv } from "../subscriptions/detect.js";
+import { acceptanceFolder, type AcceptanceCheck } from "./acceptance-checks.js";
 import { expandHome, holdsProtected, jailPath, within } from "./guard.js";
 import { judgeEngineCall } from "./engines/judge.js";
 import { runCommand, type RunResult } from "./runner.js";
@@ -175,6 +176,8 @@ export type CheckRun = {
   reason: string | null;
   exitCode: number | null;
   ms: number;
+  /** `acceptance`: a command the task's or plan step's acceptance criteria name, run whether or not the agent reported it. */
+  from?: "acceptance";
   counts: TestCounts | null;
   output: string;
 };
@@ -188,6 +191,8 @@ export type RerunOptions = {
   secrets?: readonly string[];
   /** Asked before each check: a reason to run no more (the owner discarded the turn's changes), else null. */
   stopped?: () => Promise<string | null>;
+  /** The commands the run's task or plan step names in its acceptance criteria, run after the reported checks. */
+  acceptance?: readonly AcceptanceCheck[];
   /** Tests replace the judge and the command runner. */
   judge?: typeof judgeEngineCall;
   run?: typeof runCommand;
@@ -262,10 +267,12 @@ function keep(output: string, secrets: readonly string[]): string {
 /**
  * Runs each check of the report that has a `rerun` again, as the agent's own command would run: judged
  * first (refused by the hard floor, asked about where the mode asks), then in the run's folder or one it
- * was let into (`rerunFolder`), with the agent's PATH and HOME and a time limit each. Checks without a
- * rerun are listed as the agent's claims only; after a discard (`stopped`) no more are run.
+ * was let into (`rerunFolder`), with the agent's PATH and HOME and a time limit each. Then the commands
+ * the task's or plan step's acceptance criteria name (`acceptance`), each once: one the agent's own
+ * check already ran in the same folder is not run twice. Checks without a rerun are listed as the
+ * agent's claims only; after a discard (`stopped`) no more are run.
  */
-export async function rerunChecks(ctx: JobContext, report: StepReport, options: RerunOptions): Promise<CheckRun[]> {
+export async function rerunChecks(ctx: JobContext, report: StepReport | null, options: RerunOptions): Promise<CheckRun[]> {
   const judge = options.judge ?? judgeEngineCall;
   const run = options.run ?? runCommand;
   const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS;
@@ -274,31 +281,22 @@ export async function rerunChecks(ctx: JobContext, report: StepReport, options: 
   const allowed = agentEnv(ctx.secretEnv ?? {});
   const extraEnv = Object.fromEntries(Object.entries(ctx.secretEnv ?? {}).filter(([key]) => allowed[key] !== undefined));
   const runs: CheckRun[] = [];
+  const ran = new Set<string>();
   let stop: string | null = null;
-  for (const check of report.checks ?? []) {
-    if (!check.rerun) continue;
-    const base = { name: check.name, id: check.id ?? null, command: check.rerun.command, cwd: check.rerun.cwd ?? null, expects: check.rerun.expects, claimed: check.verdict, exitCode: null, ms: 0, counts: null, output: "" };
+  const once = async (base: Omit<CheckRun, "verdict" | "reason">): Promise<CheckRun> => {
     stop ??= options.signal.aborted ? "The run was stopped before this check ran." : ((await options.stopped?.().catch(() => null)) ?? null);
-    if (stop) {
-      runs.push({ ...base, verdict: "not_run", reason: stop });
-      continue;
-    }
-    const where = await rerunFolder(ctx, check.rerun.cwd ?? null);
-    if ("refused" in where) {
-      runs.push({ ...base, verdict: "not_run", reason: where.refused });
-      continue;
-    }
-    await options.progress?.(`Checking: ${check.name}`.slice(0, 200));
-    const answer = await judge(ctx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: check.rerun.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
-    if (answer.decision !== "allow") {
-      runs.push({ ...base, verdict: "not_run", reason: answer.message ?? "The run's rules did not let it run." });
-      continue;
-    }
+    if (stop) return { ...base, verdict: "not_run", reason: stop };
+    const where = await rerunFolder(ctx, base.cwd);
+    if ("refused" in where) return { ...base, verdict: "not_run", reason: where.refused };
+    ran.add(`${where.cwd}\0${base.command.replace(/\s+/g, " ").trim()}`);
+    await options.progress?.(`Checking: ${base.name}`.slice(0, 200));
+    const answer = await judge(ctx, { tool: process.platform === "win32" ? "PowerShell" : "Bash", input: { command: base.command, ...(where.cwd !== ctx.root ? { cwd: where.cwd } : {}) }, signal: options.signal }).catch((error: unknown) => ({ decision: "deny" as const, message: error instanceof Error ? error.message : String(error) }));
+    if (answer.decision !== "allow") return { ...base, verdict: "not_run", reason: answer.message ?? "The run's rules did not let it run." };
     let result: RunResult;
     try {
       result = await run({
         userId: ctx.userId,
-        argv: shellArgv(check.rerun.command),
+        argv: shellArgv(base.command),
         cwd: where.cwd,
         root: ctx.root,
         sandboxed: ctx.sandboxed,
@@ -314,11 +312,21 @@ export async function rerunChecks(ctx: JobContext, report: StepReport, options: 
         engineEnv,
       });
     } catch (error) {
-      runs.push({ ...base, verdict: "not_run", reason: `Ensemble could not start it here: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000) });
-      continue;
+      return { ...base, verdict: "not_run", reason: `Ensemble could not start it here: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000) };
     }
-    const verdict = rerunVerdict(result, check.rerun.expects, check.rerun.command);
-    runs.push({ ...base, verdict: verdict.verdict, reason: verdict.reason, exitCode: result.exitCode, ms: result.ms, counts: verdict.counts, output: keep(result.output, options.secrets ?? []) });
+    const verdict = rerunVerdict(result, base.expects, base.command);
+    return { ...base, verdict: verdict.verdict, reason: verdict.reason, exitCode: result.exitCode, ms: result.ms, counts: verdict.counts, output: keep(result.output, options.secrets ?? []) };
+  };
+  for (const check of report?.checks ?? []) {
+    if (!check.rerun) continue;
+    runs.push(await once({ name: check.name, id: check.id ?? null, command: check.rerun.command, cwd: check.rerun.cwd ?? null, expects: check.rerun.expects, claimed: check.verdict, exitCode: null, ms: 0, counts: null, output: "" }));
+  }
+  for (const check of options.acceptance ?? []) {
+    const cwd = await acceptanceFolder(ctx.root, check.folder);
+    const where = await rerunFolder(ctx, cwd);
+    if (!("refused" in where) && ran.has(`${where.cwd}\0${check.command.replace(/\s+/g, " ").trim()}`)) continue;
+    const claimed = report?.checks?.find((row) => row.id === check.id)?.verdict ?? "skipped";
+    runs.push(await once({ name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" }));
   }
   return runs;
 }
@@ -348,6 +356,7 @@ const CheckRunSchema = z.object({
   expects: z.union([z.literal("exit_0"), z.object({ outputMatches: z.string().max(500) })]),
   claimed: z.enum(["pass", "fail", "blocked", "skipped"]),
   verdict: z.enum(["pass", "fail", "not_run", "uncertain"]),
+  from: z.literal("acceptance").optional(),
   reason: z.string().max(2000).nullable(),
   exitCode: z.number().int().nullable(),
   ms: z.number().min(0),
@@ -386,8 +395,12 @@ export function completionOf(input: {
   const failed = input.runs.filter((row) => row.verdict === "fail").length;
   const notRun = input.runs.filter((row) => row.verdict === "not_run").length;
   const uncertain = input.runs.filter((row) => row.verdict === "uncertain").length;
-  const claimed = input.report?.checks?.length ?? 0;
-  const unrunnable = claimed - input.runs.length;
+  // The agent's checks, and the task's own commands it did not report: a reported check without a
+  // command is covered when one of those ran under its id.
+  const reported = input.report?.checks ?? [];
+  const task = input.runs.filter((row) => row.from === "acceptance");
+  const claimed = Math.max(reported.length + task.filter((row) => !row.id || !reported.some((check) => check.id === row.id)).length, input.runs.length);
+  const unrunnable = reported.filter((check) => !check.rerun && !(check.id && task.some((row) => row.id === check.id))).length;
   const checks: ChecksState = failed ? "failed" : uncertain ? "uncertain" : passed && !notRun && !unrunnable ? "passed" : claimed ? "unverified" : "none";
   return {
     schema: COMPLETION_SCHEMA,
@@ -437,31 +450,118 @@ export async function pullRequestOf(db: Pick<PrismaClient, "workspaceEvent" | "r
 }
 
 /**
- * A Code tab turn's completion record, when its run ends: the agent's report (report_result, or
- * `.ensemble/result.json`), its checks run again here when the conversation finished, the files it
- * changed and its pull request. Each check's progress shows on the run, and its result is an event.
+ * A run's completion record, when it ends (a Code tab turn, or a run assigned to a coding agent): the
+ * agent's report (report_result, or `.ensemble/result.json`), its checks and the commands its task's or
+ * plan step's acceptance criteria name (`acceptance`) run again here when the conversation finished, the
+ * files it changed and its pull request. Each check's progress shows on the run, and its result is an event.
  */
-export async function verifyCodeTurn(ctx: JobContext, input: { outcome: Parameters<typeof completionOf>[0]["outcome"]; files: readonly Pick<ChangedFile, "added" | "removed">[] }, options: Partial<RerunOptions> = {}): Promise<Completion> {
+export async function verifyRun(ctx: JobContext, input: { outcome: Parameters<typeof completionOf>[0]["outcome"]; files: readonly Pick<ChangedFile, "added" | "removed">[]; acceptance?: readonly AcceptanceCheck[] }, options: Partial<RerunOptions> = {}): Promise<Completion> {
   const job = await ctx.prisma.workspaceJob.findUnique({ where: { id: ctx.job.id }, select: { report: true, results: true } });
   const report = parseReport(job?.report);
+  const acceptance = input.acceptance ?? [];
   const runs =
-    report && input.outcome === "success"
+    (report || acceptance.length) && input.outcome === "success"
       ? await rerunChecks(ctx, report, {
           signal: ctx.signal,
           progress: (text) => ctx.progress(text),
           secrets: Object.values(ctx.secretEnv ?? {}),
           stopped: async () => ((await acceptedOf(ctx.prisma, ctx.runId ?? null)) === "rejected" ? "The owner discarded the turn's changes before this check ran." : null),
+          acceptance,
           ...options,
         })
       : [];
   for (const run of runs) {
-    await ctx.event("check_rerun", { name: run.name, id: run.id, command: run.command.slice(0, 500), claimed: run.claimed, verdict: run.verdict, exitCode: run.exitCode, ms: run.ms, reason: run.reason });
+    await ctx.event("check_rerun", { name: run.name, id: run.id, command: run.command.slice(0, 500), claimed: run.claimed, verdict: run.verdict, exitCode: run.exitCode, ms: run.ms, reason: run.reason, ...(run.from ? { from: run.from } : {}) });
   }
   const pr = await pullRequestOf(ctx.prisma, ctx.job.id, ctx.runId ?? null, job?.results);
   return completionOf({ outcome: input.outcome, files: input.files, report, runs, pr });
 }
 
+/** Whether Ensemble's runs of a run's checks confirm it: `passed`, `failed`, `not_verified` (uncertain or not run), or null when it had none. */
+export type Verified = "passed" | "failed" | "not_verified";
+
+/**
+ * What Ensemble's own runs of a run's checks show, which decides its task and its plan step: failed when
+ * one failed, passed when every one passed, not verified when one was uncertain or not run; null when
+ * none ran. A check that came without a command stays the agent's word: listed, never holding the task
+ * back nor confirming it.
+ */
+export function verifiedOf(checks: Pick<Completion["checks"], "runs"> | null | undefined): Verified | null {
+  const runs = checks?.runs ?? [];
+  if (!runs.length) return null;
+  if (runs.some((run) => run.verdict === "fail")) return "failed";
+  return runs.every((run) => run.verdict === "pass") ? "passed" : "not_verified";
+}
+
+/**
+ * Where a task goes when its agent's run ends (docs/16 §9). With checks to run again (the agent's, or
+ * commands its acceptance criteria name), the task is done only when Ensemble's runs of them passed: a
+ * failure keeps it from done (blocked, with the failure), and checks it could not confirm (uncertain,
+ * not run, or none run at all though the run had some: `hasChecks`) leave it finished, not verified
+ * (waiting for the owner). Without them, as before: done when the run's `markDone` says so. The
+ * conversation's own end (stopped, failed) decides as before.
+ */
+export function taskStatusAfter(input: { outcome: Parameters<typeof completionOf>[0]["outcome"]; markDone: boolean; checks: Completion["checks"] | null; hasChecks?: boolean }): { status: "done" | "waiting_approval" | "todo" | "blocked"; verified: Verified | null; question: string | null } {
+  if (input.outcome === "cancelled") return { status: "todo", verified: null, question: null };
+  if (input.outcome !== "success") return { status: "blocked", verified: null, question: null };
+  const verified = verifiedOf(input.checks) ?? (input.hasChecks ? "not_verified" : null);
+  if (verified === null || verified === "passed") return { status: input.markDone ? "done" : "waiting_approval", verified, question: null };
+  if (verified === "failed") {
+    const failing = (input.checks?.runs ?? []).filter((run) => run.verdict === "fail").slice(0, 3);
+    const lines = failing.map((run) => `${run.id ? `${run.id} ` : ""}${run.command}: ${run.reason ?? "It failed."}`);
+    return { status: "blocked", verified: "failed", question: `Its checks failed when Ensemble ran them again: ${lines.join("; ")}`.slice(0, 2000) };
+  }
+  return { status: "waiting_approval", verified: "not_verified", question: null };
+}
+
+/** Why a task moved when its run finished: what Ensemble's runs of the run's checks showed. */
+export function verifiedReason(verified: Verified | null): string {
+  return verified === "passed" ? "Agent finished; its checks passed when Ensemble ran them again" : verified === "failed" ? "Agent finished; its checks failed when Ensemble ran them again" : verified === "not_verified" ? "Agent finished, not verified" : "Agent finished";
+}
+
+/**
+ * A worker's report with Ensemble's own runs of its checks in place of its word: each rerun's verdict, the
+ * acceptance commands it did not report, and the outcome they earn (a failure fails it; a check that
+ * could not be confirmed leaves it uncertain). The report as it was when nothing ran again.
+ */
+export function verifiedReport(report: StepReport, completion: Completion | null): StepReport {
+  const runs = completion?.checks.runs ?? [];
+  if (!runs.length) return report;
+  const verdictOf = (run: CheckRun): Check["verdict"] => (run.verdict === "pass" ? "pass" : run.verdict === "fail" ? "fail" : "skipped");
+  const detailOf = (run: CheckRun) => `Ensemble ran it again: ${run.reason ?? (run.verdict === "pass" ? "it passed." : run.verdict)}`.slice(0, 2000);
+  const used = new Set<CheckRun>();
+  const checks: Check[] = (report.checks ?? []).map((check) => {
+    const own = runs.find((run) => !used.has(run) && !run.from && run.name === check.name && run.command === check.rerun?.command);
+    const task = own ? undefined : runs.find((run) => !used.has(run) && run.from === "acceptance" && check.id && run.id === check.id);
+    const run = own ?? task;
+    if (!run) return check;
+    used.add(run);
+    return { ...check, verdict: verdictOf(run), detail: detailOf(run) };
+  });
+  for (const run of runs) {
+    if (used.has(run) || run.from !== "acceptance") continue;
+    checks.push({ ...(run.id ? { id: run.id } : {}), name: run.name.slice(0, 200), verdict: verdictOf(run), detail: detailOf(run), rerun: { command: run.command.slice(0, 2000), expects: "exit_0" } });
+  }
+  const verified = verifiedOf(completion?.checks);
+  const outcome: StepReport["outcome"] = verified === "failed" ? "fail" : verified === "not_verified" ? "uncertain" : report.outcome;
+  return { ...report, outcome, checks: checks.slice(0, 50) };
+}
+
 type Db = PrismaClient | Prisma.TransactionClient;
+
+/** A run's completion record as a computer sends it with the run's end: every text scrubbed (`scrub`); null when the run has none. */
+export async function runCompletionOf(db: Db, job: { runId: string | null }, scrub: (text: string) => string): Promise<Completion | null> {
+  if (!job.runId) return null;
+  const completion = parseCompletion((await db.run.findUnique({ where: { id: job.runId }, select: { completion: true } }))?.completion);
+  if (!completion) return null;
+  const deep = (value: unknown): unknown => {
+    if (typeof value === "string") return scrub(value);
+    if (Array.isArray(value)) return value.map(deep);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, deep(item)]));
+    return value;
+  };
+  return parseCompletion(deep(completion));
+}
 
 /** The owner's or a reviewer's accept or discard kept on the run so far; "pending" when there is none. */
 export async function acceptedOf(db: Db, runId: string | null): Promise<AcceptedState> {

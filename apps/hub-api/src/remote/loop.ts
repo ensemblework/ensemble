@@ -23,6 +23,7 @@ import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
 import { workspaceRoot } from "../workspace/guard.js";
 import { removeWorktrees } from "../workspace/worktrees.js";
 import { codeTurnResultOf } from "../workspace/code-turn.js";
+import { runCompletionOf } from "../workspace/completion.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
@@ -152,6 +153,9 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     codeAgent: 2,
     // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
     runAnswers: 1,
+    // An assigned run's checks (the agent's, and the commands the claim's `acceptance` names) run again here when the
+    // agent says it is done, and its end carries what they showed (`completion`): the web marks the task done only then.
+    runVerification: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
     nodeTools: NODE_TOOLS_API,
     // A node shares a folder (zipped here) and files up to 100 MB, and puts its owner's files (chat attachments) here.
@@ -861,6 +865,8 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const report = (job.protocol ?? 1) >= 6 ? parseReport(local.report) : null;
   // A Code tab turn's packet, skills, checks run again and handoff record; older servers ignore it.
   const codeTurn = current ? await codeTurnResultOf(prisma, local, scrubOutgoing).catch(() => null) : null;
+  // Any other run's checks as Ensemble ran them again here, which decide whether the web marks its task done.
+  const completion = current && !codeTurn ? await runCompletionOf(prisma, local, scrubOutgoing).catch(() => null) : null;
   const send = async () => {
     // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
@@ -870,7 +876,7 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
       app.log.warn({ err: error }, "could not send the run's evidence");
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}), ...(completion ? { completion } : {}) });
   };
   try {
     await send();

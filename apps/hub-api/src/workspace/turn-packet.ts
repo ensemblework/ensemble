@@ -235,7 +235,9 @@ export function acceptanceOf(text: string, max = 12): Criterion[] {
     }
     const inline = CRITERIA_INLINE.exec(line);
     if (inline) {
-      found.push({ id: null, text: inline[1]!.trim() });
+      // "Acceptance: AC-1 `node accept.js` passes": the id it gives, then its words.
+      const named = /^(AC[-_ ]?\d{1,3})\s*[:.)\]]?\s+(.+)$/i.exec(inline[1]!.trim());
+      found.push(named ? { id: named[1]!.toUpperCase().replace(/[_ ]/, "-").replace(/^AC(?=\d)/, "AC-"), text: named[2]!.trim() } : { id: null, text: inline[1]!.trim() });
       listing = false;
       continue;
     }

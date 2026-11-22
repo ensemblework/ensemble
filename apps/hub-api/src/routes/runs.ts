@@ -13,6 +13,7 @@ import { runnerRefusal } from "./agents.js";
 import { isPaused } from "../lib/activity.js";
 import { actorFor } from "../sharing/context.js";
 import { repairErasedUsage } from "../lib/workspace-data.js";
+import { parseCompletion, verifiedOf } from "../workspace/completion.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -193,6 +194,8 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
           where: job?.where ?? null,
           deviceName: job?.deviceName ?? null,
           jobStatus: job?.status ?? null,
+          // What Ensemble's runs of its checks showed (workspace/completion.ts): a finished run is not done work.
+          verified: verifiedOf(parseCompletion(run.completion)?.checks),
           toolCalls: job?.toolCalls ?? null,
           tokens: job ? job.tokensIn + job.tokensOut : null,
           startedAt: run.startedAt.toISOString(),
@@ -216,7 +219,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!run) return reply.code(404).send({ error: "Run not found." });
     const { workspaceJob, ...rest } = run;
-    return { run: { ...rest, sourceRunId: workspaceJob ? jobFacts(workspaceJob).sourceRunId : null }, job: workspaceJob ? jobFacts(workspaceJob) : null };
+    return { run: { ...rest, sourceRunId: workspaceJob ? jobFacts(workspaceJob).sourceRunId : null, verified: verifiedOf(parseCompletion(run.completion)?.checks) }, job: workspaceJob ? jobFacts(workspaceJob) : null };
   });
 
   app.post("/api/runs/:id/feedback", async (request, reply) => {

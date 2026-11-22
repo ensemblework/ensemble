@@ -307,6 +307,13 @@ export const JobSpec = z
     packet: z.unknown().optional(),
     profileInstructions: text(4000).nullish(),
     fork: z.boolean().optional(),
+    /**
+     * The commands the task's or its node's plan step's acceptance criteria name (`AcceptanceCheck` of
+     * workspace/acceptance-checks.ts), as the web has them: run here again with the agent's reported checks
+     * when the agent says it is done (`capabilities.runVerification`, docs/16 §9). Older servers omit it;
+     * this computer then reads its copy of the task.
+     */
+    acceptance: z.array(z.unknown()).max(20).optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
