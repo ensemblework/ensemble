@@ -48,6 +48,18 @@ jobs:
       - name: Install the API and what it uses
         run: pnpm install --frozen-lockfile --filter "@ensemble/hub-api..."
 
+      # Desktop control loads the API's store, which builds a Prisma client: Prisma's Rust engine on x64, its
+      # Rust-free client on arm64, as the Windows arm64 sidecar does (scripts/assemble-desktop-sidecar.mjs).
+      - name: Prisma client
+        shell: bash
+        run: |
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            node -e 'const fs = require("fs"); const s = fs.readFileSync("apps/hub-api/prisma/schema.prisma", "utf8"); const t = s.replace(/(generator client \{\r?\n)/, "$1  engineType      = \"client\"\n"); if (t === s) process.exit(1); fs.writeFileSync("apps/hub-api/prisma/schema.smoke.prisma", t);'
+            pnpm --filter @ensemble/hub-api exec prisma generate --schema prisma/schema.smoke.prisma
+          else
+            pnpm --filter @ensemble/hub-api exec prisma generate
+          fi
+
       - name: The session this job runs in
         shell: pwsh
         run: |

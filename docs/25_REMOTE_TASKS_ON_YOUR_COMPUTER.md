@@ -952,7 +952,7 @@ How each part of desktop control works on a Mac through Cua Driver (§11.9), and
 | Recording | The driver's `start_recording` with video (ScreenCaptureKit, H.264 in MP4, macOS 15 or later; earlier ones answer `unsupported`) into `<data>/desktop/cua/recordings/<id>`; saving moves the MP4 alone into the evidence folder and deletes the folder with the driver's notes of each action. Length, size and frames come from the MP4's index (`drivers/mp4.ts`). A saved secret is never filled in while a recording runs |
 | Agent screen | None: calls work on the owner's screen, and one that names the agent screen answers that macOS has none |
 
-The `desktop-tasks` skill (`skills/desktop-tasks/SKILL.md`) gives the agent the Mac's way of working, with Apple Reminders (add, title, Return) and Clock (alarms under its Alarms tab) as the worked examples.
+The `desktop-tasks` skill (`skills/desktop-tasks/SKILL.md`) gives the agent the way of working on a Mac's or Windows PC's owner's screen, with Apple Reminders (add, title, Return), Clock (alarms under its Alarms tab) and Notepad (type, read it back) as the worked examples, and Microsoft Store installs through `winget` with `computer_run`.
 
 ### 11.11 Windows: setup and the session probe
 
