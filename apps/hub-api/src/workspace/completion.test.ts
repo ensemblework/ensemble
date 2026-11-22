@@ -19,6 +19,7 @@ const folder = (name: string) => {
 const fieldnote = folder("fieldnote");
 mkdirSync(join(fieldnote, "web"));
 writeFileSync(join(fieldnote, "accept.js"), "");
+writeFileSync(join(fieldnote, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", test: "node --test" } }));
 
 const ctx = (over: Partial<JobContext> = {}) =>
   ({ root: fieldnote, userId: "u1", sandboxed: false, network: false, accessMode: "read-write", secretEnv: {}, job: { id: "job-1" }, ...over }) as unknown as JobContext;
@@ -481,6 +482,44 @@ test("a criterion's file is checked again right before it runs, and runs at the 
   assert.deepEqual(runs.map((row) => [row.id, row.verdict, row.command]), [["AC-1", "pass", "npm run build"], ["AC-2", "not_run", "node test_out.js"], ["AC-3", "pass", "node accept.js"]]);
   assert.match(runs[1]!.reason ?? "", /test_out\.js is not in the run's folder/);
   assert.equal(execFileSync("sh", ["-c", pinned.replace(/^node /, "printf %s ")], { encoding: "utf8" }), join(root, "accept.js"), "the shell reads the quoted path back whole");
+});
+
+test("a package manager runs a criterion's script only when the package.json where it runs has it: yarn and bun would run an installed program of that name", async () => {
+  const hooks = folder("hooks");
+  writeFileSync(join(hooks, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", "test:unit": "node --test" }, devDependencies: { husky: "9", "lint-staged": "15" } }));
+  mkdirSync(join(hooks, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(hooks, "node_modules", ".bin", "lint-staged"), "#!/bin/sh\n");
+  mkdirSync(join(hooks, "web"));
+  const acceptance = [
+    { id: "AC-1", text: "`yarn run lint-staged` passes", command: "yarn run lint-staged", folder: null },
+    { id: "AC-2", text: "`bun run lint-staged` passes", command: "bun run lint-staged", folder: null },
+    { id: "AC-3", text: "`yarn test` passes", command: "yarn test", folder: null },
+    { id: "AC-4", text: "`yarn run lint` passes", command: "yarn run lint", folder: null },
+    { id: "AC-5", text: "`pnpm run test:unit` passes", command: "pnpm run test:unit", folder: null },
+    { id: "AC-6", text: "`npm run lint` passes in the web folder", command: "npm run lint", folder: "web" },
+    { id: "AC-7", text: "`bun test` passes", command: "bun test", folder: null },
+  ];
+  const ran: string[] = [];
+  const asked: string[] = [];
+  const runs = await rerunChecks(ctx({ root: hooks }), null, {
+    signal,
+    judge: allow,
+    ask: async (_ctx, input) => {
+      asked.push(input.command ?? "");
+      return { decision: "allow", answer: null };
+    },
+    acceptance,
+    run: async (options) => {
+      ran.push(options.argv.at(-1)!);
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(ran, ["yarn run lint", "pnpm run test:unit", "bun test"], "bun test is bun's own test runner");
+  assert.deepEqual(asked, ["yarn run lint\npnpm run test:unit\nbun test"], "the card names only what can run");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "not_run"], ["AC-2", "not_run"], ["AC-3", "not_run"], ["AC-4", "pass"], ["AC-5", "pass"], ["AC-6", "not_run"], ["AC-7", "pass"]]);
+  assert.match(runs[0]!.reason ?? "", /"lint-staged" is not a script in the package\.json where it runs/);
+  assert.match(runs[2]!.reason ?? "", /"test" is not a script/);
+  assert.match(runs[5]!.reason ?? "", /"lint" is not a script/, "a folder without a package.json has no scripts");
 });
 
 test("the criteria come from what the task says: never the brief's information sections, quotes or embedded sources", async () => {

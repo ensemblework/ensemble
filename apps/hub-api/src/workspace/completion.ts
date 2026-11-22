@@ -356,8 +356,8 @@ export async function rerunChecks(ctx: JobContext, report: StepReport | null, op
     const where = await rerunFolder(ctx, cwd);
     if (!("refused" in where) && ran.has(`${where.cwd}\0${check.command.replace(/\s+/g, " ").trim()}`)) continue;
     const claimed = report?.checks?.find((row) => row.id === check.id)?.verdict ?? "skipped";
-    // Text anyone could have written: held to the check forms again here, and a file it runs must be in the run's folder, so
-    // the owner's card names only what can run.
+    // Text anyone could have written: held to the check forms again here, a file it runs must be in the run's folder and a
+    // package script in the package.json where it runs, so the owner's card names only what can run.
     const problem = !isCheckCommand(check.command) ? NOT_A_CHECK : "refused" in where ? null : await checkFilesProblem(ctx.root, where.cwd, check.command);
     planned.push({ base: { name: check.text.slice(0, 200), id: check.id, command: check.command, cwd, expects: "exit_0", claimed, exitCode: null, ms: 0, counts: null, output: "", from: "acceptance" }, problem });
   }
