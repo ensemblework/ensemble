@@ -83,7 +83,7 @@ A folder outside the workspace and the folders Code can use is trusted once befo
 
 `GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use).
 
-They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<slug>`, named by the run's model; [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation)) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*.
+They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<slug>`, named by the run's model, or from its title for a chat turn; [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation)) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*.
 
 Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`.
 

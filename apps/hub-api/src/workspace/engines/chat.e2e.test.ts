@@ -92,6 +92,7 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
     assert.equal(job.status, "succeeded", `${job.error ?? ""}\n${side.logs().slice(-3000)}`);
     return job;
   };
+  let passed = false;
   try {
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Chat: hello", owner: "agent", status: "todo" } });
     const turn = { taskId: task.body.task.id, kind: "code", engine: "claude-code", mode: "review", sandbox: false, delivery: "local", markDone: false, chat: true };
@@ -111,7 +112,7 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
     trustStayedHome(root);
 
     const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { resume: string | null; first: string; last: string });
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 2, `${log}: ${JSON.stringify(calls)}`);
     assert.equal(calls[0]!.resume, null);
     assert.match(calls[0]!.first, /^You're chatting with the person in Ensemble's terminal chat/);
     assert.equal(calls[0]!.last, "hello there");
@@ -121,10 +122,12 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
 
     const after = await side.api<{ task: { status: string; notes?: string } }>(`/api/tasks/${task.body.task.id}`);
     assert.equal(after.body.task.status, "in_progress", "a chat stays open on the board");
+    passed = true;
   } finally {
     await side.stop();
     await runtime.close();
-    rmSync(root, { recursive: true, force: true });
+    // A failure keeps the folder, with the stand-in's log.
+    if (passed) rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -201,6 +204,7 @@ for (const agent of [
       assert.equal(job.status, "succeeded", `${job.error ?? ""}\n${side.logs().slice(-3000)}`);
       return job;
     };
+    let passed = false;
     try {
       const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Chat: hi", owner: "agent", status: "todo" } });
       const turn = { taskId: task.body.task.id, kind: "code", engine: agent.engine, mode: "review", sandbox: false, delivery: "local", markDone: false, chat: true };
@@ -212,11 +216,12 @@ for (const agent of [
       assert.equal((await finished(second.body.jobId!)).summary, `${agent.next} ${agent.session}`, "resumed, and the replayed history is not part of the reply");
       trustStayedHome(root);
       const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { how: string; last: string });
-      assert.deepEqual(calls.map((call) => [call.how, call.last]), [[agent.first, "hi"], [agent.next, "again"]]);
+      assert.deepEqual(calls.map((call) => [call.how, call.last]), [[agent.first, "hi"], [agent.next, "again"]], log);
+      passed = true;
     } finally {
       await side.stop();
       await runtime.close();
-      rmSync(root, { recursive: true, force: true });
+      if (passed) rmSync(root, { recursive: true, force: true });
     }
   });
 }
