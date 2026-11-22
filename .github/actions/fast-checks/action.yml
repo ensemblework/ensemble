@@ -2,7 +2,7 @@ name: Fast checks
 description: >-
   The checks every push and pull request into testing and main runs before anything deploys:
   versions in step, shared/prompts/API/web/CLI types, CLI channel isolation, focused web and API
-  regressions, public docs and read-only lookup, deployment guards, release scripts, the route inventory and the
+  regressions, public docs and read-only lookup, deployment guards, release scripts, the route and test inventories and the
   generated prompt sections. About five
   minutes in one job; ci.yml runs it as four parallel parts (`part`). The slower suites are paused in full-checks.yml
   (docs/37_PAUSED_CHECKS.md).
@@ -122,7 +122,7 @@ runs:
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/included.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/included/pricing.test.ts src/included/budget.integration.test.ts src/runtime/included.test.ts src/runtime/web-search.test.ts src/node/model.test.ts
-    - name: Deployment guards, release scripts, route inventory and prompt sections
+    - name: Deployment guards, release scripts, route and test inventories and prompt sections
       if: inputs.part == 'all' || inputs.part == 'rest'
       shell: bash
       run: |
@@ -131,5 +131,7 @@ runs:
         # Prisma's Rust-free client on PGlite, which the Windows arm64 sidecar carries; desktop.yml builds only on tags.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/lib/pglite-adapter.test.ts
         pnpm --filter @ensemble/hub-api route:inventory:check
+        # Every hub-api test file is in a package script, or skipped with a reason (scripts/test-inventory.ts).
+        pnpm --filter @ensemble/hub-api test:inventory:check
         # The instructions' sections and src/sections.generated.ts must match (packages/prompts/README.md).
         pnpm --filter @ensemble/prompts test
