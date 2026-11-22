@@ -2,14 +2,41 @@
  * Chat with the person's own agent, end to end, with stand-ins on PATH (`claude`, `codex`,
  * `cursor-agent`) that speak each tool's own protocol: the first message starts a session with
  * Ensemble's board tools loaded, and the next one resumes that session instead of starting over
- * (`claude --resume`, Codex `thread/resume`, Cursor's ACP `session/load`).
+ * (`claude --resume`, Codex `thread/resume`, Cursor's ACP `session/load`). The runtime has a home folder
+ * of its own: the folder trust it shares with the agents lands there, and the developer's own agent
+ * settings stay as they were.
  */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { bootSidecar, sleep, startStubRuntime } from "../../desktop/e2e-harness.js";
+import { cursorSlug } from "../trust-share.js";
+
+/** Codex, Claude Code and Cursor as if installed in the runtime's home folder (`root`), so it shares its folder trust with them there. */
+function agentsAt(root: string): void {
+  mkdirSync(join(root, ".codex"), { recursive: true });
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  writeFileSync(join(root, ".claude", ".claude.json"), "{}\n");
+  mkdirSync(join(root, ".cursor", "projects"), { recursive: true });
+}
+
+/**
+ * The runtime shared its folder trust (workspace/trust-share.ts) with the agents in its own home folder,
+ * which is where it writes each agent's file, and so never in the developer's own. Of those only Cursor's
+ * folder names are read: the developer's `~/.codex/config.toml` and `~/.claude.json` are neither read
+ * nor timed, as their own agents and other test runs write them at any moment.
+ */
+function trustStayedHome(root: string): void {
+  const workspace = realpathSync(join(root, "workspace"));
+  const codex = join(root, ".codex", "config.toml");
+  assert.ok(existsSync(codex) && readFileSync(codex, "utf8").includes(`[projects.'${workspace}']`), "Codex trusts the workspace in the runtime's home");
+  const claude = JSON.parse(readFileSync(join(root, ".claude", ".claude.json"), "utf8")) as { projects?: Record<string, { hasTrustDialogAccepted?: boolean }> };
+  assert.equal(claude.projects?.[workspace]?.hasTrustDialogAccepted, true, "Claude Code trusts the workspace in the runtime's home");
+  assert.ok(existsSync(join(root, ".cursor", "projects", cursorSlug(workspace), ".workspace-trusted")), "Cursor trusts the workspace in the runtime's home");
+  assert.equal(existsSync(join(homedir(), ".cursor", "projects", cursorSlug(workspace))), false, "the developer's own Cursor has no folder for the run's workspace");
+}
 
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const { execFileSync } = require("node:child_process");
@@ -53,6 +80,7 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
   chmodSync(join(bin, "claude"), 0o755);
   const log = join(root, "standin.log");
   writeFileSync(log, "");
+  agentsAt(root);
   const runtime = await startStubRuntime();
   const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, STANDIN_LOG: log });
   const finished = async (jobId: string) => {
@@ -80,6 +108,7 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
     assert.ok(second.body.jobId, JSON.stringify(second.body));
     const two = await finished(second.body.jobId!);
     assert.match(two.summary ?? "", /^Second reply, same session\./);
+    trustStayedHome(root);
 
     const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { resume: string | null; first: string; last: string });
     assert.equal(calls.length, 2);
@@ -160,6 +189,7 @@ for (const agent of [
     chmodSync(join(bin, agent.bin), 0o755);
     const log = join(root, "standin.log");
     writeFileSync(log, "");
+    agentsAt(root);
     const runtime = await startStubRuntime();
     const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, STANDIN_LOG: log });
     const finished = async (jobId: string) => {
@@ -180,6 +210,7 @@ for (const agent of [
       const second = await side.api<{ jobId?: string }>("/api/agent/assign", { json: { ...turn, instructions: "again", continueFromJobId: first.body.jobId } });
       assert.ok(second.body.jobId, JSON.stringify(second.body));
       assert.equal((await finished(second.body.jobId!)).summary, `${agent.next} ${agent.session}`, "resumed, and the replayed history is not part of the reply");
+      trustStayedHome(root);
       const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { how: string; last: string });
       assert.deepEqual(calls.map((call) => [call.how, call.last]), [[agent.first, "hi"], [agent.next, "again"]]);
     } finally {

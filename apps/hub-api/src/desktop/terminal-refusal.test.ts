@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DESKTOP_WEBVIEW_ORIGINS } from "../lib/desktop-guard.js";
 import { TERMINAL_DESKTOP_REFUSAL } from "../lib/terminal-human.js";
+import { homeEnv } from "./e2e-harness.js";
 
 const hub = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -29,7 +30,7 @@ test("the desktop sidecar refuses the desktop token on every terminal route", { 
   const discovery = join(root, "api.json");
   const token = "terminal-refusal-token-0123456789";
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...homeEnv(root),
     NODE_ENV: "development",
     ENSEMBLE_DATA_DIR: join(root, "pglite"),
     ENSEMBLE_BACKUP_DIR: join(root, "backups"),
