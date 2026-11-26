@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -27,6 +27,145 @@ after(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 const DAY = 86_400_000;
+
+test("R2-a: a task on the person's agent records its instructions, exact supplied skills and context before success or failure", async () => {
+  const { executeJob } = await import("./agent.js");
+  const { instructionHash, runContextOf } = await import("./run-context.js");
+  const { setLocalPort } = await import("./engines/registry.js");
+  const address = await h.app.listen({ host: "127.0.0.1", port: 0 });
+  setLocalPort(Number(new URL(address).port));
+  const home = join(scratch, "run-home");
+  const bin = join(home, "bin");
+  const root = join(home, "workspace", "task");
+  await mkdir(bin, { recursive: true });
+  await mkdir(root, { recursive: true });
+  const command = join(bin, "claude");
+  await writeFile(command, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--version")) { console.log("2.1.999 (Claude Code)"); process.exit(0); }
+if (args.includes("--help")) { console.log("--name"); process.exit(0); }
+const prompt = args[args.indexOf("-p") + 1];
+fs.writeFileSync("sent-prompt.txt", prompt);
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "trace-fixture", model: "claude-test" }));
+if (prompt.includes("FAIL_THIS_RUN")) { console.error("Fixture rejected the task."); process.exit(2); }
+console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 1, result: "Finished the task.", usage: { input_tokens: 10, output_tokens: 4 } }));
+`);
+  await chmod(command, 0o755);
+  const keys = ["HOME", "XDG_CONFIG_HOME", "PATH", "ENSEMBLE_WORKSPACE_ROOT"] as const;
+  const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), PATH: `${bin}:${process.env.PATH}`, ENSEMBLE_WORKSPACE_ROOT: join(home, "workspace") });
+  try {
+    const user = await h.asUser();
+    const body = "Keep the CSV header first. ".repeat(50);
+    const picked = await db.skill.create({ data: { userId: user.id, slug: "csv-trace", name: "CSV rules", body } });
+    const routine = await db.skill.create({ data: { userId: user.id, slug: "routine-trace", name: "Routine only", body: "Do not send this.", scope: { purpose: "morning-brief" } } });
+    const task = await db.task.create({ data: { userId: user.id, title: "Keep the CSV header", description: "Private task context.", skillIds: [picked.id, routine.id], createdBy: "me" } });
+    const execute = async (instructions: string) => {
+      const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", status: "running", provider: "claude-code", model: "default", externalRoot: root, executionMode: "native", delivery: "push", unattended: true, instructions, markDone: false } });
+      await executeJob(h.app, job.id, { signal: new AbortController().signal, waitForPerson: (work) => work() });
+      const finished = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id }, include: { run: { include: { contextPack: true } } } });
+      assert.equal(finished.status, instructions === "FAIL_THIS_RUN" ? "failed" : "succeeded", finished.error ?? "");
+      assert.ok(finished.run?.promptVersion && finished.run.contextPackId);
+      assert.deepEqual(finished.run.skillIds, [picked.id]);
+      const context = (await runContextOf(db, finished.runId))!;
+      assert.equal(context.promptVersion, finished.run.promptVersion);
+      assert.deepEqual(context.skills, [{ id: picked.id, name: picked.name, source: "owner", sha256: instructionHash(body.slice(0, 900)) }]);
+      const prompt = await readFile(join(root, "sent-prompt.txt"), "utf8");
+      assert.match(prompt, /Skills picked for this task/);
+      assert.ok(prompt.includes(body.slice(0, 900)));
+      assert.doesNotMatch(prompt, /Do not send this/);
+      assert.deepEqual(context.parts, [{ name: "prompt", sha256: instructionHash(prompt), chars: prompt.length }]);
+      assert.doesNotMatch(JSON.stringify(finished.run.contextPack), /Private task context|Keep the CSV header first/);
+      assert.equal(finished.run.contextPack?.userId, user.id);
+      assert.equal(finished.run.contextPack?.taskId, task.id);
+      return finished;
+    };
+    const success = await execute("Complete the export.");
+    assert.equal(success.status, "succeeded", success.error ?? "");
+    const failed = await execute("FAIL_THIS_RUN");
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /Fixture rejected/);
+    assert.notEqual(failed.run?.contextPackId, success.run?.contextPackId, "each run has its own context snapshot");
+    await db.skill.update({ where: { id: picked.id }, data: { body: "Instructions edited after the first run." } });
+    const steered = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", status: "running", provider: "claude-code", model: "default", externalRoot: root, executionMode: "native", delivery: "push", unattended: true, instructions: "Keep going.", continueFromJobId: success.id, context: { steer: { update: "Keep going." } }, markDone: false } });
+    await executeJob(h.app, steered.id, { signal: new AbortController().signal, waitForPerson: (work) => work() });
+    const continued = await db.workspaceJob.findUniqueOrThrow({ where: { id: steered.id }, include: { run: true } });
+    assert.equal(continued.status, "succeeded", continued.error ?? "");
+    assert.deepEqual(continued.run?.skillSignatures, success.run?.skillSignatures, "a steer that sends no new brief keeps the session's original skills, not their current bodies");
+    assert.doesNotMatch(await readFile(join(root, "sent-prompt.txt"), "utf8"), /Instructions edited after/);
+  } finally {
+    for (const key of keys) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
+
+test("R2-a: an API-model research run records a version and an explicit empty skill list", async () => {
+  const { executeJob } = await import("./agent.js");
+  const { runContextOf } = await import("./run-context.js");
+  const { setRuntimeFetchForTests } = await import("../runtime/models.js");
+  const { setCredentialResolverForTests } = await import("../runtime/credentials.js");
+  const old = process.env.ENSEMBLE_INPROCESS_RUNTIME;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
+  const user = await h.asUser();
+  const task = await db.task.create({ data: { userId: user.id, title: "Research CSV headers", createdBy: "me" } });
+  const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "research", status: "running", provider: "ollama", model: "trace-fixture", executionMode: "native", markDone: false } });
+  let observed = false;
+  setCredentialResolverForTests(async (_userId, provider) => ({ provider, secret: "", source: "none", baseUrl: null }));
+  setRuntimeFetchForTests(async () => {
+    const running = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id } });
+    const context = await runContextOf(db, running.runId);
+    assert.ok(context?.promptVersion, "the trace exists before the model is called");
+    assert.deepEqual(context.skills, []);
+    assert.deepEqual(context.parts.map((part) => part.name), ["system", "brief"]);
+    observed = true;
+    return Response.json({ model: "trace-fixture", message: { role: "assistant", content: "Research complete." }, done: true, prompt_eval_count: 10, eval_count: 4 });
+  });
+  try {
+    await executeJob(h.app, job.id, { signal: new AbortController().signal, waitForPerson: (work) => work() });
+    const ended = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(ended.status, "succeeded", ended.error ?? "");
+    assert.equal(observed, true);
+  } finally {
+    setRuntimeFetchForTests(null);
+    setCredentialResolverForTests(null);
+    if (old === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME;
+    else process.env.ENSEMBLE_INPROCESS_RUNTIME = old;
+  }
+});
+
+test("R2-a: a leased computer relays provenance into a web-owned context pack, without trusting a local id", async () => {
+  const { contextPart, instructionHash, keepRunContext, runContextOf } = await import("./run-context.js");
+  const user = await h.asUser();
+  const task = await db.task.create({ data: { userId: user.id, title: "Paired trace", createdBy: "me" } });
+  const local = await db.run.create({ data: { userId: user.id, taskId: task.id, worker: "workspace" } });
+  await keepRunContext(db, local.id, { schema: "ensemble.run-context/1", promptVersion: instructionHash("Instructions"), skills: [], parts: [contextPart("brief", "Private context")] });
+  const source = await db.run.findUniqueOrThrow({ where: { id: local.id } });
+  await keepRunContext(db, local.id, { ...(await runContextOf(db, local.id))!, parts: [contextPart("prompt", "Retry context")] });
+  assert.equal((await db.run.findUniqueOrThrow({ where: { id: local.id } })).contextPackId, source.contextPackId, "a retry updates the same pack, not an orphan");
+  const context = (await runContextOf(db, local.id))!;
+  const token = await h.asToken(user, "device");
+  const device = await db.device.create({ data: { userId: user.id, name: "Laptop", platform: "linux", tokenId: token.id } });
+  const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, deviceId: device.id, status: "running", executionMode: "native", model: "fixture", leaseToken: "trace-lease", leaseUntil: new Date(Date.now() + 60_000) } });
+  const complete = (leaseToken: string, runContext: unknown) => token.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/complete`, payload: { leaseToken, outcome: "succeeded", summary: "Done.", runContext } });
+  assert.equal((await complete("wrong-lease", context)).statusCode, 409);
+  assert.equal((await complete("trace-lease", { ...context, promptVersion: "not-a-version" })).statusCode, 400);
+  const sent = await complete("trace-lease", context);
+  assert.equal(sent.statusCode, 200, sent.body);
+  const web = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id }, include: { run: { include: { contextPack: true } } } });
+  assert.ok(web.run?.contextPackId);
+  assert.notEqual(web.run.contextPackId, source.contextPackId);
+  assert.equal(web.run.contextPack?.userId, user.id);
+  assert.equal(web.run.contextPack?.taskId, task.id);
+  assert.deepEqual(await runContextOf(db, web.runId), context);
+  assert.equal(web.run.promptVersion, source.promptVersion);
+  assert.deepEqual(web.run.skillIds, []);
+  const count = await db.contextPack.count({ where: { userId: user.id } });
+  assert.equal((await complete("trace-lease", context)).statusCode, 409);
+  assert.equal(await db.contextPack.count({ where: { userId: user.id } }), count);
+});
 
 async function laptopFor(user: HttpUser, online = true) {
   const key = await h.asToken(user, "device");

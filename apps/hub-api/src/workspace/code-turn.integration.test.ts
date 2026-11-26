@@ -89,6 +89,7 @@ test("the first turn gets the whole packet; the next turn in the session only th
   await ran(first, one, "session-1");
   const run = await db.run.findUniqueOrThrow({ where: { id: first.runId! } });
   assert.equal(run.promptVersion, one.record.version);
+  assert.ok(run.contextPackId, "a Code tab turn keeps the context pack too");
   assert.ok(packetRecordOf(run.packet)?.sections.some((section) => section.name === "code/00-agent" && section.chars > 0), "section sizes are kept with the version");
 
   await db.task.update({ where: { id: board.id }, data: { title: "Fix the CSV and XLSX export" } });
@@ -139,6 +140,10 @@ test("the owner's linked skills go into the agent's own skill folder, out of git
   assert.doesNotMatch(read.prompt, /no longer in your skill folder|Skills for this run/);
   assert.deepEqual(read.record.skills, built.record.skills);
   assert.ok(existsSync(join(root, ".claude", "skills", "owner-release-notes", "SKILL.md")));
+  await ran(reading, read, "session-s");
+  const readRun = await db.run.findUniqueOrThrow({ where: { id: reading.runId! } });
+  assert.deepEqual(readRun.skillIds, run.skillIds);
+  assert.deepEqual(readRun.skillSignatures, run.skillSignatures, "read-only resumed turns retain the skills already in their session");
 
   // A read-only turn writes nothing into the folder.
   const other = await setup("skills-read-only");

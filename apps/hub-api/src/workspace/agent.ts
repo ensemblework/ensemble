@@ -65,6 +65,7 @@ import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
+import { contextPart, instructionHash, keepRunContext, runContextOf, type RunSkill } from "./run-context.js";
 import { checkFolder, saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
 import { BASELINE_EVENT, checkBaseline, checkChanges, earlierBaseline, END_EVENT, type CheckBaseline } from "./check-files.js";
 import { acceptanceChecksFor, acceptanceInContext, type AcceptanceCheck } from "./acceptance-checks.js";
@@ -464,7 +465,7 @@ function failureOf(failure: unknown): { kind: string; retryAfterSeconds?: number
   return { kind: parsed.kind, ...(parsed.retryAfterSeconds != null ? { retryAfterSeconds: parsed.retryAfterSeconds } : {}) };
 }
 
-async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, files: AttachedFile[] = [], copies: EngineCopies | null = null, pictures?: ContentPart[]): Promise<string> {
+async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, files: AttachedFile[] = [], copies: EngineCopies | null = null, pictures?: ContentPart[]): Promise<{ text: string; skills: RunSkill[] }> {
   const task = await app.prisma.task.findFirst({
     where: { id: ctx.taskId },
     include: { page: true, project: { select: { name: true, notes: true } }, repo: { select: { fullName: true } } },
@@ -474,7 +475,7 @@ async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, 
   // Only the skills picked for this task: an enabled skill for other work (the morning brief) is not this task's.
   const skills =
     hasModule(owner?.moduleSet, "skills") && task?.skillIds.length
-      ? (await app.prisma.skill.findMany({ where: { userId: ctx.userId, deletedAt: null, id: { in: task.skillIds } }, select: { name: true, body: true, scope: true }, take: 6 })).filter((skill) => !purposeOf(skill.scope))
+      ? (await app.prisma.skill.findMany({ where: { userId: ctx.userId, deletedAt: null, id: { in: task.skillIds } }, select: { id: true, name: true, body: true, scope: true }, take: 6 })).filter((skill) => !purposeOf(skill.scope))
       : [];
   const previous = ctx.job.continueFromJobId
     ? await app.prisma.workspaceJob.findUnique({ where: { id: ctx.job.continueFromJobId }, include: { task: { select: { title: true } } } })
@@ -507,7 +508,10 @@ async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, 
     skills.length ? `## Skills picked for this task (follow them where they apply)\n${skills.map((skill) => `### ${skill.name}\n${skill.body.slice(0, 900)}`).join("\n\n")}` : "",
     `Today is ${new Date().toISOString().slice(0, 10)} (${settings.timezone}).`,
   ];
-  return parts.filter(Boolean).join("\n\n");
+  return {
+    text: parts.filter(Boolean).join("\n\n"),
+    skills: skills.map((skill) => ({ id: skill.id, name: skill.name, source: "owner", sha256: instructionHash(skill.body.slice(0, 900)) })),
+  };
 }
 
 /**
@@ -1004,10 +1008,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     const verified = { images: modelReadsImages(job.provider, job.model), files: documentsFor(job.provider, job.model) };
     const files = await filesOnTask(prisma, userId, job.taskId).catch(() => []);
     const pictures: ContentPart[] = [];
-    const briefText = await brief(app, ctx, settings, files, null, pictures);
+    const briefed = await brief(app, ctx, settings, files, null, pictures);
+    const system = ownAgentPrompt(job.kind, ctx, settings, personName(user?.name));
     const messages: ModelMessage[] = [
-      { role: "system", content: ownAgentPrompt(job.kind, ctx, settings, personName(user?.name)) },
-      { role: "user", content: withPictures(briefText, pictures) },
+      { role: "system", content: system },
+      { role: "user", content: withPictures(briefed.text, pictures) },
     ];
     await ctx.progress("Thinking");
 
@@ -1022,6 +1027,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       let earlierSummary: string | null = null;
       /** The whole brief, for a task run that starts a new engine session. */
       let fullPrompt = "";
+      let skills: RunSkill[] = [];
+      let fullSkills: RunSkill[] = [];
+      let inheritedVersion: string | null = null;
       const carryOn = chat ? null : resumeOf(job.context);
       if (chat) {
         // A chat message continues the agent's own session when the same agent ran the turn before.
@@ -1047,7 +1055,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           app.log.warn({ err: failure }, "could not copy attached files for the engine");
           return null;
         });
-        fullPrompt = enginePrompt(ctx, await brief(app, ctx, settings, files, copies));
+        const prepared = await brief(app, ctx, settings, files, copies);
+        skills = prepared.skills;
+        fullSkills = prepared.skills;
+        fullPrompt = enginePrompt(ctx, prepared.text);
         // The sessions the person started on their own in this project's folder since its last Ensemble run (outside-runs.ts).
         const own = await ownProjectSessions(prisma, job, ctx.root, user?.name ?? null).catch(() => "");
         if (own) fullPrompt = `${fullPrompt}\n\n${own}`;
@@ -1064,6 +1075,14 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           // A change to the run it interrupted (Ensemble Node's steer) goes on with just the change.
           const steer = steerOf(job.context);
           if (resume) enginePromptText = steer ? steerPrompt(steer.update) : sessionTaskPrompt(fullPrompt);
+        }
+        if (resume && (carryOn || steerOf(job.context)) && job.continueFromJobId) {
+          const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { runId: true } });
+          const inherited = await runContextOf(prisma, previous?.runId ?? null);
+          if (inherited) {
+            skills = inherited.skills;
+            inheritedVersion = inherited.promptVersion;
+          }
         }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
@@ -1143,6 +1162,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       let sessionRestarted = false;
       /** What Cursor's or an ACP engine counted in its session as an attempt failed or was stopped. */
       let counted: CountedPrompts | null = null;
+      const sent: ReturnType<typeof contextPart>[] = [];
       // A prompt the engine sent is in the session though the run then fails, is stopped or is interrupted: the run
       // notes how many prompts the session holds all the same, or the next run in it would take that prompt for
       // something the person said in the agent's app. The engine's own count, else the agent's history.
@@ -1155,6 +1175,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         const watch = watchEngine({ jobId: job.id, parent: control.signal, openCalls: () => trace.openCalls, waiting: () => waitingNow > 0, remainingMs });
         ctx.signal = watch.signal;
         try {
+          if (codeTurn) await keepCodeTurn(prisma, run.id, codeTurn);
+          else {
+            sent.push(contextPart("prompt", prompt));
+            await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: inheritedVersion ?? instructionHash(workingNotes(ctx)), skills, parts: sent });
+          }
           ran = await runEngine(prompt, session);
         } catch (failure) {
           counted = promptsOf(failure) ?? counted;
@@ -1170,6 +1195,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
             await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300), restart: restarted });
             if (failure instanceof SessionBusyError) await ctx.progress("The ChatGPT app kept the earlier conversation open, so Codex starts a new one with the earlier task's summary.");
             session = null;
+            skills = fullSkills;
+            inheritedVersion = null;
             if (codeAgent) {
               codeTurn = await prepareCodeTurn(ctx, { owner: personName(user?.name), rules: engineRules(ctx), resume: null, sessionGone: true, head: initialHead || null, timezone: settings.timezone || "UTC", warn: harnessWarn });
               prompt = codeTurn.prompt;
@@ -1245,6 +1272,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       }
     }
 
+    if (!engine) await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: instructionHash(system), skills: briefed.skills, parts: [contextPart("system", system), contextPart("brief", briefed.text)] });
     for (let turn = 0; !engine; turn += 1) {
       await stopCheck();
       if (turn > 0) await ensureTrust(false);

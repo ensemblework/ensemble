@@ -8,6 +8,7 @@ import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
 import type { OwnAsk, OwnToolEvent } from "../subscriptions/bridge.js";
+import type { RunContext } from "../workspace/run-context.js";
 
 function channelBase(base: string): string {
   const channel = process.env.ENSEMBLE_CLI_CHANNEL;
@@ -62,7 +63,7 @@ export interface HostedClient {
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown; codeTurn?: unknown; completion?: unknown }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown; codeTurn?: unknown; completion?: unknown; runContext?: RunContext }): Promise<void>;
   /**
    * One file the run's worker attached (protocol 6), its bytes as the body, before complete. "stored" or
    * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.

@@ -17,6 +17,7 @@ import type { StepReport } from "../node/report.js";
 import { keepCodeTurnResult, type CodeTurnResult } from "../workspace/code-turn.js";
 import { saveCompletion, settleTask, taskStatusAfter, taskStatusAtStartOf, verifiedReason, type Completion } from "../workspace/completion.js";
 import { acceptanceChecksFor } from "../workspace/acceptance-checks.js";
+import { keepRunContext, type RunContext } from "../workspace/run-context.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -61,6 +62,7 @@ export async function finishDeviceJob(
     totals?: RunTotals;
     report?: StepReport | null;
     codeTurn?: CodeTurnResult | null;
+    runContext?: RunContext;
     /** Any other run's checks as its computer ran them again. */
     completion?: Completion | null;
     /** The computer runs an assigned run's checks again (`capabilities.runVerification`): its task is done only when they pass. */
@@ -136,6 +138,7 @@ export async function finishDeviceJob(
     // A Code tab turn: what its packet sent, the checks the computer ran again, and its handoff record.
     if (input.codeTurn) await keepCodeTurnResult(tx, job, runId, input.codeTurn);
     else if (input.completion) await saveCompletion(tx, runId, input.completion);
+    if (input.runContext) await keepRunContext(tx, runId, redactDeep(input.runContext));
     // An assigned run on a computer that runs its checks again: its task is done only when they passed.
     const assigned = job.kind === "code" && !isChatTurn(job.context) && input.verifies === true;
     const checks = assigned ? (input.completion?.checks ?? null) : null;

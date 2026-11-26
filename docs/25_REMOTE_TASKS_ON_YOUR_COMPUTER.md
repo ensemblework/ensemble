@@ -110,6 +110,8 @@ It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-termin
 
 ### 4.9 Subscriptions and included models
 
+**Run provenance.** A computer sends `runContext` with a job's `complete`: instruction version, supplied skill ids and SHA-256 signatures, and prompt-part hashes and sizes (`workspace/run-context.ts`). The leased completion creates or updates the web run's own context pack, never links a computer's local pack id ([06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)). The field is optional for older computers and ignored by older servers.
+
 #### Continue an agent session
 
 Agent sessions: a computer with `capabilities.sessions` 1 runs a job that continues another in the agent's own session (Claude `--resume`, Codex thread resume, ACP `session/load`) and takes the claim's `steer`. A run that would start a new session may continue one of the computer's own: the computer decides when it takes the job, from the claim's `related`, `sessionChoice` and `newSession`, and reports the decision (`POST /api/devices/self/jobs/:id/session-choice`, under the job's lease), which links the run on the web too ([41 §4](41_AGENT_SESSIONS.md#4-choosing-a-session)).

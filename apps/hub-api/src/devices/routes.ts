@@ -66,6 +66,7 @@ import { endUnconfirmedStops } from "./settle.js";
 import { isCodeEngine, PageDocument } from "@ensemble/shared-types";
 import { nodeProjectBrief, projectBrief } from "../workspace/agent-projects.js";
 import { CodeTurnResult, profileInstructionsOf } from "../workspace/code-turn.js";
+import { RunContext } from "../workspace/run-context.js";
 import { packetSource } from "../workspace/turn-packet.js";
 import { activeConfig } from "../workspace/session-choice/config.js";
 import { factsOf } from "../workspace/session-choice/related.js";
@@ -162,6 +163,7 @@ const Complete = z.object({
   codeTurn: z.unknown().optional(),
   /** Any other run's checks as the computer ran them again (workspace/completion.ts `CompletionSchema`, `capabilities.runVerification`). */
   completion: z.unknown().optional(),
+  runContext: RunContext.optional(),
 });
 
 function deviceJson(device: Device, now = Date.now()) {
@@ -921,7 +923,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (codeTurn && !codeTurn.success) request.log.warn({ jobId: id }, "a computer sent a Code tab turn's result that could not be read; it was not kept");
     const completion = body.completion === undefined ? null : parseCompletion(body.completion);
     if (body.completion !== undefined && !completion) request.log.warn({ jobId: id }, "a computer sent a run's checks that could not be read; they were not kept");
-    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report, codeTurn: codeTurn?.success ? codeTurn.data : null, completion, verifies: deviceVerifiesRuns(device.capabilities) });
+    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report, codeTurn: codeTurn?.success ? codeTurn.data : null, completion, runContext: body.runContext, verifies: deviceVerifiesRuns(device.capabilities) });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     void recordChoiceOutcome(prisma, id).catch((error: unknown) => request.log.warn({ err: error, jobId: id }, "could not record how the session choice went"));
     return { status: body.outcome };
