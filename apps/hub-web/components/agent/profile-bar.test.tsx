@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { claudeCodeModels, CODE_ENGINES, RunProfile, Settings } from "@ensemble/shared-types";
 import { AssignDialog, ProfileBar } from "./assign-dialog.js";
+import { RunProfilesSection } from "../settings/run-profiles.js";
 
 (globalThis as { React?: typeof React }).React = React;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -392,8 +393,8 @@ test("Git starts on No limits under More options; Pull request: any base typed (
     await click(assignButton());
     const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
     assert.deepEqual(
-      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder, trust: body?.trust },
-      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "notes", deviceId: "device-1", folder: undefined, trust: undefined },
+      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, place: body?.place, deviceId: body?.deviceId, folder: body?.folder, trust: body?.trust },
+      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, place: { kind: "folder", label: "notes" }, deviceId: "device-1", folder: undefined, trust: undefined },
     );
   } finally {
     await act(async () => root.unmount());
@@ -401,4 +402,130 @@ test("Git starts on No limits under More options; Pull request: any base typed (
     client.clear();
     globalThis.fetch = realFetch;
   }
+});
+
+async function placeView(surface: "assign" | "settings", deviceId = "device-1") {
+  let settings = Settings.parse({ runProfiles: [{ id: "live", name: "Live", deviceId, place: { kind: "folder", label: "live-test", path: "/work/live-test" } }], defaultRunProfileId: "live" });
+  const devices = [{ id: "device-1", name: "Studio", online: true, platform: "linux", folders: ["live-test", "notes"], capabilities: {}, lastSeenAt: null, createdAt: "" }];
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const realFetch = globalThis.fetch;
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    if (init?.method && init.method !== "GET") sent.push({ path, body });
+    if (path === "/api/settings") {
+      if (init?.method === "PATCH") settings = Settings.parse({ ...settings, ...body });
+      return json({ settings });
+    }
+    if (path === "/api/shell") return json({ modules: "workspace,code,runs", hostCode: false });
+    if (path === "/api/devices") return json({ devices, serverRunner: true });
+    if (path === "/api/models") return json({ providers: [] });
+    if (path === "/api/subscriptions") return json({ computers: [], preferred: null });
+    if (path === "/api/tasks/task-1") return json({ task: { id: "task-1", title: "Work here", complexity: "medium", status: "todo" } });
+    if (path === "/api/workspace") return json({ queued: [], running: [], stopped: [], completed: [], waiting: [] });
+    if (path === "/api/agent/assign") return json({ jobId: "job-1" });
+    if (path.startsWith("/api/agent/earlier-runs")) return json({ checkouts: [] });
+    if (path === "/api/devices/device-1/code") {
+      if (body.path === "/api/code/folders/trust") {
+        devices[0]!.folders.push("new-notes");
+        return json({ path: "/work/new-notes", added: true, label: "new-notes" });
+      }
+      return json({ places: [{ kind: "workspace", name: "Workspace", path: "/work" }], folder: { path: "/work", name: "Workspace", parent: null, repo: false, trusted: true, why: "Choose a project folder.", entries: [{ path: "/work/new-notes", name: "new-notes", repo: true, trusted: false }], more: 0 } });
+    }
+    return json({ error: "not found" }, 404);
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const settle = async () => { for (let n = 0; n < 6; n += 1) await act(async () => { await wait(10); }); };
+  function SettingsView() {
+    const [value, setValue] = React.useState(settings);
+    return <RunProfilesSection settings={value} patch={(patch) => {
+      settings = Settings.parse({ ...settings, ...patch });
+      sent.push({ path: "/settings-patch", body: patch });
+      setValue(settings);
+    }} />;
+  }
+  await act(async () => root.render(<QueryClientProvider client={client}>{surface === "assign" ? <AssignDialog open taskId="task-1" onClose={() => {}} /> : <SettingsView />}</QueryClientProvider>));
+  await settle();
+  return {
+    client, sent, devices, settle, settings: () => settings,
+    click: async (node: HTMLElement | null | undefined) => { assert.ok(node); await act(async () => node.click()); await settle(); },
+    choose: async (label: string, value: string) => {
+      const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+      assert.ok(select);
+      await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      await settle();
+    },
+    done: async () => { await act(async () => root.unmount()); host.remove(); client.clear(); globalThis.fetch = realFetch; },
+  };
+}
+
+test("Assign restores a profile's place, keeps an override local until saved, and never saves Continue", async () => {
+  const view = await placeView("assign");
+  const radio = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Where it works"] [role="radio"]')].find((node) => node.textContent === label);
+  const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => text === "Live" ? node.textContent?.startsWith("Live") : node.textContent?.trim() === text);
+  try {
+    assert.equal(radio("A folder on Studio")?.getAttribute("aria-checked"), "true");
+    assert.equal(document.querySelector<HTMLSelectElement>('[aria-label="Shared folder"]')?.value, "live-test");
+    await view.choose("Shared folder", "notes");
+    const saved = view.settings().runProfiles[0]?.place;
+    assert.equal(saved?.kind === "folder" && saved.label, "live-test");
+    await view.click(button("Save to “Live”"));
+    assert.deepEqual(view.settings().runProfiles[0]?.place, { kind: "folder", label: "notes" });
+    await view.click(radio("Its own checkout"));
+    await view.click(button("Live"));
+    assert.equal(document.querySelector<HTMLSelectElement>('[aria-label="Shared folder"]')?.value, "notes", "picking the profile restores its saved place");
+    await view.click(radio("Continue an earlier task"));
+    await view.click(button("New profile"));
+    const name = document.querySelector<HTMLInputElement>('[aria-label="Profile name"]')!;
+    await act(async () => { for (const key of "Copy") press(name, key); });
+    await act(async () => name.form!.requestSubmit());
+    await view.settle();
+    assert.deepEqual(view.settings().runProfiles[1]?.place, { kind: "folder", label: "notes" });
+    assert.equal("continueFromJobId" in view.settings().runProfiles[1]!, false);
+    await view.click(button("Live"));
+    await view.click([...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign")));
+    assert.deepEqual(view.sent.find((row) => row.path === "/api/agent/assign")?.body.place, { kind: "folder", label: "notes" });
+  } finally { await view.done(); }
+});
+
+test("Settings reuses the Code picker, trusts and shares once, then saves the returned label and path", async () => {
+  const view = await placeView("settings");
+  try {
+    await view.click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim().startsWith("Live")));
+    await view.click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.includes("Choose…")));
+    assert.ok(document.querySelector('[data-testid="folder-picker"]'));
+    await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-list"] [role="option"]'));
+    await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-use"]'));
+    assert.ok(document.querySelector('[data-testid="folder-picker-trust"]'));
+    assert.equal(view.sent.filter((row) => row.body.path === "/api/code/folders/trust").length, 0, "trust waits for the confirmation");
+    await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-use"]'));
+    const shares = view.sent.filter((row) => row.body.path === "/api/code/folders/trust");
+    assert.deepEqual(shares.map((row) => row.body.body), [{ path: "/work/new-notes", repo: false, share: true }]);
+    assert.deepEqual(view.settings().runProfiles[0]?.place, { kind: "folder", label: "new-notes", path: "/work/new-notes" });
+    assert.equal(document.querySelector<HTMLSelectElement>('[aria-label="Live: shared folder"]')?.value, "new-notes");
+  } finally { await view.done(); }
+});
+
+test("Settings clearly marks an unpaired profile and choosing another computer clears its old place", async () => {
+  const view = await placeView("settings", "gone");
+  try {
+    assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /computer is no longer paired/);
+    await view.choose("Live: choose another computer", "device-1");
+    assert.deepEqual([view.settings().runProfiles[0]?.deviceId, view.settings().runProfiles[0]?.place], ["device-1", { kind: "checkout" }]);
+  } finally { await view.done(); }
+});
+
+test("Assign keeps an unpaired saved computer selected instead of switching to the available server", async () => {
+  const view = await placeView("assign", "gone");
+  try {
+    assert.match(document.querySelector("[data-assign-blocker]")?.textContent ?? "", /computer is no longer paired/);
+    const assign = [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;
+    assert.equal(assign.getAttribute("aria-disabled"), "true");
+    await view.click(assign);
+    assert.equal(view.sent.some((row) => row.path === "/api/agent/assign"), false);
+  } finally { await view.done(); }
 });

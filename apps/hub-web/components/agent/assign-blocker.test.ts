@@ -38,6 +38,15 @@ test("every other stop says what is missing and which field to fix", () => {
   assert.equal(assignBlocker({ ...here, branchMode: "new" })!.text, "Name the new branch.");
 });
 
+test("a saved computer never falls back, and a folder on an offline computer or no longer shared blocks", () => {
+  assert.match(assignBlocker({ ...base, runOn: "gone", device: null, serverRunner: true })!.text, /no longer paired/);
+  const form = { ...base, runOn: "studio", place: "folder" as const, folderLabel: "live-test", device: { name: "Studio Mac", folders: 1, online: true, sharedFolders: ["live-test"] } };
+  assert.equal(assignBlocker(form), null);
+  assert.match(assignBlocker({ ...form, device: { ...form.device, online: false } })!.text, /Studio Mac is offline/);
+  assert.match(assignBlocker({ ...form, device: { ...form.device, sharedFolders: [] } })!.text, /no longer shares “live-test”/);
+  assert.equal(assignBlocker({ ...form, place: "fresh", folderLabel: "", device: { ...form.device, sharedFolders: [] } }), null, "an explicit checkout wins");
+});
+
 test("no mode waits for a trusted folder or a sandbox; a coding agent needs one of the person's computers", () => {
   const here = { ...base, serverRunner: true, device: null, place: "folder" as const, folder: "/work/app", folderCheck: { ok: true, text: "Git repository" } };
   for (const mode of ["ask", "review", "unattended"] as const) assert.equal(assignBlocker({ ...here, mode }), null, mode);

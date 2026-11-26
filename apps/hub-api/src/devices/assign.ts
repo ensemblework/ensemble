@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
-import { deviceCodesWithAgent, deviceEngines, deviceForksCodeThreads, deviceOpensPullRequests, folderLabels } from "./labels.js";
+import { deviceCodesWithAgent, deviceEngines, deviceForksCodeThreads, deviceOpensPullRequests, folderLabels, repositoryLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { pairingsOf } from "./earlier.js";
 
@@ -20,6 +20,8 @@ export async function deviceAssignment(
     kind: "research" | "code";
     folder?: string;
     folderLabel?: string;
+    /** A saved folder place works in place, even when shared as a repository. */
+    folderInPlace?: boolean;
     repoUrl?: string;
     continueFromJobId?: string;
     /** A coding agent (CODE_ENGINES) or "ensemble". */
@@ -65,6 +67,7 @@ export async function deviceAssignment(
   if (requested) {
     const labels = folderLabels(device.capabilities);
     if (!labels.includes(requested)) throw new GuardError(trustFolder(device.name));
+    if (input.folderInPlace && repositoryLabels(device.capabilities).includes(requested) && ((device.capabilities as { codeApi?: number } | null)?.codeApi ?? 0) < 7) throw new GuardError(`Update Ensemble on ${device.name} (\`ensemble update\`) to run in this profile's repository folder in place.`);
     folderLabel = requested;
   }
 

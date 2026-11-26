@@ -3,7 +3,7 @@
  * default for Quick assign. The schema and the limit live in shared-types
  * (`RunProfile`, `MAX_RUN_PROFILES`); the API refuses a fourth.
  */
-import { ENGINE_LABELS, INCLUDED_PROVIDER, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
+import { ENGINE_LABELS, INCLUDED_PROVIDER, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, runPlaceLabel, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { pullRequestLine } from "./pull-request";
 
 export type ProfileFields = Omit<RunProfile, "id" | "name">;
@@ -20,6 +20,7 @@ export function profileFields(profile: RunProfile): ProfileFields {
 
 const KEYS: Array<keyof ProfileFields> = [
   "deviceId",
+  "place",
   "engine",
   "model",
   "effort",
@@ -45,7 +46,7 @@ const KEYS: Array<keyof ProfileFields> = [
 export function differs(profile: RunProfile, fields: ProfileFields): boolean {
   // An unset context window and "default" are the same choice.
   const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) =>
-    key === "context" && row.context === "default" ? null : key === "fast" ? row.fast === true || null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : key === "toolsOff" ? ([...(row.toolsOff ?? [])].sort().join("\n") || null) : (row[key] ?? null);
+    key === "place" ? (row.place?.kind === "folder" ? JSON.stringify([row.place.label, row.place.path ?? null]) : null) : key === "context" && row.context === "default" ? null : key === "fast" ? row.fast === true || null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : key === "toolsOff" ? ([...(row.toolsOff ?? [])].sort().join("\n") || null) : (row[key] ?? null);
   return KEYS.some((key) => value(profile, key) !== value(fields, key));
 }
 
@@ -106,7 +107,7 @@ export function agentFields(choice: ProfileAgent): Pick<ProfileFields, "engine" 
 }
 
 /** One line that says what a profile does, for its tooltip. */
-export function profileSummary(profile: RunProfile): string {
+export function profileSummary(profile: RunProfile, computer?: string | null): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   // A run that ends in a pull request may commit; Ensemble pushes its branch when it ends.
   const delivery = profile.pullRequest ? "commit" : profile.delivery;
@@ -114,5 +115,6 @@ export function profileSummary(profile: RunProfile): string {
   const chosen = profileAgent(profile);
   const agent = isCodeEngine(profile.engine) ? ENGINE_LABELS[profile.engine] : chosen ? (chosen.provider === INCLUDED_PROVIDER ? "Included model" : chosen.model) : "Matches the task";
   const pull = profile.pullRequest ? ` · ${pullRequestLine(profile.pullRequest)}` : "";
-  return `${agent} · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}`;
+  const place = profile.place?.kind === "folder" ? ` · ${runPlaceLabel(profile.place, computer)}` : "";
+  return `${agent} · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}${place}`;
 }

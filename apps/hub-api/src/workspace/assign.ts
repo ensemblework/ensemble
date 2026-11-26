@@ -7,9 +7,10 @@ import { hasAttached, withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, RunPlace, runPlaceProblem, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
-import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
+import { deviceOnline, serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
+import { folderLabels } from "../devices/labels.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
 import { appendLedger } from "../lib/ledger.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -67,6 +68,8 @@ export const Assign = z.object({
   maxTurns: z.number().int().min(3).max(200).optional(),
   deviceId: z.string().uuid().optional(),
   folderLabel: z.string().max(200).optional(),
+  /** A profile's place. Explicit folder, repository or continuation fields win over it. */
+  place: RunPlace.optional(),
   /**
    * Who does the work: Ensemble's own agent (a model API with your key), or the person's own
    * Claude Code, Codex, Cursor agent or GitHub Copilot on their computer with their own sign-in.
@@ -149,10 +152,10 @@ function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readon
 export type ChatTurn = { surface?: "code"; codeFolder?: string };
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat: ChatTurn | null = null, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat: ChatTurn | null = null, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false, folderInPlace = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
   const turn = chat ? { chat: true, ...(chat.surface ? { surface: chat.surface } : {}), ...(chat.codeFolder ? { codeFolder: chat.codeFolder } : {}) } : {};
-  return { ...base, outsideAccess, ...turn, ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...turn, ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}), ...(folderInPlace ? { folderInPlace: true } : {}) } as Prisma.InputJsonValue;
 }
 
 /** A folder named by its path for a paired computer: never relative, never a name made of `..`. The computer checks the rest. */
@@ -193,6 +196,17 @@ export function withPullRequest<T extends AssignInput>(body: T): T {
   return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "push", network: true };
 }
 export type AssignInput = z.infer<typeof Assign>;
+
+/** Resolve a saved place before choosing sessions or creating a job, never on a different computer. */
+export async function withRunPlace(prisma: PrismaClient, userId: string, input: AssignInput): Promise<AssignInput> {
+  if (input.place?.kind !== "folder") return input;
+  if (input.folder?.trim() || input.folderLabel?.trim() || input.repoUrl?.trim() || input.continueFromJobId || input.session) return { ...input, place: undefined };
+  const place = input.place;
+  const device = input.deviceId ? await prisma.device.findFirst({ where: { id: input.deviceId, userId: actorFor(userId) ?? userId, revokedAt: null } }) : null;
+  const problem = runPlaceProblem(place, input.deviceId ?? null, device ? { name: device.name, online: deviceOnline(device.lastSeenAt), folders: folderLabels(device.capabilities) } : null);
+  if (problem) throw new GuardError(problem);
+  return { ...input, ...(input.deviceId ? { folderLabel: place.label } : { folder: place.path! }) };
+}
 
 /**
  * How a run in an agent session takes one of its settings: keep the session's (`inherit`), the
@@ -284,9 +298,9 @@ export type ResolvedAssign = AssignInput & { kind: "research" | "code"; sandbox:
  * folder, or on a server that runs code happens in a folder (`code`: the agent can research too);
  * otherwise Ensemble's agent researches and writes on the server.
  */
-export function autoKind(body: Pick<AssignInput, "kind" | "engine" | "deviceId" | "folder" | "folderLabel" | "repoUrl" | "continueFromJobId" | "pullRequest" | "chat">, serverRunsCode: boolean): "research" | "code" {
+export function autoKind(body: Pick<AssignInput, "kind" | "engine" | "deviceId" | "folder" | "folderLabel" | "place" | "repoUrl" | "continueFromJobId" | "pullRequest" | "chat">, serverRunsCode: boolean): "research" | "code" {
   if (body.kind) return body.kind;
-  const somewhere = Boolean(body.deviceId || body.folder?.trim() || body.folderLabel?.trim() || body.repoUrl?.trim() || body.continueFromJobId || body.pullRequest || body.chat);
+  const somewhere = Boolean(body.deviceId || body.folder?.trim() || body.folderLabel?.trim() || body.place?.kind === "folder" || body.repoUrl?.trim() || body.continueFromJobId || body.pullRequest || body.chat);
   return body.engine !== "ensemble" || somewhere || serverRunsCode ? "code" : "research";
 }
 
@@ -408,6 +422,7 @@ async function createDeviceJob(
     engine: body.engine,
     pullRequest: Boolean(body.pullRequest),
     fork: codeTurn && body.fork === true,
+    folderInPlace: body.place?.kind === "folder",
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -443,7 +458,7 @@ async function createDeviceJob(
       maxTurns: body.maxTurns ?? runLimits(orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true, body.place?.kind === "folder"),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -567,6 +582,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const task = await prisma.task.findFirst({ where: { id: input.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
+  input = await withRunPlace(prisma, userId, input);
   const tier = settings.models[task.complexity];
   const choice = await chooseFor(prisma, userId, task, input, tier, options, settings.orchestration.linkedSessions !== false);
   let requested: AssignInput = input;

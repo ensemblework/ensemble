@@ -160,6 +160,21 @@ test("work in files goes straight from its packet to the agent; reports end the 
   assert.deepEqual(seen.map((turn) => turn.slug), ["manager", "manager"]);
 });
 
+test("a crew's file step with no folder or repository uses its worker's run profile place", async () => {
+  const mira = await person("Mira");
+  const laptop = await laptopFor(mira);
+  await saveSettings(h.prisma, mira.id, { runProfiles: [RunProfile.parse({ id: "live", name: "Live", engine: "codex", deviceId: laptop.id, place: { kind: "folder", label: "live-test" } })], defaultRunProfileId: "live" });
+  const { room } = await crew(mira);
+  script = (turn) => turn.slug === "manager" && turn.transcript.includes("fix the tables")
+    ? { calls: [{ name: "node_plan", arguments: { ...PLAN, constraints: { agent: "codex" } } }], then: "Building and checking it." }
+    : { text: "(no reply)" };
+  await post(mira, room.id, "Please fix the tables bug.");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+  const build = await runOf(mission.id, "build");
+  assert.deepEqual([build.job.folderLabel, build.job.deviceId, build.job.repoUrl], ["live-test", laptop.id, null]);
+  assert.equal((build.job.context as { folderInPlace?: boolean }).folderInPlace, true);
+});
+
 test("a failed check repairs the build in the builder's own session, then retests in the checker's", async () => {
   const mira = await person("Mira");
   await laptopFor(mira);

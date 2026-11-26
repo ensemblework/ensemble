@@ -26,7 +26,7 @@ import { placeStep, type Located } from "./placement.js";
 import { packetOrigin, stepProgress, storeStepPacket, type PlanData, type PlanStep } from "./plans.js";
 import { CHECKING_KINDS, reportFormatOf } from "./report.js";
 import { charterOf } from "./templates.js";
-import { computerWorkAsks, holdForOwner, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
+import { computerWorkAsks, holdForOwner, nodeRunProfile, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
 import { updateMessageData } from "./store.js";
 
 export type Dispatch = { done: true; summary: string } | { done: false; why: string };
@@ -172,7 +172,7 @@ export async function noteTold(prisma: PrismaClient, jobId: unknown, told: strin
  * turn). `done: false`: the hand-over failed, and its node takes the turn with why.
  */
 export async function dispatchStep(app: FastifyInstance, data: PlanData, step: PlanStep, reason: AttemptReason, planRoomId: string): Promise<Dispatch | null> {
-  if (!dispatchable(data, step, reason)) return null;
+  if (!dispatchable(data, step, reason, true)) return null;
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: step.nodeId } });
   // A paused or deleted node: the turn path ends the step as it always has.
@@ -181,15 +181,22 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
   const env = await envFor(app, node, planRoomId, data.missionId, step.id);
   const who = env ? await packetWho(prisma, data, step) : null;
   if (!env || !who) return null;
+  const profile = nodeRunProfile(env.ctx.settings, node);
+  if (!dispatchable(data, step, reason, profile.place?.kind === "folder")) return null;
 
   const constraints = data.constraints;
   const continuing = await sessionFor(prisma, data, step, reason);
   let place: Place = {};
   let located: Located | null = null;
   if (!continuing) {
-    const found = await placeFor(prisma, node.userId, constraints);
+    const defaults = !constraints.folder && !(constraints.repos ?? []).some(cloneable) && profile.place?.kind === "folder"
+      ? { ...constraints, folder: profile.place.label, computer: constraints.computer ?? profile.deviceId ?? undefined }
+      : constraints;
+    const found = defaults !== constraints && !profile.deviceId
+      ? { place: {}, located: null }
+      : await placeFor(prisma, node.userId, defaults);
     if ("why" in found) return { done: false, why: found.why };
-    place = found.place;
+    place = defaults !== constraints ? { ...(constraints.computer ? { computer: constraints.computer } : {}) } : found.place;
     located = found.located;
   } else if (constraints.folder) {
     located = await sessionPlace(prisma, continuing);

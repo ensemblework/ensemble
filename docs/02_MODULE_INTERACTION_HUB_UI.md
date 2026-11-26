@@ -289,6 +289,10 @@ If another place changed the same key differently, it returns 409 `SAVE_CONFLICT
 
 Settings saves run in order and an unsaved draft stays in this tab, scoped to its settings owner (`components/save-conflict-host.tsx`, `app/(hub)/settings/page.tsx`, `lib/settings.ts`). `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
 
+#### Run profiles
+
+Settings → Agents → **Run profiles** (`components/settings/run-profiles.tsx`) edits up to three saved ways to run work. **Runs on** names the computer, and **Where it works** chooses its own checkout or a folder with the Code tab's `FolderPicker`, beside the shared-folder quick list. Changing the computer clears its folder choice. A profile with an unpaired computer shows that error even while collapsed and offers **Choose computer** there. Folder and offline errors stay visible; summaries include the folder and computer. Assignment, saving and precedence are in [06 §1](06_MODULE_WORKSPACE_AND_SURFACES.md#1-assigning).
+
 #### Choose a background pattern
 
 **Doodle** (`components/settings/doodle-picker.tsx`, `appearance.doodle`): a faint pattern behind the work area (`[data-theme-canvas]`, the main column). *Theme's own* keeps the color theme's artwork (Lagoon, Juniper, Blueprint; none for the others), *Plain* has none, and twelve more are seamless 480 px tiles in `public/doodles/` (Constellations, Orbits, Galaxy, Stardust, Ripples, Network, Contours, Waves, Weave, Dot grid, Circuits, Graph paper), built by `apps/hub-web/scripts/doodles.ts` (`--check` fails when a file is out of date).

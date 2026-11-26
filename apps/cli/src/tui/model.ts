@@ -3,7 +3,7 @@
  * stopped, done), and the answers a waiting request offers. No terminal here, so it is tested
  * directly.
  */
-import { claudeCodeModels, ENGINE_LABELS, isCodeEngine, type CodeEngine, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { claudeCodeModels, ENGINE_LABELS, isCodeEngine, runPlaceLabel, type CodeEngine, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
 import type { Engine, Tab } from "./prefs.js";
 
@@ -173,10 +173,10 @@ export function sourceLabel(source: string): string {
 export type AgentChoice = { model: string | null; effort?: string | null; context?: ContextTier | null };
 
 /**
- * The Assign request `/run` sends: a code task in this folder, under the run profile, with the
+ * The Assign request `/run` sends: a code task in the profile's saved place, else this folder, with the
  * chosen engine. `agent`, the `/model` choice for the person's own agent, replaces the profile's
  * model, thinking level and context window when it names a model. A profile that ends in a pull
- * request runs in its own clone of this folder (a git repository) instead of in the folder, on a
+ * request with no saved folder runs in its own clone of this folder (a git repository), on a
  * branch Ensemble makes from the base (empty: the repository's default branch); it commits, and
  * Ensemble pushes and opens the pull request.
  */
@@ -210,7 +210,9 @@ export function runRequest(input: {
     engine,
     ...(picked ?? { ...model, ...effort, ...context, ...fast }),
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
-    ...(pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
+    ...(profile.place?.kind === "folder"
+      ? { place: profile.place, ...(profile.deviceId ? { deviceId: profile.deviceId } : {}), ...(pullRequest ? { pullRequest } : {}) }
+      : pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
     branchMode: pullRequest ? "as-is" : profile.branchMode,
     delivery: pullRequest ? "push" : profile.delivery,
     askBeforePublish: profile.askBeforePublish,
@@ -277,7 +279,7 @@ export function chatTurnRequest(input: {
       taskId: input.taskId,
       folder: input.folder,
       instructions: input.message,
-      profile: { ...input.profile, instructions: first ? input.profile.instructions : "", pullRequest: null },
+      profile: { ...input.profile, place: undefined, instructions: first ? input.profile.instructions : "", pullRequest: null },
       engine: input.engine,
       agent: { model: input.model, effort: input.effort, context: input.context },
     }),
@@ -370,7 +372,7 @@ export function profileSummary(profile: RunProfile): string {
   const git = plan
     ? `pull request into ${baseLabel(plan.base)}${plan.merge === "auto" ? ", merged when its checks pass" : plan.merge === "ask" ? ", merged if you approve" : ", left open"}`
     : deliveryLabel(profile.delivery);
-  return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}`;
+  return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}${profile.place?.kind === "folder" ? ` · ${runPlaceLabel(profile.place)}` : ""}`;
 }
 
 export type KeyRow = { provider: string; source?: string | null };

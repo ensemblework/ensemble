@@ -41,7 +41,7 @@ export function crumbs(path: string, places: Pick<CodeBrowsePlace, "name" | "pat
   return steps;
 }
 
-export type PickedFolder = { path: string; name: string };
+export type PickedFolder = { path: string; name: string; label?: string };
 
 export function FolderPicker({
   open,
@@ -52,6 +52,7 @@ export function FolderPicker({
   action = "Open",
   onPick,
   fallback,
+  share = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -63,15 +64,17 @@ export function FolderPicker({
   onPick: (folder: PickedFolder) => void;
   /** What to offer when the computer is on an older Ensemble: its known repositories. */
   fallback?: Array<{ path: string; name: string }>;
+  /** Also share the chosen folder for task runs on this computer. */
+  share?: boolean;
 }) {
   return (
     <Dialog open={open} onClose={onClose} title={title} width={760} className="folder-picker-dialog" bodyClassName="p-0">
-      {open ? <PickerBody target={target} computerName={computerName} action={action} onPick={onPick} onClose={onClose} fallback={fallback ?? []} /> : null}
+      {open ? <PickerBody target={target} computerName={computerName} action={action} onPick={onPick} onClose={onClose} fallback={fallback ?? []} share={share} /> : null}
     </Dialog>
   );
 }
 
-function PickerBody({ target, computerName, action, onPick, onClose, fallback }: { target: CodeTarget; computerName: string; action: string; onPick: (folder: PickedFolder) => void; onClose: () => void; fallback: Array<{ path: string; name: string }> }) {
+function PickerBody({ target, computerName, action, onPick, onClose, fallback, share }: { target: CodeTarget; computerName: string; action: string; onPick: (folder: PickedFolder) => void; onClose: () => void; fallback: Array<{ path: string; name: string }>; share: boolean }) {
   const client = useQueryClient();
   const code = useMemo(() => codeApiFor(target), [target]);
   const key = target.kind === "local" ? "local" : target.deviceId;
@@ -109,12 +112,17 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback }:
     mutationFn: async () => {
       if (!target_) throw new Error("Pick a folder.");
       // Trusting adds it to the folders Code can use there; a folder that is not a repository becomes one.
-      if (!trusted || (!target_.repo && startRepo)) return (await code.trustFolder(target_.path, !target_.repo && startRepo)).path;
-      return target_.path;
+      if (share || !trusted || (!target_.repo && startRepo)) {
+        const result = await code.trustFolder(target_.path, !target_.repo && startRepo, share);
+        if (share && !result.label) throw new Error(`Update Ensemble on ${computerName} to share a picked folder for runs.`);
+        return { path: result.path, label: result.label };
+      }
+      return { path: target_.path };
     },
-    onSuccess: (resolved) => {
+    onSuccess: async (resolved) => {
       void client.invalidateQueries({ queryKey: ["code-repos"] });
-      onPick({ path: resolved, name: target_?.name ?? resolved });
+      if (share) await client.invalidateQueries({ queryKey: ["devices"] });
+      onPick({ ...resolved, name: target_?.name ?? resolved.path });
     },
   });
   const make = useMutation({
@@ -143,7 +151,7 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback }:
         {knownRows.length ? (
           <div className="mt-3 max-h-[50dvh] overflow-y-auto rounded-lg border border-line">
             {knownRows.map((row) => (
-              <button key={row.path} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-hover" onClick={() => onPick({ path: row.path, name: row.name })}>
+              <button key={row.path} type="button" disabled={share} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-hover disabled:opacity-50" onClick={() => onPick({ path: row.path, name: row.name })}>
                 <FolderGit2 size={14} className="shrink-0 text-muted" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{row.name}</span>
                 <span className="max-w-[45%] truncate font-mono text-[11px] text-faint">{row.path}</span>

@@ -14,7 +14,11 @@ Choose **Assign task** in Runs, or open Assign from the task you want to run. Ch
 
 Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier, the sandbox as Settings → Agents → Sandbox by default says). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named.
 
-**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
+**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, folder, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
+
+`RunProfile.place` is optional: absent or `{kind: "checkout"}` keeps its own checkout; `{kind: "folder", label, path?}` saves a folder on the profile's computer. Assign restores it, and **Save to** or **New profile** saves it. A dialog override affects only that run until saved. **Continue an earlier task** is never saved as a profile choice.
+
+Quick assign, `hub_assign_to_agent`, node and crew runs, and the CLI use the saved place unless the assignment names a folder, repository or session. A folder profile blocks if its computer is offline or unpaired, or the folder is no longer shared. It never substitutes another computer or a checkout.
 
 **Connected-app tools**, under More options in the dialog, start from the profile: which connected apps, or single tools in them, the run may use. A change is for this run only and marks the profile changed until saved with *Save to*; the run keeps its own list, so a later profile edit leaves it as it was ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Opening the name editor selects the name, so typing replaces it
 
@@ -26,7 +30,7 @@ Only what can run is listed (signed in, key working), plus the current choice wi
 
 ### Runs on
 
-Permitted server execution or a paired computer (an offline computer keeps the job queued); a coding agent goes to a computer that has it signed in. Without either, Ensemble's agent researches and writes on the server
+Permitted server execution or a paired computer; a coding agent goes to a computer that has it signed in. Queued work waits if that computer goes offline. A folder profile needs its computer online when assigned. Without a saved computer or folder, Ensemble's agent can research and write on the server
 
 ### Kind
 
@@ -34,7 +38,7 @@ Not chosen: work by a coding agent, on a computer or on a server that runs code 
 
 ### Where it works
 
-Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's
+Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's. **A folder on…** opens the Code tab's `FolderPicker` ([16 §1](16_CODE_TAB.md#open-a-folder)); the shared-folder list stays beside **Choose** as a quick choice. Picking trusts an outside folder once and shares it for runs before using it. A folder place works in that folder itself, including one shared as a repository; its existing read-only grant still applies.
 
 ### Mode
 

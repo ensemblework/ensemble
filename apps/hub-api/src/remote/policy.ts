@@ -126,7 +126,7 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     } else if (label) {
       const shared = sharedFolder(settings, label);
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };
-      if (shared.kind === "repo") {
+      if (shared.kind === "repo" && !spec.folderInPlace) {
         assign.repoUrl = shared.path;
       } else {
         assign.folder = shared.path;

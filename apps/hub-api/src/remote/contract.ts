@@ -217,6 +217,8 @@ export const JobSpec = z
     repoUrl: text(500).nullish(),
     folder: text(200).nullish(),
     folderLabel: text(200).nullish(),
+    /** A saved run place works in this shared folder itself, including a folder shared as a repository. */
+    folderInPlace: z.boolean().optional(),
     delivery: z.enum(["local", "commit", "push"]).default("push"),
     provider: text(100).nullish(),
     model: text(200).nullish(),
@@ -583,9 +585,10 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
  * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
  * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request), 3 a
  * node's files, 4 making a new file or folder from the explorer, 5 moving, deleting and downloading from it,
- * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch).
+ * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch),
+ * 7 sharing a picked folder for run profiles (`folders/trust` with `share`) and `folderInPlace` runs in repository shares.
  */
-export const CODE_API = 6;
+export const CODE_API = 7;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

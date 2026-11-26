@@ -131,6 +131,11 @@ test("a shared label becomes a local folder, and an https URL is cloned as given
   const repo = planLocalJob(spec({ folder: "source" }), shared, () => null);
   assert.equal(isRefusal(repo), false);
   if (!isRefusal(repo)) assert.equal(repo.assign.repoUrl, "/work/source");
+  const inPlace = planLocalJob(spec({ folderLabel: "source", folderInPlace: true }), shared, () => null);
+  assert.ok(!isRefusal(inPlace));
+  assert.deepEqual([inPlace.assign.folder, inPlace.assign.repoUrl], ["/work/source", undefined], "a profile's folder means the folder itself, not a clone");
+  const removed = planLocalJob(spec({ folderLabel: "source", folderInPlace: true }), settings(), () => null);
+  assert.equal(isRefusal(removed) && removed.code, "UNKNOWN_FOLDER", "a folder removed after queueing fails instead of using a checkout");
 
   const pub = planLocalJob(spec({ repoUrl: "https://github.com/octocat/Hello-World.git" }), settings(), () => null);
   assert.equal(isRefusal(pub), false);

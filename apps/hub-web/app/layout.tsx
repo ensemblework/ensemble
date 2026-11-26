@@ -8,6 +8,7 @@ import { publicSiteUrl } from "@/lib/site-url";
 import "./globals.css";
 import "@/components/settings/color-theme-picker.css";
 import "@/components/settings/doodle-picker.css";
+import "@/components/code/folder-picker.css";
 import "@/components/shell/notifications.css";
 import "@/components/shell/topbar-surfaces.css";
 import "@/components/work-surfaces.css";

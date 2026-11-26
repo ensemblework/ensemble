@@ -15,6 +15,9 @@ import { blockedReason, expandHome, GuardError, within } from "../workspace/guar
 import { git } from "./git.js";
 import { dotUnderHome, resolveCodeFolder, usableCodeRoots } from "./code-folders.js";
 import { loadSettings, saveSettings } from "./settings.js";
+import { loadSettings as remoteSettings, updateSettings as updateRemoteSettings } from "../remote/store.js";
+import { publishedFolders } from "../remote/policy.js";
+import { appendLedger } from "./ledger.js";
 
 export type BrowsePlace = { kind: "home" | "desktop" | "documents" | "projects" | "workspace" | "code"; name: string; path: string };
 export type BrowseEntry = { name: string; path: string; repo: boolean; trusted: boolean };
@@ -146,12 +149,23 @@ export async function makeFolder(prisma: PrismaClient, userId: string, parent: s
  * after the same checks Settings makes. A folder already inside the workspace or one of them is left as
  * it is. With `repo`, a folder that is not a git repository becomes one, as Code works in repositories.
  */
-export async function trustFolder(prisma: PrismaClient, userId: string, path: string, repo: boolean): Promise<{ path: string; added: boolean }> {
+export async function trustFolder(prisma: PrismaClient, userId: string, path: string, repo: boolean, share = false): Promise<{ path: string; added: boolean; label?: string; folders?: ReturnType<typeof publishedFolders> }> {
   const resolved = await resolveCodeFolder(path, userId);
   if (repo && !(await exists(join(resolved, ".git")))) await git(resolved, ["init", "-q"]);
   const roots = await trustedRoots(prisma, userId);
-  if (roots.some((root) => within(root, resolved))) return { path: resolved, added: false };
-  const settings = await loadSettings(prisma, userId);
-  await saveSettings(prisma, userId, { code: { ...settings.code, roots: [...settings.code.roots, resolved] } });
-  return { path: resolved, added: true };
+  const added = !roots.some((root) => within(root, resolved));
+  if (added) {
+    const settings = await loadSettings(prisma, userId);
+    await saveSettings(prisma, userId, { code: { ...settings.code, roots: [...settings.code.roots, resolved] } });
+  }
+  if (!share) return { path: resolved, added };
+  const remote = remoteSettings();
+  const existing = remote.folders.find((folder) => folder.path === resolved);
+  if (existing) return { path: resolved, added, label: existing.label, folders: publishedFolders(remote) };
+  const base = basename(resolved).replace(/[\\\r\n]/g, "-").trim().slice(0, 50) || "Folder";
+  let label = base;
+  for (let suffix = 2; remote.folders.some((folder) => folder.label === label); suffix += 1) label = `${base}-${suffix}`;
+  const next = updateRemoteSettings({ folders: [...remote.folders, { label, path: resolved, kind: "folder", access: "read-write" }] });
+  await appendLedger({ userId, actor: "me", action: "remote.folder", payload: { label, kind: "folder", access: "read-write" } });
+  return { path: resolved, added, label, folders: publishedFolders(next) };
 }

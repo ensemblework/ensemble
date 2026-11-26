@@ -267,15 +267,15 @@ test("a node whose turn about a task changed nothing is not told when the task i
   assert.deepEqual([payload.told, payload.withdrawn], [false, true]);
 });
 
-async function laptopFor(user: HttpUser) {
+async function laptopFor(user: HttpUser, savePlace = false) {
   const key = await h.asToken(user, "device");
   const laptop = await h.prisma.device.create({
     data: { userId: user.id, name: "Laptop", platform: "linux", tokenId: key.id, capabilities: { folders: ["ensemble"], engines: ["copilot-cli", "claude-code"] }, lastSeenAt: new Date() },
   });
   await saveSettings(h.prisma, user.id, {
     runProfiles: [
-      RunProfile.parse({ id: "copilot", name: "Copilot", engine: "copilot-cli", model: "gpt-6.1-sol", effort: "medium", mode: "review", delivery: "local", deviceId: laptop.id }),
-      RunProfile.parse({ id: "claude", name: "Claude", engine: "claude-code", model: "claude-opus-4.8", effort: "high", mode: "review", delivery: "local", deviceId: laptop.id }),
+      RunProfile.parse({ id: "copilot", name: "Copilot", engine: "copilot-cli", model: "gpt-6.1-sol", effort: "medium", mode: "review", delivery: "local", deviceId: laptop.id, ...(savePlace ? { place: { kind: "folder", label: "ensemble" } } : {}) }),
+      RunProfile.parse({ id: "claude", name: "Claude", engine: "claude-code", model: "claude-opus-4.8", effort: "high", mode: "review", delivery: "local", deviceId: laptop.id, ...(savePlace ? { place: { kind: "folder", label: "ensemble" } } : {}) }),
     ],
     defaultRunProfileId: "copilot",
   });
@@ -284,14 +284,14 @@ async function laptopFor(user: HttpUser) {
 
 test("scripted: a node answers once and runs the task in an agent session with the profile its owner told it to use; the task stays with it", async () => {
   const akash = await person("Akash");
-  await laptopFor(akash);
+  await laptopFor(akash, true);
   const { node, room } = await createNode(akash, "feature-engineer");
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/nodes/${node.id}/memory`, payload: { content: "Always run coding work with the Claude run profile (claude-opus-4.8, high)." } })).statusCode, 201);
   const task = await newTask(akash, { title: "Add dark mode to settings", status: "todo" });
   script = (turn) => {
     if (turn.slug === node.slug && turn.transcript.includes("Your owner gave you an Ensemble task")) {
       return {
-        calls: [{ name: "node_session_start", arguments: { title: "Dark mode", prompt: "Add dark mode to the settings page; run the tests.", taskId: task.id, folder: "ensemble", agent: "claude-code", model: "claude-opus-4.8", effort: "high" } }],
+        calls: [{ name: "node_session_start", arguments: { title: "Dark mode", prompt: "Add dark mode to the settings page; run the tests.", taskId: task.id, agent: "claude-code", model: "claude-opus-4.8", effort: "high" } }],
         then: "I'll build it in a Claude Code session on your laptop (your Claude profile).",
       };
     }
@@ -309,6 +309,7 @@ test("scripted: a node answers once and runs the task in an agent session with t
   assert.equal(messages.filter((row) => row.kind === "run").length, 1, "and the run card");
   const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: akash.id } });
   assert.deepEqual([job.taskId, job.provider, job.model, job.reasoningEffort], [task.id, "claude-code", "claude-opus-4.8", "high"]);
+  assert.equal(job.folderLabel, "ensemble", "the node's task uses the profile's place without a folder in the call");
   const held = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
   assert.deepEqual([held.owner, held.assigneeNodeId], ["node", node.id], "its own run keeps the task with the node");
   // The task's words chose its context (node/instructions.ts): the memory about coding work came with it.

@@ -104,11 +104,11 @@ function located(data: Pick<PlanData, "constraints">): boolean {
 
 /**
  * Steps code hands straight to a coding agent: building, checking what was built, and writing files,
- * where the mission names the folder or repository. Research, other work, the node's own work and a
+ * where the mission or the worker's profile names the place. Research, other work, the node's own work and a
  * nudge are turns of their node.
  */
-export function dispatchable(data: Pick<PlanData, "contract" | "constraints" | "steps">, step: Pick<PlanStep, "kind" | "executor" | "verifies">, reason: AttemptReason): boolean {
-  if (data.contract < 3 || reason === "nudge" || step.executor !== "node" || !located(data)) return false;
+export function dispatchable(data: Pick<PlanData, "contract" | "constraints" | "steps">, step: Pick<PlanStep, "kind" | "executor" | "verifies">, reason: AttemptReason, profilePlace = false): boolean {
+  if (data.contract < 3 || reason === "nudge" || step.executor !== "node" || (!profilePlace && !located(data))) return false;
   if (step.kind === "build" || step.kind === "write") return true;
   if (CHECKING_KINDS.has(step.kind)) {
     const target = data.steps.find((row) => row.id === step.verifies);

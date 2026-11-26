@@ -77,6 +77,8 @@ The folder picker (`components/code/folder-picker.tsx`) is drawn like a computer
 
 A folder outside the workspace and the folders Code can use is trusted once before it opens: *Trust and open* adds it to the folders Code can use on that computer (`POST /api/code/folders/trust`, the same checks as Settings; ledger `code.folder_trust`). A folder that is not a git repository offers *Start a git repository in it*. The agent's place bar opens the same picker (§9). A computer before Ensemble 0.8.3 says to update it and lists the repositories it knows instead; its branch menu shows the branch without switching or making one.
 
+Assign → **Where it works** and Settings → Agents → **Run profiles** reuse this component and its globally loaded `folder-picker.css`, browsing the selected computer rather than the browser's disk. For paired task runs they send `share: true` to the same trust route (Code API 7): it returns the shared `label` and resolved `path`, retaining an existing folder's access or sharing a new one in place with read-write access. The relay updates the computer's published folders before answering, so the folder is assignable immediately. A computer without this operation says to update it; it never pretends a folder was shared. [06 §1](06_MODULE_WORKSPACE_AND_SURFACES.md#1-assigning) describes the saved place.
+
 *Changes to review* in the side panel filters *To review*, *Reviewed* or *All*; on the computer it can also *Show expired*. `/code#reviews` opens it and `/code#local-repositories` opens the Explorer.
 
 ### Repository names
