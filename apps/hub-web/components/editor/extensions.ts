@@ -36,6 +36,7 @@ import { EnsembleReply } from "./ensemble-node";
 import { FileAttach, type FileAttachOptions } from "./file-attach";
 import { PageClipboard } from "./clipboard";
 import { CodeIndent } from "./code-indent";
+import { CodeCopy } from "./code-copy";
 import { ChecklistItem } from "./check-item";
 import { menuRenderer, type MenuItem } from "./suggestion-menu";
 import { mentionItems, type EntitySource } from "@/lib/mentions/menu";
@@ -261,6 +262,7 @@ export function editorExtensions(
     SlashCommand,
     PageClipboard,
     CodeIndent,
+    CodeCopy,
     TrailingBlock,
     BlockSelectionExtension,
     BlockEscape,

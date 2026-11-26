@@ -2,17 +2,19 @@
 /** @jsxImportSource react */
 import "../ui-test-dom.js";
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Editor } from "@tiptap/core";
 import { Slice } from "@tiptap/pm/model";
+import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { PAGE_DRAG_TYPE } from "@/lib/page-drag";
 import { editorExtensions } from "./extensions";
 import { applyBlock, inTable } from "./editor-commands";
 import { pastedPageHtml, plainTextOf } from "./clipboard";
 import { HOVER_DELAY, LinkPopover, inAppPath } from "./link-popover";
 import { insertAnswer } from "../comments/ensemble-view";
+import { bindToast, type ToastOptions } from "@/lib/toast-bus";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 setGlobal("DOMParser", window.DOMParser);
@@ -25,11 +27,12 @@ function setGlobal(name: string, value: unknown) {
 
 type Json = Record<string, unknown>;
 const p = (text = ""): Json => (text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" });
-const make = (...content: Json[]) => {
-  const editor = new Editor({ extensions: editorExtensions(() => [], "Type / for blocks"), content: { type: "doc", content: content.length ? content : [p()] } });
+const makeWithMode = (editable: boolean, ...content: Json[]) => {
+  const editor = new Editor({ editable, extensions: editorExtensions(() => [], "Type / for blocks"), content: { type: "doc", content: content.length ? content : [p()] } });
   document.body.appendChild(editor.view.dom);
   return editor;
 };
+const make = (...content: Json[]) => makeWithMode(true, ...content);
 const done = (editor: Editor) => {
   editor.view.dom.remove();
   editor.destroy();
@@ -52,6 +55,183 @@ function cursorIn(editor: Editor, text: string, offset = 0) {
   assert.ok(at >= 0, `no line with "${text}"`);
   editor.commands.setTextSelection(at);
 }
+
+const code = (text: string): Json => ({ type: "codeBlock", attrs: { language: "javascript" }, content: text ? [{ type: "text", text }] : [] });
+const copyButtons = (editor: Editor) => [...editor.view.dom.querySelectorAll<HTMLButtonElement>(".page-code-copy")];
+const settleCopy = async () => { await Promise.resolve(); };
+function clipboard(t: TestContext, writeText?: (text: string) => Promise<void>) {
+  const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: writeText ? { writeText } : undefined });
+  t.after(() => {
+    if (original) Object.defineProperty(navigator, "clipboard", original);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  });
+}
+
+test("code copy buttons work for pointer and keyboard-generated clicks in editable and read-only pages, without changing writing state", async (t) => {
+  const raw = "\tconst value = '<b>raw</b>';\n  // **not Markdown**\n\nreturn value;  \n\n";
+  const writes: string[] = [];
+  const notices: string[] = [];
+  clipboard(t, async (text) => { writes.push(text); });
+  bindToast((text) => notices.push(text));
+  t.after(() => bindToast(null));
+  for (const editable of [true, false]) {
+    const editor = makeWithMode(editable, code(raw), code(""));
+    try {
+      editor.commands.setTextSelection({ from: 2, to: 5 });
+      const state = editor.state;
+      const history = [undoDepth(state), redoDepth(state)];
+      const json = editor.getJSON();
+      const html = editor.getHTML();
+      const [button, empty] = copyButtons(editor);
+      assert.ok(button && empty);
+      assert.equal(button.type, "button");
+      assert.equal(button.tabIndex, 0, "the hidden button remains keyboard reachable");
+      assert.equal(button.getAttribute("contenteditable"), "false");
+      assert.equal(button.getAttribute("aria-label"), "Copy code");
+      assert.equal(button.parentElement?.querySelector("pre code")?.className, "language-javascript");
+
+      const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      button.dispatchEvent(down);
+      assert.equal(down.defaultPrevented, true, "pointer copying must not move the caret to the button");
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      await settleCopy();
+      assert.equal(writes.at(-1), raw);
+      assert.equal(button.getAttribute("aria-label"), "Copied");
+      assert.equal(empty.getAttribute("aria-label"), "Copy code");
+      assert.equal(editor.state, state, "copying must not dispatch even a selection or history transaction");
+      assert.deepEqual(editor.getJSON(), json);
+      assert.equal(editor.getHTML(), html, "controls and feedback are not serialized");
+
+      empty.focus();
+      assert.equal(document.activeElement, empty);
+      const focusedState = editor.state;
+      assert.equal(focusedState.doc, state.doc);
+      assert.ok(focusedState.selection.eq(state.selection), "focusing the control keeps the writing selection");
+      for (const key of ["Enter", " "]) {
+        const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        empty.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false, "native button activation is not intercepted by editor shortcuts");
+        // jsdom does not synthesize the native button click from Enter or Space.
+        empty.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await settleCopy();
+        assert.equal(writes.at(-1), "");
+        assert.equal(empty.getAttribute("aria-label"), "Copied");
+        assert.equal(editor.state.doc, state.doc);
+        assert.ok(editor.state.selection.eq(state.selection), `keyboard copying keeps the writing selection (editable=${editable}, key=${JSON.stringify(key)}, selection=${JSON.stringify(editor.state.selection.toJSON())})`);
+        assert.deepEqual([undoDepth(editor.state), redoDepth(editor.state)], history, "keyboard copying leaves undo history alone");
+      }
+    } finally { done(editor); }
+  }
+  assert.deepEqual(notices, [], "success is local feedback, not a toast");
+});
+
+test("code feedback lasts two seconds, repeats restart it, and blocks have independent timers", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  clipboard(t, async () => {});
+  const editor = make(code("one"), code("two"));
+  try {
+    const [one, two] = copyButtons(editor);
+    assert.ok(one && two);
+    const copyIcon = one.querySelector("svg")!.innerHTML;
+    one.click();
+    await settleCopy();
+    assert.notEqual(one.querySelector("svg")!.innerHTML, copyIcon, "success changes the icon, not just its label");
+    t.mock.timers.tick(1000);
+    two.click();
+    await settleCopy();
+    t.mock.timers.tick(999);
+    assert.equal(one.dataset.copied, "true");
+    assert.equal(two.dataset.copied, "true");
+    t.mock.timers.tick(1);
+    assert.equal(one.getAttribute("aria-label"), "Copy code");
+    assert.equal(one.title, "Copy code");
+    assert.equal(one.querySelector("svg")!.innerHTML, copyIcon);
+    assert.equal(two.getAttribute("aria-label"), "Copied");
+    two.click();
+    await settleCopy();
+    t.mock.timers.tick(1999);
+    assert.equal(two.getAttribute("aria-label"), "Copied");
+    assert.equal(two.title, "Copied");
+    t.mock.timers.tick(1);
+    assert.equal(two.getAttribute("aria-label"), "Copy code");
+  } finally { done(editor); }
+});
+
+test("code controls include nested blocks, follow live code edits, and never enter serialized or selected clipboard content", async (t) => {
+  const writes: string[] = [];
+  clipboard(t, async (text) => { writes.push(text); });
+  const editor = make(code("first"), { type: "toggleBlock", content: [p("Summary"), code("\tnested\n\n")] });
+  try {
+    const buttons = copyButtons(editor);
+    assert.equal(buttons.length, 2);
+    const nested = buttons[1]!;
+    cursorIn(editor, "nested", 6);
+    editor.commands.insertContent(" changed");
+    assert.equal(copyButtons(editor)[1], nested, "a text edit reuses the code control");
+    nested.click();
+    await settleCopy();
+    assert.equal(writes.at(-1), "\tnested changed\n\n");
+    cursorIn(editor, "nested");
+    const { from } = editor.state.selection;
+    assert.equal(plainTextOf(editor.state.doc.slice(from, from + 6)), "nested");
+    assert.equal(/Copy code|Copied|page-code-copy/.test(editor.getHTML()), false);
+    assert.equal(/Copy code|Copied|page-code-copy/.test(JSON.stringify(editor.getJSON())), false);
+  } finally { done(editor); }
+});
+
+test("denied and unavailable clipboards show an error notice and remove any success tick", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const notices: Array<{ text: string; tone?: string }> = [];
+  bindToast((text, options?: ToastOptions) => notices.push({ text, tone: options?.tone }));
+  t.after(() => bindToast(null));
+  let denied = false;
+  clipboard(t, async () => { if (denied) throw new Error("Denied"); });
+  const editor = make(code("raw"));
+  try {
+    const button = copyButtons(editor)[0]!;
+    button.click();
+    await settleCopy();
+    assert.equal(button.dataset.copied, "true");
+    denied = true;
+    button.click();
+    await settleCopy();
+    assert.equal(button.getAttribute("aria-label"), "Copy code");
+    assert.equal(button.dataset.copied, "false");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    button.click();
+    await settleCopy();
+    assert.equal(button.dataset.copied, "false");
+    assert.deepEqual(notices, [
+      { text: "Couldn't copy the code.", tone: "error" },
+      { text: "Couldn't copy the code.", tone: "error" },
+    ]);
+  } finally { done(editor); }
+});
+
+test("removing a code block or editor cancels feedback timers and ignores pending clipboard completion", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let resolve!: () => void;
+  clipboard(t, async () => {});
+  const editor = make(code("one"), code("two"), code("pending"));
+  const [one, two, pending] = copyButtons(editor);
+  assert.ok(one && two && pending);
+  try {
+    one.click();
+    two.click();
+    await settleCopy();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => new Promise<void>((done) => { resolve = done; }) } });
+    pending.click();
+    editor.commands.deleteRange({ from: 0, to: editor.state.doc.firstChild!.nodeSize });
+    assert.equal(one.isConnected, false);
+  } finally { done(editor); }
+  resolve();
+  await settleCopy();
+  t.mock.timers.tick(2000);
+  assert.equal(one.getAttribute("aria-label"), "Copied", "a removed block's cancelled timer never changes its detached control");
+  assert.equal(two.getAttribute("aria-label"), "Copied", "editor removal cancels the other timer too");
+  assert.equal(pending.getAttribute("aria-label"), "Copy code", "clipboard completion after removal never shows feedback");
+});
 
 test("pasted plain-text Markdown becomes headings, lists, checklists, code, quotes, tables and marks", () => {
   const editor = make();

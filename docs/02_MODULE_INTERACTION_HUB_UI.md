@@ -435,6 +435,12 @@ Mod+A selects the line's text first, then every block. A table keeps its own cel
 
 Every editable page ends on an empty line (`components/editor/trailing-block.ts`): it is drawn, not saved, and clicking it or anywhere below the last block makes it a real line, so there is always somewhere to write after an image, a table or a list.
 
+#### Copy a code block
+
+Every code block in the shared editor (`components/editor/code-copy.ts`) has a top-right **Copy code** button, shown on hover or keyboard focus and always shown on touch screens. It works in editable, read-only, shared and public pages, in both themes. It copies the entire block's raw text, including tabs, blank lines and trailing newlines, without changing the document, selection or undo history.
+
+Clipboard success changes the icon to a green tick and the label to **Copied** for two seconds; copying again restarts that block's timer. A failed or unavailable clipboard shows an error notice, never a success tick or toast. Tab and Shift+Tab in the code keep their indentation shortcuts (`code-indent.ts`).
+
 #### Embed a file, plot or diagram
 
 Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
