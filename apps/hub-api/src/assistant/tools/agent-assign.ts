@@ -5,7 +5,7 @@
  * (docs/25). The assistant never runs commands itself.
  */
 import { z } from "zod";
-import { CODE_ENGINES, isCodeEngine, pickRunProfile, runPlaceLabel, runPlaceProblem, type RunProfile } from "@ensemble/shared-types";
+import { CODE_ENGINES, isCodeEngine, pickRunProfile, runPlaceLabel, runPlaceProblem, type RunPlace, type RunProfile } from "@ensemble/shared-types";
 import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
 import { deviceEngines, deviceOpensPullRequests, folderLabels, repositoryLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
@@ -64,30 +64,39 @@ export function chooseProfile(ctx: ToolContext, wanted?: string): RunProfile {
 
 export type Where = { deviceId?: string; computer?: Computer };
 
-/** Where the run happens: the computer named, the profile's computer, this server when it can, else a paired computer. */
-export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string): Promise<Where> {
+/** The profile's saved folder, when this assignment uses it: it names no folder, repository or session, and does not ask for its own checkout. */
+export function savedFolderOf(profile: RunProfile, input: { folder?: string; repoUrl?: string; place?: "checkout"; session?: unknown }): Extract<RunPlace, { kind: "folder" }> | undefined {
+  if (profile.place?.kind !== "folder" || input.session || input.folder?.trim() || input.repoUrl?.trim() || input.place === "checkout") return undefined;
+  return profile.place;
+}
+
+const UNPAIRED = "This profile's computer is no longer paired. Choose another computer in Settings → Run profiles.";
+
+/**
+ * Where the run happens: the computer named, the profile's computer, this server when it can, else a paired
+ * computer. With `savedFolder` (the run works in the profile's saved folder) only the profile's computer will
+ * do, so an unpaired one is refused instead of replaced; whether it is online is checked once the place is known.
+ */
+export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string, savedFolder = false): Promise<Where> {
   const computers = await pairedComputers(ctx);
   const named = wanted?.trim();
-  const chosen = (computer: Computer): Where => {
-    if (profile.place?.kind === "folder" && computer.id === profile.deviceId && !computer.online) throw new ToolBlockedError(`${computer.name} is offline. Open Ensemble there before assigning.`);
-    return { deviceId: computer.id, computer };
-  };
   if (named && named.toLowerCase() !== "any") {
     const key = named.toLowerCase();
     const found = computers.find((row) => row.id === named || row.name.toLowerCase() === key) ?? computers.find((row) => row.name.toLowerCase().includes(key));
     if (!found) {
-      if (named === profile.deviceId) throw new ToolBlockedError("This profile's computer is no longer paired. Choose another computer in Settings → Run profiles.");
+      if (savedFolder && named === profile.deviceId) throw new ToolBlockedError(UNPAIRED);
       throw new ToolBlockedError(
         computers.length ? `No paired computer is called “${named}”. Paired: ${computers.map((row) => `“${row.name}”`).join(", ")}.` : `No computer is paired. ${PAIR_A_COMPUTER}`,
         "Ask which computer, or use \"any\" for their usual one.",
       );
     }
-    return chosen(found);
+    return { deviceId: found.id, computer: found };
   }
   const profiled = profile.deviceId ? computers.find((row) => row.id === profile.deviceId) : undefined;
-  if (profiled) return chosen(profiled);
-  if (profile.deviceId) throw new ToolBlockedError("This profile's computer is no longer paired. Choose another computer in Settings → Run profiles.");
-  if (profile.place?.kind === "folder" && !named) return {};
+  if (profiled) return { deviceId: profiled.id, computer: profiled };
+  if (savedFolder && profile.deviceId) throw new ToolBlockedError(UNPAIRED);
+  // A saved folder without a computer is a path on this server.
+  if (savedFolder && !named) return {};
   // Ensemble's agent with no computer to go to researches and writes on the server.
   if (!named && engine === "ensemble" && (serverRunnerEnabled() || !computers.length)) return {};
   const picked = computers.find((row) => row.online) ?? computers[0];
@@ -142,14 +151,16 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
   const session = input.session ? await resolveSession(ctx.prisma, { space: ctx.userId, runner: actorFor(ctx.userId) }, input.session) : null;
   if (input.session && !session) throw new ToolBlockedError("That agent session is not one of theirs, or no longer exists.", "List them again with hub_list_agent_sessions.");
   const engine = session?.agent ?? input.agent ?? profile.engine;
+  // The place first: a named folder, repository or session wins over the profile's saved folder.
+  const saved = savedFolderOf(profile, { ...input, session });
+  const place = saved ?? (!session && !input.folder?.trim() && !input.repoUrl?.trim() && input.place === "checkout" ? { kind: "checkout" as const } : undefined);
   const where: Where = session
     ? session.deviceId
       ? await chooseComputer(ctx, profile, engine, session.deviceId).catch(() => {
           throw new ToolBlockedError(`The computer that session ran on (${session.computer ?? "a paired computer"}) is no longer paired, so the session cannot go on.`, "Assign the task without a session to start a new one.");
         })
       : {}
-    : await chooseComputer(ctx, profile, engine, input.computer);
-  const place = !session && !input.folder?.trim() && !input.repoUrl?.trim() ? input.place === "checkout" ? { kind: "checkout" as const } : profile.place : undefined;
+    : await chooseComputer(ctx, profile, engine, input.computer, Boolean(saved));
   if (place?.kind === "folder") {
     if (profile.deviceId !== (where.deviceId ?? null)) throw new ToolBlockedError("This profile's folder belongs to another computer. Choose a folder on the computer you named.");
     const problem = runPlaceProblem(place, where.deviceId ?? null, where.computer ?? null);

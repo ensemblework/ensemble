@@ -126,7 +126,9 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     } else if (label) {
       const shared = sharedFolder(settings, label);
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };
-      if (shared.kind === "repo" && !spec.folderInPlace) {
+      // A folder shared from the web's picker takes runs only while the web may change code here.
+      if (shared.source === "web" && !settings.webEdit) return { code: "WEB_EDIT_OFF", message: `“${label.slice(0, 60)}” was shared from the web, and changing code from the web is turned off on this computer. Turn it on there with \`ensemble web edit on\`, or share the folder there with \`ensemble folders add\`.` };
+      if (shared.kind === "repo") {
         assign.repoUrl = shared.path;
       } else {
         assign.folder = shared.path;

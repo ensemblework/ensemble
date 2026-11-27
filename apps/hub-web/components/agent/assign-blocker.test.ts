@@ -38,13 +38,15 @@ test("every other stop says what is missing and which field to fix", () => {
   assert.equal(assignBlocker({ ...here, branchMode: "new" })!.text, "Name the new branch.");
 });
 
-test("a saved computer never falls back, and a folder on an offline computer or no longer shared blocks", () => {
-  assert.match(assignBlocker({ ...base, runOn: "gone", device: null, serverRunner: true })!.text, /no longer paired/);
-  const form = { ...base, runOn: "studio", place: "folder" as const, folderLabel: "live-test", device: { name: "Studio Mac", folders: 1, online: true, sharedFolders: ["live-test"] } };
+test("a profile's saved folder never falls back: its computer unpaired, offline or no longer sharing it blocks; a one-off choice does not", () => {
+  assert.match(assignBlocker({ ...base, runOn: "gone", device: null, serverRunner: true, savedPlace: true })!.text, /no longer paired/);
+  const form = { ...base, runOn: "studio", place: "folder" as const, folderLabel: "live-test", savedPlace: true, device: { name: "Studio Mac", folders: 1, online: true, sharedFolders: ["live-test"] } };
   assert.equal(assignBlocker(form), null);
   assert.match(assignBlocker({ ...form, device: { ...form.device, online: false } })!.text, /Studio Mac is offline/);
   assert.match(assignBlocker({ ...form, device: { ...form.device, sharedFolders: [] } })!.text, /no longer shares “live-test”/);
-  assert.equal(assignBlocker({ ...form, place: "fresh", folderLabel: "", device: { ...form.device, sharedFolders: [] } }), null, "an explicit checkout wins");
+  assert.equal(assignBlocker({ ...form, place: "fresh", folderLabel: "", savedPlace: false, device: { ...form.device, sharedFolders: [] } }), null, "an explicit checkout wins");
+  assert.equal(assignBlocker({ ...form, savedPlace: false, device: { ...form.device, online: false } }), null, "a one-off folder on an offline computer is queued");
+  assert.equal(assignBlocker({ ...base, runOn: "gone", device: null, serverRunner: true, kind: "research" }), null, "without a saved folder the dialog picks another computer");
 });
 
 test("no mode waits for a trusted folder or a sandbox; a coding agent needs one of the person's computers", () => {

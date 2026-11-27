@@ -139,7 +139,8 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback, s
   const open = (entry: { path: string }) => go(entry.path);
   const proceed = () => {
     if (!target_ || tooBroad) return;
-    if (!trusted && !confirm) return setConfirm(true);
+    // Sharing for runs always asks first, even for a folder Code can already use.
+    if ((share || !trusted) && !confirm) return setConfirm(true);
     use.mutate();
   };
 
@@ -245,11 +246,15 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback, s
           {folder?.more ? <p className="px-4 py-2 text-[11.5px] text-faint">{folder.more} more not listed. Filter to find one.</p> : null}
         </div>
         {confirm && target_ ? (
-          <div className="folder-picker-trust" role="alertdialog" aria-label="Trust this folder" data-testid="folder-picker-trust">
+          <div className="folder-picker-trust" role="alertdialog" aria-label={share ? "Share this folder for runs" : "Trust this folder"} data-testid="folder-picker-trust">
             <ShieldCheck size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden />
             <div className="min-w-0 flex-1">
-              <div className="font-medium text-ink">Trust {target_.name}?</div>
-              <div className="text-[12.5px] text-muted">It is outside the Ensemble workspace. Code and agents can then read and change files in it on {computerName}.</div>
+              <div className="font-medium text-ink">{share ? `Share ${target_.name} for runs?` : `Trust ${target_.name}?`}</div>
+              <div className="text-[12.5px] text-muted">
+                {share
+                  ? `Runs on ${computerName} can then change files in it while Change code from the web is on.`
+                  : `It is outside the Ensemble workspace. Code and agents can then read and change files in it on ${computerName}.`}
+              </div>
             </div>
           </div>
         ) : null}
@@ -271,7 +276,7 @@ function PickerBody({ target, computerName, action, onPick, onClose, fallback, s
             {confirm ? "Back" : "Cancel"}
           </button>
           <button type="button" className="btn-primary h-8" disabled={!target_ || Boolean(tooBroad) || use.isPending} onClick={proceed} data-testid="folder-picker-use">
-            {use.isPending ? <Spinner size={12} /> : null} {confirm ? `Trust and ${action.toLowerCase()}` : action}
+            {use.isPending ? <Spinner size={12} /> : null} {confirm ? `${share ? "Share" : "Trust"} and ${action.toLowerCase()}` : action}
           </button>
         </div>
       </div>

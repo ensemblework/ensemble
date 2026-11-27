@@ -564,7 +564,6 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         instructions: next.instructions,
         repoUrl: next.repoUrl,
         folderLabel: next.folderLabel,
-        ...((next.context as { folderInPlace?: boolean } | null)?.folderInPlace ? { folderInPlace: true } : {}),
         delivery: next.delivery,
         task: { title: next.task.title, description, ...(page ? { page } : {}) },
         askBeforePublish: next.askBeforePublish,

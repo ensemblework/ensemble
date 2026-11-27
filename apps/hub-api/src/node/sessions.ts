@@ -21,7 +21,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/client";
 import { CODE_ENGINES, ENGINE_LABELS, engineHasSandbox, isCodeEngine, pickRunProfile, runPlaceLabel, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
-import { AssignInput, chooseComputer, chooseProfile, plan, type Plan } from "../assistant/tools/agent-assign.js";
+import { AssignInput, chooseComputer, chooseProfile, plan, savedFolderOf, type Plan } from "../assistant/tools/agent-assign.js";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { isPaused } from "../lib/activity.js";
 import { nodeTaskRef } from "../lib/node-tasks.js";
@@ -634,7 +634,8 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   // What was asked, as asked (the step's settings count as asked); the profile fills in the rest.
   const requested = requestedSettings(input);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
-  const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
+  const saved = savedFolderOf(profile, input);
+  const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer, Boolean(saved));
   // The profile's agent is only a default: a model named here that it cannot run goes to an agent that can.
   if (!input.agent && agent && input.model?.trim()) {
     const { listing, agents } = await listingOf(env.prisma, where.deviceId, agent);
@@ -645,8 +646,8 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   const named = await agentModel(env.prisma, where.deviceId, agent, input.model, input.effort);
   input = { ...input, ...named };
   // Only here, when the node is about to start a session: its own sessions this work may fit, for it to choose (node/session-fit.ts).
-  if (!input.newSession && input.place !== "checkout" && !env.plan?.planStep && !input.repoUrl?.trim() && isCodeEngine(agent)) {
-    const fits = await nodeFits(env, agent, where.deviceId ?? null, { ...input, folder: input.folder ?? (profile.place?.kind === "folder" ? profile.place.label : undefined) }).catch(() => []);
+  if (!input.newSession && !env.plan?.planStep && !input.repoUrl?.trim() && isCodeEngine(agent)) {
+    const fits = await nodeFits(env, agent, where.deviceId ?? null, saved ? { ...input, folder: saved.label } : input).catch(() => []);
     if (fits.length) return { summary: fitMessage(fits), data: { started: false, fits } };
   }
   const task = await taskFor(env, input);

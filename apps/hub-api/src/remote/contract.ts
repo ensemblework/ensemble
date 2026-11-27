@@ -217,8 +217,6 @@ export const JobSpec = z
     repoUrl: text(500).nullish(),
     folder: text(200).nullish(),
     folderLabel: text(200).nullish(),
-    /** A saved run place works in this shared folder itself, including a folder shared as a repository. */
-    folderInPlace: z.boolean().optional(),
     delivery: z.enum(["local", "commit", "push"]).default("push"),
     provider: text(100).nullish(),
     model: text(200).nullish(),
@@ -586,7 +584,8 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
  * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request), 3 a
  * node's files, 4 making a new file or folder from the explorer, 5 moving, deleting and downloading from it,
  * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch),
- * 7 sharing a picked folder for run profiles (`folders/trust` with `share`) and `folderInPlace` runs in repository shares.
+ * 7 sharing a picked folder for runs (`folders/trust` with `share`), a share made from the web that takes runs
+ * only while "Change code from the web" is on.
  */
 export const CODE_API = 7;
 

@@ -320,11 +320,16 @@ export function assignBlocker(form: {
   local?: boolean;
   /** What keeps the run's pull request from going ahead (lib/pull-request), when it ends in one. */
   pullRequest?: Blocker | null;
+  /**
+   * The run works in the profile's saved folder, unchanged: its computer must be paired, online and still share
+   * it. Anything else goes as a one-off choice, which a computer that is away queues.
+   */
+  savedPlace?: boolean;
 }): Blocker | null {
   if (!form.taskId) return { text: "Choose a task first.", field: "task" };
-  if (form.runOn && form.runOn !== "server" && !form.device) return { text: "This profile's computer is no longer paired. Choose another computer.", field: "run-on" };
-  if (form.place === "folder" && form.device?.online === false) return { text: `${form.device.name} is offline. Open Ensemble there before assigning.`, field: "run-on" };
-  if (form.place === "folder" && form.folderLabel && form.device?.sharedFolders && !form.device.sharedFolders.includes(form.folderLabel)) return { text: `${form.device.name} no longer shares “${form.folderLabel}”. Choose the folder again.`, field: "place" };
+  if (form.savedPlace && form.runOn && form.runOn !== "server" && !form.device) return { text: "This profile's computer is no longer paired. Choose another computer.", field: "run-on" };
+  if (form.savedPlace && form.device?.online === false) return { text: `${form.device.name} is offline. Open Ensemble there before assigning.`, field: "run-on" };
+  if (form.savedPlace && form.folderLabel && form.device?.sharedFolders && !form.device.sharedFolders.includes(form.folderLabel)) return { text: `${form.device.name} no longer shares “${form.folderLabel}”. Choose the folder again.`, field: "place" };
   if (form.engine && !form.device && !form.local) {
     return form.devices
       ? { text: `${ENGINE_LABELS[form.engine]} runs on one of your computers. Choose it under Runs on.`, field: "run-on" }
@@ -433,6 +438,13 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     return signedIn?.id ?? rows.find((device) => device.online)?.id ?? rows[0]?.id ?? devices.find((device) => device.online)?.id ?? devices[0]?.id ?? null;
   };
   const serverAllowed = serverRunner || (cloud && !codeEngine);
+  // The profile's saved folder, unchanged in the dialog. Only then does Assign send it as the profile's place, which
+  // refuses an offline, unpaired or no longer shared computer; a folder picked here goes as a one-off choice.
+  const savedProfile = settings.data?.settings.runProfiles.find((row) => row.id === profileId);
+  const savedFolder = savedProfile?.place?.kind === "folder" ? savedProfile.place : undefined;
+  const usesSavedFolder = Boolean(
+    savedFolder && place === "folder" && runOn === (savedProfile?.deviceId ?? "server") && (savedProfile?.deviceId ? folderLabel === savedFolder.label : folder === (savedFolder.path ?? "")),
+  );
   // Where a run goes first: this server when it runs code, else a paired computer; Ensemble alone (research and writing) when there is none.
   const placed = useRef(false);
   useEffect(() => {
@@ -442,17 +454,18 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     }
     if (!computers.data || placed.current) return;
     placed.current = true;
-    if (runOn === "server" && place !== "folder" && !serverRunner && devices.length) setRunOn(computerFor(codeEngine) ?? "server");
+    if (runOn === "server" && !usesSavedFolder && !serverRunner && devices.length) setRunOn(computerFor(codeEngine) ?? "server");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, computers.data]);
   useEffect(() => {
-    if (!open || !computers.data) return;
-    if (runOn === "server" && place !== "folder" && !serverAllowed) setRunOn(computerFor(codeEngine) ?? "server");
+    if (!open || !computers.data || usesSavedFolder) return;
+    if (runOn === "server" && !serverAllowed) setRunOn(computerFor(codeEngine) ?? "server");
+    else if (runOn !== "server" && !devices.some((device) => device.id === runOn)) setRunOn(serverRunner ? "server" : computerFor(codeEngine) ?? "server");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, computers.data, runOn, serverAllowed, codeEngine]);
+  }, [open, computers.data, runOn, serverAllowed, codeEngine, usesSavedFolder]);
 
-  // A run that can work in a folder (a coding agent, a paired computer, or this server) is a code run; otherwise research and writing on the server.
-  const codeRun = place === "folder" || Boolean(codeEngine) || runOn !== "server" || serverRunner;
+  // A run that can work in a folder (a coding agent, a paired computer, this server, or the profile's folder) is a code run; otherwise research and writing on the server.
+  const codeRun = usesSavedFolder || Boolean(codeEngine) || selectedDevice !== null || serverRunner;
   const kind: "research" | "code" = codeRun ? "code" : "research";
 
   // Earlier runs to continue: on the chosen computer (its folders are there), or on this server.
@@ -537,7 +550,10 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
 
   const applyProfile = (profile: RunProfile) => {
     setProfileId(profile.id);
-    setRunOn(profile.deviceId ?? (profile.place?.kind === "folder" || serverRunner || !devices.length ? "server" : computerFor(isCodeEngine(profile.engine) ? profile.engine : null) ?? "server"));
+    // A saved folder keeps its computer even when that one is gone, so the blocker says so; for any other
+    // profile a computer no longer paired is replaced by another (the effect above).
+    if (profile.place?.kind === "folder") setRunOn(profile.deviceId ?? "server");
+    else if (profile.deviceId) setRunOn(profile.deviceId);
     setPlace(profile.place?.kind === "folder" ? "folder" : "fresh");
     setFolderLabel(profile.place?.kind === "folder" ? profile.place.label : "");
     setFolder(profile.place?.kind === "folder" ? profile.place.path ?? "" : "");
@@ -650,6 +666,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     serverRunner,
     device: selectedDevice ? { name: computerName(selectedDevice.name), folders: selectedDevice.folders.length, online: selectedDevice.online, sharedFolders: selectedDevice.folders } : null,
     runOn: computers.data ? runOn : undefined,
+    savedPlace: usesSavedFolder,
     devices: devices.length,
     place,
     continueFrom,
@@ -707,7 +724,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           ...(outside ? { outsideAccess: outside } : {}),
         });
         if (selectedDevice) {
-          Object.assign(input, { useCredentials: false, ...(place === "folder" ? { place: fields.place } : {}), ...(profileSecrets.length ? { secrets: profileSecrets } : {}) });
+          // Only the profile's saved folder, unchanged, goes as its place; a folder picked here is a one-off choice, as it always was.
+          Object.assign(input, { useCredentials: false, ...(place === "folder" ? (usesSavedFolder && savedFolder ? { place: savedFolder } : { folderLabel }) : {}), ...(profileSecrets.length ? { secrets: profileSecrets } : {}) });
         } else {
           Object.assign(input, { useCredentials: credentials, ...(place === "folder" ? { folder } : {}) });
         }

@@ -152,10 +152,10 @@ function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readon
 export type ChatTurn = { surface?: "code"; codeFolder?: string };
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat: ChatTurn | null = null, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false, folderInPlace = false): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat: ChatTurn | null = null, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
   const turn = chat ? { chat: true, ...(chat.surface ? { surface: chat.surface } : {}), ...(chat.codeFolder ? { codeFolder: chat.codeFolder } : {}) } : {};
-  return { ...base, outsideAccess, ...turn, ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}), ...(folderInPlace ? { folderInPlace: true } : {}) } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...turn, ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
 }
 
 /** A folder named by its path for a paired computer: never relative, never a name made of `..`. The computer checks the rest. */
@@ -422,7 +422,6 @@ async function createDeviceJob(
     engine: body.engine,
     pullRequest: Boolean(body.pullRequest),
     fork: codeTurn && body.fork === true,
-    folderInPlace: body.place?.kind === "folder",
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -458,7 +457,7 @@ async function createDeviceJob(
       maxTurns: body.maxTurns ?? runLimits(orchestration).maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
       // The computer decides the session when it takes the job; the person's "new session" goes with it.
-      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true, body.place?.kind === "folder"),
+      context: contextWith(withCodeTurn(withToolsOff(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.toolsOff), body), body.outsideAccess ?? orchestration.outsideAccess, codeTurn ? { surface: "code", ...(codeFolder ? { codeFolder } : {}) } : null, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;

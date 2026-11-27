@@ -165,7 +165,8 @@ export async function trustFolder(prisma: PrismaClient, userId: string, path: st
   const base = basename(resolved).replace(/[\\\r\n]/g, "-").trim().slice(0, 50) || "Folder";
   let label = base;
   for (let suffix = 2; remote.folders.some((folder) => folder.label === label); suffix += 1) label = `${base}-${suffix}`;
-  const next = updateRemoteSettings({ folders: [...remote.folders, { label, path: resolved, kind: "folder", access: "read-write" }] });
-  await appendLedger({ userId, actor: "me", action: "remote.folder", payload: { label, kind: "folder", access: "read-write" } });
+  // Sharing from the picker is the web's way to share (the computer's own is `ensemble folders add`), so the share follows web edit.
+  const next = updateRemoteSettings({ folders: [...remote.folders, { label, path: resolved, kind: "folder", access: "read-write", source: "web" }] });
+  await appendLedger({ userId, actor: "me", action: "remote.folder", payload: { label, kind: "folder", access: "read-write", source: "web" } });
   return { path: resolved, added, label, folders: publishedFolders(next) };
 }

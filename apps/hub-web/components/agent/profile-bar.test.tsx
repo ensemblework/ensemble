@@ -393,8 +393,8 @@ test("Git starts on No limits under More options; Pull request: any base typed (
     await click(assignButton());
     const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
     assert.deepEqual(
-      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, place: body?.place, deviceId: body?.deviceId, folder: body?.folder, trust: body?.trust },
-      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, place: { kind: "folder", label: "notes" }, deviceId: "device-1", folder: undefined, trust: undefined },
+      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, place: body?.place, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder, trust: body?.trust },
+      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, place: { kind: "folder", label: "notes" }, folderLabel: undefined, deviceId: "device-1", folder: undefined, trust: undefined },
     );
   } finally {
     await act(async () => root.unmount());
@@ -404,9 +404,9 @@ test("Git starts on No limits under More options; Pull request: any base typed (
   }
 });
 
-async function placeView(surface: "assign" | "settings", deviceId = "device-1") {
-  let settings = Settings.parse({ runProfiles: [{ id: "live", name: "Live", deviceId, place: { kind: "folder", label: "live-test", path: "/work/live-test" } }], defaultRunProfileId: "live" });
-  const devices = [{ id: "device-1", name: "Studio", online: true, platform: "linux", folders: ["live-test", "notes"], capabilities: {}, lastSeenAt: null, createdAt: "" }];
+async function placeView(surface: "assign" | "settings", deviceId = "device-1", options: { place?: boolean; online?: boolean } = {}) {
+  let settings = Settings.parse({ runProfiles: [{ id: "live", name: "Live", deviceId, ...(options.place === false ? {} : { place: { kind: "folder", label: "live-test", path: "/work/live-test" } }) }], defaultRunProfileId: "live" });
+  const devices = [{ id: "device-1", name: "Studio", online: options.online ?? true, platform: "linux", folders: ["live-test", "notes"], capabilities: {}, lastSeenAt: null, createdAt: "" }];
   const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
   const realFetch = globalThis.fetch;
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -500,7 +500,7 @@ test("Settings reuses the Code picker, trusts and shares once, then saves the re
     assert.ok(document.querySelector('[data-testid="folder-picker"]'));
     await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-list"] [role="option"]'));
     await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-use"]'));
-    assert.ok(document.querySelector('[data-testid="folder-picker-trust"]'));
+    assert.match(document.querySelector('[data-testid="folder-picker-trust"]')?.textContent ?? "", /Share new-notes for runs\?/, "sharing always asks first");
     assert.equal(view.sent.filter((row) => row.body.path === "/api/code/folders/trust").length, 0, "trust waits for the confirmation");
     await view.click(document.querySelector<HTMLElement>('[data-testid="folder-picker-use"]'));
     const shares = view.sent.filter((row) => row.body.path === "/api/code/folders/trust");
@@ -527,5 +527,30 @@ test("Assign keeps an unpaired saved computer selected instead of switching to t
     assert.equal(assign.getAttribute("aria-disabled"), "true");
     await view.click(assign);
     assert.equal(view.sent.some((row) => row.path === "/api/agent/assign"), false);
+  } finally { await view.done(); }
+});
+
+test("a folder picked in Assign is a one-off choice: it goes as a shared folder, and an offline computer queues it", async () => {
+  const view = await placeView("assign", "device-1", { online: false });
+  const assign = () => [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"));
+  try {
+    assert.match(document.querySelector("[data-assign-blocker]")?.textContent ?? "", /Studio is offline/, "the profile's saved folder needs its computer");
+    await view.choose("Shared folder", "notes");
+    assert.equal(document.querySelector("[data-assign-blocker]"), null);
+    await view.click(assign());
+    const body = view.sent.find((row) => row.path === "/api/agent/assign")?.body;
+    assert.deepEqual([body?.folderLabel, body?.place, body?.deviceId], ["notes", undefined, "device-1"]);
+  } finally { await view.done(); }
+});
+
+test("a profile without a saved folder whose computer is no longer paired goes elsewhere, as before", async () => {
+  const view = await placeView("assign", "gone", { place: false });
+  try {
+    assert.doesNotMatch(document.querySelector("[data-assign-blocker]")?.textContent ?? "", /no longer paired/);
+    await view.click([...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign")));
+    const body = view.sent.find((row) => row.path === "/api/agent/assign")?.body;
+    assert.ok(body, "it assigns");
+    assert.notEqual(body.deviceId, "gone");
+    assert.equal(body.place, undefined);
   } finally { await view.done(); }
 });

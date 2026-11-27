@@ -338,6 +338,22 @@ test("scripted: a node answers once and runs the task in an agent session with t
   assert.match(turns.at(-1)!.note!, /no longer yours: your owner gave it to the agent\.\nStop your work on it now: the agent session [^\n]+ \(node_session_stop\)/);
 });
 
+test("scripted: a node session that names its own repository queues for the profile's offline computer, its saved folder unused", async () => {
+  const akash = await person("Akash");
+  const laptop = await laptopFor(akash, true);
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: null } });
+  const { node } = await createNode(akash, "feature-engineer");
+  const task = await newTask(akash, { title: "Fix the app's login", status: "todo" });
+  script = (turn) => turn.slug === node.slug && turn.transcript.includes("Your owner gave you an Ensemble task")
+    ? { calls: [{ name: "node_session_start", arguments: { title: "Login fix", prompt: "Fix the login redirect.", taskId: task.id, repoUrl: "fieldnote/app" } }], then: "Started it." }
+    : { text: "(no reply)" };
+  await patch(akash, task.id, { owner: "node", assigneeNodeId: node.id });
+  await settleTurns();
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: akash.id, taskId: task.id } });
+  assert.deepEqual([job.status, job.deviceId, job.folderLabel], ["queued", laptop.id, null]);
+  assert.match(job.repoUrl ?? "", /fieldnote\/app/);
+});
+
 test("scripted: a crew's lead gives a testing task to its tester in one plan; the crew stays quiet; a node that gives a task back is not told", async () => {
   const akash = await person("Akash");
   const { ids, crew } = await crewOf(akash, ["manager", "feature-engineer", "tester"], "Software team");

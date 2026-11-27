@@ -131,10 +131,7 @@ test("a shared label becomes a local folder, and an https URL is cloned as given
   const repo = planLocalJob(spec({ folder: "source" }), shared, () => null);
   assert.equal(isRefusal(repo), false);
   if (!isRefusal(repo)) assert.equal(repo.assign.repoUrl, "/work/source");
-  const inPlace = planLocalJob(spec({ folderLabel: "source", folderInPlace: true }), shared, () => null);
-  assert.ok(!isRefusal(inPlace));
-  assert.deepEqual([inPlace.assign.folder, inPlace.assign.repoUrl], ["/work/source", undefined], "a profile's folder means the folder itself, not a clone");
-  const removed = planLocalJob(spec({ folderLabel: "source", folderInPlace: true }), settings(), () => null);
+  const removed = planLocalJob(spec({ folderLabel: "source" }), settings(), () => null);
   assert.equal(isRefusal(removed) && removed.code, "UNKNOWN_FOLDER", "a folder removed after queueing fails instead of using a checkout");
 
   const pub = planLocalJob(spec({ repoUrl: "https://github.com/octocat/Hello-World.git" }), settings(), () => null);
@@ -143,6 +140,21 @@ test("a shared label becomes a local folder, and an https URL is cloned as given
     assert.equal(pub.assign.repoUrl, "https://github.com/octocat/Hello-World.git");
     assert.equal(pub.assign.useCredentials, false);
   }
+});
+
+test("a folder shared from the web takes runs only while Change code from the web is on; a folder shared here does not depend on it", () => {
+  const folders: RemoteSettings["folders"] = [
+    { label: "picked", path: "/work/picked", kind: "folder", access: "read-write", source: "web" },
+    { label: "notes", path: "/work/notes", kind: "folder", access: "read-write" },
+  ];
+  const on = planLocalJob(spec({ folderLabel: "picked" }), settings(folders), () => null);
+  assert.equal(isRefusal(on) ? on.code : on.assign.folder, "/work/picked");
+  const off = { ...settings(folders), webEdit: false };
+  const refused = planLocalJob(spec({ folderLabel: "picked" }), off, () => null);
+  assert.equal(isRefusal(refused) && refused.code, "WEB_EDIT_OFF");
+  assert.match(isRefusal(refused) ? refused.message : "", /ensemble web edit on/);
+  const local = planLocalJob(spec({ folderLabel: "notes" }), off, () => null);
+  assert.equal(isRefusal(local) ? local.code : local.assign.folder, "/work/notes");
 });
 
 test("web settings apply when this computer accepts them, and only narrow when it does not", () => {
