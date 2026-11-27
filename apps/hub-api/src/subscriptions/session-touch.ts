@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { SubscriptionProvider } from "@ensemble/shared-types";
+import { copilotEventFromSubAgent } from "../workspace/engines/sub-agents.js";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/;
 /** A transcript larger than this is not read through on every turn. */
@@ -28,26 +29,43 @@ async function countLines(path: string, matches: (line: string) => boolean): Pro
   return count;
 }
 
-type Block = { type?: unknown };
+type Block = { type?: unknown; text?: unknown };
 
-/** A Claude Code transcript line that is a prompt (not a tool result, a command's echo, a hook's note or a compaction summary). */
+/** What Claude Code writes as a user line that nobody typed: a command's echo, or a background sub-agent's result waking the session. */
+const NOT_TYPED = /^<(?:(?:local-)?command-|task-notification>)/;
+
+/**
+ * A Claude Code transcript line that is a prompt: not a tool result, a command's echo, a hook's note, a
+ * compaction summary, or a background sub-agent's result (`origin.kind: "task-notification"`), which wakes the
+ * session as a user line of its own.
+ */
 export function claudePrompt(line: string): boolean {
   if (!line.includes('"user"')) return false;
   try {
-    const entry = JSON.parse(line) as { type?: unknown; isMeta?: unknown; isCompactSummary?: unknown; isSidechain?: unknown; message?: { content?: unknown } };
+    const entry = JSON.parse(line) as { type?: unknown; isMeta?: unknown; isCompactSummary?: unknown; isSidechain?: unknown; origin?: { kind?: unknown } | null; message?: { content?: unknown } };
     if (entry.type !== "user" || entry.isMeta === true || entry.isCompactSummary === true || entry.isSidechain === true) return false;
+    if (entry.origin?.kind === "task-notification") return false;
     const content = entry.message?.content;
-    if (typeof content === "string") return !/^<(local-)?command-/.test(content.trimStart());
+    if (typeof content === "string") return !NOT_TYPED.test(content.trimStart());
     if (!Array.isArray(content)) return false;
     const blocks = content as Block[];
-    return blocks.some((block) => block?.type === "text") && !blocks.some((block) => block?.type === "tool_result");
+    const first = blocks.find((block) => block?.type === "text");
+    return !!first && !(typeof first.text === "string" && NOT_TYPED.test(first.text.trimStart())) && !blocks.some((block) => block?.type === "tool_result");
   } catch {
     return false;
   }
 }
 
-/** A GitHub Copilot `events.jsonl` line that is a prompt. */
-export const copilotPrompt = (line: string): boolean => line.includes('"type":"user.message"');
+/** A GitHub Copilot `events.jsonl` line that is a prompt: a `user.message`, but not a sub-agent's task (its envelope names the agent). */
+export function copilotPrompt(line: string): boolean {
+  if (!line.includes('"type":"user.message"')) return false;
+  try {
+    const event = JSON.parse(line) as { type?: unknown; agentId?: unknown; data?: Record<string, unknown> } | null;
+    return event?.type === "user.message" && !copilotEventFromSubAgent(event);
+  } catch {
+    return false;
+  }
+}
 
 /** Claude Code's folder for a working folder's sessions: every character but a letter or digit becomes "-". */
 export const claudeProjectName = (folder: string): string => folder.replace(/[^a-zA-Z0-9]/g, "-");

@@ -13,7 +13,8 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { SubscriptionProvider } from "@ensemble/shared-types";
-import { claudePrompt, claudeTranscript, copilotEvents } from "./session-touch.js";
+import { copilotEventFromSubAgent } from "../workspace/engines/sub-agents.js";
+import { claudePrompt, claudeTranscript, copilotEvents, copilotPrompt } from "./session-touch.js";
 
 /** One exchange in the agent's app: the person's message, the agent's answer, a line for its tool calls, the files it changed (where the agent names them), and when (ISO). */
 export type OutsideTurn = { prompt: string; answer: string; tools?: string; files?: string[]; at?: string };
@@ -160,7 +161,10 @@ export async function claudeTurns(path: string, since = 0): Promise<{ turns: Out
   return { turns, app };
 }
 
-/** GitHub Copilot's `events.jsonl` as exchanges, one per `user.message` (as session-touch.ts counts them). */
+/**
+ * GitHub Copilot's `events.jsonl` as exchanges, one per prompt as session-touch.ts counts them (`copilotPrompt`).
+ * A sub-agent's task and messages (Copilot's task tool) are not an exchange or its answer; its tool calls are the exchange's work.
+ */
 export async function copilotTurns(path: string): Promise<OutsideTurn[]> {
   const turns: OutsideTurn[] = [];
   let current: { turn: OutsideTurn; tools: Tally } | null = null;
@@ -173,10 +177,12 @@ export async function copilotTurns(path: string): Promise<OutsideTurn[]> {
     if (!line.includes('"type":"user.message"') && !line.includes('"type":"assistant.message"') && !line.includes('"type":"tool.execution_start"')) continue;
     const event = parse(line);
     const data = (event?.data ?? {}) as Record<string, unknown>;
+    const sub = !!event && copilotEventFromSubAgent(event);
     if (event?.type === "user.message") {
+      if (!copilotPrompt(line)) continue;
       close();
       current = { turn: { prompt: typeof data.content === "string" ? data.content : "", answer: "", ...(typeof event.timestamp === "string" ? { at: event.timestamp } : {}) }, tools: tally() };
-    } else if (current && event?.type === "assistant.message" && typeof data.content === "string" && data.content.trim()) current.turn.answer = data.content;
+    } else if (current && event?.type === "assistant.message" && !sub && typeof data.content === "string" && data.content.trim()) current.turn.answer = data.content;
     else if (current && event?.type === "tool.execution_start" && typeof data.toolName === "string") count(current.tools, data.toolName, data.arguments);
   }
   close();
