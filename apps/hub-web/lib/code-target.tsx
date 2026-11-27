@@ -63,7 +63,7 @@ export type CodeApi = {
   actions(repo: string): Promise<ActionsResult>;
   browse(path?: string | null): Promise<CodeBrowse>;
   makeFolder(parent: string, name: string, repo?: boolean): Promise<{ path: string }>;
-  trustFolder(path: string, repo?: boolean): Promise<{ path: string; added: boolean }>;
+  trustFolder(path: string, repo?: boolean, share?: boolean): Promise<{ path: string; added: boolean; label?: string }>;
   branches(repo: string): Promise<CodeBranches>;
   createBranch(repo: string, name: string): Promise<{ current: string }>;
   switchBranch(repo: string, branch: string): Promise<{ current: string }>;
@@ -105,7 +105,7 @@ const localApi: CodeApi = {
   actions: (repo) => api.actions(repo),
   browse: (path) => api.codeBrowse(path),
   makeFolder: (parent, name, repo) => api.codeMakeFolder(parent, name, repo),
-  trustFolder: (path, repo) => api.codeTrustFolder(path, repo),
+  trustFolder: (path, repo, share) => api.codeTrustFolder(path, repo, share),
   branches: (repo) => api.codeBranches(repo),
   createBranch: (repo, name) => api.codeCreateBranch(repo, name),
   switchBranch: (repo, branch) => api.codeSwitchBranch(repo, branch),
@@ -161,7 +161,7 @@ export function deviceCodeApi(deviceId: string): CodeApi {
     actions: (repo) => get("/api/code/actions", { repo }),
     browse: (path) => get("/api/code/browse", { path: path || undefined }),
     makeFolder: (parent, name, repo = true) => post("/api/code/browse/folder", { parent, name, repo }),
-    trustFolder: (path, repo = false) => post("/api/code/folders/trust", { path, repo }),
+    trustFolder: (path, repo = false, share = false) => post("/api/code/folders/trust", { path, repo, ...(share ? { share } : {}) }),
     branches: (repo) => get("/api/code/branches", { repo }),
     createBranch: (repo, name) => post("/api/code/branches", { repo, name }),
     switchBranch: (repo, branch) => post("/api/code/branches/switch", { repo, branch }),

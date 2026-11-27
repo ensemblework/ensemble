@@ -32,7 +32,7 @@ When `POST /api/devices/self/claim` claims queued work, `devices/routes.ts` move
 
 The host's spec carries task context and execution choices (and `steer`, the change for a run that continues one a node interrupted: [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), never shell argv. A folder is a label the computer shares, resolved there; the one exception is a turn of the Code tab's agent, which names the folder Code has open by its path (`codeFolder`), and the computer runs it only in a repository its own Code API may open (§4.7). Hosted email verification and account quotas apply.
 
-An offline computer leaves its job queued; work never falls back to the server or another device. `remote/client.ts`, `accept.ts`, `policy.ts`, `store.ts` and `devices/routes.ts` implement this boundary.
+An offline computer leaves an existing job queued; work never falls back to the server or another device. A run in a run profile's saved folder requires that computer online and still sharing the folder when assigned; a folder chosen for one run is queued as before. Removing the share after queueing makes the computer refuse the run with `UNKNOWN_FOLDER`, not create a checkout. `remote/client.ts`, `accept.ts`, `policy.ts`, `store.ts` and `devices/routes.ts` implement this boundary.
 
 **Continue an earlier task.** Assign's "Continue an earlier task" on a computer lists, from `GET /api/agent/earlier-runs?deviceId=&taskId=` (`devices/earlier.ts`), the code runs that ran (or are queued to run) on that computer, under its current pairing or an earlier one of it (§8): each chain of continued runs once, by its newest step, the task's own first (and chosen by default).
 
@@ -52,7 +52,9 @@ Local secrets stay local. The exception runs the other way: with *Settings → M
 
 ### 4.4 Web UI
 
-Open **Assign** and choose an available computer. The picker shows its shared folder labels and capabilities.
+Open **Assign** and choose an available computer. **Where it works** restores the run profile's saved folder. The shared-folder quick list stays available beside **Choose**, which opens the Code tab's folder picker on that computer. Choosing an unshared folder there asks first, then saves a label in that computer's `remote.json` and publishes it immediately (`POST /api/code/folders/trust` with `share: true`, Code API 7; the web refuses the call to an older computer and while *Change code from the web* is off there). The path mapping stays on the computer; the profile can keep its picked path as well as the label.
+
+A share made this way is marked `source: "web"` (`trustFolder` in `lib/code-browse.ts`). The computer runs a task in it only while `webEdit` is on and otherwise refuses with `WEB_EDIT_OFF` (`planLocalJob` in `remote/policy.ts`); sharing the same label with `ensemble folders add` makes it an ordinary share. Every run names its folder by label (`folderLabel`), whether it comes from a profile or one Assign, and keeps the share's `folder` or `repo` behaviour: a repository share is always worked on in a clone.
 
 The assistant can queue the same job from chat ("do this on my machine") with `hub_assign_to_agent` after the person presses Apply; it goes through `createJob` like the dialog, so the computer's checks are unchanged ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)).
 

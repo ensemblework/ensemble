@@ -583,9 +583,11 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
  * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
  * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request), 3 a
  * node's files, 4 making a new file or folder from the explorer, 5 moving, deleting and downloading from it,
- * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch).
+ * 6 the folder picker (browse, new folder, trust a folder) and branches (list, make, switch),
+ * 7 sharing a picked folder for runs (`folders/trust` with `share`), a share made from the web that takes runs
+ * only while "Change code from the web" is on.
  */
-export const CODE_API = 6;
+export const CODE_API = 7;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

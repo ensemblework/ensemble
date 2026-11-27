@@ -10,7 +10,7 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { pickRunProfile, runPlaceLabel, type RunProfile } from "@ensemble/shared-types";
 import { readFileText } from "../../files/extract.js";
 import { appendToTaskPage } from "./pages.js";
 import { createTask } from "../../services/tasks.js";
@@ -87,7 +87,7 @@ const clip = (text: string, limit = MAX_TEXT) => (text.length > limit ? `${text.
 export function profileLine(profile: RunProfile): string {
   const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
-  return `${profile.name}: ${mode}, ${git}, sandbox ${profile.sandbox ? "on" : "off"}, internet ${profile.network ? "on" : "off"}`;
+  return `${profile.name}: ${mode}, ${git}, sandbox ${profile.sandbox ? "on" : "off"}, internet ${profile.network ? "on" : "off"}${profile.place?.kind === "folder" ? `, ${runPlaceLabel(profile.place)}` : ""}`;
 }
 
 /** Code tools by name, for Apply (they are not in the web assistant's catalog). */
@@ -208,7 +208,7 @@ export const codeTools: readonly AnyHubTool[] = [
       page: z.string().max(20_000).optional().describe("Markdown for a new task's page: context worth keeping. Not the short description, which is the person's."),
       instructions: z.string().max(8000).default("").describe("What to do, what to check, what done looks like."),
       taskId: z.string().uuid().optional().describe("An existing task instead of a new one."),
-      folder: z.string().optional().describe("Default: the folder Ensemble Code was opened in."),
+      folder: z.string().optional().describe("Default: the run profile's saved folder, else the folder Ensemble Code was opened in."),
       repoUrl: z.string().max(500).optional().describe("Clone this repository into a fresh folder instead (https URL or owner/repo)."),
     }),
     isWrite: true,
@@ -217,13 +217,14 @@ export const codeTools: readonly AnyHubTool[] = [
     async preview(ctx, input) {
       const code = session(ctx);
       const profile = pickRunProfile(ctx.settings, code.profileId);
-      const where = input.repoUrl ? `a fresh clone of ${input.repoUrl}` : shown(code, resolve(code.folder, expandHome(input.folder ?? ".")));
+      const where = input.repoUrl ? `a fresh clone of ${input.repoUrl}` : !input.folder && profile.place?.kind === "folder" ? runPlaceLabel(profile.place) : shown(code, resolve(code.folder, expandHome(input.folder ?? ".")));
       return `Start ${engineName(code.engine ?? profile.engine)} on “${input.title}” in ${where} (${profileLine(profile)})`;
     },
     async run(ctx, input) {
       const code = session(ctx);
       const profile = pickRunProfile(ctx.settings, code.profileId);
       const engine = code.engine ?? profile.engine;
+      const place = !input.folder && !input.repoUrl && profile.place?.kind === "folder" ? profile.place : undefined;
       let taskId = input.taskId;
       if (taskId) {
         const found = await ctx.prisma.task.findFirst({ where: { id: taskId, userId: ctx.userId, deletedAt: null }, select: { id: true } });
@@ -242,7 +243,7 @@ export const codeTools: readonly AnyHubTool[] = [
         taskId = task.id;
       }
       let folder: string | undefined;
-      if (!input.repoUrl) {
+      if (!input.repoUrl && !place) {
         try {
           folder = await resolveWorkFolder(resolve(code.folder, expandHome(input.folder ?? ".")));
         } catch (error) {
@@ -257,7 +258,7 @@ export const codeTools: readonly AnyHubTool[] = [
         ...(code.runModel ? (engine === "ensemble" ? splitModel(code.runModel) : { model: code.runModel }) : profileModel(profile, engine)),
         ...(engine === "ensemble" && !code.runModel && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}),
         instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
-        ...(folder ? { folder } : { repoUrl: input.repoUrl }),
+        ...(place ? { place, ...(profile.deviceId ? { deviceId: profile.deviceId } : {}) } : folder ? { folder } : { repoUrl: input.repoUrl }),
         branchMode: profile.branchMode,
         delivery: profile.delivery,
         askBeforePublish: profile.askBeforePublish,

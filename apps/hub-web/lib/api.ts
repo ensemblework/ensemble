@@ -1033,6 +1033,7 @@ export type AssignInput = {
   maxTurns?: number;
   deviceId?: string;
   folderLabel?: string;
+  place?: import("@ensemble/shared-types").RunPlace;
   /**
    * End the run in a pull request into `base` that Ensemble pushes, opens and merges as `merge` says.
    * The server then allows commits, turns the internet on, and uses `branch` (or a name it picks).
@@ -2001,7 +2002,7 @@ export const api = bindClient({
   /** The folder picker: the places to start from and one folder's folders (hub-api lib/code-browse.ts). */
   codeBrowse: (path?: string | null) => get<CodeBrowse>(`/api/code/browse${qs({ path: path || undefined })}`),
   codeMakeFolder: (parent: string, name: string, repo = true) => post<{ path: string }>("/api/code/browse/folder", { parent, name, repo }),
-  codeTrustFolder: (path: string, repo = false) => post<{ path: string; added: boolean }>("/api/code/folders/trust", { path, repo }),
+  codeTrustFolder: (path: string, repo = false, share = false) => post<{ path: string; added: boolean; label?: string }>("/api/code/folders/trust", { path, repo, ...(share ? { share } : {}) }),
   codeBranches: (repo: string) => get<CodeBranches>(`/api/code/branches${qs({ repo })}`),
   codeCreateBranch: (repo: string, name: string) => post<{ current: string }>("/api/code/branches", { repo, name }),
   codeSwitchBranch: (repo: string, branch: string) => post<{ current: string }>("/api/code/branches/switch", { repo, branch }),

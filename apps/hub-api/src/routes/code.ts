@@ -661,8 +661,8 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
 
   /** A folder for Code and agents, from the picker: added to the folders Code can use when it is outside them. */
   app.post("/api/code/folders/trust", async (request) => {
-    const body = z.object({ path: z.string().min(1).max(4096), repo: z.boolean().default(false) }).parse(request.body);
-    const trusted = await trustFolder(prisma, request.userId, body.path, body.repo);
+    const body = z.object({ path: z.string().min(1).max(4096), repo: z.boolean().default(false), share: z.boolean().default(false) }).parse(request.body);
+    const trusted = await trustFolder(prisma, request.userId, body.path, body.repo, body.share);
     if (trusted.added) await appendLedger({ userId: request.userId, actor: "me", action: "code.folder_trust", payload: { path: trusted.path } });
     return trusted;
   });
