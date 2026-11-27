@@ -28,7 +28,7 @@ import { claudeFilesystem, engineSandboxPaths, openRoots, type EngineResult } fr
 import { answerForm } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
-import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionBusyError, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionBusyError, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { BUSY_CARD, BUSY_WAIT, CodexThreadBusy, resumeCodexThread } from "./session-restart.js";
 import { otherCodexThread, SUB_AGENT } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
@@ -189,6 +189,7 @@ export async function runCodex(
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child: ChildProcessWithoutNullStreams = spawn(codex, ["app-server"], { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   // Codex may exit first; a late write is dropped, never thrown.
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {

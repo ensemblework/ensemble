@@ -10,7 +10,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { JobContext } from "../tools.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
-import { isCodeAgentTurn } from "../trust.js";
+import { adoptSession } from "../runner.js";
+import { isChatTurn, isCodeAgentTurn } from "../trust.js";
 
 type Run = { ctx: JobContext; secret: string };
 
@@ -87,6 +88,15 @@ export function registerEngineRun(ctx: JobContext): string {
   const secret = randomBytes(24).toString("hex");
   runs.set(ctx.job.id, { ctx, secret });
   return `${ctx.job.id}.${secret}`;
+}
+
+/**
+ * The engine's own program has started, in a session of its own. In a task run that session joins the run's
+ * commands (`adoptSession`), so the run's end stops what its agent left running there, such as a server it
+ * started and never stopped. A chat turn's stay: the person may have asked for a server that outlives the message.
+ */
+export function engineStarted(ctx: Pick<JobContext, "job">, child: { pid?: number }): void {
+  if (!isChatTurn(ctx.job.context)) adoptSession(ctx.job.id, child.pid);
 }
 
 export function unregisterEngineRun(jobId: string): void {

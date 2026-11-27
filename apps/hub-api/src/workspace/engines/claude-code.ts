@@ -33,7 +33,7 @@ import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
-import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
 import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, type ClaudeSpend } from "./sub-agents.js";
@@ -265,6 +265,7 @@ export async function runClaudeCode(
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child = spawn(claude, args, { cwd: ctx.root, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   // The caller may hold the trace, to close it if the run stops before the engine returns.
   const trace = options.trace ?? new EngineTrace(ctx, "claude-code");
   const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };

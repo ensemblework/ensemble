@@ -490,7 +490,7 @@ export async function outsidePath(
       held: refusal(
         ctx.accessMode === "review"
           ? `This run is read-only: no changes outside the folder. ${real}`
-          : `${real} is beyond the Ensemble workspace, and Settings → “Outside the Ensemble workspace” is set to No access; nobody can approve more in an unattended run.`,
+          : `${real} is beyond the Ensemble workspace, and Settings → “Outside the Ensemble workspace” is set to No access; nobody can approve more in an unattended run. Work in this run's folder, ${ctx.root}.`,
         "Blocked by the run's setting",
       ),
       asked: false,

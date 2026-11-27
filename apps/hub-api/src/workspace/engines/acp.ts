@@ -39,7 +39,7 @@ import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, patchPaths, type EngineAnswer, type EngineCall } from "./judge.js";
-import { engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
+import { engineStarted, engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
 
@@ -438,6 +438,7 @@ export async function runAcp(
     throw new Error(`${label} is not on this computer. ${agent.install}`);
   }
   const child: ChildProcessWithoutNullStreams = spawn(launch.program, launch.args, { cwd: ctx.root, env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   child.stdin.on("error", () => undefined);
   const rpc = new RpcConnection((line) => child.stdin.writable && void child.stdin.write(line), { jsonrpc: true });
   const trace = options.trace ?? new EngineTrace(ctx, agent.trace);

@@ -27,7 +27,7 @@ import { copilotSessionName, nameCopilotSession, titledPrompt } from "./app-sess
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { ENSEMBLE_OWN_TOOLS, judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
-import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { RpcConnection } from "./rpc.js";
 import { copilotUpdateAgent, SUB_AGENT } from "./sub-agents.js";
@@ -241,6 +241,7 @@ export async function runCopilot(
     ...(options.context === "long_context" ? ["--context", "long_context"] : []),
   ];
   const child: ChildProcessWithoutNullStreams = spawn(copilot, args, { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   child.stdin.on("error", () => undefined);
   const rpc = new RpcConnection(
     (line) => {

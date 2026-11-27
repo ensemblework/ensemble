@@ -1,9 +1,11 @@
 import "../runtime/test-env.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { spawn } from "node:child_process";
+import { engineStarted } from "./engines/registry.js";
 import { killGroup, runCommand, sessionOf, sessionTree } from "./runner.js";
 
 const alive = (pid: number): boolean => {
@@ -66,6 +68,33 @@ test("a command is over when its own process exits, even if a process it started
     await settle();
     assert.ok(!alive(left), "the run's end stops what its commands left running");
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a coding agent's own program joins its task run's commands: what it left running stops when the run ends; a chat turn's stays", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-runner-engine-"));
+  // A stand-in agent, started as the engines start theirs (a session of its own): it starts a server in the background and exits.
+  const agent = async (job: { id: string; context: unknown }, pidFile: string): Promise<number> => {
+    const child = spawn("sh", ["-c", `sleep 60 & echo $! > ${pidFile}`], { cwd: root, detached: true, stdio: "ignore" });
+    engineStarted({ job } as never, child);
+    await new Promise((resolve) => child.once("exit", resolve));
+    for (let tries = 0; !existsSync(join(root, pidFile)) && tries < 50; tries += 1) await settle();
+    return Number(readFileSync(join(root, pidFile), "utf8"));
+  };
+  let kept = 0;
+  try {
+    const left = await agent({ id: "engine-task", context: {} }, "task.pid");
+    assert.ok(alive(left), "it outlives the agent's own program");
+    killGroup("engine-task");
+    await settle();
+    assert.ok(!alive(left), "the task run's end stops it");
+    kept = await agent({ id: "engine-chat", context: { chat: true } }, "chat.pid");
+    killGroup("engine-chat");
+    await settle();
+    assert.ok(alive(kept), "a chat turn's server stays: the person may have asked for it");
+  } finally {
+    if (kept) process.kill(kept, "SIGKILL");
     rmSync(root, { recursive: true, force: true });
   }
 });

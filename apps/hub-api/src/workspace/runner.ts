@@ -216,6 +216,18 @@ function killTree(child: ChildProcess): void {
   }
 }
 
+/**
+ * Counts a session another part of the run started (a coding agent's own program, which starts in a session of its
+ * own: its pid is the session's id) as one of the group's, so `killGroup` at the run's end also stops what was left
+ * running in it.
+ */
+export function adoptSession(group: string, pid: number | undefined): void {
+  if (!pid || process.platform === "win32") return;
+  const started = sessions.get(group) ?? new Set();
+  started.add(pid);
+  sessions.set(group, started);
+}
+
 /** Kills every process started for this group, including ones its commands left running. Returns how many commands were running. */
 export function killGroup(group: string): number {
   const set = live.get(group);
