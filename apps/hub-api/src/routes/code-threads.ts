@@ -17,6 +17,7 @@ import { publicDecision } from "../lib/decisions.js";
 import { canUseHostCredentials } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
 import { CODE_THREAD_BIN_DAYS, CODE_THREAD_PREFIX, codeThreadRef } from "../lib/node-tasks.js";
+import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { keepAgentOutput, keepAgentOutputOnDeliverable, keepAgentOutputOnMeeting, KeepTargetError } from "../pages/agent-output.js";
 import { collabHub } from "../pages/live.js";
@@ -30,6 +31,7 @@ import { parseCompletion } from "../workspace/completion.js";
 import { parseHandoff, renderHandoff } from "../workspace/handoff-record.js";
 import { forkOf } from "../workspace/sessions.js";
 import { PacketSummarySchema } from "../workspace/turn-packet.js";
+import { binStart, deleteThreadForGood } from "../workspace/thread-bin.js";
 import { stopJob } from "../workspace/worker.js";
 import { card, onCurrentDevices } from "./agents.js";
 
@@ -140,7 +142,7 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
     // With a folder: that folder's threads on that computer (the IDE). Without: every thread (the sessions list).
     // `bin=1`: the threads deleted in the last CODE_THREAD_BIN_DAYS, newest first, each with when it goes for good.
     const query = z.object({ deviceId: z.string().uuid().optional(), folder: z.string().trim().min(1).max(1000).optional(), bin: z.enum(["1"]).optional() }).parse(request.query);
-    const binFrom = new Date(Date.now() - CODE_THREAD_BIN_DAYS * 86_400_000);
+    const binFrom = binStart();
     const tasks = await prisma.task.findMany({
       where: { userId: request.userId, deletedAt: query.bin ? { gte: binFrom } : null, sourceRef: query.folder ? codeThreadRef(query.deviceId, query.folder) : { startsWith: CODE_THREAD_PREFIX } },
       orderBy: query.bin ? { deletedAt: "desc" } : { updatedAt: "desc" },
@@ -232,17 +234,21 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
   /** Brings a thread back from the Bin. */
   app.post("/api/agent/threads/:id/restore", async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const restored = await prisma.task.updateMany({ where: { id, userId: request.userId, deletedAt: { not: null }, sourceRef: { startsWith: CODE_THREAD_PREFIX } }, data: { deletedAt: null } });
+    const restored = await prisma.task.updateMany({ where: { id, userId: request.userId, deletedAt: { gte: binStart() }, sourceRef: { startsWith: CODE_THREAD_PREFIX } }, data: { deletedAt: null } });
     if (!restored.count) return reply.code(404).send({ error: "That thread is not in the Bin." });
     sseHub.publish(request.userId, { event: "task", data: { id, action: "restore" } });
     return { ok: true };
   });
 
-  /** Deletes a thread in the Bin for good, with its turns. A thread not in the Bin goes there first (DELETE /api/tasks/:id). */
+  /**
+   * Deletes a thread in the Bin for good, with its turns and, through the session clean-up, its agent sessions
+   * (workspace/thread-bin.ts). A thread not in the Bin goes there first (DELETE /api/tasks/:id).
+   */
   app.delete("/api/agent/threads/:id", async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const gone = await prisma.task.deleteMany({ where: { id, userId: request.userId, deletedAt: { not: null }, sourceRef: { startsWith: CODE_THREAD_PREFIX } } });
-    if (!gone.count) return reply.code(404).send({ error: "That thread is not in the Bin." });
+    const settings = await loadSettings(prisma, request.userId);
+    const gone = await deleteThreadForGood(prisma, request.userId, id, { keepSessions: settings.orchestration.cleanSessions === false });
+    if (!gone) return reply.code(404).send({ error: "That thread is not in the Bin." });
     await appendLedger({ userId: request.userId, actor: "me", action: "code.thread_purge", payload: { threadId: id } });
     sseHub.publish(request.userId, { event: "task", data: { id, action: "delete" } });
     return reply.code(204).send();

@@ -540,6 +540,45 @@ test("the sweep deletes a session only when every task in it is retired and its 
   assert.equal(offline.length, 0);
 });
 
+test("a Code thread in the Bin keeps its agent session; deleted for good or past its 7 days, the session goes first and then the thread", async () => {
+  const user = await h.asUser();
+  const laptop = await laptopFor(user);
+  const app = { prisma: db, log: { info: () => undefined } } as unknown as FastifyInstance;
+  const { purgeThreads } = await import("./thread-bin.js");
+  const thread = (title: string, deletedAt: Date) => db.task.create({ data: { userId: user.id, title, createdBy: "me", sourceRef: `code:${randomUUID()}`, deletedAt } });
+  const binned = await thread("In the Bin", new Date(Date.now() - 60 * 60_000));
+  const expired = await thread("Bin time up", new Date(Date.now() - 8 * DAY));
+  const empty = await thread("Never ran", new Date(Date.now() - 60_000));
+  const binnedRun = await ranOn(user.id, binned.id, laptop.id);
+  const expiredRun = await ranOn(user.id, expired.id, laptop.id);
+
+  const first: string[] = [];
+  await sweepAgentSessions(app, user.id, { completedDays: 60, remove: async (id) => first.push(id) });
+  assert.ok(first.includes(expiredRun.id), "a thread out of the Bin is retired work");
+  assert.ok(!first.includes(binnedRun.id), "a thread in the Bin keeps its session, so Restore brings the conversation back");
+
+  // Deleted for good: a thread that never ran goes at once; one with a session leaves the Bin and waits for the clean-up.
+  assert.equal((await user.inject({ method: "DELETE", url: `/api/agent/threads/${empty.id}` })).statusCode, 204);
+  assert.equal(await db.task.count({ where: { id: empty.id } }), 0);
+  assert.equal((await user.inject({ method: "DELETE", url: `/api/agent/threads/${binned.id}` })).statusCode, 204);
+  assert.equal(await db.task.count({ where: { id: binned.id } }), 1, "kept until its session is deleted");
+  const bin = (await user.inject({ method: "GET", url: "/api/agent/threads?bin=1" })).json() as { threads: Array<{ id: string }> };
+  assert.ok(!bin.threads.some((row) => row.id === binned.id), "it is no longer in the Bin");
+  assert.equal((await user.inject({ method: "POST", url: `/api/agent/threads/${binned.id}/restore` })).statusCode, 404);
+  await db.workspaceJob.update({ where: { id: binnedRun.id }, data: { context: {} } });
+  const second: string[] = [];
+  await sweepAgentSessions(app, user.id, { completedDays: 60, remove: async (id) => second.push(id) });
+  assert.ok(second.includes(binnedRun.id), "deleted for good, its session goes at the next sweep");
+
+  // The thread goes once its session is deleted; with sessions kept (cleanSessions off), at once.
+  assert.equal(await purgeThreads(db, user.id, { keepSessions: false }), 0, "sessions still to delete keep both threads");
+  await db.workspaceJob.update({ where: { id: expiredRun.id }, data: { context: { sessionDeletion: { state: "deleted", at: new Date().toISOString() } } } });
+  assert.equal(await purgeThreads(db, user.id, { keepSessions: false }), 1);
+  assert.equal(await db.task.count({ where: { id: expired.id } }), 0);
+  assert.equal(await purgeThreads(db, user.id, { keepSessions: true }), 1);
+  assert.equal(await db.task.count({ where: { id: binned.id } }), 0);
+});
+
 test("a claim of a project's task by the person's own agent carries the project's brief for its folder", async () => {
   const user = await h.asUser();
   const key = await h.asToken(user, "device");
