@@ -26,7 +26,8 @@ on:
       - "desktop-v*"
 
 # Published updater packages require TAURI_SIGNING_PRIVATE_KEY.
-# There is no Apple, Windows, or Linux code-signing certificate in this workflow.
+# The Mac app is signed ad hoc (bundle.macOS in tauri.conf.json). There is no Apple, Windows, or Linux
+# code-signing certificate in this workflow.
 permissions:
   contents: read
   actions: write
@@ -122,6 +123,12 @@ jobs:
       - name: Package the Intel Mac disk image
         if: matrix.name == 'macos-x64'
         run: node scripts/package-mac-dmg.mjs x86_64-apple-darwin
+
+      # macOS calls a downloaded app damaged when its bundle is not sealed. Stop unless the app, the app in
+      # each disk image and the app in each updater archive pass codesign --verify --deep --strict.
+      - name: Check the Mac app signatures
+        if: runner.os == 'macOS'
+        run: node scripts/verify-mac-signature.mjs ${{ matrix.rust_targets }}
 
       - name: Upload bundles
         uses: actions/upload-artifact@v6
