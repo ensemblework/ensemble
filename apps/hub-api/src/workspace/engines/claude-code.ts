@@ -36,7 +36,7 @@ import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
-import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, type ClaudeSpend } from "./sub-agents.js";
+import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
@@ -260,7 +260,7 @@ export async function runClaudeCode(
     ...(name ? ["--name", name] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
-  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true, ctx.job.context), MCP_TOOL_TIMEOUT: String(86_400_000) };
+  const env: NodeJS.ProcessEnv = withClaudeSubAgentLimits({ ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true, ctx.job.context), MCP_TOOL_TIMEOUT: String(86_400_000) });
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;

@@ -1,5 +1,5 @@
 /**
- * Cursor's sub-agent chats (#272, docs/41 §7). cursor-agent saves each sub-agent its task tool starts as a chat of
+ * Cursor's sub-agent chats (#272, docs/41 §6). cursor-agent saves each sub-agent its task tool starts as a chat of
  * its own, `chats/<workspace>/<child>/store.db` in its config folder, whose metadata names the chat that started it
  * and the root of the tree (`subagentInfo.parentAgentId`, `rootParentAgentId`). The sub-agent's transcript sits in
  * the parent's, `projects/<workspace>/agent-transcripts/<parent>/subagents/<child>.jsonl` in Cursor's data folder.
