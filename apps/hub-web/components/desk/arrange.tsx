@@ -1,9 +1,10 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { GripVertical } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "@/lib/api";
+import { usePreferenceWrite } from "@/lib/preference-write";
 import { useToast } from "@/components/toast";
 import { hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
 import { useSpaceAccess } from "@/lib/access";
@@ -34,28 +35,21 @@ function announce(text: string) {
   // The same words twice in a row would not be read again.
   region.textContent = region.textContent === text ? `${text}\u00a0` : text;
 }
-type Prefs = Awaited<ReturnType<typeof api.preferences>>;
-
 /** A layout preference with an optimistic write and a rollback on failure. */
 export function useLayoutPreference(key: string) {
-  const client = useQueryClient();
   const toast = useToast();
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
   const layout = readLayout(prefs.data?.preferences.find((row) => row.key === key)?.value);
+  const write = usePreferenceWrite(key);
   const save = useCallback(
     async (next: DeskLayout | null) => {
-      const before = client.getQueryData<Prefs>(["preferences"]);
-      const rest = (before?.preferences ?? []).filter((row) => row.key !== key);
-      client.setQueryData<Prefs>(["preferences"], { preferences: next ? [...rest, { key, value: next } as Prefs["preferences"][number]] : rest });
       try {
-        if (next) await api.putPreference(key, next);
-        else await api.deletePreference(key);
+        await write(next);
       } catch (error) {
-        if (before) client.setQueryData(["preferences"], before);
         toast((error as Error).message, { tone: "error" });
       }
     },
-    [client, key, toast],
+    [write, toast],
   );
   return { ready: prefs.isSuccess, layout, save, prefs };
 }
