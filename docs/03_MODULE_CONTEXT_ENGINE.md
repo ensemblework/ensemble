@@ -448,7 +448,7 @@ Every row carries its handle. Consumers: Ensemble's own agent and a coding agent
 
 Each kind (tasks with their pages' text, projects, people, repositories, deliverables, meeting notes with their transcripts, notes sessions, standalone pages, files by name and summary, saved app items, and with their modules skills, diagrams and plots) returns up to 30 rows matching any word; each row scores 3 per word in its title, its field weight per word in its body, 2 when every word matched, 4 for the whole phrase in the title, up to 1 for recency (over 120 days) and 0.5 for open work, scaled by the share of words matched.
 
-`near` (a record) adds 3 for a record it links to directly, 1.5 for one its scored relations name, and 1.5 for one in the same project. There are no embeddings: `Artifact.searchVector`, `ArtifactChunk.embedding` and `ContextPack` exist in the schema but nothing fills or queries them.
+`near` (a record) adds 3 for a record it links to directly, 1.5 for one its scored relations name, and 1.5 for one in the same project. There are no embeddings: `Artifact.searchVector` and `ArtifactChunk.embedding` exist in the schema but nothing fills or queries them. `ContextPack` stores workspace runs' context fingerprints, not search vectors ([06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)).
 
 Routes: `GET /api/context/item?ref=` (or `kind`, `id`; `rel`, `limit`, `offset`) and `GET /api/context/search?q=&kinds=&near=&limit=` (`routes/context.ts`, shared-space readable).
 

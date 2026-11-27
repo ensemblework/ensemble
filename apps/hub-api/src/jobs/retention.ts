@@ -23,6 +23,7 @@ export interface RetentionCounts {
   aiActivityPurged?: number;
   jobFilesPurged?: number;
   reviewsExpired?: number;
+  contextPacksPurged?: number;
 }
 
 /** Remote-task log chunks. Fixed, not a per-user setting. See docs/07 §1.1. */
@@ -161,6 +162,8 @@ export async function runRetention(
   counts.purged += await hardPurge(app.prisma, userId, deletedCutoff);
   // A deleted thread of the Code tab's agent keeps its own, shorter Bin (docs/16 §9).
   counts.purged += (await app.prisma.task.deleteMany({ where: { userId, sourceRef: { startsWith: CODE_THREAD_PREFIX }, deletedAt: { lt: new Date(now.getTime() - CODE_THREAD_BIN_DAYS * 86_400_000) } } })).count;
+  // A purged task takes its runs with it; their context packs (workspace/run-context.ts) go too.
+  counts.contextPacksPurged = await deleteUnusedContextPacks(app.prisma, userId);
   if (options.historyDays && options.historyDays > 0) {
     const historyCutoff = new Date(now.getTime() - options.historyDays * 86_400_000);
     const [ledger, transitions] = await app.prisma.$transaction([
@@ -197,6 +200,11 @@ export async function runRetention(
     payload: { ...counts, deletedDays: options.deletedDays, completedDays: options.completedDays, historyDays: options.historyDays ?? null },
   });
   return counts;
+}
+
+/** This account's context packs that no run uses any more. A pack is made with its run, so none is ever waiting for one. */
+export async function deleteUnusedContextPacks(db: Db, userId: string): Promise<number> {
+  return (await db.contextPack.deleteMany({ where: { userId, runs: { none: {} } } })).count;
 }
 
 async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Promise<number> {

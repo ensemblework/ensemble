@@ -16,7 +16,7 @@ import { createHttpHarness } from "../test/http.js";
 
 const h = await createHttpHarness();
 const db = h.prisma;
-const { keepCodeTurn, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
+const { keepCodeTurn, keepCodeTurnContext, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
 const { completionOf, markAccepted, parseCompletion, saveCompletion, verifyRun } = await import("./completion.js");
 const { steerPrompt } = await import("./engine-watch.js");
 const { HANDOFF_CHARS, renderHandoff, parseHandoff } = await import("./handoff-record.js");
@@ -67,8 +67,9 @@ async function setup(name: string) {
     });
   };
   const ctx = (job: Awaited<ReturnType<typeof turn>>): Ctx => ({ prisma: db, job, userId: user.id, root, secretEnv: {} }) as unknown as Ctx;
-  /** The turn's agent got its prompt and recorded its session; the turn ended. */
+  /** The turn's provenance was kept before it went; its agent got its prompt and recorded its session; the turn ended. */
   const ran = async (job: Awaited<ReturnType<typeof turn>>, built: Awaited<ReturnType<typeof prepareCodeTurn>>, session: string) => {
+    await keepCodeTurnContext(db, job.runId!, built);
     await keepCodeTurn(db, job.runId!, built);
     await db.workspaceEvent.create({ data: { jobId: job.id, kind: "engine", data: { session } } });
     await db.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", finishedAt: new Date(), summary: "Changed the export to keep the column order." } });
@@ -89,6 +90,7 @@ test("the first turn gets the whole packet; the next turn in the session only th
   await ran(first, one, "session-1");
   const run = await db.run.findUniqueOrThrow({ where: { id: first.runId! } });
   assert.equal(run.promptVersion, one.record.version);
+  assert.ok(run.contextPackId, "a Code tab turn keeps the context pack too");
   assert.ok(packetRecordOf(run.packet)?.sections.some((section) => section.name === "code/00-agent" && section.chars > 0), "section sizes are kept with the version");
 
   await db.task.update({ where: { id: board.id }, data: { title: "Fix the CSV and XLSX export" } });
@@ -139,6 +141,10 @@ test("the owner's linked skills go into the agent's own skill folder, out of git
   assert.doesNotMatch(read.prompt, /no longer in your skill folder|Skills for this run/);
   assert.deepEqual(read.record.skills, built.record.skills);
   assert.ok(existsSync(join(root, ".claude", "skills", "owner-release-notes", "SKILL.md")));
+  await ran(reading, read, "session-s");
+  const readRun = await db.run.findUniqueOrThrow({ where: { id: reading.runId! } });
+  assert.deepEqual(readRun.skillIds, run.skillIds);
+  assert.deepEqual(readRun.skillSignatures, run.skillSignatures, "read-only resumed turns retain the skills already in their session");
 
   // A read-only turn writes nothing into the folder.
   const other = await setup("skills-read-only");
