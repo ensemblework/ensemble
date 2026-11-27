@@ -9,7 +9,7 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { publishTo } from "../node/events.js";
 import { sseHub } from "../lib/sse.js";
-import { lockSession, resolveSession, runsOfSession, sessionDeletionOf } from "./sessions.js";
+import { childSessionsOf, lockSession, resolveSession, runsOfSession, sessionDeletionOf } from "./sessions.js";
 import { stopJob } from "./worker.js";
 
 const fail = (message: string, statusCode = 409) => Object.assign(new Error(message), { statusCode, expose: true });
@@ -107,7 +107,8 @@ export async function deleteAgentSession(
       const deleted = JSON.stringify({ state: "deleted", at: new Date().toISOString() });
       await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${deleted}::jsonb) WHERE id IN (${Prisma.join(jobs.map(job => job.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     });
-    await appendLedger({ userId: accountId, actor: options.actor ?? "me", action: "workspace.session.delete", payload: { sessionId: session.id, jobIds: jobs.map(job => job.id), engine: session.agent, projectFilesKept: true, ...(options.reason ? { reason: options.reason } : {}) } });
+    const children = (await childSessionsOf(app.prisma, jobs.map(job => job.id))).map(child => child.id);
+    await appendLedger({ userId: accountId, actor: options.actor ?? "me", action: "workspace.session.delete", payload: { sessionId: session.id, jobIds: jobs.map(job => job.id), engine: session.agent, projectFilesKept: true, ...(children.length ? { children } : {}), ...(options.reason ? { reason: options.reason } : {}) } });
     notify();
     return { deleted: true, sessionId: session.id };
   } catch (error) {

@@ -11,6 +11,7 @@
 import type { Prisma, PrismaClient, WorkspaceJobStatus } from "@prisma/client";
 import { CODE_ENGINES, ENGINE_LABELS, isCodeEngine, type CodeEngine } from "@ensemble/shared-types";
 import { currentDevices } from "../devices/successor.js";
+import { OWN_SESSION_KINDS, type SubAgentKind } from "./engines/sub-agents.js";
 
 /** Whose runs: the space, and in a space shared with someone, only the runs they started. */
 export type SessionScope = { space: string; runner: string | null };
@@ -389,6 +390,33 @@ export type SessionRun = {
   claimedAt: Date | null;
   finishedAt: Date | null;
 };
+
+/** A session of its own that a session's agent started (a Codex sub-agent's thread, a Cursor sub-agent's chat), as its runs recorded it. */
+export type ChildSession = { runId: string; engine: string; id: string; kind: string; title: string | null };
+
+/**
+ * The sessions of their own the given runs' agents started, each once (`sub_agent` events of a kind in
+ * `OWN_SESSION_KINDS`, workspace/engines/sub-agents.ts): deleted with the session that started them (docs/41 §6).
+ */
+export async function childSessionsOf(prisma: Pick<PrismaClient, "workspaceEvent">, runIds: readonly string[]): Promise<ChildSession[]> {
+  if (!runIds.length) return [];
+  const rows = await prisma.workspaceEvent.findMany({ where: { jobId: { in: [...runIds] }, kind: "sub_agent" }, select: { jobId: true, data: true }, orderBy: { sequence: "asc" }, take: 5_000 });
+  const found = new Map<string, ChildSession>();
+  for (const row of rows) {
+    const data = (row.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : {}) as Record<string, unknown>;
+    if (typeof data.id !== "string" || typeof data.engine !== "string" || !OWN_SESSION_KINDS.includes(data.kind as SubAgentKind)) continue;
+    const key = `${data.engine}:${data.id}`;
+    const title = typeof data.title === "string" ? data.title : null;
+    found.set(key, { runId: row.jobId, engine: data.engine, id: data.id, kind: data.kind as string, title: title ?? found.get(key)?.title ?? null });
+  }
+  return [...found.values()];
+}
+
+/** What deleting a session also deletes, as its confirmation says it, with a space after: nothing when its agent started no session of its own. */
+export function childrenLine(count: number): string {
+  if (count <= 0) return "";
+  return count === 1 ? "This session started 1 more session. It'll be deleted too. " : `This session started ${count} more sessions. They'll be deleted too. `;
+}
 
 /** Every run of a session (`root` is its id), oldest first: what Ensemble Node steers, queues behind and stops. */
 export async function runsOfSession(prisma: Pick<PrismaClient, "workspaceJob">, scope: SessionScope, root: string, complete = false): Promise<SessionRun[]> {

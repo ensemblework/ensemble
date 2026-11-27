@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { isCodeEngine } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { deleteNativeSession } from "../workspace/engines/delete-session.js";
+import { sessionToDelete } from "../workspace/engines/sub-agents.js";
 import { lockSession, runsOfSession, sessionOfJob, sessionDeletionOf } from "../workspace/sessions.js";
 import { stopJob } from "../workspace/worker.js";
 import { loadHeld } from "./store.js";
@@ -12,7 +13,7 @@ import type { CodeAnswer } from "./contract.js";
 
 export const SESSION_DELETE_API = 1;
 const Request = z.object({ id: z.string().min(1).max(100), jobIds: z.array(z.string().uuid()).min(1).max(1000) }).strict();
-const engineSession = z.object({ session: z.string().min(1) });
+
 const receipt = (id: string) => `session.native-deleted:${id}`;
 const nativeDeletes = new Map<string, Promise<void>>();
 
@@ -55,15 +56,18 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
     await new Promise(done => setTimeout(done, 250));
   }
   const nativeJobs = await app.prisma.workspaceJob.findMany({ where: { userId: accountId, id: { in: [...allIds] } }, select: { id: true, provider: true, externalRoot: true, repoPath: true } });
-  const events = await app.prisma.workspaceEvent.findMany({ where: { jobId: { in: [...allIds] }, kind: "engine" }, select: { jobId: true, data: true } });
+  // Each run's own session first, then the sessions of their own its agent started (Codex threads, Cursor chats), each by
+  // its exact id once its run has stopped, which stopped them too. A child the parent's deletion already removed counts as deleted.
+  const events = (await app.prisma.workspaceEvent.findMany({ where: { jobId: { in: [...allIds] }, kind: { in: ["engine", "sub_agent"] } }, select: { jobId: true, kind: true, data: true }, orderBy: { sequence: "asc" } }))
+    .sort((a, b) => Number(a.kind !== "engine") - Number(b.kind !== "engine"));
   const seen = new Set<string>();
   for (const job of nativeJobs) {
     if (!isCodeEngine(job.provider)) continue;
     const engine = job.provider;
     for (const event of events.filter(event => event.jobId === job.id)) {
-      const data = engineSession.safeParse(event.data);
-      if (!data.success) continue;
-      const key = `${job.provider}:${data.data.session}`;
+      const session = sessionToDelete(event, engine);
+      if (!session) continue;
+      const key = `${job.provider}:${session}`;
       if (seen.has(key)) continue;
       const done = await app.prisma.preference.findUnique({ where: { userId_key: { userId: accountId, key: receipt(key) } } });
       if (!done) {
@@ -72,7 +76,7 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
         if (existing) await existing;
         else {
           const deletion = (async () => {
-            await deleteNativeSession(engine, data.data.session, job.externalRoot ?? job.repoPath ?? process.cwd());
+            await deleteNativeSession(engine, session, job.externalRoot ?? job.repoPath ?? process.cwd());
             await app.prisma.preference.upsert({
               where: { userId_key: { userId: accountId, key: receipt(key) } },
               create: { userId: accountId, key: receipt(key), value: { deleted: true }, source: "system" },

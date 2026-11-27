@@ -115,6 +115,8 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.match(summary, /brief:title-first:no-unpicked-skill:lean/, "the brief opens with the task, carries only picked skills, and no noise");
     assert.match(summary, /host:none own:0/, "Claude Code signs in with the person's own settings, not the app session's");
     assert.match(summary, /subagents:depth=3,teams=0/, "sub-agents nest at most 3 deep and agent teams stay off, though the runtime's environment turned them on");
+    const children = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events.filter((event) => event.kind === "sub_agent");
+    assert.deepEqual(children.map((event) => [event.data.engine, event.data.id, event.data.kind, event.data.title]), [["claude-code", "a1", "inside", "Reply with PLUM"]], "the Agent tool's sub-agent is recorded as a child inside the session");
     // A background sub-agent: the last answer is the summary, both stretches count (this run's cost, not the
     // session's so far), and the sub-agent's tool call is in the trace, marked, while its words are not the run's.
     assert.doesNotMatch(summary, /still running|PLUM/);

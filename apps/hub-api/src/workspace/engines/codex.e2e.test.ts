@@ -110,6 +110,8 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     const steps = (await side.api<{ run: { steps: Array<{ title: string; output: string | null }> } }>(`/api/runs/${job.runId}`)).body.run.steps;
     assert.ok(steps.some((step) => step.title === "Sub-agent: Run ls"), steps.map((step) => step.title).join(" | "));
     assert.ok(!steps.some((step) => (step.output ?? "").includes("PLUM")), "the sub-agent's answer is not a step of the run");
+    const events = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events;
+    assert.deepEqual(events.filter((event) => event.kind === "sub_agent").map((event) => [event.data.engine, event.data.session, event.data.id, event.data.kind]), [["codex", "t1", "t2", "thread"]], "the sub-agent's thread is recorded once, as the session's child");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
 
     // A folder the person trusts is trusted in Codex too, so its own .codex/ runs as in their Codex.
