@@ -736,6 +736,40 @@ test("a computer tool that runs a command is never read-only, and every read-onl
   ], "every read-only flag on the computer tools, checked by hand");
 });
 
+test("every tool a node turn can call that is not a write either only reads or is on the reviewed list of tools that act", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  const { nodeTools } = await import("./tools.js");
+  const { peerRequestTool } = await import("./peer-requests.js");
+  const { TOOLS } = await import("../assistant/registry.js");
+  const { actsOnTheWorld } = await import("./work-board.js");
+  const full = await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { autonomy: { computerFiles: true } as never } });
+  const dm = await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } });
+  const scope = (plan: { planId: string; planStep: string | null } | null) =>
+    ({ prisma: h.prisma, node: full, room: dm, lineage: { rootMessageId: null, botDepth: 1, fromNonOwner: false }, privateTo: null, ownerOnly: true, redis: h.app.redis, dispatch: async () => undefined, turnId: randomUUID(), plan, signal: undefined, ownerWords: "" }) as never;
+  const tools = new Map(
+    [...TOOLS.values(), ...nodeTools(scope(null)), ...nodeTools(scope({ planId: randomUUID(), planStep: "s1" })), peerRequestTool({ node: full, room: { ...dm, kind: "room" }, askerId: mira.id, draft: { rootMessageId: null, botDepth: 1, fromNonOwner: false } } as never)].map((tool) => [tool.name, tool]),
+  );
+  for (const name of ["hub_list_tasks", "node_post", "node_step_report", "node_peer_request", "computer_run", "node_computer_files", "node_remember"]) assert.ok(tools.has(name), `${name} is among them`);
+  const acting = [...tools.values()].filter((tool) => !tool.isWrite && !readsOnly(tool)).map((tool) => tool.name).sort();
+  assert.deepEqual(acting, [
+    // The computer: pages, recordings, the screen, commands, files and requests.
+    "browser_click", "browser_close", "browser_download", "browser_login_needed", "browser_open", "browser_press", "browser_record", "browser_set_location", "browser_type", "browser_upload",
+    "capture_app_start", "capture_app_stop", "capture_video",
+    "computer_files_delete", "computer_files_move", "computer_files_write", "computer_http", "computer_run", "computer_run_stop", "computer_sudo", "computer_terminal_screenshot",
+    "desktop_act", "desktop_handoff", "desktop_open", "desktop_record",
+    "live_view",
+    // The node's own acts: posts, cards, plans, memories, routines, sessions, nodes and crews.
+    "node_answer_question", "node_create", "node_create_group", "node_crew_add", "node_delegate", "node_helper", "node_peer_request", "node_plan", "node_plan_revise", "node_post", "node_remember", "node_routines",
+    "node_save_attachment", "node_secret_request", "node_session_adopt", "node_session_delete", "node_session_hand_over", "node_session_queue", "node_session_send", "node_session_start", "node_session_stop",
+    "node_share_file", "node_show", "node_step_blocked", "node_step_report", "node_work_start", "node_work_steer", "node_work_stop",
+    "secret_http", "terminal_close", "terminal_open", "terminal_send", "web_task",
+  ], "the tools that act without being writes, reviewed by hand: a tool joins only once someone checked that it acts; one that only reads gets readOnly");
+  for (const tool of tools.values()) {
+    if (!tool.isWrite && !readsOnly(tool)) assert.equal(actsOnTheWorld({ name: tool.name, isWrite: false, readOnly: false }), true, `${tool.name} counts as acting`);
+  }
+});
+
 test("journal labels: secrets are taken out by key and in text, before the label is cut", () => {
   const label = (args: unknown) => journalLabel(JSON.stringify(args)) ?? "";
   for (const kept of [
