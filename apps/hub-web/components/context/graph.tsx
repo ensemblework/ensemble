@@ -564,7 +564,8 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
 
   useEffect(() => {
     const wrap = wrapRef.current;
-    if (!wrap) return;
+    const canvas = canvasRef.current;
+    if (!wrap || !canvas) return;
     let lastW = wrap.clientWidth;
     let lastH = wrap.clientHeight;
     const observer = new ResizeObserver(() => {
@@ -622,18 +623,18 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
     const onTouchEnd = () => {
       pinch.current = null;
     };
-    wrap.addEventListener("wheel", onWheel, { passive: false });
-    wrap.addEventListener("touchstart", onTouchStart, { passive: true });
-    wrap.addEventListener("touchmove", onTouchMove, { passive: false });
-    wrap.addEventListener("touchend", onTouchEnd);
-    wrap.addEventListener("touchcancel", onTouchEnd);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("touchstart", onTouchStart, { passive: true });
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+    canvas.addEventListener("touchend", onTouchEnd);
+    canvas.addEventListener("touchcancel", onTouchEnd);
     return () => {
       observer.disconnect();
-      wrap.removeEventListener("wheel", onWheel);
-      wrap.removeEventListener("touchstart", onTouchStart);
-      wrap.removeEventListener("touchmove", onTouchMove);
-      wrap.removeEventListener("touchend", onTouchEnd);
-      wrap.removeEventListener("touchcancel", onTouchEnd);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchEnd);
     };
   }, [fullscreen, graph.isLoading, compact]);
 
@@ -1113,7 +1114,7 @@ function GraphSidePanel({
           <Crosshair size={12} aria-hidden /> {focused ? "Focused" : "Focus here"}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-3" tabIndex={0} role="region" aria-label="Linked records">
         {ref && item.data ? (
           <RelationGroups data={item.data} onOpen={pick} />
         ) : ref && item.isPending ? (

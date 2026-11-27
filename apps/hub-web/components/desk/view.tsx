@@ -148,7 +148,7 @@ export function DeskView({
       {liveData?.pinnedTasks?.length ? (
         <section className="today-pins" data-today-pins aria-label="Pinned to Today">
           <h2><Pin size={12} aria-hidden />Pinned</h2>
-          <div>{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="today-pin" title={task.title}>{task.title}</Link>)}</div>
+          <div>{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="today-pin" title={task.title}><span>{task.title}</span></Link>)}</div>
         </section>
       ) : null}
       <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk" aria-busy={waiting || undefined}>

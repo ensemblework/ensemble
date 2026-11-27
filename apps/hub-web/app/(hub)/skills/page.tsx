@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Eye, PenLine, Plus, Search } from "lucide-react";
+import { ChevronRight, Eye, PenLine, Plus, Search, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
@@ -25,6 +26,7 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
   const [history, setHistory] = useState(false);
   const [view, setViewState] = useState<"edit" | "preview">("edit");
   const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   useEffect(() => {
     if (window.localStorage.getItem(VIEW_KEY) === "preview") setViewState("preview");
   }, []);
@@ -162,6 +164,17 @@ export default function SkillsPage() {
     mutationFn: (input: { id: string; enabled: boolean }) => api.patchSkill(input.id, { enabled: input.enabled }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["skills"] }),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteSkill(id),
+    onSuccess: (_result, id) => {
+      client.setQueryData<{ skills: SkillRecord[] }>(["skills"], (current) => current ? { skills: current.skills.filter(skill => skill.id !== id) } : current);
+      if (id === selectedId) router.replace("/skills");
+      void client.invalidateQueries({ queryKey: ["skills"] });
+      void client.invalidateQueries({ queryKey: ["entities"] });
+      void client.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const create = useMutation({
     mutationFn: async () => {
       const name = await askText({ title: "New skill", label: "What should the agent get good at?", placeholder: "Writing release notes", confirm: "Create skill" });
@@ -187,6 +200,7 @@ export default function SkillsPage() {
             <Search size={13} className="text-faint" />
             <input
               value={search}
+              aria-label="Search skills"
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search skills…"
               className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-faint"
@@ -207,20 +221,19 @@ export default function SkillsPage() {
               {list.map((skill) => (
                 <div
                   key={skill.id}
-                  role="button"
-                  onClick={() => router.replace(`/skills?skill=${skill.id}`)}
                   className={cx(
-                    "tile cursor-pointer rounded-md px-3 py-2.5",
+                    "tile group relative rounded-md px-3 py-2.5",
                     skill.id === selectedId ? "bg-accent-soft" : "bg-panel",
                   )}
                   data-active={skill.id === selectedId || undefined}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13.5px] font-semibold">{skill.name}</span>
-                    <span onClick={(event) => event.stopPropagation()}>
+                  <div className="flex min-w-0 items-center justify-between gap-2 pr-7">
+                    <Link href={`/skills?skill=${skill.id}`} replace className="min-w-0 flex-1 break-words text-[13.5px] font-semibold after:absolute after:inset-0" aria-current={skill.id === selectedId ? "true" : undefined}>{skill.name}</Link>
+                    <span className="relative z-10 shrink-0">
                       <Toggle label={`Enable ${skill.name}`} checked={skill.enabled} onChange={(enabled) => toggle.mutate({ id: skill.id, enabled })} />
                     </span>
                   </div>
+                  <button type="button" className="icon-btn absolute right-2 top-2 z-10 h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100" aria-label={`Delete ${skill.name} permanently`} title="Delete permanently" disabled={remove.isPending && remove.variables === skill.id} onClick={() => remove.mutate(skill.id)}><Trash2 size={13} aria-hidden /></button>
                   <div className="mt-1 flex items-center gap-1.5 text-[12px] text-muted">
                     <Tag tone="blue">{skill.provenance === "declared" ? "your rule" : skill.provenance}</Tag>
                     <span>v{skill.version}</span>
@@ -232,7 +245,7 @@ export default function SkillsPage() {
             </div>
           )}
         </div>
-        {selected ? <SkillDetail skill={selected} /> : <div />}
+        {selected ? <SkillDetail key={selected.id} skill={selected} /> : <div />}
       </div>
     </div>
   );

@@ -1752,6 +1752,7 @@ export const api = bindClient({
     post<{ ok: boolean; model: string; text: string; tokensIn: number | null; tokensOut: number | null; ms: number }>("/api/models/test", { tier }),
 
   // needs me
+  waitingTasks: () => get<{ tasks: TaskRecord[] }>("/api/tasks?needsMe=true"),
   approvals: () => get<{ approvals: ApprovalRecord[] }>("/api/approvals"),
   decide: (id: string, data: { decision: "approved" | "edited" | "rejected"; editedPayload?: unknown; reason?: string }) =>
     post(`/api/approvals/${id}/decide`, data),

@@ -12,6 +12,7 @@ import { accountIdOf } from "../lib/auth.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
 import { INTERNAL_TASK } from "../lib/node-tasks.js";
 import { guardedSave, lockSave, saveBase, SaveConflictError } from "../lib/save-conflict.js";
+import { waitingTaskIds } from "../lib/needs-me.js";
 
 export function serializeTask(task: {
   due: Date | null;
@@ -65,7 +66,7 @@ async function presentTask(viewer: string, task: Held) {
 
 export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/tasks", async (request) => {
-    const { board } = z.object({ board: z.enum(["default"]).optional() }).parse(request.query ?? {});
+    const { board, needsMe } = z.object({ board: z.enum(["default"]).optional(), needsMe: z.enum(["true"]).optional() }).parse(request.query ?? {});
     const userId = request.userId;
     const hideStarters = await hidesSignupStarters(prisma, userId);
     const tasks = await prisma.task.findMany({
@@ -77,8 +78,10 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
     });
-    const found = await nodeAssignees(accountIdOf(request), tasks);
-    return { tasks: tasks.map((task) => withNodeAssignee(task, found)) };
+    const waiting = needsMe ? await waitingTaskIds(prisma, userId, tasks) : null;
+    const shown = waiting ? tasks.filter(task => waiting.has(task.id)) : tasks;
+    const found = await nodeAssignees(accountIdOf(request), shown);
+    return { tasks: shown.map((task) => withNodeAssignee(task, found)) };
   });
 
   app.get("/api/tasks/:id", async (request, reply) => {
