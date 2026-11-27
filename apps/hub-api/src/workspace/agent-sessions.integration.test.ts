@@ -28,17 +28,16 @@ after(async () => {
 });
 const DAY = 86_400_000;
 
-test("R2-a: a task on the person's agent records its instructions, exact supplied skills and context before success or failure", async () => {
-  const { executeJob } = await import("./agent.js");
-  const { instructionHash, runContextOf } = await import("./run-context.js");
+/**
+ * The person's Claude Code as a fixture, shared by the tests that run the engine (the command's path is looked up
+ * once): `REFUSE_BEFORE_START` fails before the agent starts, `FAIL_THIS_RUN` after. Its home, and the API listening.
+ */
+async function fakeClaude(): Promise<{ home: string; bin: string }> {
   const { setLocalPort } = await import("./engines/registry.js");
-  const address = await h.app.listen({ host: "127.0.0.1", port: 0 });
-  setLocalPort(Number(new URL(address).port));
+  if (!h.app.server.listening) setLocalPort(Number(new URL(await h.app.listen({ host: "127.0.0.1", port: 0 })).port));
   const home = join(scratch, "run-home");
   const bin = join(home, "bin");
-  const root = join(home, "workspace", "task");
   await mkdir(bin, { recursive: true });
-  await mkdir(root, { recursive: true });
   const command = join(bin, "claude");
   await writeFile(command, `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -47,11 +46,21 @@ if (args.includes("--version")) { console.log("2.1.999 (Claude Code)"); process.
 if (args.includes("--help")) { console.log("--name"); process.exit(0); }
 const prompt = args[args.indexOf("-p") + 1];
 fs.writeFileSync("sent-prompt.txt", prompt);
+if (prompt.includes("REFUSE_BEFORE_START")) { console.error("Fixture refused the prompt."); process.exit(2); }
 console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "trace-fixture", model: "claude-test" }));
 if (prompt.includes("FAIL_THIS_RUN")) { console.error("Fixture rejected the task."); process.exit(2); }
 console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 1, result: "Finished the task.", usage: { input_tokens: 10, output_tokens: 4 } }));
 `);
   await chmod(command, 0o755);
+  return { home, bin };
+}
+
+test("R2-a: a task on the person's agent records its instructions, exact supplied skills and context before success or failure", async () => {
+  const { executeJob } = await import("./agent.js");
+  const { instructionHash, runContextOf } = await import("./run-context.js");
+  const { home, bin } = await fakeClaude();
+  const root = join(home, "workspace", "task");
+  await mkdir(root, { recursive: true });
   const keys = ["HOME", "XDG_CONFIG_HOME", "PATH", "ENSEMBLE_WORKSPACE_ROOT"] as const;
   const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), PATH: `${bin}:${process.env.PATH}`, ENSEMBLE_WORKSPACE_ROOT: join(home, "workspace") });
@@ -102,6 +111,45 @@ console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false
   }
 });
 
+test("R2-a: a Code tab turn that fails before its agent gets it keeps its provenance, not its packet, so the next turn's delta still has what it missed", async () => {
+  const { executeJob } = await import("./agent.js");
+  const { lastDelivered } = await import("./code-turn.js");
+  const { packetRecordOf } = await import("./turn-packet.js");
+  const { home, bin } = await fakeClaude();
+  const root = join(home, "workspace", "thread");
+  await mkdir(root, { recursive: true });
+  const keys = ["HOME", "XDG_CONFIG_HOME", "PATH", "ENSEMBLE_WORKSPACE_ROOT"] as const;
+  const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), PATH: `${bin}:${process.env.PATH}`, ENSEMBLE_WORKSPACE_ROOT: join(home, "workspace") });
+  try {
+    const user = await h.asUser();
+    const board = await db.task.create({ data: { userId: user.id, title: "Fix the CSV export", owner: "agent", status: "todo", createdBy: "me" } });
+    const thread = await db.task.create({ data: { userId: user.id, title: "CSV export", owner: "agent", status: "todo", sourceKind: "other", sourceRef: "code:local:fieldnote", createdBy: "me" } });
+    const context = { chat: true, surface: "code" };
+    const turn = async (instructions: string, continueFromJobId: string | null) => {
+      const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: thread.id, kind: "code", status: "running", provider: "claude-code", model: "default", externalRoot: root, executionMode: "native", delivery: "push", unattended: true, instructions, continueFromJobId, context, markDone: false } });
+      await executeJob(h.app, job.id, { signal: new AbortController().signal, waitForPerson: (work) => work() });
+      return db.workspaceJob.findUniqueOrThrow({ where: { id: job.id }, include: { run: true } });
+    };
+    const first = await turn(`Make the export keep the column order.\n\n(Mentioned in Ensemble: @${board.title} [task] ensemble://task/${board.id})`, null);
+    assert.equal(first.status, "succeeded", first.error ?? "");
+    const delivered = packetRecordOf(first.run?.packet)?.delivered;
+    assert.ok(delivered, "a turn its agent got keeps its packet");
+    await db.task.update({ where: { id: board.id }, data: { title: "Fix the CSV and XLSX export" } });
+    const second = await turn("REFUSE_BEFORE_START", first.id);
+    assert.equal(second.status, "failed");
+    assert.match(second.error ?? "", /Fixture refused/);
+    assert.equal(second.run?.packet, null, "a turn its agent never got leaves no packet");
+    assert.ok(second.run?.contextPackId && second.run.promptVersion, "its provenance is kept all the same");
+    assert.deepEqual(await lastDelivered(db, { provider: "claude-code", model: "default", context }, second.id), delivered, "the next turn compares against what the agent last got");
+  } finally {
+    for (const key of keys) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
+
 test("R2-a: an API-model research run records a version and an explicit empty skill list", async () => {
   const { executeJob } = await import("./agent.js");
   const { runContextOf } = await import("./run-context.js");
@@ -136,6 +184,37 @@ test("R2-a: an API-model research run records a version and an explicit empty sk
   }
 });
 
+test("R2-a: provenance never fails a run: a skill name past the schema's cap is cut, and a stored pack that does not fit reads as none", async () => {
+  const { executeJob } = await import("./agent.js");
+  const { runContextOf } = await import("./run-context.js");
+  const { setRuntimeFetchForTests } = await import("../runtime/models.js");
+  const { setCredentialResolverForTests } = await import("../runtime/credentials.js");
+  const old = process.env.ENSEMBLE_INPROCESS_RUNTIME;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
+  const user = await h.asUser();
+  // Skill names have no limit of their own (`PATCH /api/skills/:id`); the run context keeps 200 characters.
+  const name = "Release notes for the quarterly export ".repeat(10);
+  const skill = await db.skill.create({ data: { userId: user.id, slug: "long-name", name, body: "Group by area." } });
+  const task = await db.task.create({ data: { userId: user.id, title: "Research release notes", skillIds: [skill.id], createdBy: "me" } });
+  const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "research", status: "running", provider: "ollama", model: "trace-fixture", executionMode: "native", markDone: false } });
+  setCredentialResolverForTests(async (_userId, provider) => ({ provider, secret: "", source: "none", baseUrl: null }));
+  setRuntimeFetchForTests(async () => Response.json({ model: "trace-fixture", message: { role: "assistant", content: "Research complete." }, done: true, prompt_eval_count: 10, eval_count: 4 }));
+  try {
+    await executeJob(h.app, job.id, { signal: new AbortController().signal, waitForPerson: (work) => work() });
+    const ended = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id }, include: { run: true } });
+    assert.equal(ended.status, "succeeded", ended.error ?? "");
+    assert.deepEqual(ended.run?.skillIds, [skill.id]);
+    assert.equal((await runContextOf(db, ended.runId))?.skills[0]?.name, name.slice(0, 200));
+    await db.contextPack.update({ where: { id: ended.run!.contextPackId! }, data: { items: { schema: "ensemble.run-context/1", promptVersion: "not-a-version" } } });
+    assert.equal(await runContextOf(db, ended.runId), null);
+  } finally {
+    setRuntimeFetchForTests(null);
+    setCredentialResolverForTests(null);
+    if (old === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME;
+    else process.env.ENSEMBLE_INPROCESS_RUNTIME = old;
+  }
+});
+
 test("R2-a: a leased computer relays provenance into a web-owned context pack, without trusting a local id", async () => {
   const { contextPart, instructionHash, keepRunContext, runContextOf } = await import("./run-context.js");
   const user = await h.asUser();
@@ -148,10 +227,31 @@ test("R2-a: a leased computer relays provenance into a web-owned context pack, w
   const context = (await runContextOf(db, local.id))!;
   const token = await h.asToken(user, "device");
   const device = await db.device.create({ data: { userId: user.id, name: "Laptop", platform: "linux", tokenId: token.id } });
-  const job = await db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, deviceId: device.id, status: "running", executionMode: "native", model: "fixture", leaseToken: "trace-lease", leaseUntil: new Date(Date.now() + 60_000) } });
-  const complete = (leaseToken: string, runContext: unknown) => token.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/complete`, payload: { leaseToken, outcome: "succeeded", summary: "Done.", runContext } });
+  const leased = (leaseToken: string) => db.workspaceJob.create({ data: { userId: user.id, taskId: task.id, deviceId: device.id, status: "running", executionMode: "native", model: "fixture", leaseToken, leaseUntil: new Date(Date.now() + 60_000) } });
+  const completeJob = (jobId: string, leaseToken: string, runContext: unknown) => token.inject({ method: "POST", url: `/api/devices/self/jobs/${jobId}/complete`, payload: { leaseToken, outcome: "succeeded", summary: "Done.", ...(runContext === undefined ? {} : { runContext }) } });
+  const job = await leased("trace-lease");
+  const complete = (leaseToken: string, runContext: unknown) => completeJob(job.id, leaseToken, runContext);
   assert.equal((await complete("wrong-lease", context)).statusCode, 409);
-  assert.equal((await complete("trace-lease", { ...context, promptVersion: "not-a-version" })).statusCode, 400);
+  // One value that does not fit (a computer on another schema, say) is not kept; the run still ends.
+  const bad = await leased("bad-lease");
+  const refused = await completeJob(bad.id, "bad-lease", { ...context, promptVersion: "not-a-version" });
+  assert.equal(refused.statusCode, 200, refused.body);
+  const badEnd = await db.workspaceJob.findUniqueOrThrow({ where: { id: bad.id }, include: { run: true } });
+  assert.equal(badEnd.status, "succeeded");
+  assert.ok(badEnd.run?.endedAt, "the completion is kept");
+  assert.equal(badEnd.run.contextPackId, null);
+  // A computer that sends no provenance (an older CLI) ends its run as before.
+  const older = await leased("older-lease");
+  assert.equal((await completeJob(older.id, "older-lease", undefined)).statusCode, 200);
+  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: older.id } })).status, "succeeded");
+  // Sizes past the cap are capped, so the pack's token estimate cannot overflow and roll the completion back.
+  const huge = await leased("huge-lease");
+  const big = await completeJob(huge.id, "huge-lease", { ...context, parts: Array.from({ length: 60 }, () => ({ ...context.parts[0]!, chars: 9_000_000_000_000 })) });
+  assert.equal(big.statusCode, 200, big.body);
+  const hugeEnd = await db.workspaceJob.findUniqueOrThrow({ where: { id: huge.id }, include: { run: { include: { contextPack: true } } } });
+  assert.equal(hugeEnd.status, "succeeded");
+  assert.ok(hugeEnd.run?.contextPack && hugeEnd.run.contextPack.tokenEstimate! <= 2_147_483_647);
+  assert.ok((await runContextOf(db, hugeEnd.runId))!.parts.every((part) => part.chars === 10_000_000));
   const sent = await complete("trace-lease", context);
   assert.equal(sent.statusCode, 200, sent.body);
   const web = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id }, include: { run: { include: { contextPack: true } } } });
@@ -165,6 +265,30 @@ test("R2-a: a leased computer relays provenance into a web-owned context pack, w
   const count = await db.contextPack.count({ where: { userId: user.id } });
   assert.equal((await complete("trace-lease", context)).statusCode, 409);
   assert.equal(await db.contextPack.count({ where: { userId: user.id } }), count);
+});
+
+test("R2-a: retention deletes the context packs its purge left without a run, only in the account it purges", async () => {
+  const { contextPart, instructionHash, keepRunContext } = await import("./run-context.js");
+  const { runRetention } = await import("../jobs/retention.js");
+  const owner = await h.asUser();
+  const other = await h.asUser();
+  const packed = async (userId: string, deletedAt: Date | null) => {
+    const task = await db.task.create({ data: { userId, title: "Traced task", createdBy: "me", deletedAt } });
+    const run = await db.run.create({ data: { userId, taskId: task.id, worker: "workspace" } });
+    await keepRunContext(db, run.id, { schema: "ensemble.run-context/1", promptVersion: instructionHash("Instructions"), skills: [], parts: [contextPart("prompt", "Context")] });
+    return { task: task.id, pack: (await db.run.findUniqueOrThrow({ where: { id: run.id } })).contextPackId! };
+  };
+  const purged = await packed(owner.id, new Date(Date.now() - 40 * DAY));
+  const kept = await packed(owner.id, null);
+  // Another account's pack that no run uses any more waits for that account's own pass.
+  const elsewhere = await packed(other.id, null);
+  await db.task.delete({ where: { id: elsewhere.task } });
+  const counts = await runRetention(h.app, owner.id, { deletedDays: 30, completedDays: 60 });
+  assert.equal(await db.task.findUnique({ where: { id: purged.task } }), null);
+  assert.equal(await db.contextPack.findUnique({ where: { id: purged.pack } }), null);
+  assert.equal(counts.contextPacksPurged, 1);
+  assert.ok(await db.contextPack.findUnique({ where: { id: kept.pack } }));
+  assert.ok(await db.contextPack.findUnique({ where: { id: elsewhere.pack } }));
 });
 
 async function laptopFor(user: HttpUser, online = true) {

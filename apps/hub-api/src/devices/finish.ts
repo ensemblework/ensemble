@@ -62,7 +62,10 @@ export async function finishDeviceJob(
     totals?: RunTotals;
     report?: StepReport | null;
     codeTurn?: CodeTurnResult | null;
-    runContext?: RunContext;
+    /** The run's context provenance (workspace/run-context.ts), already read; kept after the run ends, best-effort. */
+    runContext?: RunContext | null;
+    /** Where a part kept best-effort that could not be kept is logged. */
+    warn?: (error: unknown, message: string) => void;
     /** Any other run's checks as its computer ran them again. */
     completion?: Completion | null;
     /** The computer runs an assigned run's checks again (`capabilities.runVerification`): its task is done only when they pass. */
@@ -138,7 +141,6 @@ export async function finishDeviceJob(
     // A Code tab turn: what its packet sent, the checks the computer ran again, and its handoff record.
     if (input.codeTurn) await keepCodeTurnResult(tx, job, runId, input.codeTurn);
     else if (input.completion) await saveCompletion(tx, runId, input.completion);
-    if (input.runContext) await keepRunContext(tx, runId, redactDeep(input.runContext));
     // An assigned run on a computer that runs its checks again: its task is done only when they passed.
     const assigned = job.kind === "code" && !isChatTurn(job.context) && input.verifies === true;
     const checks = assigned ? (input.completion?.checks ?? null) : null;
@@ -167,6 +169,10 @@ export async function finishDeviceJob(
     return runId;
   });
   if (!won) return false;
+  // Provenance never undoes or fails the end of a run: kept outside its transaction, and a failure is only logged.
+  // Skill names are its only free text; hashes and sizes are kept as sent.
+  const runContext = input.runContext ? { ...input.runContext, skills: input.runContext.skills.map((skill) => ({ ...skill, name: redactText(skill.name) })) } : null;
+  if (runContext) await keepRunContext(prisma, won, runContext).catch((error: unknown) => input.warn?.(error, "could not keep the run's context provenance"));
   await announceClosedDecisions(prisma, [job.id]).catch(() => undefined);
   await appendLedger({
     userId: job.userId,

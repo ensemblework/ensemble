@@ -16,7 +16,7 @@ import { createHttpHarness } from "../test/http.js";
 
 const h = await createHttpHarness();
 const db = h.prisma;
-const { keepCodeTurn, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
+const { keepCodeTurn, keepCodeTurnContext, prepareCodeTurn, codeTurnResultOf, keepCodeTurnResult } = await import("./code-turn.js");
 const { completionOf, markAccepted, parseCompletion, saveCompletion, verifyRun } = await import("./completion.js");
 const { steerPrompt } = await import("./engine-watch.js");
 const { HANDOFF_CHARS, renderHandoff, parseHandoff } = await import("./handoff-record.js");
@@ -67,8 +67,9 @@ async function setup(name: string) {
     });
   };
   const ctx = (job: Awaited<ReturnType<typeof turn>>): Ctx => ({ prisma: db, job, userId: user.id, root, secretEnv: {} }) as unknown as Ctx;
-  /** The turn's agent got its prompt and recorded its session; the turn ended. */
+  /** The turn's provenance was kept before it went; its agent got its prompt and recorded its session; the turn ended. */
   const ran = async (job: Awaited<ReturnType<typeof turn>>, built: Awaited<ReturnType<typeof prepareCodeTurn>>, session: string) => {
+    await keepCodeTurnContext(db, job.runId!, built);
     await keepCodeTurn(db, job.runId!, built);
     await db.workspaceEvent.create({ data: { jobId: job.id, kind: "engine", data: { session } } });
     await db.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", finishedAt: new Date(), summary: "Changed the export to keep the column order." } });

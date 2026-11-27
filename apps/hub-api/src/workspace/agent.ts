@@ -64,7 +64,7 @@ import { MISSING_SECRET_RULE, secretRules } from "../lib/run-secrets.js";
 import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
-import { keepCodeTurn, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
+import { keepCodeTurn, keepCodeTurnContext, prepareCodeTurn, type CodeTurn } from "./code-turn.js";
 import { contextPart, instructionHash, keepRunContext, runContextOf, type RunSkill } from "./run-context.js";
 import { checkFolder, saveCompletion, settleTask, taskStatusAfter, verifiedReason, verifyRun, type Completion } from "./completion.js";
 import { BASELINE_EVENT, checkBaseline, checkChanges, earlierBaseline, END_EVENT, type CheckBaseline } from "./check-files.js";
@@ -1077,8 +1077,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           if (resume) enginePromptText = steer ? steerPrompt(steer.update) : sessionTaskPrompt(fullPrompt);
         }
         if (resume && (carryOn || steerOf(job.context)) && job.continueFromJobId) {
-          const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { runId: true } });
-          const inherited = await runContextOf(prisma, previous?.runId ?? null);
+          const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { runId: true } }).catch(() => null);
+          const inherited = await runContextOf(prisma, previous?.runId ?? null).catch((failure: unknown) => (harnessWarn(failure, "could not read the earlier run's context provenance"), null));
           if (inherited) {
             skills = inherited.skills;
             inheritedVersion = inherited.promptVersion;
@@ -1172,14 +1172,15 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       };
       // The engine runs under a watch (engine-watch.ts): stuck, a failure that passes, or out of minutes.
       for (let retry = 0; !ran; ) {
+        // What this attempt sends, before it goes: provenance only (never the packet, kept once the agent has it), and best-effort.
+        if (codeTurn) await keepCodeTurnContext(prisma, run.id, codeTurn).catch((failure: unknown) => harnessWarn(failure, "could not keep the run's context provenance"));
+        else {
+          sent.push(contextPart("prompt", prompt));
+          await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: inheritedVersion ?? instructionHash(workingNotes(ctx)), skills, parts: sent }).catch((failure: unknown) => harnessWarn(failure, "could not keep the run's context provenance"));
+        }
         const watch = watchEngine({ jobId: job.id, parent: control.signal, openCalls: () => trace.openCalls, waiting: () => waitingNow > 0, remainingMs });
         ctx.signal = watch.signal;
         try {
-          if (codeTurn) await keepCodeTurn(prisma, run.id, codeTurn);
-          else {
-            sent.push(contextPart("prompt", prompt));
-            await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: inheritedVersion ?? instructionHash(workingNotes(ctx)), skills, parts: sent });
-          }
           ran = await runEngine(prompt, session);
         } catch (failure) {
           counted = promptsOf(failure) ?? counted;
@@ -1272,7 +1273,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       }
     }
 
-    if (!engine) await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: instructionHash(system), skills: briefed.skills, parts: [contextPart("system", system), contextPart("brief", briefed.text)] });
+    if (!engine) await keepRunContext(prisma, run.id, { schema: "ensemble.run-context/1", promptVersion: instructionHash(system), skills: briefed.skills, parts: [contextPart("system", system), contextPart("brief", briefed.text)] }).catch((failure: unknown) => harnessWarn(failure, "could not keep the run's context provenance"));
     for (let turn = 0; !engine; turn += 1) {
       await stopCheck();
       if (turn > 0) await ensureTrust(false);

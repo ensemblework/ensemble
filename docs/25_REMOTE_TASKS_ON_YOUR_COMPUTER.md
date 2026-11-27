@@ -110,7 +110,7 @@ It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-termin
 
 ### 4.9 Subscriptions and included models
 
-**Run provenance.** A computer sends `runContext` with a job's `complete`: instruction version, supplied skill ids and SHA-256 signatures, and prompt-part hashes and sizes (`workspace/run-context.ts`). The leased completion creates or updates the web run's own context pack, never links a computer's local pack id ([06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)). The field is optional for older computers and ignored by older servers.
+**Run provenance.** A computer sends `runContext` with a job's `complete`: instruction version, supplied skill ids and SHA-256 signatures, and prompt-part hashes and sizes (`workspace/run-context.ts`). Once the leased completion is kept, the web creates or updates the run's own context pack, never links a computer's local pack id ([06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)). The field is read apart from the rest of `complete`: one that does not fit is logged and not kept, and the job still completes. It is optional for older computers and ignored by older servers.
 
 #### Continue an agent session
 
