@@ -109,7 +109,24 @@ Recovery: a dispatch with `target: macos-x64` rebuilds only the Intel artifact a
 
 `scripts/verify-desktop-signatures.mjs` builds a verifier from `verify-desktop-signatures.rs` with Tauri's signature library and the configured public key.
 
-OS code signing is not configured: Gatekeeper and SmartScreen may warn on first install. Updater signatures authenticate in-app updates only; they do not replace Apple notarization or Authenticode.
+The Mac app is signed ad hoc, not with an Apple Developer ID, and is not notarized. `bundle.macOS` in `tauri.conf.json` sets `signingIdentity` to `-` (the hardened runtime off), so Tauri seals the whole `Ensemble.app` before it makes the `.dmg` and the `.app.tar.gz`; the updater signature is made over the archive of the sealed app. The signature covers the bundle only: `CuaDriver.app` inside it keeps Cua's own signature. `scripts/package-mac-dmg.mjs` refuses an app whose signature does not verify, and `scripts/verify-mac-signature.mjs` fails each macOS job unless `codesign --verify --deep --strict` passes on the built app, on the app inside each `.dmg` (mounted read-only, then detached) and on the app inside each `.app.tar.gz`. Windows and Linux builds carry no OS signature. Updater signatures authenticate in-app updates only; they do not replace Apple notarization or Authenticode.
+
+The first time a downloaded copy opens, the system asks once:
+
+| System | How to open it |
+| --- | --- |
+| macOS 15 and later | Open the app and choose **Done** on the warning, then System Settings › Privacy & Security › **Open Anyway** (under Security), and confirm |
+| macOS 13 and 14 | Control-click the app in Applications, choose **Open**, then **Open** again; or **Open Anyway** as above |
+| Windows | SmartScreen: **More info › Run anyway** |
+
+Mac builds of 0.9.1 and older carry only the signature the linker puts on the executable, which seals none of the bundle, so macOS can call a downloaded copy damaged and offer only **Move to Trash**, with no **Open Anyway**. Copy the app to Applications, then in Terminal:
+
+```bash
+xattr -cr /Applications/Ensemble.app
+codesign --force --deep --sign - /Applications/Ensemble.app
+```
+
+The download page (`apps/landing/app/download/page.tsx`, commands in `macDamagedRepair` in `lib/download.ts`) gives the same steps.
 
 With an account (and on first run) the updater calls `GET https://api.ensemblework.com/api/desktop/update/:target/:arch/:current` (`apps/hub-api/src/routes/misc.ts`), which resolves only the latest published desktop tag, independent of CLI releases. The API validates the manifest version and official asset URLs.
 
@@ -302,9 +319,9 @@ On Linux the sidecar carries Prisma's query engines for OpenSSL 3 and 1.1 (x64: 
 
 On Linux the `.deb` depends on `libxdo3` and the `.rpm` on `libxdo` (Fedora, or EPEL on RHEL); the AppImage carries its own copy.
 
-The Intel disk image: `package-mac-dmg.mjs` creates a compressed APFS image with the app and an Applications link, checks the app's version and verifies the image, with bounded tool timeouts and no Finder automation.
+The Intel disk image: `package-mac-dmg.mjs` creates a compressed APFS image with the app and an Applications link, checks the app's version and signature and verifies the image, with bounded tool timeouts and no Finder automation.
 
-On a Mac, `pnpm desktop:dmg` (`scripts/build-mac-dmg.sh`) builds an unsigned disk image for that Mac's chip.
+On a Mac, `pnpm desktop:dmg` (`scripts/build-mac-dmg.sh`) builds a disk image for that Mac's chip, signed ad hoc like the release builds, and runs `verify-mac-signature.mjs` on it.
 
 Download names (`apps/landing/lib/download.ts`): `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and `Ensemble-<v>-1.x86_64.rpm` (Fedora, RHEL, openSUSE); on arm64, `Ensemble_<v>_arm64-setup.exe`, `Ensemble_<v>_aarch64.AppImage`, `Ensemble_<v>_arm64.deb` and `Ensemble-<v>-1.aarch64.rpm`. The AppImages run on other distributions.
 
