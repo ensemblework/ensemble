@@ -12,7 +12,7 @@ import { useToast } from "@/components/toast";
 
 import { Held } from "@/components/motion/held";
 import { PageHeader, SkeletonRows } from "@/components/ui";
-import { api, type ApprovalRecord } from "@/lib/api";
+import { api, type ApprovalRecord, type TaskRecord } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { LinkifiedText } from "@/components/linkified-text";
 import { useWarmEditors, warmTask } from "@/lib/warm";
@@ -144,17 +144,46 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
   );
 }
 
-export default function NeedsMePage() {
+function WaitingTask({ task }: { task: TaskRecord }) {
   const client = useQueryClient();
+  const toast = useToast();
+  const peek = usePeek();
+  const access = useSpaceAccess();
+  const key = `desk.needs-me.dismissed.${task.id}`;
+  const undoDismiss = useMutation({
+    mutationFn: () => api.deletePreference(key),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["tasks", "needs-me"] }),
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const dismiss = useMutation({
+    mutationFn: () => api.putPreference(key, task.updatedAt),
+    onSuccess: () => {
+      client.setQueryData<{ tasks: TaskRecord[] }>(["tasks", "needs-me"], current => current ? { tasks: current.tasks.filter(row => row.id !== task.id) } : current);
+      void client.invalidateQueries({ queryKey: ["tasks", "needs-me"] });
+      void client.invalidateQueries({ queryKey: ["notifications"] });
+      toast("Removed from Needs me. The task stays on your board.", { action: { label: "Undo", run: () => undoDismiss.mutate() } });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  return <div className="relative">
+    <button type="button" onMouseEnter={() => warmTask(client, task.id)} onFocus={() => warmTask(client, task.id)} onClick={() => peek.open(task.id)} className="waiting-card h-full w-full" data-motion-slot="needs.waiting" data-state="waiting">
+      <span className="waiting-status pr-8" data-blocked>Blocked</span>
+      <strong>{task.title}</strong>
+      <span className="waiting-meta">{relative(task.updatedAt)}<ArrowUpRight size={14} /></span>
+    </button>
+    {access.guest ? null : <button type="button" className="icon-btn absolute right-3 top-3" aria-label={`Remove ${task.title} from Needs me`} title="Remove from Needs me" disabled={!access.ready || dismiss.isPending} onClick={() => dismiss.mutate()}><X size={14} aria-hidden /></button>}
+  </div>;
+}
+
+export default function NeedsMePage() {
   const approvals = useQuery({ queryKey: ["approvals"], queryFn: api.approvals, refetchInterval: 30_000, refetchOnWindowFocus: true });
-  const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
+  const tasks = useQuery({ queryKey: ["tasks", "needs-me"], queryFn: api.waitingTasks, refetchInterval: 30_000 });
   const decisions = usePendingDecisions();
   // Cards Ensemble Node's runs raise for their agents; where there is no Node (Ensemble on a computer) the list is empty.
   const nodes = useNodeApprovals();
   const nodeCards = nodes.data?.approvals ?? [];
-  const peek = usePeek();
   useWarmEditors("peek");
-  const blocked = (tasks.data?.tasks ?? []).filter((task) => task.status === "blocked" || task.status === "waiting_approval").sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
+  const blocked = [...(tasks.data?.tasks ?? [])].sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const pendingApprovals = approvals.data?.approvals ?? [];
   const requests = decisions.decisions;
   const ready = approvals.isSuccess && tasks.isSuccess && decisions.isSuccess && !nodes.isPending;
@@ -167,7 +196,7 @@ export default function NeedsMePage() {
       {(requests.length > 0 || decisions.isPending) && <div className="review-requests"><EditorDecisions hideEmpty /></div>}
       {nodeCards.length > 0 && <section className="review-section"><header><span><AgentIcon size={16} />From your nodes' sessions</span><small>{nodeCards.length}</small></header><NodeApprovals cards={nodeCards} nodeUrl={nodes.data?.nodeUrl ?? null} /></section>}
       {(pendingApprovals.length > 0 || approvals.isPending) && <section className="review-section"><header><span><ShieldCheck size={16} />Approvals</span><small>{pendingApprovals.length || ""}</small></header><Held pending={approvals.isPending} fallback={<SkeletonRows count={2} />}><div className="space-y-3">{pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div></Held></section>}
-      {(blocked.length > 0 || tasks.isPending) && <section className="review-section"><header><span><CircleHelp size={16} />Waiting tasks</span><small>{blocked.length || ""}</small></header>{tasks.isPending ? <SkeletonRows count={2} /> : <div className="waiting-grid">{blocked.map((task) => <button key={task.id} type="button" onMouseEnter={() => warmTask(client, task.id)} onFocus={() => warmTask(client, task.id)} onClick={() => peek.open(task.id)} className="waiting-card" data-motion-slot="needs.waiting" data-state="waiting"><span className="waiting-status" data-blocked={task.status === "blocked"}>{task.status === "blocked" ? "Blocked" : "Awaiting approval"}</span><strong>{task.title}</strong><span className="waiting-meta">{relative(task.updatedAt)}<ArrowUpRight size={14} /></span></button>)}</div>}</section>}
+      {(blocked.length > 0 || tasks.isPending) && <section className="review-section"><header><span><CircleHelp size={16} />Waiting tasks</span><small>{blocked.length || ""}</small></header>{tasks.isPending ? <SkeletonRows count={2} /> : <div className="waiting-grid">{blocked.map((task) => <WaitingTask key={task.id} task={task} />)}</div>}</section>}
     </>}
   </div>;
 }

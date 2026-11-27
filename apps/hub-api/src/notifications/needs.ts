@@ -10,6 +10,8 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { isNodeTask } from "../lib/node-tasks.js";
 import { NODE_TOOL_DECISION } from "../node/device-tool-decisions.js";
 import { nodeNeedsInEnsemble, nodeRunJobs } from "../node/needs-me.js";
+import { waitingTaskIds } from "../lib/needs-me.js";
+import { closeStaleRunDecisions } from "../lib/decisions.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -31,6 +33,7 @@ export async function staleNeeds(db: Db, userId: string, rows: NeedsRow[]): Prom
   const taskRows = needs.filter((row) => row.kind === "agent");
 
   if (decisionRows.length) {
+    await closeStaleRunDecisions(db, userId);
     const select = { id: true, title: true, status: true, expiresAt: true, source: true, toolName: true, sessionId: true } as const;
     const ids = decisionRows.map((row) => subjectId(row.subject, "decision")).filter((id): id is string => Boolean(id));
     const named = ids.length ? await db.agentDecision.findMany({ where: { id: { in: ids }, userId }, select }) : [];
@@ -61,7 +64,8 @@ export async function staleNeeds(db: Db, userId: string, rows: NeedsRow[]): Prom
 
   if (taskRows.length) {
     const ids = [...new Set(taskRows.map((row) => subjectId(row.subject, "task") ?? taskFromUrl(row.url)).filter((id): id is string => Boolean(id)))];
-    const tasks = ids.length ? await db.task.findMany({ where: { id: { in: ids }, userId }, select: { id: true, status: true, deletedAt: true, sourceRef: true } }) : [];
+    const tasks = ids.length ? await db.task.findMany({ where: { id: { in: ids }, userId }, select: { id: true, status: true, deletedAt: true, sourceRef: true, updatedAt: true } }) : [];
+    const waiting = await waitingTaskIds(db, userId, tasks);
     const byId = new Map(tasks.map((task) => [task.id, task]));
     // A run started again after the notification (retried, reassigned) supersedes it.
     const jobs = ids.length ? await db.workspaceJob.findMany({ where: { taskId: { in: ids } }, select: { taskId: true, createdAt: true }, orderBy: { createdAt: "desc" }, take: 500 }) : [];
@@ -71,10 +75,7 @@ export async function staleNeeds(db: Db, userId: string, rows: NeedsRow[]): Prom
       const id = subjectId(row.subject, "task") ?? taskFromUrl(row.url);
       const task = id ? byId.get(id) : undefined;
       const retried = id ? (latestJob.get(id) ?? 0) > row.createdAt.getTime() : false;
-      // The bell's Needs me matches the Needs me page: a task waits while it is blocked or waiting on the
-      // board. Runs a node started report in its chat, where the node goes on: they never wait here.
-      const waiting = task?.status === "blocked" || task?.status === "waiting_approval";
-      if (!task || task.deletedAt || !waiting || isNodeTask(task) || retried) stale.add(row.id);
+      if (!task || task.deletedAt || !waiting.has(task.id) || isNodeTask(task) || retried) stale.add(row.id);
     }
   }
   return stale;

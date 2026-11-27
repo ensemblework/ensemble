@@ -7,6 +7,7 @@ import { describeFile, filesOnPage, filesOnTask, type AttachedFile } from "../fi
 import { pageAgentText } from "../pages/agent-context.js";
 import { pageText as pageDocumentText } from "../pages/markdown.js";
 import { loadSettings } from "../lib/settings.js";
+import { pendingApprovalsWhere } from "../lib/needs-me.js";
 import { meetingsInSeries, seriesKeyFor } from "../cowork/series.js";
 import { itemNeighbors, relationsOf, type ItemCard, type Neighborhood } from "../context/graph/neighbors.js";
 import { workContext } from "../context/graph/packet.js";
@@ -426,7 +427,7 @@ export async function listMeetings(db: Db, userId: string, query: { from?: strin
 export async function listDecisions(db: Db, userId: string, query: { limit: number }) {
   const [approvals, decisions] = await Promise.all([
     db.approval.findMany({
-      where: { userId, decision: null },
+      where: pendingApprovalsWhere(userId),
       orderBy: { requestedAt: "asc" },
       take: query.limit,
     }),
@@ -501,7 +502,7 @@ export async function todayBriefing(db: Db, userId: string) {
       take: 60,
       select: EVENT_ROW_SELECT,
     }),
-    db.approval.count({ where: { userId, decision: null } }),
+    db.approval.count({ where: pendingApprovalsWhere(userId) }),
     db.agentDecision.count({ where: { userId, status: "pending" } }),
     db.task.findMany({
       where: { userId, deletedAt: null, ...ON_BOARD, status: "waiting_approval" },

@@ -151,6 +151,31 @@ async function mountPage(credits: IncludedUsage, summaryFor: (url: URL) => typeo
   };
 }
 
+test("model and purpose lists show the top five with independent show-all toggles", async () => {
+  const summary = {
+    ...SUMMARY,
+    byModel: Array.from({ length: 8 }, (_, index) => ({ ...SUMMARY.byModel[0]!, model: `model-${index}`, calls: index + 1 })),
+    byPurpose: Array.from({ length: 7 }, (_, index) => ({ ...SUMMARY.byPurpose[0]!, purpose: `Purpose ${index}`, calls: index })),
+  };
+  const view = await mountPage({ ...USAGE, available: false }, () => summary);
+  try {
+    const models = () => [...view.host.querySelectorAll("[data-model-row]")].map(row => row.getAttribute("data-model-row"));
+    const purposes = () => [...view.host.querySelectorAll("[data-purpose-row]")].map(row => row.getAttribute("data-purpose-row"));
+    const toggle = (id: string) => view.host.querySelector<HTMLButtonElement>(`[aria-controls="${id}"]`)!;
+    assert.deepEqual(models(), [7, 6, 5, 4, 3].map(index => `ensemble:model-${index}`));
+    assert.deepEqual(purposes(), [6, 5, 4, 3, 2].map(index => `Purpose ${index}`));
+    await act(async () => toggle("usage-models").click());
+    assert.equal(models().length, 8);
+    assert.equal(purposes().length, 5);
+    assert.equal(toggle("usage-models").getAttribute("aria-expanded"), "true");
+    await act(async () => toggle("usage-purposes").click());
+    assert.equal(purposes().length, 6, "zero-call purposes stay out of both the list and the total");
+    await act(async () => toggle("usage-models").click());
+    assert.equal(models().length, 5);
+    assert.equal(purposes().length, 6);
+  } finally { await view.done(); }
+});
+
 test("the Metrics page leads with the credits card and shows credits, not dollars, for included calls", async () => {
   const view = await mountPage(USAGE);
   try {

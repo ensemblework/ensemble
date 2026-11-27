@@ -9,6 +9,7 @@ import { itemNeighbors } from "../../context/graph/neighbors.js";
 import { workContext } from "../../context/graph/packet.js";
 import { parseItemRef } from "../../context/graph/refs.js";
 import { rankedSearch, SEARCH_KINDS, type SearchHit } from "../../context/graph/search.js";
+import { pendingApprovalsWhere } from "../../lib/needs-me.js";
 
 /** Where a stored item came from: an attached app item names its app; synced items their kind. */
 function originOf(kind: string, metadata: Prisma.JsonValue): string {
@@ -196,7 +197,7 @@ export const contextTools = [
     risk: "low",
     async run(ctx) {
       const approvals = await ctx.prisma.approval.findMany({
-        where: { userId: ctx.userId, decision: null },
+        where: pendingApprovalsWhere(ctx.userId),
         orderBy: { requestedAt: "asc" },
         take: 20,
       });
