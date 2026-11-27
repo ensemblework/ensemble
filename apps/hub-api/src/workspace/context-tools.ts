@@ -102,6 +102,9 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
     ].join("\n");
   }
   const raw = asText(args.item).trim();
+  // A diagram, plot or data file is not in the record graph: its handle reads what it holds.
+  const own = /^ensemble:\/\/(diagram|plot|dataset)\/([0-9a-f-]{36}(?:\/[\w-]{1,40})?)$/i.exec(raw);
+  if (own) return (await recordContent(ctx.db, ctx.userId, { kind: own[1]!.toLowerCase(), id: own[2]!.replace(/^[0-9a-f-]{36}/i, (uuid) => uuid.toLowerCase()) }, 12_000).catch(() => null)) ?? "That record is not in this space, or it is in Trash.";
   const ref = raw ? parseItemRef(raw) : { kind: "task" as const, id: taskId };
   if (!ref) throw new GraphError("item must be an ensemble://<kind>/<id> handle from a result, or a Hub link. Omit it for your task.");
   const rel = asText(args.rel).trim();
