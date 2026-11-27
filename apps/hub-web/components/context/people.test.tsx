@@ -43,7 +43,7 @@ function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function mount(initialSearch: string) {
+async function mount(initialSearch: string, records = PEOPLE) {
   const posts: unknown[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), "http://localhost").pathname;
@@ -51,7 +51,7 @@ async function mount(initialSearch: string) {
       posts.push(JSON.parse(String(init.body)));
       return json({ person: person("p9", "New", null) }, 201);
     }
-    if (path === "/api/people") return json({ people: PEOPLE });
+    if (path === "/api/people") return json({ people: records });
     return json({ error: "not mocked" }, 404);
   }) as typeof fetch;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
@@ -103,6 +103,19 @@ test("a filter that matches no one says so and clears, instead of the first-run 
   await act(async () => button("Clear filter").click());
   assert.equal(view.host.querySelectorAll("[data-person-card]").length, 3);
   await view.close();
+});
+
+test("project names and roles have separate readable rows, including long names", async () => {
+  const member = person("member", "Mira Chen", null);
+  member.projects = [{ id: "p1", name: "Fieldnote".repeat(12), role: "Design and engineering lead" }, { id: "p2", name: "Launch", role: null }];
+  const view = await mount("", [member]);
+  try {
+    const projects = view.host.querySelectorAll("[data-person-project]");
+    assert.equal(projects.length, 2);
+    assert.equal(projects[0]!.children[0]!.textContent, member.projects[0]!.name);
+    assert.equal(projects[0]!.children[1]!.textContent, member.projects[0]!.role);
+    assert.equal(projects[1]!.children.length, 1, "an absent role leaves no empty separator");
+  } finally { await view.close(); }
 });
 
 test("Add person checks the email on the field and sends nothing until it is valid", async () => {

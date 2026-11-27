@@ -8,6 +8,9 @@ import {AssignmentsPanel} from "../desk/context-customize";
 import {MobileGraph} from "./mobile-graph";
 import {AskLauncher} from "../assistant/ask-launcher";
 import {Dialog} from "../ui";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { GraphTab } from "./graph";
+(globalThis as { React?: typeof React }).React = React;
 test("the phone graph expands one item into readable linked items",async()=>{
  const host=document.createElement("div");document.body.append(host);const root=createRoot(host);let opened="";
  const nodes=[{id:"p",kind:"project",label:"Release",sub:"Project"},{id:"m",kind:"people",label:"Mira Chen",sub:"Designer"},{id:"other",kind:"people",label:"Sam Rivera",sub:"Unlinked"}];
@@ -15,6 +18,41 @@ test("the phone graph expands one item into readable linked items",async()=>{
  const release=[...host.querySelectorAll("button")].find(button=>button.textContent?.includes("Release"))!;await act(async()=>release.click());
  assert.match(host.textContent??"",/Mira Chen/);assert.doesNotMatch(host.textContent??"",/Sam Rivera/);assert.match(host.textContent??"",/1 linked item(?!s)/);assert.doesNotMatch(host.textContent??"",/1 links/);
  const open=[...host.querySelectorAll("button")].find(button=>button.textContent==="Open Release")!;await act(async()=>open.click());assert.equal(opened,"p");await act(async()=>root.unmount());host.remove();
+});
+
+test("wheel scrolling in graph details is native while scrolling the canvas still zooms", async () => {
+ const oldFetch = globalThis.fetch;
+ const oldObserver = globalThis.ResizeObserver;
+ const getContext = Object.getOwnPropertyDescriptor(window.HTMLCanvasElement.prototype, "getContext")!;
+ Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", { configurable: true, value: () => null });
+ globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+ globalThis.fetch = async () => Response.json({ error: "No linked records" }, { status: 404 });
+ const nodes = [{ id: "project-one", kind: "project", label: "Launch", sub: "Project" }];
+ const extras: typeof nodes = [];
+ const services: [] = [];
+ const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } } });
+ client.setQueryData(["graph", false], { nodes, edges: [] });
+ client.setQueryData(["shell"], { modules: "all" });
+ const router = { push() {}, replace() {}, back() {}, forward() {}, refresh() {}, prefetch() {} };
+ const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+ try {
+  await act(async () => root.render(<AppRouterContext.Provider value={router}><QueryClientProvider client={client}><GraphTab contextNodes={extras} mockServices={services} /></QueryClientProvider></AppRouterContext.Provider>));
+  const find = host.querySelector<HTMLInputElement>('[aria-label="Find in graph"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(find, "Launch"); find.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => find.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  const panel = host.querySelector('[data-graph-panel] [aria-label="Linked records"]');
+  assert.ok(panel);
+  const scroll = new window.WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
+  await act(async () => panel.dispatchEvent(scroll));
+  assert.equal(scroll.defaultPrevented, false, "details keep native scrolling instead of graph zoom");
+  const zoom = new window.WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
+  await act(async () => host.querySelector("canvas")!.dispatchEvent(zoom));
+  assert.equal(zoom.defaultPrevented, true, "the canvas still owns its zoom gesture");
+ } finally {
+  await act(async () => root.unmount()); host.remove(); client.clear();
+  globalThis.fetch = oldFetch; globalThis.ResizeObserver = oldObserver;
+  Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", getContext);
+ }
 });
 test("the assistant launcher stays interactive while another dialog makes the background inert",async()=>{
  const host=document.createElement("div");document.body.append(host);const root=createRoot(host);let opened=0;

@@ -434,6 +434,79 @@ test("skills have isolated edit/restore/score/delete and malformed input is a cl
   await check(a, "POST", "/api/skills", 400, "invalid-input", { name: 4 });
   await hidden("DELETE", `/api/skills/${id}`);
   await check(a, "DELETE", `/api/skills/${id}`, 204, "happy-path");
+  assert.equal(await harness.prisma.skill.findUnique({ where: { id } }), null, "deletion is permanent, not Trash");
+  assert.equal(await harness.prisma.skillVersion.count({ where: { skillId: id } }), 0, "retained bodies are removed too");
+  await check(a, "GET", `/api/skills/${id}`, 404, "unknown-id");
+  const replacement = await created("/api/skills", "skill", { name: "Private skill" });
+  assert.notEqual(replacement, id, "the deleted slug can be reused immediately");
+});
+
+test("Needs me removes status-only and ended approvals, and persists task dismissal without changing the board", async () => {
+  const user = await harness.asUser();
+  const create = (title: string, status: "blocked" | "waiting_approval" = "waiting_approval") => harness.prisma.task.create({ data: { userId: user.id, title, status, updatedAt: new Date("2026-01-01T00:00:00Z") } });
+  const blocked = await create("Failed run I handled myself", "blocked");
+  const phantom = await create("An MCP edit with no approval");
+  const live = await create("A real running approval");
+  const finished = await create("Run finished");
+  const gone = await create("Run removed");
+  const makeRun = (taskId: string) => harness.prisma.run.create({ data: { userId: user.id, taskId, worker: "fixture" } });
+  const liveRun = await makeRun(live.id);
+  const finishedRun = await makeRun(finished.id);
+  await harness.prisma.run.update({ where: { id: finishedRun.id }, data: { outcome: "failed", endedAt: new Date() } });
+  const removedRun = await makeRun(gone.id);
+  await harness.prisma.run.update({ where: { id: removedRun.id }, data: { deletedAt: new Date() } });
+  const approval = (runId: string, taskId: string) => harness.prisma.approval.create({ data: { userId: user.id, runId, taskId, kind: "other", title: "Permission", preview: {} } });
+  const activeApproval = await approval(liveRun.id, live.id);
+  const staleApproval = await approval(finishedRun.id, finished.id);
+  await approval(removedRun.id, gone.id);
+  const expired = await approval(liveRun.id, live.id);
+  await harness.prisma.approval.update({ where: { id: expired.id }, data: { expiresAt: new Date(0) } });
+  const waiting = async () => {
+    const response = await user.inject({ method: "GET", url: "/api/tasks?needsMe=true" });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json().tasks as Array<{ id: string }>;
+  };
+  assert.deepEqual((await waiting()).map(row => row.id), [blocked.id], "a real approval is in Approvals, not a second info-only task card");
+  assert.ok(!(await waiting()).some(row => row.id === phantom.id));
+  const approvals = await user.inject({ method: "GET", url: "/api/approvals" });
+  assert.deepEqual(approvals.json().approvals.map((row: { id: string }) => row.id), [activeApproval.id]);
+  const staleAnswer = await user.inject({ method: "POST", url: `/api/approvals/${staleApproval.id}/decide`, payload: { decision: "approved" } });
+  assert.equal(staleAnswer.statusCode, 409);
+  assert.equal((await harness.prisma.approval.findUniqueOrThrow({ where: { id: staleApproval.id } })).decision, null, "nothing is approved or rejected automatically");
+  const key = `desk.needs-me.dismissed.${blocked.id}`;
+  assert.equal((await user.inject({ method: "PUT", url: `/api/preferences/${key}`, payload: { value: blocked.updatedAt.toISOString() } })).statusCode, 200);
+  assert.ok(!(await waiting()).some(row => row.id === blocked.id));
+  const { loadSurfaceContext } = await import("../ensemble/surfaces.js");
+  const context = await loadSurfaceContext(harness.prisma, user.id, { surface: "needs_me" });
+  assert.deepEqual(context.entities.map(row => row.id), [activeApproval.id], "inline context matches the visible queue");
+  const { listDecisions } = await import("../bridge/service.js");
+  const bridge = await listDecisions(harness.prisma, user.id, { limit: 20 });
+  assert.deepEqual(bridge.needsMe.approvals.map(row => row.id), [activeApproval.id], "bridge reads exclude ended and expired approvals too");
+  const board = (await user.inject({ method: "GET", url: "/api/tasks" })).json().tasks;
+  assert.ok(board.some((row: { id: string; status: string }) => row.id === blocked.id && row.status === "blocked"));
+  const notification = await harness.prisma.notification.create({ data: { userId: user.id, kind: "agent", title: "Needs you", body: "", subject: `task:${blocked.id}`, url: `/tasks/${blocked.id}` } });
+  const bell = (await user.inject({ method: "GET", url: "/api/notifications" })).json();
+  assert.ok(!bell.notifications.some((row: { id: string }) => row.id === notification.id), "the bell follows the same dismissal");
+  assert.equal((await b.inject({ method: "GET", url: "/api/tasks?needsMe=true" })).json().tasks.some((row: { id: string }) => row.id === blocked.id), false);
+  await harness.prisma.task.update({ where: { id: blocked.id }, data: { notes: "A new blocker" } });
+  assert.ok((await waiting()).some(row => row.id === blocked.id), "new task activity can need a new answer");
+  await harness.prisma.task.update({ where: { id: live.id }, data: { status: "done" } });
+  assert.ok(!(await waiting()).some(row => row.id === live.id));
+  assert.equal((await user.inject({ method: "GET", url: "/api/approvals" })).json().approvals.length, 0);
+});
+
+test("a permission whose run is gone closes without answering the tool", async () => {
+  const user = await harness.asUser();
+  const decision = await harness.prisma.agentDecision.create({ data: { userId: user.id, source: "ensemble", event: "question", toolName: "fixture", title: "Orphan request", sessionId: MISSING_ID, detail: {}, expiresAt: new Date(Date.now() + 60_000) } });
+  const shell = await user.inject({ method: "GET", url: "/api/shell" });
+  assert.equal(shell.statusCode, 200, shell.body);
+  assert.equal(shell.json().decisions, 0, "orphan requests do not linger in the sidebar count");
+  const response = await user.inject({ method: "GET", url: "/api/decisions?surface=hub" });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.ok(!response.json().decisions.some((row: { id: string }) => row.id === decision.id));
+  const closed = await harness.prisma.agentDecision.findUniqueOrThrow({ where: { id: decision.id } });
+  assert.equal(closed.status, "expired");
+  assert.equal(closed.decision, null);
 });
 
 test("settings and preferences never overwrite or reveal another account", async () => {

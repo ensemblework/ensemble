@@ -11,6 +11,7 @@ import { collabHub } from "../pages/live.js";
 import { accountIdOf } from "../lib/auth.js";
 import { answerRequestedMove } from "../services/tasks.js";
 import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
+import { pendingApprovalsWhere } from "../lib/needs-me.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -281,8 +282,8 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
     const approval = await prisma.approval.findFirst({ where: { id, userId: request.userId } });
     if (!approval) return reply.code(404).send({ error: "Approval not found." });
     if (approval.decision) return reply.code(409).send({ error: "This was already decided." });
-    const decided = await prisma.approval.update({
-      where: { id },
+    const changed = await prisma.approval.updateMany({
+      where: { id, ...pendingApprovalsWhere(request.userId) },
       data: {
         decision: body.decision,
         editedPayload: body.editedPayload === undefined ? undefined : (body.editedPayload as never),
@@ -290,6 +291,8 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
         decidedAt: new Date(),
       },
     });
+    if (!changed.count) return reply.code(409).send({ error: "This approval ended with its work or was already decided." });
+    const decided = await prisma.approval.findUniqueOrThrow({ where: { id } });
     await appendLedger({
       userId: request.userId,
       actor: "me",

@@ -14,6 +14,7 @@ import { isPaused } from "../lib/activity.js";
 import { actorFor } from "../sharing/context.js";
 import { repairErasedUsage } from "../lib/workspace-data.js";
 import { parseCompletion, verifiedOf } from "../workspace/completion.js";
+import { pendingApprovalsWhere } from "../lib/needs-me.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -313,7 +314,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         take: 5000,
       }),
       prisma.auditLedger.count({ where: { userId } }),
-      prisma.approval.count({ where: { userId, decision: null } }),
+      prisma.approval.count({ where: pendingApprovalsWhere(userId) }),
     ]);
 
     type Call = {
