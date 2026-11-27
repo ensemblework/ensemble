@@ -8,7 +8,7 @@ Ensemble Node also comes with Ensemble's own skills (planning, checking work bef
 
 Edit the body on the Skills page. It saves 900 ms after you stop typing. Each body change creates a version; the newest **three** versions are kept, including the current one. Editing the body removes older versions.
 
-Open history to restore a retained version. Restoring publishes it as a new version, so the version counter keeps increasing. Disable a skill to stop using it, or choose Delete to move it to Trash. A disabled or deleted skill is ignored even when a task still links to it.
+Open history to restore a retained version. Restoring publishes it as a new version, so the version counter keeps increasing. Disable a skill to stop using it. The Skills page's delete button appears on hover or keyboard focus, and is always visible on touch devices. Delete permanently removes the skill, its retained versions and feedback immediately, without a confirmation popup, retention window or Undo. A disabled or deleted skill is ignored even when a task still links to it.
 
 The UI keeps the editor, enablement, history and any recorded evidence. It does not expose test/score controls or an unfinished learning promotion. The test and score API routes remain available to clients (§6).
 
@@ -78,7 +78,7 @@ Learned changes are published directly after the notice; there is no review/acce
 
 ## 7. Privacy and tests
 
-Skills are space-scoped and follow module and sharing access. Bodies can hold private instructions and learned guidance from the person's work; they are not anonymized. Export, deletion and Trash work as for other data.
+Skills are space-scoped and follow module and sharing access. Bodies can hold private instructions and learned guidance from the person's work; they are not anonymized. Export follows other space data. Deletion through `/api/skills/:id` is permanent; it does not put the skill in Trash.
 
 Tests (under `apps/hub-api/src`): `jobs/retention.integration.test.ts` (mining with a fixture model), `test/resources.integration.test.ts` and `test/testing-report.integration.test.ts` (skill routes), `assistant/workspace-actions.integration.test.ts` (skill tools). They use fixture models, so they cover versioning and retention, not the quality of a live model's output.
 
@@ -100,6 +100,6 @@ The Skills page is `apps/hub-web/app/(hub)/skills`. Morning brief defaults come 
 | POST | `/api/skills/:id/restore` | Publish a retained version as a new version |
 | POST | `/api/skills/:id/test` | Sample output from the Easy model; no tools, no external actions; needs a verified account; normal usage applies |
 | POST | `/api/skills/:id/score` | Check a `draft` against the skill's rule lines |
-| DELETE | `/api/skills/:id` | Move to Trash |
+| DELETE | `/api/skills/:id` | Permanently delete the skill, retained versions and feedback |
 
 `/score` reads bullet lines in the body of the form `- must-include: …`, `- must-not-include: …`, `- max-words: N` and `- min-words: N`, and reports pass/fail for each. It is a literal text check, not a quality judgement.

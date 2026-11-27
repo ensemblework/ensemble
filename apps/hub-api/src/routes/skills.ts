@@ -191,7 +191,7 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/skills/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const result = await prisma.skill.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { deletedAt: new Date() } });
+    const result = await prisma.skill.deleteMany({ where: { id, userId: request.userId } });
     if (!result.count) return reply.code(404).send({ error: "Skill not found." });
     return reply.code(204).send();
   });

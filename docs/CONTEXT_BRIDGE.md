@@ -167,7 +167,7 @@ The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ens
 | `ensemble_deliverables` | `ensemble://deliverables` | Deliverables |
 | `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) from Google Calendar, Outlook and calendar links, one row per event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)), each with `previous`: the latest earlier meeting of its series ([03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)) |
 | `ensemble_people` | `ensemble://people`, `ensemble://people/{id}` | Engineer Graph people |
-| `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts (read only) |
+| `ensemble_decisions` | `ensemble://decisions` | Needs me: live, unexpired approvals from open tasks and unfinished runs, plus pending editor prompts (read only) |
 | `ensemble_today` | `ensemble://today` | In the person's time zone: focus, proposed todos, tasks ready for review (`waiting_approval`), what others owe (open tasks labelled `waiting-on`), deliverables, meetings, Needs-me counts |
 | `ensemble_gaps` | `ensemble://gaps` | What the bridge cannot see or refuses to expose |
 | `ensemble_files` | None | The person's files, newest first (`GET /api/bridge/files`): name, format, media type, size, pages, summary, source app and handle. `query` matches the name, summary or text; `on` (a task, page, project, person or repository handle) lists the files on that record, as its page shows them; `limit` (≤50) and `offset` |
