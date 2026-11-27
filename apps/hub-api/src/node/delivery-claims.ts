@@ -4,33 +4,39 @@
  * claim needs a picture, video or file that reaches the chat with this turn (the turn's media, a capture
  * held for its owner's preview card, or a link to a saved file in the reply). Only the node's own word is a
  * claim: said with I or we, or with no subject ("Sent you the screenshots", "Here is …"), never what someone
- * else did or said, and never words in quotes or code. English words only, from a short list, no model call.
- * A claim with nothing behind it goes back to the model once; if it stays, it is taken out of the reply and
- * a plain note says what was not attached.
+ * else did or said, and never words in quotes or code. English and Spanish words only, from a short list for
+ * each, no model call. A claim with nothing behind it goes back to the model once; if it stays, it is taken out
+ * of the reply and a plain note, in the claim's language, says what was not attached.
  */
 
 export type ClaimKind = "screenshot" | "picture" | "video" | "file";
+/** The languages whose claims the check reads. */
+export type ClaimLanguage = "en" | "es";
 
 /** One claim in a reply: what it says was sent, the sentence that says it, and where that sentence is. */
 export type DeliveryClaim = {
   kind: ClaimKind;
-  /** The thing named, as written ("screenshots", "report.md"). */
+  /** The thing named, as written ("screenshots", "report.md", "capturas de pantalla"). */
   noun: string;
   sentence: string;
   start: number;
   end: number;
   /** The sentence says nothing but the claim, so it can go without losing anything. */
   whole: boolean;
+  /** The language of its words: the note that replaces it is written in it. */
+  language: ClaimLanguage;
 };
 
 /** What reached the chat with this turn, by class. */
 export type Delivered = { pictures: number; videos: number; files: number };
 
+const EXTENSIONS = "md|markdown|txt|pdf|csv|tsv|json|ya?ml|html?|docx?|xlsx?|pptx?|zip|log|png|jpe?g|gif|webp|mp4|webm|mov";
+
 const NOUNS: Record<ClaimKind, string> = {
   screenshot: String.raw`screen ?shots?|screen ?grabs?|screen ?captures?`,
   picture: String.raw`pictures?|images?|photos?|photographs?`,
   video: String.raw`screen ?recordings?|recordings?|videos?|screencasts?`,
-  file: String.raw`[\w-]+\.(?:md|markdown|txt|pdf|csv|tsv|json|ya?ml|html?|docx?|xlsx?|pptx?|zip|log|png|jpe?g|gif|webp|mp4|webm|mov)|files?|reports?|documents?|pdfs?|spreadsheets?|csvs?|archives?|summar(?:y|ies)`,
+  file: String.raw`[\w-]+\.(?:${EXTENSIONS})|files?|reports?|documents?|pdfs?|spreadsheets?|csvs?|archives?|summar(?:y|ies)`,
 };
 /** Text within one sentence: a dot inside a name ("report.md", "example.com") does not end it. */
 const SAME = String.raw`(?:[^.!?\n]|\.(?=\S))`;
@@ -38,8 +44,8 @@ const DET = String.raw`(?:the|a|an|your|my|this|that|these|those|both|all|\d+|on
 const BETWEEN = String.raw`(?:[\w’'-]+(?:\.[\w’'-]+)*\s+){0,4}?`;
 const NOT_YOURS = String.raw`(?<!\byou\s)(?<!\byou['’]ve\s)(?<!\byou have\s)`;
 
-/** The claims for one kind of thing: pictures and videos may be "here", a file must be attached or sent. `acts`: a verb whose subject is checked. */
-function patterns(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
+/** The English claims for one kind of thing: pictures and videos may be "here", a file must be attached or sent. `acts`: a verb whose subject is checked. */
+function english(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
   const noun = `(?<noun>${NOUNS[kind]})`;
   const shown = kind === "file" ? "attached|included" : "attached|included|below|above";
   const list = [
@@ -60,7 +66,62 @@ function patterns(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
   return [...list.map((source) => ({ pattern: new RegExp(source, "gi"), acts: false })), { pattern: new RegExp(acts, "gi"), acts: true }];
 }
 
-const PATTERNS = (["screenshot", "picture", "video", "file"] as const).map((kind) => ({ kind, list: patterns(kind) }));
+/** A word's edges in Spanish, where `\b` would split "está" or "vídeo" at its accented letter. */
+const START = String.raw`(?<![\p{L}\p{N}_])`;
+const END = String.raw`(?![\p{L}\p{N}_])`;
+const ES_NOUNS: Record<ClaimKind, string> = {
+  // "captura" alone is a screenshot, but not "captura de datos" (data capture).
+  screenshot: String.raw`capturas?(?!\s+de\s+(?:datos|requisitos|leads|informaci[oó]n)${END})(?:\s+de\s+pantalla)?|pantallazos?|screenshots?`,
+  picture: String.raw`im[aá]gen(?:es)?|fotos?|fotograf[ií]as?`,
+  video: String.raw`grabaci(?:[oó]n|ones)(?:\s+de\s+(?:la\s+)?pantalla)?|v[ií]deos?|screencasts?`,
+  file: String.raw`[\p{L}\p{N}_-]+\.(?:${EXTENSIONS})|archivos?|ficheros?|informes?|reportes?|documentos?|pdfs?|hojas?\s+de\s+c[aá]lculo|csvs?|res[uú]men(?:es)?`,
+};
+const ES_DET = String.raw`(?:el|la|los|las|un|una|unos|unas|tu|tus|su|sus|mi|mis|nuestro|nuestra|nuestros|nuestras|este|esta|estos|estas|ese|esa|esos|esas|ambos|ambas|todos|todas|\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)`;
+const ES_BETWEEN = String.raw`(?:[\p{L}\p{N}’'-]+(?:\.[\p{L}\p{N}’'-]+)*\s+){0,4}?`;
+const ES_ATTACHED = String.raw`adjunt[oa]s?|adjuntad[oa]s?|incluid[oa]s?`;
+const ES_PLACE = String.raw`(?:m[aá]s\s+)?(?:abajo|debajo|arriba)|a\s+continuaci[oó]n`;
+/** "te", "le", "os", "les": to whom it went. "Pasar" and "dejar" deliver only with one ("te paso", "te dejé"); "mando" and "paso" are nouns too. */
+const TO = String.raw`(?:te|le|les|os)`;
+/** The node's own act in the first person, which the verb's form says: "he adjuntado", "adjunté", "te envío", "acabo de enviar". */
+const ES_ACT = [
+  String.raw`(?:${TO}\s+)?(?:he|hemos)\s+(?:ya\s+)?(?:adjuntado|enviado|mandado|compartido|subido|publicado)`,
+  String.raw`${TO}\s+(?:he|hemos)\s+(?:ya\s+)?(?:pasado|dejado)`,
+  String.raw`(?:${TO}\s+)?(?:adjunté|envié|mandé|compart[ií]|sub[ií]|publiqué|adjuntamos|enviamos|mandamos|compartimos|subimos|publicamos)`,
+  String.raw`${TO}\s+(?:pasé|dejé|pasamos|dejamos)`,
+  String.raw`(?:${TO}\s+)?(?:adjunto|env[ií]o|env[ií]amos|comparto|subo)`,
+  String.raw`${TO}\s+(?:mando|paso|dejo)`,
+  String.raw`(?:${TO}\s+)?acab(?:o|amos)\s+de\s+(?:adjuntar|enviar|mandar|compartir|subir|publicar|pasar|dejar)(?:te|le|les|os)?`,
+].join("|");
+
+/** The Spanish claims for one kind of thing, as in English. `acts`: the words before it must name no one but the node. */
+function spanish(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
+  const noun = `(?<noun>${ES_NOUNS[kind]})`;
+  const shown = kind === "file" ? ES_ATTACHED : `${ES_ATTACHED}|${ES_PLACE}`;
+  const said = [
+    // "la captura de la página está adjunta", "las fotos están más abajo", "el informe va adjunto"
+    String.raw`${START}${noun}${END}${SAME}{0,60}?${START}(?:est[aá]n?|van?|quedan?|(?:se\s+)?encuentran?|aparecen?|(?:l[oa]s?\s+)?tienes)\s+(?:ya\s+)?(?:${shown})${END}`,
+    // "**Captura de pantalla:** adjunta"
+    String.raw`${START}${noun}${END}\s*[:*]+\s*(?:\*+\s*)?(?:${shown})${END}`,
+    // "adjunto encontrarás el informe", "adjunta va la captura", "abajo tienes las fotos"
+    String.raw`${START}(?:${kind === "file" ? "adjunt[oa]s?" : `adjunt[oa]s?|${ES_PLACE}`})\s*,?\s+(?:${TO}\s+)?(?:est[aá]n?|van?|tienes?|ten[eé]is|tienen|encontrar[aá]s|encontrar[aá]n|encontrar[eé]is|ver[aá]s|ver[aá]n|ver[eé]is|env[ií]o|enviamos|mando|mandamos|paso|pasamos|dejo|dejamos|comparto|compartimos)${END}${SAME}{0,40}?${START}${noun}${END}`,
+  ];
+  // "aquí está la captura", "aquí tienes las fotos": as in English, a report or summary can be written in the reply itself.
+  if (kind !== "file") said.unshift(String.raw`${START}(?:aqu[ií]|ac[aá]|ah[ií])\s+(?:${TO}\s+)?(?:est[aá]n?|tienes?|ten[eé]is|tienen|van?)\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}`);
+  const acts = [
+    // "consulta el informe adjunto", "verás la captura abajo": in Spanish the second person's command is also the third person's act ("Mira revisa …").
+    String.raw`${START}(?:ver|v[eé]ase|consulta|consulte|revisa|revise|mira|puedes\s+ver|puede\s+ver|ver[aá]s|ver[aá]n)\s+(?:${ES_DET}\s+)?${noun}${END}(?:\s+\p{L}+){0,2}?\s+(?:${kind === "file" ? ES_ATTACHED : `${ES_ATTACHED}|(?:de\s+)?(?:m[aá]s\s+)?(?:abajo|debajo|arriba)`})${END}`,
+    // "he adjuntado el informe", "te envié las capturas", "adjunto el archivo"
+    String.raw`${START}(?:${ES_ACT})\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}`,
+  ];
+  return [...said.map((source) => ({ pattern: new RegExp(source, "giu"), acts: false })), ...acts.map((source) => ({ pattern: new RegExp(source, "giu"), acts: true }))];
+}
+
+const KINDS = ["screenshot", "picture", "video", "file"] as const;
+/** Every English reading comes first, so a sentence English claims is read as before. */
+const PATTERNS = [
+  ...KINDS.flatMap((kind) => english(kind).map((row) => ({ ...row, kind, language: "en" as const }))),
+  ...KINDS.flatMap((kind) => spanish(kind).map((row) => ({ ...row, kind, language: "es" as const }))),
+];
 
 /** A sentence that says something was not sent, or asks, or makes it depend on something else: not a claim. */
 const NEGATED = /\b(?:no|not|never|nothing|none|cannot|unable|without|failed)\b|n['’]t\b/i;
@@ -79,10 +140,30 @@ function elsewhere(rest: string): boolean {
   return IN_APP.test(rest);
 }
 
+/** The same in Spanish: "no he adjuntado", "¿te lo envío?", "si termina, te envío", "el PDF que adjuntaste", "te lo envío más tarde". */
+const ES_NEGATED = /(?<![\p{L}])(?:no|ni|nunca|jam[aá]s|nada|ningún|ningun[oa]?|tampoco|sin|imposible)(?![\p{L}])/iu;
+const ES_CONDITIONAL = /^[^\p{L}\p{N}]*(?:si|cuando|en\s+cuanto|una\s+vez\s+que|tan\s+pronto\s+como|apenas|a\s+menos\s+que|salvo\s+que|hasta\s+que|antes\s+de\s+que)(?![\p{L}])/iu;
+const ES_THEIRS = /(?<![\p{L}])(?:adjuntaste|enviaste|mandaste|compartiste|subiste|pasaste|dejaste|has\s+(?:ya\s+)?(?:adjuntado|enviado|mandado|compartido|subido|pasado|dejado)|usted\s+(?:adjuntó|envió|mandó|compartió|subió))(?![\p{L}])/iu;
+/** Spanish says a plan in the present ("te envío el informe más tarde"): a time still to come makes it one. */
+const ES_LATER = /(?<![\p{L}])(?:mañana|m[aá]s\s+tarde|en\s+breve|en\s+un\s+rato|en\s+un\s+momento|lo\s+antes\s+posible|pronto)(?![\p{L}])/iu;
+/** Words someone else said: "Mira dice que …", "según el cliente". Accents kept where the word without one is the first person ("comento"). */
+const ES_REPORTED = /(?<![\p{L}])(?:dice|dicen|dijo|dijeron|dec[ií]a|comenta|comentó|escribe|escribió|escribieron|afirma|afirmó|confirma|confirmó|menciona|mencionó|contó|asegura|aseguró|responde|respondió|contesta|contestó|preguntó|cree|creen|cre[ií]a|piensa|pensaba|seg[uú]n)(?![\p{L}])/iu;
+const ES_CHAT = /^(?:este chat|esta conversaci[oó]n|este hilo|este mensaje|esta respuesta|mi respuesta|el chat|la conversaci[oó]n|el hilo|nuestro chat|chat|hilo|aqu[ií])(?![\p{L}])/iu;
+/** "a Mira", "a la tarea", "al repositorio", "con Mira", "con el equipo". */
+const ES_TO_SOMEONE =
+  /(?<![\p{L}])(?:a|hacia)\s+((?:la|el|los|las|tu|tus|su|sus|mi|mis|nuestro|nuestra|nuestros|nuestras|un|una|este|esta|ese|esa)(?![\p{L}])[^,.;:!?\n]{0,40}|[\p{Lu}@#][^,.;:!?\n]{0,40})|(?<![\p{L}])al\s+([^,.;:!?\n]{1,40})|(?<![\p{L}])con\s+((?:el|tu|su|nuestro)\s+equipo(?![\p{L}])|todos(?![\p{L}])|todas(?![\p{L}])|ellos(?![\p{L}])|ellas(?![\p{L}])|él(?![\p{L}])|ella(?![\p{L}])|[\p{Lu}@#][^,.;:!?\n]{0,40})/gu;
+const ES_IN_APP =
+  /(?<![\p{L}])(?:en|a|al)\s+(?:(?:la|el|tu|su|mi|nuestro|nuestra|un|una)\s+)?(?:tarea|ticket|incidencia|issue|tarjeta|p[aá]gina|documento|doc|google|drive|dropbox|onedrive|sharepoint|notion|slack|teams|jira|linear|github|gitlab|confluence|correo|e-?mail|bandeja|calendario|evento|reuni[oó]n|proyecto|tablero|carpeta|repo|repositorio|canal|archivos)(?![\p{L}])|(?<![\p{L}])(?:en|a)\s+[#@][\w-]+|(?<![\p{L}])(?:por|v[ií]a|mediante)\s+(?:e-?mail|correo|mail|slack|teams|sms|whatsapp|telegram|discord|mensaje\s+de\s+texto)(?![\p{L}])/iu;
+
+function elsewhereEs(rest: string): boolean {
+  for (const match of rest.matchAll(ES_TO_SOMEONE)) if (!ES_CHAT.test((match[1] ?? match[2] ?? match[3] ?? "").trim())) return true;
+  return ES_IN_APP.test(rest);
+}
+
 /** What stands in, at the same length, for text the reply quotes or shows as code: no letter, space or sentence end. */
 const BLANK = "\u2063";
 const FENCED = /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g;
-const QUOTED = /``[^\n]*?``|`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|^[ \t]*>[^\n]*/gm;
+const QUOTED = /``[^\n]*?``|`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|^[ \t]*>[^\n]*/gm;
 const blanked = (found: string) => found.replace(/[^\n]/g, BLANK);
 
 /**
@@ -91,14 +172,16 @@ const blanked = (found: string) => found.replace(/[^\n]/g, BLANK);
  */
 function unquoted(text: string): string {
   return text.replace(FENCED, blanked).replace(QUOTED, (found) => {
-    const end = /[.!?]+(?=["”]$)/.exec(found);
+    const end = /[.!?]+(?=["”»]$)/.exec(found);
     const blank = blanked(found);
     return end ? `${blank.slice(0, end.index)}${end[0]}${blank.slice(end.index + end[0].length)}` : blank;
   });
 }
 
-/** Abbreviations whose dot ends no sentence ("U.S.", "e.g.", "i.e.", "etc.", "vs.", "Dr. Rao", "9 a.m."): a line break after one still does. */
-const ABBREVIATION = /(?:^|[^\p{L}\p{N}])(?:\p{L}(?:\.\p{L})+|etc|vs|mr|mrs|ms|dr|prof|sr|jr|st|approx|inc|ltd|co|corp|fig|cf|al|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$/iu;
+/** Abbreviations whose dot ends no sentence ("U.S.", "e.g.", "i.e.", "etc.", "vs.", "Dr. Rao", "Dra. Ruiz", "9 a.m."): a line break after one still does. */
+const ABBREVIATION = /(?:^|[^\p{L}\p{N}])(?:\p{L}(?:\.\p{L})+|etc|vs|mr|mrs|ms|dr|prof|sr|jr|st|approx|inc|ltd|co|corp|fig|cf|al|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|sra|srta|dra|ud|uds|p[aá]g|n[uú]m)$/iu;
+/** Spanish abbreviations in two parts ("p. ej.", "EE. UU.", "9 a. m."), up to the second dot: neither dot ends a sentence. */
+const PAIRED = /(?:^|[^\p{L}\p{N}])(?:p\.\s?ej|ee\.\s?uu|[ap]\.\s?m)$/iu;
 
 /**
  * Whether a sentence ends at `index`: a line break, "!" or "?", or a dot followed by a space, a closing mark or the end,
@@ -110,7 +193,10 @@ const stops = (text: string, index: number): boolean => {
   if (char !== ".") return false;
   if (index + 1 >= text.length || text[index + 1] === "\n") return true;
   if (!/[\s)"'’\]*_\u2063]/.test(text[index + 1]!)) return false;
-  return !ABBREVIATION.test(text.slice(Math.max(0, index - 12), index)) && !/^[ \t]*\d{1,3}$/.test(text.slice(text.lastIndexOf("\n", index - 1) + 1, index));
+  const before = text.slice(Math.max(0, index - 12), index);
+  const next = /^\s?\p{L}+(?=\.)/u.exec(text.slice(index + 1, index + 6))?.[0];
+  if (PAIRED.test(before) || (next && PAIRED.test(`${before}.${next}`))) return false;
+  return !ABBREVIATION.test(before) && !/^[ \t]*\d{1,3}$/.test(text.slice(text.lastIndexOf("\n", index - 1) + 1, index));
 };
 
 /** The sentence around `index`: from the last stop before it to the next one after it. */
@@ -139,9 +225,9 @@ const CLAUSE = /([,;:()\n]|\s[-–]\s)|\b(and|but|so|then|because|while|since|al
 const REPORTED = /\b(?:says|said|wrote|writes|mentions|mentioned|told|tells|thinks|thought|confirms|confirmed|claims|claimed|noted|according to|replies|replied|asks|asked)\b/i;
 
 /** The last clause of `text`, what comes before it, and whether a conjunction joined it to that ("fixed it and sent"). */
-function lastClause(text: string): { clause: string; before: string; conjunction: boolean } {
+function lastClause(text: string, clauses = CLAUSE): { clause: string; before: string; conjunction: boolean } {
   let last: RegExpExecArray | null = null;
-  for (const match of text.matchAll(CLAUSE)) last = match;
+  for (const match of text.matchAll(clauses)) last = match;
   if (!last) return { clause: text, before: "", conjunction: false };
   return { clause: text.slice(last.index + last[0].length), before: text.slice(0, last.index), conjunction: Boolean(last[2]) };
 }
@@ -173,25 +259,55 @@ function besides(lead: string, tail: string): number {
   return tokens(lead).filter((word) => !SELF.test(word) && !FILLER.test(word)).length + words(tail);
 }
 
+const ES_SELF = /^(?:yo|nosotros|nosotras)$/i;
+/** Words that name no one: "ya", "también", "listo", "hola", and the "te" or "lo" before a verb. */
+const ES_FILLER = /^(?:ya|también|tambien|además|ademas|ahora|hoy|ayer|antes|recién|recien|finalmente|y|e|pues|bueno|bien|vale|listo|lista|hecho|hecha|perfecto|ok|okay|sí|claro|entonces|así|aquí|aqui|acá|aca|hola|te|le|les|os|lo|la|los|las)$/iu;
+/** Where a Spanish clause begins: "corregí el error y te envié …", "te confirmo que he adjuntado …". */
+const ES_CLAUSE = /([,;:()\n]|\s[-–]\s)|(?<![\p{L}])(y|e|pero|que|porque|pues|aunque|mientras|luego|entonces)(?![\p{L}])/giu;
+/** Articles and the like, which Spanish needs more of than English: "de la página de estado" says as much as "of the status page". */
+const ES_LIGHT = /^(?:de|del|la|el|los|las|un|una|unos|unas|al|a|y|e|en)$/iu;
+
+/** Whether the node itself did it: its verb says the first person, so its clause names no one else ("Mira y yo", "yo" or nothing). */
+function nodeDidEs(lead: string): boolean {
+  const words = tokens(lastClause(lead, ES_CLAUSE).clause).filter((word) => !ES_FILLER.test(word));
+  return !words.length || (words.length === 1 && ES_SELF.test(words[0]!));
+}
+
+/** How each language reads a sentence a pattern found a claim in. */
+const LANGUAGES: Record<ClaimLanguage, { excluded: (sentence: string) => boolean; here: RegExp; elsewhere: (rest: string) => boolean; own: (lead: string, acts: boolean) => boolean; besides: (lead: string, tail: string) => number }> = {
+  en: {
+    excluded: (sentence) => sentence.endsWith("?") || NEGATED.test(sentence) || CONDITIONAL.test(sentence) || THEIRS.test(sentence),
+    here: /^here/i,
+    elsewhere,
+    own: (lead, acts) => (acts ? nodeDid(lead) : !REPORTED.test(lastClause(lead).clause)),
+    besides,
+  },
+  es: {
+    excluded: (sentence) => sentence.endsWith("?") || sentence.includes("¿") || ES_NEGATED.test(sentence) || ES_CONDITIONAL.test(sentence) || ES_THEIRS.test(sentence) || ES_LATER.test(sentence),
+    here: /^(?:aqu[ií]|ac[aá]|ah[ií])/iu,
+    elsewhere: elsewhereEs,
+    own: (lead, acts) => !ES_REPORTED.test(lead) && (!acts || nodeDidEs(lead)),
+    besides: (lead, tail) => tokens(lead).filter((word) => !ES_SELF.test(word) && !ES_FILLER.test(word)).length + tokens(tail).filter((word) => !ES_LIGHT.test(word)).length,
+  },
+};
+
 /** The delivery claims a reply makes, one per sentence, in the order written. */
 export function deliveryClaims(text: string): DeliveryClaim[] {
   const plain = unquoted(text);
   const found = new Map<number, DeliveryClaim>();
-  for (const { kind, list } of PATTERNS) {
-    for (const { pattern, acts } of list) {
-      for (const match of plain.matchAll(pattern)) {
-        const { start, end } = sentenceAt(plain, match.index);
-        if (found.has(start) || match.index + match[0].length > end) continue;
-        const sentence = plain.slice(start, end).trim();
-        if (!sentence || sentence.endsWith("?") || NEGATED.test(sentence) || CONDITIONAL.test(sentence) || THEIRS.test(sentence)) continue;
-        // "here is the screenshot" names its own place; anything else may name another one ("attached it to the task").
-        if (!/^here/i.test(match[0]) && elsewhere(plain.slice(match.index, end))) continue;
-        // Only the node's own word counts: never what someone else did or said.
-        const lead = plain.slice(start, match.index);
-        if (acts ? !nodeDid(lead) : REPORTED.test(lastClause(lead).clause)) continue;
-        const whole = besides(text.slice(start, match.index), text.slice(match.index + match[0].length, end)) <= 4;
-        found.set(start, { kind, noun: match.groups!.noun!, sentence: text.slice(start, end).trim(), start, end, whole });
-      }
+  for (const { kind, language, pattern, acts } of PATTERNS) {
+    const reads = LANGUAGES[language];
+    for (const match of plain.matchAll(pattern)) {
+      const { start, end } = sentenceAt(plain, match.index);
+      if (found.has(start) || match.index + match[0].length > end) continue;
+      const sentence = plain.slice(start, end).trim();
+      if (!sentence || reads.excluded(sentence)) continue;
+      // "here is the screenshot" names its own place; anything else may name another one ("attached it to the task").
+      if (!reads.here.test(match[0]) && reads.elsewhere(plain.slice(match.index, end))) continue;
+      // Only the node's own word counts: never what someone else did or said.
+      if (!reads.own(plain.slice(start, match.index), acts)) continue;
+      const whole = reads.besides(text.slice(start, match.index), text.slice(match.index + match[0].length, end)) <= 4;
+      found.set(start, { kind, noun: match.groups!.noun!, sentence: text.slice(start, end).trim(), start, end, whole, language });
     }
   }
   return [...found.values()].sort((a, b) => a.start - b.start);
@@ -225,26 +341,39 @@ function backed(kind: ClaimKind, delivered: Delivered): boolean {
   return delivered.pictures > 0;
 }
 
-const NOTE: Record<ClaimKind, string> = {
-  screenshot: "No screenshot was attached.",
-  picture: "No picture was attached.",
-  video: "No video was attached.",
-  file: "No file was attached.",
+const NOTES: Record<ClaimLanguage, Record<ClaimKind, string>> = {
+  en: {
+    screenshot: "No screenshot was attached.",
+    picture: "No picture was attached.",
+    video: "No video was attached.",
+    file: "No file was attached.",
+  },
+  es: {
+    screenshot: "No se adjuntó ninguna captura de pantalla.",
+    picture: "No se adjuntó ninguna imagen.",
+    video: "No se adjuntó ningún video.",
+    file: "No se adjuntó ningún archivo.",
+  },
 };
 
-const named = (noun: string) => (/\.\w+$/.test(noun) ? noun : `the ${noun.toLowerCase()}`);
+const fileName = (noun: string) => /\.\w+$/.test(noun);
+/** "screenshots", "capturas de pantalla", "informes": more than one. */
+const plural = (claim: DeliveryClaim) => !fileName(claim.noun) && (claim.language === "en" ? /s$/i : /^\S+s(?=\s|$)/i).test(claim.noun);
+/** What the feedback, which is in English, calls the thing: a file's name, the English noun as written, or for Spanish its kind ("the screenshot"). */
+const named = (claim: DeliveryClaim) =>
+  fileName(claim.noun) ? claim.noun : claim.language === "en" ? `the ${claim.noun.toLowerCase()}` : `the ${claim.kind}${plural(claim) ? "s" : ""}`;
 
 /** The feedback for the one round that may fix it: what the reply said, and what to do. */
 export function claimFeedback(claims: readonly DeliveryClaim[]): string {
-  const nouns = [...new Set(claims.map((claim) => named(claim.noun)))];
-  const plural = nouns.length > 1 || /s$/i.test(claims[0]!.noun) && !/\.\w+$/.test(claims[0]!.noun);
+  const nouns = [...new Set(claims.map(named))];
+  const many = nouns.length > 1 || plural(claims[0]!);
   const what = nouns.length > 1 ? `${nouns.slice(0, -1).join(", ")} and ${nouns.at(-1)}` : nouns[0]!;
-  return `You said ${what} ${plural ? "are" : "is"} attached, but nothing reached the chat. Attach ${plural ? "them" : "it"} with the right tool, or correct your reply.`;
+  return `You said ${what} ${many ? "are" : "is"} attached, but nothing reached the chat. Attach ${many ? "them" : "it"} with the right tool, or correct your reply.`;
 }
 
 /**
  * The reply without its false claims: a sentence that only made the claim goes, with its emphasis and, alone on its
- * line, with its line and bullet; any other stays. A plain note says what was not attached.
+ * line, with its line and bullet; any other stays. A plain note, in each claim's language, says what was not attached.
  */
 export function withoutClaims(text: string, claims: readonly DeliveryClaim[]): string {
   let kept = text;
@@ -278,7 +407,7 @@ export function withoutClaims(text: string, claims: readonly DeliveryClaim[]): s
     kept = `${before}${after}`;
   }
   kept = kept.trim();
-  const notes = [...new Set(claims.map((claim) => NOTE[claim.kind]))].join(" ");
+  const notes = [...new Set(claims.map((claim) => NOTES[claim.language][claim.kind]))].join(" ");
   return kept ? `${kept}\n\n${notes}` : notes;
 }
 

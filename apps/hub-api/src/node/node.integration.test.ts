@@ -461,6 +461,49 @@ test("on its owner's plan, a reply that says a screenshot is attached when none 
   assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
 });
 
+test("on its owner's plan, a reply in Spanish that says a screenshot is attached when none reached the chat goes back once; still false, the claim goes and a note in Spanish says so", async () => {
+  const plan = await onPlan("Lucía");
+  const agent = agentOn(plan, (spec, index) => (index === 0 ? { text: "Aquí está la captura de pantalla de la página de estado." } : { text: spec.prompt.startsWith("You said the screenshot is attached") ? "Te he adjuntado la captura." : "?" }));
+  try {
+    await say(plan.owner, plan.room.id, "envíame una captura de pantalla de la página de estado");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "one round to attach it or correct the reply");
+  assert.equal(agent.specs[1]!.prompt, "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "No se adjuntó ninguna captura de pantalla.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.outcome, report.falseClaims], ["partial", 1]);
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
+});
+
+test("on its owner's plan, a Spanish claim that a link to the saved file backs stands, with no second message", async () => {
+  const plan = await onPlan("Mateo");
+  const upload = await plan.owner.inject({
+    method: "POST",
+    url: "/api/documents",
+    payload: { filename: "informe.md", mediaType: "text/markdown", dataBase64: Buffer.from("# Ventas de marzo\n\nCrecieron un 12 %.").toString("base64"), summarize: false },
+  });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const text = `He adjuntado el informe: [informe.md](ensemble://file/${json(upload).file.id as string}).`;
+  const agent = agentOn(plan, () => ({ text }));
+  try {
+    await say(plan.owner, plan.room.id, "prepárame el informe de ventas de marzo");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 1, "nothing sent back");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, text);
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  assert.equal((turn.trace!.report as { falseClaims?: number }).falseClaims, undefined);
+  assert.equal((turn.trace!.loop as { followUps?: string[] }).followUps, undefined);
+});
+
 test("on its owner's plan, the answer check runs after the turn when a checklist model is there: what is missing goes back to the same session, and its rounds are in the trace", async () => {
   const { CHECKLIST_PROMPT } = await import("./deliverables.js");
   process.env.ENSEMBLE_NODE_CHECKLIST_MODEL = "on";
