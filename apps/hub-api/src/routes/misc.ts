@@ -11,6 +11,7 @@ import { prisma } from "../lib/prisma.js";
 import { redis } from "../lib/redis.js";
 import { sseHandler, type Listener } from "../lib/sse.js";
 import { redoLast, undoLast } from "../lib/undo.js";
+import { pendingApprovalsWhere } from "../lib/needs-me.js";
 
 const HistoryBody = z.object({ entryId: z.string().min(1).optional() });
 
@@ -92,7 +93,7 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/approvals", async (request) => {
     const approvals = await prisma.approval.findMany({
-      where: { userId: request.userId, decision: null },
+      where: pendingApprovalsWhere(request.userId),
       orderBy: { requestedAt: "asc" },
     });
     return {

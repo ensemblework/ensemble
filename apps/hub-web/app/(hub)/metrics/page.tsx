@@ -62,6 +62,8 @@ export default function MetricsPage() {
   const [windowDays, setWindowDays] = useState(14);
   const [search, setSearch] = useState("");
   const [more, setMore] = useState(false);
+  const [allModels, setAllModels] = useState(false);
+  const [allPurposes, setAllPurposes] = useState(false);
   const metrics = useQuery({ queryKey: ["metrics", provider, windowDays], queryFn: () => api.metrics(provider, windowDays), placeholderData: keepPreviousData });
   const credits = useIncludedUsage();
   const data = metrics.data;
@@ -71,6 +73,8 @@ export default function MetricsPage() {
   const output = data?.byModel.reduce((sum, row) => sum + row.tokensOut, 0) ?? 0;
   const recent = data?.recent.filter(call => `${call.title} ${call.model} ${call.purpose}`.toLowerCase().includes(search.toLowerCase())) ?? [];
   const maxCalls = Math.max(1, ...data?.byModel.map(row => row.calls) ?? []);
+  const models = [...(data?.byModel ?? [])].sort((a, b) => b.calls - a.calls);
+  const purposes = (data?.byPurpose ?? []).filter(row => row.calls > 0).sort((a, b) => b.calls - a.calls);
   return <div className="mx-auto max-w-[1200px] px-4 pb-24 pt-8 sm:px-8">
     <PageHeader title="Metrics" actions={<div className="flex flex-wrap items-center gap-2">
       <InfoTip label="About usage" text="Only calls through Ensemble appear here. Token counts come from provider responses. Other apps and AI plan balances are not read. Missing values mean not reported, not zero." />
@@ -90,8 +94,16 @@ export default function MetricsPage() {
         {data?.reporting && (data.reporting.withInput < calls || data.reporting.withOutput < calls) ? <p className="flex items-start gap-2 text-xs text-muted"><Info size={14} className="shrink-0" />Token totals include reported values only. Input counts: {data.reporting.withInput} of {calls} calls; output counts: {data.reporting.withOutput} of {calls} calls.</p> : null}
         {data ? <ActivityChart days={data.days} /> : null}
         <div className="grid gap-4 md:grid-cols-2">
-          <section className="tile rounded-xl bg-panel p-5"><h2 className="mb-4 text-sm font-semibold">Models you used</h2>{!data?.byModel.length ? <Empty>No model calls recorded in this period.</Empty> : <div className="space-y-4">{data.byModel.map(row => <div key={`${row.provider}:${row.model}`} data-model-row={`${row.provider}:${row.model}`}><div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0"><span className="block truncate font-medium">{modelName(row.provider, row.model)}</span><span className="mt-1 block text-faint">{providerName(row.provider)}</span></span><span className="shrink-0 text-right text-muted">{row.calls} calls · {spent(row)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><div className="h-full rounded-full bg-accent" style={{ width: `${row.calls / maxCalls * 100}%` }} /></div></div>)}</div>}</section>
-          <section className="tile rounded-xl bg-panel p-5"><h2 className="mb-4 text-sm font-semibold">Where your usage went</h2>{!data?.byPurpose.length ? <Empty>No activity recorded.</Empty> : <div className="space-y-4">{data.byPurpose.filter(row => row.calls > 0).map(row => <div key={row.purpose} className="flex items-start justify-between gap-3 border-b border-line pb-3 text-xs"><div><strong className="font-medium">{row.purpose}</strong><p className="mt-1 text-faint">{count(row.tokensIn + row.tokensOut)} reported tokens</p></div><span className="text-right text-muted">{row.calls} calls<br /><span className="mt-1 block">{spent(row)}</span></span></div>)}</div>}</section>
+          <section className="tile min-w-0 rounded-xl bg-panel p-5">
+            <h2 className="mb-4 text-sm font-semibold">Models you used</h2>
+            {!models.length ? <Empty>No model calls recorded in this period.</Empty> : <div id="usage-models" className="space-y-4">{models.slice(0, allModels ? undefined : 5).map(row => <div key={`${row.provider}:${row.model}`} data-model-row={`${row.provider}:${row.model}`}><div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0"><span className="block truncate font-medium" title={modelName(row.provider, row.model)}>{modelName(row.provider, row.model)}</span><span className="mt-1 block text-faint">{providerName(row.provider)}</span></span><span className="shrink-0 text-right text-muted">{row.calls} calls · {spent(row)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><div className="h-full rounded-full bg-accent" style={{ width: `${row.calls / maxCalls * 100}%` }} /></div></div>)}</div>}
+            {models.length > 5 ? <button type="button" className="btn-ghost mt-3 text-xs" aria-expanded={allModels} aria-controls="usage-models" onClick={() => setAllModels(value => !value)}>{allModels ? "Show fewer models" : `Show all ${models.length} models`}</button> : null}
+          </section>
+          <section className="tile min-w-0 rounded-xl bg-panel p-5">
+            <h2 className="mb-4 text-sm font-semibold">Where your usage went</h2>
+            {!purposes.length ? <Empty>No activity recorded.</Empty> : <div id="usage-purposes" className="space-y-4">{purposes.slice(0, allPurposes ? undefined : 5).map(row => <div key={row.purpose} data-purpose-row={row.purpose} className="flex items-start justify-between gap-3 border-b border-line pb-3 text-xs"><div className="min-w-0 break-words"><strong className="font-medium">{row.purpose}</strong><p className="mt-1 text-faint">{count(row.tokensIn + row.tokensOut)} reported tokens</p></div><span className="shrink-0 text-right text-muted">{row.calls} calls<br /><span className="mt-1 block">{spent(row)}</span></span></div>)}</div>}
+            {purposes.length > 5 ? <button type="button" className="btn-ghost mt-3 text-xs" aria-expanded={allPurposes} aria-controls="usage-purposes" onClick={() => setAllPurposes(value => !value)}>{allPurposes ? "Show fewer purposes" : `Show all ${purposes.length} purposes`}</button> : null}
+          </section>
         </div>
         <section className="tile rounded-xl bg-panel p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Most recent calls</h2><p className="mt-1 text-xs text-muted">Open a call for its time, purpose and how usage is counted.</p></div><label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"><Search size={14} className="shrink-0 text-muted" /><input type="search" aria-label="Search recent calls" placeholder="Find a call…" value={search} onChange={event => setSearch(event.target.value)} className="w-40 min-w-0 bg-transparent text-xs outline-none" /></label></div>
           {!recent.length ? <Empty>{search ? "No recent calls match." : "No calls recorded in this period."}</Empty> : recent.slice(0, more ? 40 : 5).map((call, index) => <RecentCall key={`${call.at}-${index}`} call={call} />)}

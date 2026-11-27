@@ -47,6 +47,8 @@ Pinning, reopening, active jobs, a learning pass waiting for its model or a conf
 
 `/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
 
+The Skills page deletes through `DELETE /api/skills/:id`, which permanently removes the skill and its versions and feedback immediately, outside the Trash window ([04 §1](04_MODULE_SKILL_FORGE.md#1-storage-and-editing)).
+
 ### 1.2 Private reminders and platform notifications
 
 `dispatchDueReminders` turns due reminders into in-app notifications. In-app notifications are unread items, not a log: the bell lists only unread ones ([02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-notifications-and-private-reminders)) and retention removes old rows. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission.
@@ -111,6 +113,8 @@ Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §
 ## 5. Metrics and included AI
 
 Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider filters to apply them to every aggregate: reported tokens, daily activity, models, purposes and recent calls. Usage belongs to you, including work in a shared space.
+
+The model and purpose tiles show the top five by call count, each with an independent Show all / Show fewer toggle. Zero-call purposes are omitted; the list's expansion does not change totals or filters.
 
 `lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 

@@ -153,7 +153,7 @@ Loading shows skeleton rows; with no calendar and no events the tile offers **Co
 
 #### Pin a task to Today
 
-Pin to Today is in the task's More menu. Open pinned tasks appear above every native desk, independent of its tiles, through `pinnedTasks` in `/api/desk/live`. Completed, deleted and currently snoozed tasks are excluded; pins are not lost when a task falls outside the recent-task window.
+Pin to Today is in the task's More menu. Open pinned tasks appear at the top left above every native desk, independent of its tiles, through `pinnedTasks` in `/api/desk/live`. They form one horizontally scrollable row of tiles, with long titles truncated inside each link (`components/desk/view.tsx`, `desk.css`). Completed, deleted and currently snoozed tasks are excluded; pins are not lost when a task falls outside the recent-task window.
 
 ### 3.2 Board (Kanban)
 
@@ -209,6 +209,10 @@ Cards keep the exact options and pending payloads. Device permissions can requir
 
 It is one queue, without overview counters or filter tabs. Empty sections are omitted; a fully empty queue shows All caught up. Failed queries keep an explicit retry.
 
+Waiting tasks come from `GET /api/tasks?needsMe=true` (`lib/needs-me.ts` in hub-api): undismissed blocked tasks. An awaiting-approval status set through an editor or MCP is not itself an approval request; real permissions appear only as their actionable approval or question cards. The tile's **Remove from Needs me** action leaves the board task and its status alone, saves its `updatedAt` in the space's `desk.needs-me.dismissed.<taskId>` preference, and offers Undo. It stays removed across reloads until the task changes; the bell uses the same filter. Deleted runs and completed/deleted tasks leave the queue. Blocked tasks from failed attempts can be removed after handling the failure elsewhere.
+
+Pending approvals also require an unfinished, undeleted run and an open task, and must not have expired. Listing, the shell count and late-answer validation share `pendingApprovalsWhere`; stale approvals are neither approved nor rejected automatically. A run's tool requests close when its job is gone or ended.
+
 ### 3.4 Runs (Agent Timeline / Trace)
 
 Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. A code run's sheet shows the checkout's folder name, with its path in the tooltip where the person may see it; fresh own-checkout folders use the task-named slug in [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation).
@@ -229,7 +233,7 @@ Empty Overview tiles fold into one Get started strip of first steps and return a
 
 #### Open a person and their linked work
 
-People cards (`components/context/people.tsx`) edit role, team and **To you** (the person's relationship to you, which agents read), show each project with the person's role on it, and **Open** a person panel in the side peek (`components/context/person-panel.tsx`, `?peek=<id>&kind=person`; `/context?person=<id>` opens it too): the same fields, then everything that links to them from `GET /api/context/item` (projects with roles, open tasks, work you wait on them for, meetings, work done together, files, pages that mention them), each list paged with Show more (`components/context/item-relations.tsx`). A project's People property lists members with their role on the project, edited in place (`PATCH /api/projects/:id` with `people: [{ id, role }]`).
+People cards (`components/context/people.tsx`) edit role, team and **To you** (the person's relationship to you, which agents read), show each project in a neutral row with its role on a separate line and long text wrapping, and **Open** a person panel in the side peek (`components/context/person-panel.tsx`, `?peek=<id>&kind=person`; `/context?person=<id>` opens it too): the same fields, then everything that links to them from `GET /api/context/item` (projects with roles, open tasks, work you wait on them for, meetings, work done together, files, pages that mention them), each list paged with Show more (`components/context/item-relations.tsx`). A project's People property lists members with their role on the project, edited in place (`PATCH /api/projects/:id` with `people: [{ id, role }]`).
 
 #### Create and edit a project
 
@@ -245,7 +249,7 @@ Graph interaction help is behind its information icon.
 
 ### 3.6 Skills
 
-Skills edits each personal instruction body, its enablement and retained versions. Evidence appears only when present. The page has no preview/scoring form or learning teaser. Morning brief instructions are edited on Routines (§3.10a). Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
+Skills edits each personal instruction body, its enablement and retained versions. A skill's permanent delete button appears on hover or keyboard focus, and stays visible on touch devices. It deletes immediately without confirmation or a Trash window; deleting the selected skill opens the remaining library. Evidence appears only when present. The page has no preview/scoring form or learning teaser. Morning brief instructions are edited on Routines (§3.10a). Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
 
 ### 3.7 Code
 
@@ -254,6 +258,8 @@ Code opens a review or folder with changed-file diff, editor and Source control.
 ### 3.8 Metrics
 
 Metrics shows calls routed through Ensemble: token totals, an activity chart, usage by model and purpose, and expandable recent calls. The provider filter and 14/30/90-day period apply to every aggregate; the provider selector keeps its value when a period has no calls for it. Missing token counts and prices are stated, and such calls still appear.
+
+Models you used and Where your usage went each show the five entries with the most calls. Each has its own Show all / Show fewer toggle; zero-call purposes are omitted. Expanding one list does not expand the other.
 
 The credits card covers the UTC calendar month and shows credits used before a usage erasure. Reading the summary repairs usage left by an earlier Everything deletion, keeping known charges and later work (`repairErasedUsage`). No time-saved estimate is shown. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md), [33](33_INCLUDED_AI.md).
 
@@ -439,6 +445,12 @@ Mod+A selects the line's text first, then every block. A table keeps its own cel
 
 Every editable page ends on an empty line (`components/editor/trailing-block.ts`): it is drawn, not saved, and clicking it or anywhere below the last block makes it a real line, so there is always somewhere to write after an image, a table or a list.
 
+#### Copy a code block
+
+Every code block in the shared editor (`components/editor/code-copy.ts`) has a top-right **Copy code** button, shown on hover or keyboard focus and always shown on touch screens. It works in editable, read-only, shared and public pages, in both themes. It copies the entire block's raw text, including tabs, blank lines and trailing newlines, without changing the document, selection or undo history.
+
+Clipboard success changes the icon to a green tick and the label to **Copied** for two seconds; copying again restarts that block's timer. A failed or unavailable clipboard shows an error notice, never a success tick or toast. Tab and Shift+Tab in the code keep their indentation shortcuts (`code-indent.ts`).
+
 #### Embed a file, plot or diagram
 
 Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
@@ -509,6 +521,8 @@ Graph (`components/context/graph.tsx`, layout in `lib/graph-layout.ts`) derives 
 Nodes are people, projects, repositories, tasks, deliverables, skills, meetings, pages, diagrams, plots and saved app items; links include project membership (with the role), task–project/repository/deliverable/skill, dependencies, work from a meeting, meeting attendees, work you wait on someone for (dashed, people-coloured), and mentions on pages (dashed).
 
 **Find in graph** lights matching nodes (Enter selects the first). Clicking a node opens a side panel with what links to it (`GET /api/context/item`); a linked record on the graph is selected in place, so the panel walks the graph, and **Focus here** keeps only what is within one or two links (the hop count is in the focus chip).
+
+Wheel and pinch zoom handlers belong to the canvas, not the surrounding stage. The detail panel's linked-record region scrolls normally by wheel, touch or keyboard without zooming the graph, and contains its overscroll.
 
 Double-click or **Open** opens a record where it lives: tasks, projects, deliverables and people in the side peek, meetings and pages on their page. Phones use the list view. Data and suppression: [03](03_MODULE_CONTEXT_ENGINE.md).
 
@@ -728,7 +742,7 @@ Pages and task documents keep their live step/rebase protocol (§13); boards, di
 | Routines | `GET/POST /api/routines`, `PATCH/DELETE /api/routines/:id`, `POST /api/routines/:id/run`; `routes/routines.ts`; owner-only |
 | Weekly recap | `GET /api/recap/week?date=YYYY-MM-DD` (the Monday–Sunday week containing the date, default this week, in the person's time zone): `done`, `decided`, `slipped`, `meetings`, `markdown`, plus `narrative`, `stats`/`previous`, `days`, `rhythm` (7×24 active minutes), `surfaces`, `projects`, `highlights`, `ahead`, `agents`; `cowork/service.ts` (`weeklyRecap`), pure parts in `cowork/recap.ts`; `routes/cowork.ts` |
 | Meetings | `/api/meetings/sessions` (`projectId` on create; `PATCH /api/meetings/sessions/:id` with `projectId` links or, with null, unlinks a project), `POST /api/meetings/sessions/:id/suggest`, `/api/meetings/imported`, `GET`/`PATCH`/`DELETE /api/meetings/notes/:id`, `POST /api/meetings/notes/:id/suggest`, `POST /api/meetings/events/:id/prep` ([03 §4.3, §7](03_MODULE_CONTEXT_ENGINE.md#43-meeting-processing)), `POST /api/meetings/notes/:id/restore`, `POST /api/meetings/notes/:id/tasks`, `GET /api/meetings/sources`, `POST /api/meetings/transcripts/preview`, `POST /api/meetings/transcripts`, `POST /api/meetings/vendors/:vendor/import`, `GET /api/meetings/remote/:provider`, `POST /api/meetings/remote/:provider/import`, `POST /api/meetings/events/:id/transcript` ([03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-meeting-transcripts-files-pastes-teams-google-meet-and-zoom)); `routes/cowork.ts`, `meeting-notes.ts` |
-| Needs me, reminders, notices | `/api/decisions` (the Hub asks with `?surface=hub`: without a node's own requests, with each run's `origin`, [35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)), `/api/decisions/:id/decide`, `/api/approvals/:id/decide`, `/api/reminders`, `GET /api/notifications` (unread only, newest 60), `POST /api/notifications/:id/read`, `POST /api/notifications/read` (every unread one, or `{ ids }`); `routes/decisions.ts`, `misc.ts`, `board.ts`, `cowork.ts` |
+| Needs me, reminders, notices | `/api/decisions` (the Hub asks with `?surface=hub`: without a node's own requests, with each run's `origin`, [35 §8.6](35_ENSEMBLE_NODE.md#86-cards-in-the-chat)), `/api/decisions/:id/decide`, `/api/approvals` (live pending approvals), `/api/approvals/:id/decide`, `/api/tasks?needsMe=true` (undismissed waiting tasks), `/api/reminders`, `GET /api/notifications` (unread only, newest 60), `POST /api/notifications/:id/read`, `POST /api/notifications/read` (every unread one, or `{ ids }`); `routes/decisions.ts`, `misc.ts`, `board.ts`, `cowork.ts`, `tasks.ts` |
 | Live updates | `/api/events` (SSE), `/api/events/ticket`; `routes/misc.ts` |
 | Settings/models | `/api/settings`, `/api/settings/modules`, `/api/models`, `/api/models/refresh`, `/api/models/test`, `/api/model-keys/:provider`; `routes/settings.ts`, `system.ts` |
 | Spaces | `/api/spaces`, `/api/spaces/:id`, `/api/spaces/:id/switch`, `/api/spaces/settings/copy`, `/api/spaces/settings/sync`; `spaces/routes.ts`, [28 §3](28_ENSEMBLE_SPACES.md#3-routes) |
