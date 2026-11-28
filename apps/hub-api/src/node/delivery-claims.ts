@@ -69,12 +69,15 @@ function english(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
 /** A word's edges in Spanish, where `\b` would split "está" or "vídeo" at its accented letter. */
 const START = String.raw`(?<![\p{L}\p{N}_])`;
 const END = String.raw`(?![\p{L}\p{N}_])`;
+/** A file a reply cannot be written as; and a report or summary, which it can ("te dejo un resumen:" with the summary after it). */
+const ES_FILES = String.raw`[\p{L}\p{N}_-]+\.(?:${EXTENSIONS})|archivos?|ficheros?|documentos?|pdfs?|hojas?\s+de\s+c[aá]lculo|csvs?`;
+const ES_WRITTEN = String.raw`informes?|reportes?|res[uú]men(?:es)?`;
 const ES_NOUNS: Record<ClaimKind, string> = {
   // "captura" alone is a screenshot, but not "captura de datos" (data capture).
   screenshot: String.raw`capturas?(?!\s+de\s+(?:datos|requisitos|leads|informaci[oó]n)${END})(?:\s+de\s+pantalla)?|pantallazos?|screenshots?`,
   picture: String.raw`im[aá]gen(?:es)?|fotos?|fotograf[ií]as?`,
   video: String.raw`grabaci(?:[oó]n|ones)(?:\s+de\s+(?:la\s+)?pantalla)?|v[ií]deos?|screencasts?`,
-  file: String.raw`[\p{L}\p{N}_-]+\.(?:${EXTENSIONS})|archivos?|ficheros?|informes?|reportes?|documentos?|pdfs?|hojas?\s+de\s+c[aá]lculo|csvs?|res[uú]men(?:es)?`,
+  file: `${ES_FILES}|${ES_WRITTEN}`,
 };
 const ES_DET = String.raw`(?:el|la|los|las|un|una|unos|unas|tu|tus|su|sus|mi|mis|nuestro|nuestra|nuestros|nuestras|este|esta|estos|estas|ese|esa|esos|esas|ambos|ambas|todos|todas|\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)`;
 const ES_BETWEEN = String.raw`(?:[\p{L}\p{N}’'-]+(?:\.[\p{L}\p{N}’'-]+)*\s+){0,4}?`;
@@ -82,19 +85,26 @@ const ES_ATTACHED = String.raw`adjunt[oa]s?|adjuntad[oa]s?|incluid[oa]s?`;
 const ES_PLACE = String.raw`(?:m[aá]s\s+)?(?:abajo|debajo|arriba)|a\s+continuaci[oó]n`;
 /** "te", "le", "os", "les": to whom it went. "Pasar" and "dejar" deliver only with one ("te paso", "te dejé"); "mando" and "paso" are nouns too. */
 const TO = String.raw`(?:te|le|les|os)`;
-/** The node's own act in the first person, which the verb's form says: "he adjuntado", "adjunté", "te envío", "acabo de enviar". */
-const ES_ACT = [
+/**
+ * The node's own act in the first person, which the verb's form says. Done: "he adjuntado", "adjunté", "acabo de enviar".
+ * Without its accent ("envie", "adjunte") the same word is a command or a wish ("que te envíe"), so it counts only after
+ * "te" or "yo" and never after "que".
+ */
+const ES_DONE = [
   String.raw`(?:${TO}\s+)?(?:he|hemos)\s+(?:ya\s+)?(?:adjuntado|enviado|mandado|compartido|subido|publicado)`,
   String.raw`${TO}\s+(?:he|hemos)\s+(?:ya\s+)?(?:pasado|dejado)`,
-  String.raw`(?:${TO}\s+)?(?:adjunté|envié|mandé|compart[ií]|sub[ií]|publiqué|adjuntamos|enviamos|mandamos|compartimos|subimos|publicamos)`,
-  String.raw`${TO}\s+(?:pasé|dejé|pasamos|dejamos)`,
-  String.raw`(?:${TO}\s+)?(?:adjunto|env[ií]o|env[ií]amos|comparto|subo)`,
-  String.raw`${TO}\s+(?:mando|paso|dejo)`,
+  String.raw`(?:${TO}\s+)?(?:adjunté|envié|mandé|compart[ií]|sub[ií]|publiqué)`,
+  String.raw`${TO}\s+(?:pasé|dejé)`,
+  String.raw`(?<!(?:que|cuando|ojal[aá]|si|aunque|mientras)\s+)(?:yo\s+(?:${TO}\s+)?(?:adjunte|envie|mande|publique)|${TO}\s+(?:adjunte|envie|mande|publique|pase|deje))`,
   String.raw`(?:${TO}\s+)?acab(?:o|amos)\s+de\s+(?:adjuntar|enviar|mandar|compartir|subir|publicar|pasar|dejar)(?:te|le|les|os)?`,
 ].join("|");
+/** Sending in the present ("te envío", "adjunto", "subimos"), which Spanish also says of a plan ("te envío el informe cuando termine"). */
+const ES_SEND = String.raw`(?:${TO}\s+)?(?:adjunto|adjuntamos|env[ií]o|env[ií]amos|enviamos|mandamos|subo|subimos|publicamos)|${TO}\s+mando`;
+/** Handing over in the present ("te dejo", "te paso", "comparto"), which also introduces text the reply gives itself, as English "here is" does. */
+const ES_HAND = String.raw`(?:${TO}\s+)?(?:comparto|compartimos)|${TO}\s+(?:dejo|dejamos|paso|pasamos)`;
 
-/** The Spanish claims for one kind of thing, as in English. `acts`: the words before it must name no one but the node. */
-function spanish(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
+/** A Spanish claim's patterns, as in English. `acts`: the words before it must name no one but the node. `present`: a time still to come makes it a plan. */
+function spanish(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean; present: boolean }> {
   const noun = `(?<noun>${ES_NOUNS[kind]})`;
   const shown = kind === "file" ? ES_ATTACHED : `${ES_ATTACHED}|${ES_PLACE}`;
   const said = [
@@ -107,19 +117,27 @@ function spanish(kind: ClaimKind): Array<{ pattern: RegExp; acts: boolean }> {
   ];
   // "aquí está la captura", "aquí tienes las fotos": as in English, a report or summary can be written in the reply itself.
   if (kind !== "file") said.unshift(String.raw`${START}(?:aqu[ií]|ac[aá]|ah[ií])\s+(?:${TO}\s+)?(?:est[aá]n?|tienes?|ten[eé]is|tienen|van?)\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}`);
+  const handed = kind === "file" ? `(?<noun>${ES_FILES})` : noun;
   const acts = [
     // "consulta el informe adjunto", "verás la captura abajo": in Spanish the second person's command is also the third person's act ("Mira revisa …").
-    String.raw`${START}(?:ver|v[eé]ase|consulta|consulte|revisa|revise|mira|puedes\s+ver|puede\s+ver|ver[aá]s|ver[aá]n)\s+(?:${ES_DET}\s+)?${noun}${END}(?:\s+\p{L}+){0,2}?\s+(?:${kind === "file" ? ES_ATTACHED : `${ES_ATTACHED}|(?:de\s+)?(?:m[aá]s\s+)?(?:abajo|debajo|arriba)`})${END}`,
-    // "he adjuntado el informe", "te envié las capturas", "adjunto el archivo"
-    String.raw`${START}(?:${ES_ACT})\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}`,
+    { source: String.raw`${START}(?:ver|v[eé]ase|consulta|consulte|revisa|revise|mira|puedes\s+ver|puede\s+ver|ver[aá]s|ver[aá]n)\s+(?:${ES_DET}\s+)?${noun}${END}(?:\s+\p{L}+){0,2}?\s+(?:${kind === "file" ? ES_ATTACHED : `${ES_ATTACHED}|(?:de\s+)?(?:m[aá]s\s+)?(?:abajo|debajo|arriba)`})${END}` },
+    // "he adjuntado el informe", "te envié las capturas"
+    { source: String.raw`${START}(?:${ES_DONE})\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}` },
+    // "adjunto el archivo", "te envío el informe"
+    { source: String.raw`${START}(?:${ES_SEND})\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${noun}${END}`, present: true },
+    // "te paso el vídeo", "te dejo el PDF"; not "te dejo un resumen:"
+    { source: String.raw`${START}(?:${ES_HAND})\s+(?:${ES_DET}\s+)?${ES_BETWEEN}${handed}${END}`, present: true },
   ];
-  return [...said.map((source) => ({ pattern: new RegExp(source, "giu"), acts: false })), ...acts.map((source) => ({ pattern: new RegExp(source, "giu"), acts: true }))];
+  return [
+    ...said.map((source) => ({ pattern: new RegExp(source, "giu"), acts: false, present: false })),
+    ...acts.map(({ source, present }) => ({ pattern: new RegExp(source, "giu"), acts: true, present: Boolean(present) })),
+  ];
 }
 
 const KINDS = ["screenshot", "picture", "video", "file"] as const;
 /** Every English reading comes first, so a sentence English claims is read as before. */
 const PATTERNS = [
-  ...KINDS.flatMap((kind) => english(kind).map((row) => ({ ...row, kind, language: "en" as const }))),
+  ...KINDS.flatMap((kind) => english(kind).map((row) => ({ ...row, present: false, kind, language: "en" as const }))),
   ...KINDS.flatMap((kind) => spanish(kind).map((row) => ({ ...row, kind, language: "es" as const }))),
 ];
 
@@ -144,8 +162,13 @@ function elsewhere(rest: string): boolean {
 const ES_NEGATED = /(?<![\p{L}])(?:no|ni|nunca|jam[aá]s|nada|ningún|ningun[oa]?|tampoco|sin|imposible)(?![\p{L}])/iu;
 const ES_CONDITIONAL = /^[^\p{L}\p{N}]*(?:si|cuando|en\s+cuanto|una\s+vez\s+que|tan\s+pronto\s+como|apenas|a\s+menos\s+que|salvo\s+que|hasta\s+que|antes\s+de\s+que)(?![\p{L}])/iu;
 const ES_THEIRS = /(?<![\p{L}])(?:adjuntaste|enviaste|mandaste|compartiste|subiste|pasaste|dejaste|has\s+(?:ya\s+)?(?:adjuntado|enviado|mandado|compartido|subido|pasado|dejado)|usted\s+(?:adjuntó|envió|mandó|compartió|subió))(?![\p{L}])/iu;
-/** Spanish says a plan in the present ("te envío el informe más tarde"): a time still to come makes it one. */
-const ES_LATER = /(?<![\p{L}])(?:mañana|m[aá]s\s+tarde|en\s+breve|en\s+un\s+rato|en\s+un\s+momento|lo\s+antes\s+posible|pronto)(?![\p{L}])/iu;
+/**
+ * Spanish says a plan in the present ("te envío el informe cuando termine", "te paso las capturas después de la reunión"): a time
+ * still to come, or a condition, anywhere in the sentence makes one. Not a time something is from ("la captura de cuando falló",
+ * "el informe del lunes") or "por si" (in case).
+ */
+const ES_LATER =
+  /(?<![\p{L}])(?<!de\s+)(?:(?<!por\s+)si|cuando|en\s+cuanto|apenas|tan\s+pronto\s+como|una\s+vez\s+que|hasta\s+que|al\s+(?:terminar|acabar)|luego|despu[eé]s|m[aá]s\s+tarde|mañana|pronto|en\s+breve|en\s+un\s+(?:rato|momento|minuto)|en\s+unos\s+minutos|lo\s+antes\s+posible|esta\s+(?:tarde|noche)|este\s+fin\s+de\s+semana|(?:el|este|el\s+pr[oó]ximo)\s+(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|(?:la\s+)?pr[oó]xima\s+semana|la\s+semana\s+que\s+viene)(?![\p{L}])/iu;
 /** Words someone else said: "Mira dice que …", "según el cliente". Accents kept where the word without one is the first person ("comento"). */
 const ES_REPORTED = /(?<![\p{L}])(?:dice|dicen|dijo|dijeron|dec[ií]a|comenta|comentó|escribe|escribió|escribieron|afirma|afirmó|confirma|confirmó|menciona|mencionó|contó|asegura|aseguró|responde|respondió|contesta|contestó|preguntó|cree|creen|cre[ií]a|piensa|pensaba|seg[uú]n)(?![\p{L}])/iu;
 const ES_CHAT = /^(?:este chat|esta conversaci[oó]n|este hilo|este mensaje|esta respuesta|mi respuesta|el chat|la conversaci[oó]n|el hilo|nuestro chat|chat|hilo|aqu[ií])(?![\p{L}])/iu;
@@ -264,8 +287,8 @@ const ES_SELF = /^(?:yo|nosotros|nosotras)$/i;
 const ES_FILLER = /^(?:ya|también|tambien|además|ademas|ahora|hoy|ayer|antes|recién|recien|finalmente|y|e|pues|bueno|bien|vale|listo|lista|hecho|hecha|perfecto|ok|okay|sí|claro|entonces|así|aquí|aqui|acá|aca|hola|te|le|les|os|lo|la|los|las)$/iu;
 /** Where a Spanish clause begins: "corregí el error y te envié …", "te confirmo que he adjuntado …". */
 const ES_CLAUSE = /([,;:()\n]|\s[-–]\s)|(?<![\p{L}])(y|e|pero|que|porque|pues|aunque|mientras|luego|entonces)(?![\p{L}])/giu;
-/** Articles and the like, which Spanish needs more of than English: "de la página de estado" says as much as "of the status page". */
-const ES_LIGHT = /^(?:de|del|la|el|los|las|un|una|unos|unas|al|a|y|e|en)$/iu;
+/** What follows a colon is said besides the claim ("te envío la captura: el login falla en Safari"). */
+const ES_AFTER_COLON = /[:;]\s*[\p{L}\p{N}]/u;
 
 /** Whether the node itself did it: its verb says the first person, so its clause names no one else ("Mira y yo", "yo" or nothing). */
 function nodeDidEs(lead: string): boolean {
@@ -274,7 +297,10 @@ function nodeDidEs(lead: string): boolean {
 }
 
 /** How each language reads a sentence a pattern found a claim in. */
-const LANGUAGES: Record<ClaimLanguage, { excluded: (sentence: string) => boolean; here: RegExp; elsewhere: (rest: string) => boolean; own: (lead: string, acts: boolean) => boolean; besides: (lead: string, tail: string) => number }> = {
+const LANGUAGES: Record<
+  ClaimLanguage,
+  { excluded: (sentence: string, present: boolean) => boolean; here: RegExp; elsewhere: (rest: string) => boolean; own: (lead: string, acts: boolean) => boolean; besides: (lead: string, tail: string) => number }
+> = {
   en: {
     excluded: (sentence) => sentence.endsWith("?") || NEGATED.test(sentence) || CONDITIONAL.test(sentence) || THEIRS.test(sentence),
     here: /^here/i,
@@ -283,31 +309,50 @@ const LANGUAGES: Record<ClaimLanguage, { excluded: (sentence: string) => boolean
     besides,
   },
   es: {
-    excluded: (sentence) => sentence.endsWith("?") || sentence.includes("¿") || ES_NEGATED.test(sentence) || ES_CONDITIONAL.test(sentence) || ES_THEIRS.test(sentence) || ES_LATER.test(sentence),
+    excluded: (sentence, present) =>
+      sentence.endsWith("?") || sentence.includes("¿") || ES_NEGATED.test(sentence) || ES_CONDITIONAL.test(sentence) || ES_THEIRS.test(sentence) || (present && ES_LATER.test(sentence)),
     here: /^(?:aqu[ií]|ac[aá]|ah[ií])/iu,
     elsewhere: elsewhereEs,
     own: (lead, acts) => !ES_REPORTED.test(lead) && (!acts || nodeDidEs(lead)),
-    besides: (lead, tail) => tokens(lead).filter((word) => !ES_SELF.test(word) && !ES_FILLER.test(word)).length + tokens(tail).filter((word) => !ES_LIGHT.test(word)).length,
+    besides: (lead, tail) => (ES_AFTER_COLON.test(tail) ? Infinity : tokens(lead).filter((word) => !ES_SELF.test(word) && !ES_FILLER.test(word)).length + words(tail)),
   },
 };
 
+/**
+ * The reply with each letter and its accent marks as one character where Unicode has one ("e" and "◌́" typed apart become
+ * "é"), and where in the reply each of its characters starts, so a claim's span is in the reply's own characters.
+ */
+function composed(text: string): { flat: string; at: (index: number) => number } {
+  if (text.normalize("NFC") === text) return { flat: text, at: (index) => index };
+  let flat = "";
+  const starts: number[] = [];
+  for (const part of text.matchAll(/\P{M}\p{M}*|\p{M}+/gu)) {
+    const one = part[0].normalize("NFC");
+    for (let i = 0; i < one.length; i += 1) starts.push(part.index);
+    flat += one;
+  }
+  starts.push(text.length);
+  return { flat, at: (index) => starts[index]! };
+}
+
 /** The delivery claims a reply makes, one per sentence, in the order written. */
 export function deliveryClaims(text: string): DeliveryClaim[] {
-  const plain = unquoted(text);
+  const { flat, at } = composed(text);
+  const plain = unquoted(flat);
   const found = new Map<number, DeliveryClaim>();
-  for (const { kind, language, pattern, acts } of PATTERNS) {
+  for (const { kind, language, pattern, acts, present } of PATTERNS) {
     const reads = LANGUAGES[language];
     for (const match of plain.matchAll(pattern)) {
       const { start, end } = sentenceAt(plain, match.index);
       if (found.has(start) || match.index + match[0].length > end) continue;
       const sentence = plain.slice(start, end).trim();
-      if (!sentence || reads.excluded(sentence)) continue;
+      if (!sentence || reads.excluded(sentence, present)) continue;
       // "here is the screenshot" names its own place; anything else may name another one ("attached it to the task").
       if (!reads.here.test(match[0]) && reads.elsewhere(plain.slice(match.index, end))) continue;
       // Only the node's own word counts: never what someone else did or said.
       if (!reads.own(plain.slice(start, match.index), acts)) continue;
-      const whole = reads.besides(text.slice(start, match.index), text.slice(match.index + match[0].length, end)) <= 4;
-      found.set(start, { kind, noun: match.groups!.noun!, sentence: text.slice(start, end).trim(), start, end, whole, language });
+      const whole = reads.besides(flat.slice(start, match.index), flat.slice(match.index + match[0].length, end)) <= 4;
+      found.set(start, { kind, noun: match.groups!.noun!, sentence: text.slice(at(start), at(end)).trim(), start: at(start), end: at(end), whole, language });
     }
   }
   return [...found.values()].sort((a, b) => a.start - b.start);
