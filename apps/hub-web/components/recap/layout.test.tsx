@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { RECAP_LAYOUT_KEY, RECAP_TILES, recapArrangement } from "./layout";
+import { RECAP_LAYOUT_KEY, RECAP_TILES, recapArrangement, recapPlace } from "./layout";
 import { RecapTilesSection } from "./settings-section";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -62,4 +62,23 @@ test("Settings › Weekly recap switches tiles off and on, and Reset layout clea
     await act(async () => root.unmount()); host.remove(); client.clear();
     api.putPreference = oldPut; api.deletePreference = oldDelete;
   }
+});
+
+test("recap tiles keep the original tablet widths until arranged, and a week without active time leaves no gap", () => {
+  const place = (layout: unknown, key: string, active: boolean) => {
+    const { layout: saved, shown } = recapArrangement(layout);
+    const where = recapPlace(shown.find((spec) => spec.key === key)!, shown, { customized: Boolean(saved), active });
+    return `${where.c}/${where.md ?? "full"}/${where.corner ? "corner" : "no corner"}`;
+  };
+  // Default: Daily rhythm and Highlights full width on a tablet; the four middle tiles in pairs.
+  assert.equal(["rhythm", "highlights", "when", "time", "projects", "agents", "ahead", "record"].map((key) => place(undefined, key, true).split("/")[1]).join(","), "full,full,6,6,6,6,full,full");
+  // Arranged by the person: any tile of 6 columns or fewer is half a row on a tablet.
+  const arranged = { v: 1, tiles: [{ key: "highlights", c: 4, r: 3 }, { key: "when", c: 8, r: 3 }], hidden: [] };
+  assert.equal(place(arranged, "highlights", true), "4/6/corner");
+  assert.equal(place(arranged, "when", true), "8/full/corner");
+  // No active time: When you worked takes Where time went's columns (full width by default) and draws no corner.
+  assert.equal(place(undefined, "when", false), "12/full/no corner");
+  assert.equal(place({ v: 1, tiles: [{ key: "when", c: 4, r: 3 }, { key: "time", c: 4, r: 3 }], hidden: [] }, "when", false), "8/full/no corner");
+  // With Where time went removed, the tile keeps its own width.
+  assert.equal(place({ v: 1, tiles: [], hidden: ["time"] }, "when", false), "7/full/corner");
 });

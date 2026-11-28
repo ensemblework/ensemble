@@ -29,7 +29,7 @@ import { InfoTip, MenuItem, Popover, QueryError, Skeleton } from "@/components/u
 import { useToast } from "@/components/toast";
 import { api, type RecapStats, type WeeklyRecap } from "@/lib/api";
 import { AgentBars, Ahead, Highlights, Projects, RecapTile, Record } from "./tiles";
-import { RECAP_LAYOUT_KEY, recapArrangement, type RecapTileSpec } from "./layout";
+import { RECAP_LAYOUT_KEY, recapArrangement, recapPlace, type RecapTileSpec } from "./layout";
 import { useLayoutPreference, useTileControls, type TileControls } from "@/components/desk/arrange";
 import "@/components/desk/desk.css";
 import { DailyChart, HeatScale, HeatStrip, SuccessRing, SurfaceDonut } from "./charts";
@@ -176,15 +176,17 @@ function useRecapTiles() {
     restoreHint: "Turn it back on in Settings › Account.",
   });
   // Until the saved arrangement is known, a change would start from the default one.
-  return { shown: arranged.shown, controls: ready ? tiles.controls : () => undefined };
+  return { shown: arranged.shown, customized: Boolean(saved), controls: ready ? tiles.controls : () => undefined };
 }
 
 function Body({ data }: { data: WeeklyRecap }) {
   const quiet = isQuiet(data);
   const showAhead = data.current || data.ahead.overdueTotal > 0;
-  const { shown, controls } = useRecapTiles();
+  const { shown, customized, controls } = useRecapTiles();
   const tile = (spec: RecapTileSpec): ReactNode => {
-    const place = { c: spec.c, control: controls(spec) };
+    const where = recapPlace(spec, shown, { customized, active: data.stats.activeMinutes > 0 });
+    const control = controls(spec);
+    const place = { c: where.c, md: where.md, control: control && !where.corner ? { ...control, corner: undefined } : control };
     // A quiet week has nothing to chart; the plan and the record still show.
     if (quiet && !["ahead", "record"].includes(spec.key)) return null;
     switch (spec.key) {
@@ -198,7 +200,8 @@ function Body({ data }: { data: WeeklyRecap }) {
       case "highlights":
         return <RecapTile {...place} title="Highlights" icon={Award}><Highlights rows={data.highlights} /></RecapTile>;
       case "when":
-        return data.stats.activeMinutes ? <WhenYouWorked data={data} place={place} /> : (
+        if (data.stats.activeMinutes) return <WhenYouWorked data={data} place={place} />;
+        return (
           <RecapTile {...place} title="When you worked" icon={Clock3} className="recap-quiet-time" labelledBy="recap-no-time">
             <p>
               {data.current
@@ -358,7 +361,7 @@ function Flow({ data }: { data: WeeklyRecap }) {
   );
 }
 
-function WhenYouWorked({ data, place }: { data: WeeklyRecap; place: { c: number; control?: TileControls } }) {
+function WhenYouWorked({ data, place }: { data: WeeklyRecap; place: { c: number; md?: 6; control?: TileControls } }) {
   const total = data.stats.activeMinutes;
   const peak = peakWindow(data.rhythm);
   const topDay = [...data.days].sort((a, b) => b.activeMinutes - a.activeMinutes)[0];

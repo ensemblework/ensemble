@@ -27,6 +27,7 @@ export function RecapTile({
   meta,
   right,
   c,
+  md,
   control,
   className,
   children,
@@ -36,8 +37,10 @@ export function RecapTile({
   icon: LucideIcon;
   meta?: ReactNode;
   right?: ReactNode;
-  /** Columns of 12 on a wide screen. Up to 6 shares a row on a tablet; a phone is always one column. */
+  /** Columns of 12 on a wide screen; a phone is always one column. */
   c?: number;
+  /** Half a row on a tablet. */
+  md?: 6;
   /** Move grip, ⋯ menu and width corner from `useTileControls`. */
   control?: TileControls;
   className?: string;
@@ -51,7 +54,7 @@ export function RecapTile({
       className={`recap-tile${className ? ` ${className}` : ""}`}
       data-desk-key={control?.deskKey}
       data-span={c}
-      data-md={c && c <= 6 ? 6 : undefined}
+      data-md={md}
       style={c ? ({ "--recap-span": c } as CSSProperties) : undefined}
       aria-labelledby={id}
     >

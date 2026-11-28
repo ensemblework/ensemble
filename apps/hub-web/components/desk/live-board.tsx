@@ -33,7 +33,7 @@ import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras"
 import { templateDeskLayout } from "@ensemble/shared-types/manifest";
 import { useToast } from "@/components/toast";
 import { DESK_IDS, type DeskId } from "./desks";
-import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout } from "./layout";
+import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout, type DeskLayout } from "./layout";
 import { CalendarAgenda } from "./calendar-agenda";
 import { tileVisual } from "./tile-visuals";
 import { deskRole, tileFitsRole } from "./tile-catalog";
@@ -494,6 +494,17 @@ function borrowable(defaults: Spec[], shown: Spec[]): Spec[] {
   return out;
 }
 
+/**
+ * Tiles the person took off. A signup template's exact layout lists only what it draws, so every desk tile
+ * it leaves out counts as removed, and so does a tile removed since (the Diagrams tile, which no desk has
+ * by default). The Hub keeps `exact` when a later save leaves it out.
+ */
+export function removedTiles(layout: DeskLayout | null, defaults: Spec[], shown: Spec[]): string[] {
+  if (!layout) return [];
+  if (!layout.exact) return layout.hidden;
+  return [...new Set([...hiddenTilesFor(defaults, shown).map((spec) => spec.key), ...layout.hidden])];
+}
+
 /** The person's arrangement of this desk: order, sizes, and what they hid. Saved per desk in preferences. */
 export function useDeskLayout(deskId: DeskId) {
   const client = useQueryClient();
@@ -510,7 +521,7 @@ export function useDeskLayout(deskId: DeskId) {
   const start = template && template.desk === deskId ? template.value : null;
   const baseline = start ? arrange(defaults, specPool(), readLayout(start), gates) : defaults;
   const shown = arrange(defaults, specPool(), layout, gates);
-  const hidden = layout?.exact ? hiddenTilesFor(defaults, shown).map((spec) => spec.key) : (layout?.hidden ?? []);
+  const hidden = removedTiles(layout, defaults, shown);
   return {
     ready: prefs.isSuccess,
     defaults,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { api, type PreferenceRecord } from "./api";
 
 export type Preferences = { preferences: PreferenceRecord[] };
@@ -16,34 +16,51 @@ export function withPreference(data: Preferences | undefined, key: string, value
   return { preferences: [...rest, { ...row, value }] };
 }
 
+/** Writes to one key: the newest, how many are under way, and the row the Hub last confirmed (absent: none). */
+type Writes = { latest: number; pending: number; confirmed: { row?: PreferenceRecord } | null };
+const writesByClient = new WeakMap<QueryClient, Map<string, Writes>>();
+
+function writesFor(client: QueryClient, key: string): Writes {
+  let byKey = writesByClient.get(client);
+  if (!byKey) writesByClient.set(client, (byKey = new Map()));
+  let writes = byKey.get(key);
+  if (!writes) byKey.set(key, (writes = { latest: 0, pending: 0, confirmed: null }));
+  return writes;
+}
+
 /**
  * Writes one preference the way a layout needs: drawn at once, sent in order (`api.putPreference`
- * queues writes to one key), and put back if the save fails. A failed save still throws.
+ * queues writes to one key), and, if the newest write fails, put back to what the Hub last saved,
+ * never to an earlier edit that is still unsaved. A failed save still throws.
  */
-export async function writePreference(client: QueryClient, key: string, value: unknown, isLatest: () => boolean): Promise<void> {
-  const before = client.getQueryData<Preferences>(["preferences"]);
+export async function writePreference(client: QueryClient, key: string, value: unknown): Promise<void> {
+  const writes = writesFor(client, key);
+  const ticket = ++writes.latest;
+  if (writes.pending++ === 0) writes.confirmed = { row: client.getQueryData<Preferences>(["preferences"])?.preferences.find((row) => row.key === key) };
   // Drawn now, so a quick second edit starts from this one. A list read already on its way would land
   // after it and draw the older layout again: cancelling puts back the latest data set here, not the old copy.
   client.setQueryData<Preferences>(["preferences"], (old) => withPreference(old, key, value));
   void client.cancelQueries({ queryKey: ["preferences"] });
   try {
-    if (value === null) await api.deletePreference(key);
-    else {
+    if (value === null) {
+      await api.deletePreference(key);
+      writes.confirmed = { row: undefined };
+    } else {
       const { preference } = await api.putPreference(key, value);
-      if (isLatest()) client.setQueryData<Preferences>(["preferences"], (old) => withPreference(old, key, preference.value, preference));
+      writes.confirmed = { row: preference };
+      if (ticket === writes.latest) client.setQueryData<Preferences>(["preferences"], (old) => withPreference(old, key, preference.value, preference));
     }
   } catch (error) {
-    if (isLatest() && before) client.setQueryData(["preferences"], before);
+    const row = writes.confirmed?.row;
+    if (ticket === writes.latest && writes.confirmed) client.setQueryData<Preferences>(["preferences"], (old) => withPreference(old, key, row ? row.value : null, row));
     throw error;
+  } finally {
+    if (--writes.pending === 0) writes.confirmed = null;
   }
 }
 
-/** `writePreference` for one key from a component. Only the newest write reconciles or rolls back the list. */
+/** `writePreference` for one key from a component. */
 export function usePreferenceWrite(key: string) {
   const client = useQueryClient();
-  const latest = useRef(0);
-  return useCallback((value: unknown) => {
-    const ticket = ++latest.current;
-    return writePreference(client, key, value, () => ticket === latest.current);
-  }, [client, key]);
+  return useCallback((value: unknown) => writePreference(client, key, value), [client, key]);
 }

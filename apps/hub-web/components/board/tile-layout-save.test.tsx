@@ -10,7 +10,9 @@ import { answerSaveChoice, listenSaveChoices, pendingSaveChoice } from "@/lib/sa
 import { BoardInsights } from "./insights";
 import { INSIGHTS_KEY } from "./insight-data";
 import { useLayoutPreference, useTileControls } from "../desk/arrange";
-import { layoutKey } from "../desk/layout";
+import { arrange, hideTile, layoutKey, readLayout } from "../desk/layout";
+import { boardSpecs, removedTiles, specPool } from "../desk/live-board";
+import { writePreference } from "@/lib/preference-write";
 
 (globalThis as { React?: typeof React }).React = React;
 // jsdom has no CSS.escape; the tile keys here are plain words.
@@ -207,4 +209,46 @@ test("the tile menu edits width and height within the tile's limits and removes 
     assert.equal(view.conflicts(), 0);
     assert.deepEqual(hub.store.get(key), { v: 1, tiles: [{ key: "progress", c: 4, r: 3 }], hidden: ["deploys"] });
   } finally { await view.done(); }
+});
+
+test("removing the Diagrams tile from a signup template's exact layout stays removed after the Hub merges the save", () => {
+  const defaults = boardSpecs("default");
+  const pool = specPool();
+  const stored = { v: 1, tiles: defaults.slice(0, 2).map((spec) => ({ key: spec.key, c: spec.c, r: spec.r })), hidden: [], exact: true };
+  const read = (value: unknown) => {
+    const layout = readLayout(value);
+    const shown = arrange(defaults, pool, layout);
+    return { shown, removed: removedTiles(layout, defaults, shown) };
+  };
+  const before = read(stored);
+  assert.equal(before.removed.includes("diagrams"), false, "Diagrams may join the desk");
+  const next = hideTile({ shown: [...before.shown, pool.get("diagrams")!], hidden: before.removed }, "diagrams");
+  // PUT /api/preferences merges the save into the stored object, so `exact` stays.
+  const merged = mergeSaveObject(stored, next);
+  assert.equal(merged.exact, true);
+  const after = read(merged);
+  assert.equal(after.removed.includes("diagrams"), true);
+  assert.equal(after.shown.map((spec) => spec.key).join(","), before.shown.map((spec) => spec.key).join(","));
+});
+
+test("when the newer of two quick saves fails, the layout goes back to what the Hub last saved", async () => {
+  const key = "desk.layout.rollback";
+  const oldPut = api.putPreference;
+  try {
+    for (const firstSaves of [false, true]) {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+      client.setQueryData(["preferences"], { preferences: [{ id: key, key, value: "saved", source: "me", confidence: 1, evidence: [] }] });
+      let calls = 0;
+      api.putPreference = async (_key, value) => {
+        const call = ++calls;
+        await new Promise((resolve) => setTimeout(resolve, call));
+        if (call === 1 && firstSaves) return { preference: { id: key, key, value, source: "me", confidence: 1, evidence: [] } };
+        throw new Error("Save failed");
+      };
+      await Promise.all([writePreference(client, key, "one").catch(() => {}), writePreference(client, key, "two").catch(() => {})]);
+      const value = client.getQueryData<{ preferences: Array<{ key: string; value: unknown }> }>(["preferences"])?.preferences.find((row) => row.key === key)?.value;
+      assert.equal(value, firstSaves ? "one" : "saved", firstSaves ? "the first save was confirmed" : "neither save was confirmed");
+      client.clear();
+    }
+  } finally { api.putPreference = oldPut; }
 });

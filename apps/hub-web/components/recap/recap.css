@@ -30,7 +30,7 @@
 /* ── Tiles ──────────────────────────────────────────────────────────────── */
 .recap-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
 .recap-grid > * { grid-column: 1 / -1; }
-/* A tablet pairs tiles of 6 columns or fewer, filling gaps; a wide screen uses each tile's saved width in order. */
+/* A tablet puts tiles marked data-md side by side, filling gaps; a wide screen uses each tile's saved width in order. */
 @media (min-width: 768px) {
   .recap-grid { grid-auto-flow: row dense; }
   .recap-grid > [data-md="6"] { grid-column: span 6; }
