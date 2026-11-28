@@ -101,9 +101,7 @@ export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps
             {streaming && !text ? (
               <span role="status" className="text-[13px] text-muted">{live?.note && live.note !== "Working…" ? live.note : "Waiting for a reply"}</span>
             ) : (
-              <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
-                <MarkdownText text={formatEntityText(text, callRefs(calls), { streaming }) || "…"} />
-              </div>
+              <MarkdownText text={formatEntityText(text, callRefs(calls), { streaming }) || "…"} />
             )}
             {live?.error || saved?.error ? (
               <div className="text-[12.5px] text-danger" data-motion-slot="state.error" data-state="error">

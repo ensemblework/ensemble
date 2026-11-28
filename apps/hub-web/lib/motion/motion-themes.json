@@ -33,13 +33,6 @@
       ],
       "expressive": "r1 Ensemble Glyph + status line"
     },
-    "reply.stream": {
-      "states": [
-        "streaming",
-        "done"
-      ],
-      "expressive": "r1 Ink-in stream"
-    },
     "page.progress": {
       "states": [
         "loading",

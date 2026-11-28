@@ -974,13 +974,11 @@ export function AssistantDock() {
           </div>
           {tail ? savedMessage(tail, all.length - 1, true) : pending ? <>
             {liveTools.length ? <ToolSteps live calls={liveTools} conversationId={conversationId} refs={liveRefs} running={!executing || streaming ? null : liveStep ?? "Thinking…"} /> : null}
-            <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
-              {streaming ? (
-                <div className="assistant-answer-body">
-                  <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
-                </div>
-              ) : null}
-            </div>
+            {streaming ? (
+              <div className="assistant-answer-body">
+                <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
+              </div>
+            ) : null}
             <ToolProposals calls={liveTools} conversationId={conversationId} refs={liveRefs} />
           </> : null}
         </div>
