@@ -4,7 +4,7 @@
  * browser, so exporting never costs the server anything.
  */
 
-import { mentionHref, type PageMention } from "@ensemble/shared-types";
+import { mathMarkdown, mentionHref, type PageMention } from "@ensemble/shared-types";
 
 export type Run = { text: string; bold?: boolean; italic?: boolean; code?: boolean; strike?: boolean; href?: string };
 /** A table cell's text. A "\n" run is a line break inside the cell. */
@@ -169,6 +169,12 @@ function runsOf(node: Json | undefined, origin?: string): Run[] {
       runs.push({ text: "\n" });
       return;
     }
+    // An equation exports as its TeX source: `$x$`, which Markdown readers draw as math.
+    const math = mathMarkdown(child);
+    if (math !== null) {
+      runs.push({ text: math });
+      return;
+    }
     for (const next of child.content ?? []) walk(next);
   };
   for (const child of node?.content ?? []) walk(child);
@@ -288,6 +294,9 @@ export function blocksFromPage(doc: unknown, context: ExportContext = {}): Block
         return;
       case "horizontalRule":
         blocks.push({ type: "rule" });
+        return;
+      case "blockMath":
+        blocks.push({ type: "paragraph", runs: [{ text: mathMarkdown(node)! }] });
         return;
       case "table": {
         const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => cellRuns(cell, origin)));

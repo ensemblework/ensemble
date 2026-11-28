@@ -1,4 +1,4 @@
-import type { PageDocument, PageNode } from "@ensemble/shared-types";
+import { mathMarkdown, type PageDocument, type PageNode } from "@ensemble/shared-types";
 
 /**
  * A saved version of a page against the page as it is now, for the history preview. Pages are
@@ -35,7 +35,7 @@ function inline(nodes: readonly PageNode[] | undefined): string {
         return kind === "date" ? label : `@${label}`;
       }
       if (node.type === "image") return String(node.attrs?.alt ?? "") || "Image";
-      return inline(node.content);
+      return mathMarkdown(node) ?? inline(node.content);
     })
     .join("");
 }
@@ -80,6 +80,9 @@ function walk(node: PageNode, depth: number, out: PageBlock[], as?: BlockKind): 
       return;
     case "horizontalRule":
       out.push({ kind: "rule", text: "", depth });
+      return;
+    case "blockMath":
+      out.push({ kind: "code", text: mathMarkdown(node)!, depth });
       return;
     case "image":
       out.push({ kind: "image", text: label(node) || "Image", depth });

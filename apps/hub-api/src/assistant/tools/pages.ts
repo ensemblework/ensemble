@@ -211,7 +211,7 @@ export const pageTools = [
     name: "hub_create_page",
     area: "projects",
     description:
-      "Create a page (standalone note) from a title and Markdown, at the top level or nested inside a page (parentPageId) or a task (parentTaskId): headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id, link and what the page now says (saved): no need to read it back.",
+      "Create a page (standalone note) from a title and Markdown, at the top level or nested inside a page (parentPageId) or a task (parentTaskId): headings, lists, - [ ] checklists, tables, fenced code and TeX math ($x$ inline, $$ lines around a display equation) become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id, link and what the page now says (saved): no need to read it back.",
     input: z.object({
       title: z.string().trim().min(1).max(200),
       markdown: z.string().max(MAX_MARKDOWN).default("").describe("The page body in Markdown."),

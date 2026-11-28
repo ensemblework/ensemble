@@ -504,3 +504,15 @@ test("previews: one per person, a shared byte budget, one upload read at a time"
     clearPreviewsForTests();
   }
 });
+
+test("Notion: equations become page equations, as native blocks and as Markdown", () => {
+  const blocks = [
+    { id: "e1", type: "equation", equation: { expression: "x_0 \\in \\mathbb{R}^{d}" } },
+    { id: "p1", type: "paragraph", paragraph: { rich_text: [{ type: "text", plain_text: "Area " }, { type: "equation", plain_text: "\\pi r^2", equation: { expression: "\\pi r^2" } }, { type: "text", plain_text: " costs $5 and $10" }] } },
+  ];
+  assert.deepEqual(notionNodes(blocks), [
+    { type: "blockMath", attrs: { latex: "x_0 \\in \\mathbb{R}^{d}" } },
+    { type: "paragraph", content: [{ type: "text", text: "Area " }, { type: "inlineMath", attrs: { latex: "\\pi r^2" } }, { type: "text", text: " costs $5 and $10" }] },
+  ]);
+  assert.equal(notionBlocksToMarkdown(blocks), "$$\nx_0 \\in \\mathbb{R}^{d}\n$$\n\nArea $\\pi r^2$ costs $5 and $10");
+});

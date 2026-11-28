@@ -209,3 +209,14 @@ test("without an origin (outside the browser) mentions stay plain text", () => {
   const blocks = blocksFromPage(embeds);
   assert.deepEqual(blocks[1], { type: "embed", embed: { kind: "plot", id: "p-1", label: "Ablation bars", href: undefined } });
 });
+
+test("equations export as their TeX source, which Markdown readers draw as math", () => {
+  const blocks = blocksFromPage({
+    type: "doc",
+    content: [
+      { type: "paragraph", content: [{ type: "text", text: "Area " }, { type: "inlineMath", attrs: { latex: "\\pi r^2" } }] },
+      { type: "blockMath", attrs: { latex: "a^2 + b^2 = c^2" } },
+    ],
+  });
+  assert.equal(toMarkdown({ title: "Maths", blocks }), "# Maths\n\nArea $\\pi r^2$\n\n$$\na^2 + b^2 = c^2\n$$\n");
+});

@@ -9,7 +9,7 @@
 import { checkpointPage, pageEditor } from "./history.js";
 import { nodeActingIn } from "../sharing/context.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { imageMarkdown, markdownToNodes, PageDocument, type PageNode } from "@ensemble/shared-types";
+import { escapeMathBlockStarts, escapeMathText, imageMarkdown, markdownToNodes, mathMarkdown, PageDocument, type PageNode } from "@ensemble/shared-types";
 import { sseHub } from "../lib/sse.js";
 
 export { markdownToNodes };
@@ -17,6 +17,8 @@ export { markdownToNodes };
 /** `forAgents`: a file on the page names its id, so an agent can read the file. */
 function textOf(node: PageNode, forAgents: boolean): string {
   if (node.type === "text") return node.text ?? "";
+  const math = mathMarkdown(node);
+  if (math !== null) return math;
   if (node.type === "mention") {
     const label = String(node.attrs?.label ?? "");
     if (forAgents && node.attrs?.kind === "file" && node.attrs.id) return `[file: ${label} (id ${String(node.attrs.id)})]`;
@@ -67,10 +69,14 @@ function inlineMarkdown(nodes: readonly PageNode[] | undefined): string {
         const label = String(node.attrs?.label ?? "");
         return kind === "date" || !node.attrs?.id ? label : mentionLink(kind, String(node.attrs.id), label);
       }
+      const math = mathMarkdown(node);
+      if (math !== null) return math;
       if (node.type !== "text") return inlineMarkdown(node.content);
       let text = node.text ?? "";
       const marks = new Set((node.marks ?? []).map((mark) => mark.type));
+      // Dollar signs that would read back as an equation are escaped, so a rewrite keeps them text.
       if (marks.has("code")) text = `\`${text}\``;
+      else text = escapeMathText(text);
       if (marks.has("bold")) text = `**${text}**`;
       if (marks.has("italic")) text = `*${text}*`;
       if (marks.has("strike")) text = `~~${text}~~`;
@@ -90,7 +96,8 @@ function blockMarkdown(node: PageNode, indent = ""): string {
   };
   switch (node.type) {
     case "paragraph":
-      return `${indent}${inlineMarkdown(children)}`;
+      // A line that would open a display equation (`$$ a $$`, `\[1\]` typed as text) is escaped.
+      return `${indent}${escapeMathBlockStarts(inlineMarkdown(children))}`;
     case "heading":
       return `${"#".repeat(Math.min(6, Math.max(1, Number(node.attrs?.level ?? 2))))} ${inlineMarkdown(children)}`;
     case "bulletList":
@@ -105,6 +112,8 @@ function blockMarkdown(node: PageNode, indent = ""): string {
       return children.map((child) => blockMarkdown(child)).join("\n\n").split("\n").map((line) => `> ${line}`).join("\n");
     case "horizontalRule":
       return "---";
+    case "blockMath":
+      return mathMarkdown(node)!.split("\n").map((line) => `${indent}${line}`).join("\n");
     case "image": {
       const markdown = imageMarkdown(node.attrs);
       if (markdown) return `${indent}${markdown}`;
@@ -157,9 +166,9 @@ export interface AgentBlockMeta {
  * Puts the job's output on the task page, replacing its previous block.
  * Retries on a revision race with the engineer's own save.
  */
-/** Matches the editor's fingerprint of node.textContent (all text, no separators). */
+/** Matches the editor's fingerprint of node.textContent (all text, no separators; an equation counts as its Markdown). */
 export function fingerprint(nodes: PageNode[]): string {
-  const flat = (node: PageNode): string => (node.type === "text" ? node.text ?? "" : (node.content ?? []).map(flat).join(""));
+  const flat = (node: PageNode): string => (node.type === "text" ? node.text ?? "" : mathMarkdown(node) ?? (node.content ?? []).map(flat).join(""));
   const text = nodes.map(flat).join("");
   let hash = 5381;
   for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
