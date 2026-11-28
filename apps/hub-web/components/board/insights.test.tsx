@@ -130,7 +130,7 @@ test("failed overview saves keep the current layout, and retry succeeds", async 
     await click(button("Board overview"));
     assert.ok(document.querySelector('[data-board-insight="flow"]'));
     fail = false; await click(button("Board overview"));
-    assert.equal(document.querySelector('[data-board-insight="flow"]'), null);
+    assert.equal(Boolean(document.querySelector('[data-board-insight="flow"]')), false, "the overview collapsed");
     assert.equal(writes.length, 2);
   } finally { await view.done(); client.clear(); api.putPreference = oldPut; }
 });

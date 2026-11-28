@@ -33,10 +33,7 @@ export async function writePreference(client: QueryClient, key: string, value: u
       if (isLatest()) client.setQueryData<Preferences>(["preferences"], (old) => withPreference(old, key, preference.value, preference));
     }
   } catch (error) {
-    if (isLatest()) {
-      if (before) client.setQueryData(["preferences"], before);
-      void client.invalidateQueries({ queryKey: ["preferences"] });
-    }
+    if (isLatest() && before) client.setQueryData(["preferences"], before);
     throw error;
   }
 }
