@@ -102,8 +102,8 @@ img { max-width: 100%; height: auto; }
 #helper-welcome { min-height: 100%; }
 #helper-welcome h3, #helper-welcome p { margin: 0; }
 #helper-welcome .assistant-starter { font-family: inherit; border-radius: 12px; }
-#helper-waiting { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; font-size: 13px; color: var(--muted); }
-#helper-waiting .u-morph { width: 64px; height: 64px; }
+#helper-waiting { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 13px; color: var(--muted); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .agent-activity-mark [data-live] path { stroke: #51412b; } }
 #helper-elapsed { min-height: 18px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .helper-sources { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 12px; }
 .assistant-answer-body { white-space: pre-line; overflow-wrap: anywhere; }

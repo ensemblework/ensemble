@@ -4,13 +4,15 @@ import { Check, MessageSquare, X } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import type { Transaction } from "@tiptap/pm/state";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, type PageComment } from "@/lib/api";
 import { MarkdownText } from "../markdown-text";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { useToast } from "../toast";
 import { streamEnsemble } from "./ensemble-view";
+import { readEnsemble, subscribeEnsemble } from "./ensemble-bus";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { useInlineEnsemble } from "./inline-ensemble";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 import { MentionTextarea } from "../mentions/mention-field";
@@ -446,6 +448,9 @@ function Thread({
   const [confirming, setConfirming] = useState(false);
   const [text, setText] = useState(textOf(row.body));
   const [ask, setAsk] = useState("");
+  const [askId, setAskId] = useState("");
+  const liveAsk = useSyncExternalStore(useCallback(notify => subscribeEnsemble(askId, notify), [askId]), () => readEnsemble(askId), () => undefined);
+  const asking = liveAsk?.status === "streaming" && !liveAsk.error;
   const editMentions = useMentionMenu({ value: text, onValue: setText });
   const askMentions = useMentionMenu<HTMLInputElement>({ value: ask, onValue: setAsk });
   const editButton = useRef<HTMLButtonElement>(null);
@@ -574,8 +579,9 @@ function Thread({
           onSubmit={(event) => {
             event.preventDefault();
             const prompt = String(new FormData(event.currentTarget).get("prompt") ?? ask).trim();
-            if (!prompt) return;
+            if (!prompt || asking) return;
             const threadId = crypto.randomUUID();
+            setAskId(threadId);
             const mentions = askMentions.takeMentions(prompt);
             askMentions.clear();
             setAsk("");
@@ -585,9 +591,11 @@ function Thread({
           }}
         >
           <MentionPopover menu={askMentions} />
+          <AgentActivityMark kind={!asking ? null : liveAsk.text || liveAsk.toolCalls?.length ? "weave" : "exchange"} />
           <input
             ref={askMentions.ref}
             name="prompt"
+            disabled={asking}
             value={ask}
             {...askMentions.inputProps}
             onKeyDown={askMentions.onKeyDown}
@@ -597,6 +605,7 @@ function Thread({
           />
         </form>
       ) : null}
+      <span role="status" className="text-[12px] text-muted">{asking ? liveAsk.note || (liveAsk.text ? "Writing a reply" : "Waiting for a reply") : liveAsk?.error}</span>
     </article>
   );
 }

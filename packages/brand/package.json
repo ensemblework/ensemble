@@ -14,6 +14,8 @@
       "default": "./motion.js"
     },
     "./motion.css": "./motion.css",
+    "./web-activity": "./web-activity/index.ts",
+    "./web-activity.css": "./web-activity/activity.css",
     "./cli": {
       "types": "./cli.d.ts",
       "default": "./cli.js"

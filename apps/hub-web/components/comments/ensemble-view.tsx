@@ -4,8 +4,7 @@ import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ThinkingStatus } from "@/components/motion/slot";
-import { Mark } from "../mark";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { MarkdownText } from "../markdown-text";
 import { api, type AssistantToolCallRecord } from "@/lib/api";
 import { API } from "@/lib/api";
@@ -60,7 +59,7 @@ export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps
   }, [threadId]);
 
   const text = live?.text || (typeof saved?.body?.text === "string" ? saved.body.text : "");
-  const streaming = live?.status === "streaming";
+  const streaming = live?.status === "streaming" && !live.error;
   const model = live?.model || saved?.model || "";
   const tier = live?.tier || saved?.tier || "";
   const calls = live?.toolCalls ?? saved?.toolCalls ?? [];
@@ -90,7 +89,7 @@ export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps
       <div className="ensemble-reply-rule" contentEditable={false} />
       <div className="min-w-0 flex-1" contentEditable={false}>
         <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen((value) => !value)}>
-          <Mark />
+          <AgentActivityMark kind={!streaming ? null : live.text || calls.length ? "weave" : "exchange"} rest />
           <span className="text-[12.5px] font-medium">Ensemble</span>
           {tier ? <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[11px] text-ink">{tier}</span> : null}
           {model ? <span className="truncate text-[11px] text-faint">{model}</span> : null}
@@ -100,7 +99,7 @@ export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps
         {open ? (
           <div className="mt-2 space-y-2">
             {streaming && !text ? (
-              <ThinkingStatus real={live?.note && live.note !== "Working…" ? live.note : null} active />
+              <span role="status" className="text-[13px] text-muted">{live?.note && live.note !== "Working…" ? live.note : "Waiting for a reply"}</span>
             ) : (
               <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
                 <MarkdownText text={formatEntityText(text, callRefs(calls), { streaming }) || "…"} />

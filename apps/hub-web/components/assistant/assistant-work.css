@@ -129,15 +129,6 @@ button.tool-main[aria-expanded="true"] .tool-chevron { transform: rotate(90deg);
 
 /* The step a live turn is on. */
 .tool-running .tool-title { color: var(--muted); }
-.tool-spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--accent);
-  animation: tool-spin 0.9s linear infinite;
-}
-@keyframes tool-spin { to { transform: rotate(360deg); } }
 .tool-row[data-tool-state="running"] { animation: tool-reveal var(--dur) var(--ease) both; }
 .assistant-activity[data-live] .tool-row { animation: tool-reveal var(--dur) var(--ease) both; }
 
@@ -161,9 +152,7 @@ button.tool-main[aria-expanded="true"] .tool-chevron { transform: rotate(90deg);
   .assistant-activity[open] > .tool-timeline,
   .tool-row[data-tool-state="running"],
   .assistant-activity[data-live] .tool-row { animation: none; }
-  .tool-spinner { animation: none; border-color: var(--accent); }
 }
 [data-reduce-motion="true"] .assistant-activity[open] > .tool-timeline,
 [data-reduce-motion="true"] .tool-row[data-tool-state="running"],
 [data-reduce-motion="true"] .assistant-activity[data-live] .tool-row { animation: none; }
-[data-reduce-motion="true"] .tool-spinner { animation: none; border-color: var(--accent); }

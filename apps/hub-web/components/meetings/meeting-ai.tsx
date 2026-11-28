@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { connectedApi, type ImportedMeetingNote, type MeetingAiItem } from "@/lib/api-connected";
 import { MEETING_QUERY, meetingsApi } from "@/lib/api-meetings";
 import { relative } from "@/lib/format";
-import { BrandMorph } from "../motion/brand-morph";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { InfoTip, Spinner, Tag } from "../ui";
 import { useToast } from "../toast";
 import { MarkdownText } from "../markdown-text";
@@ -99,7 +99,8 @@ export function MeetingAiPanel({ noteId, sessionId, initial }: { noteId: string 
   const reading = status === "queued" || status === "running";
   const button = (
     <button type="button" className="btn" disabled={reading || (!noteId && !sessionId)} onClick={() => suggest.mutate()}>
-      {status === "running" ? <BrandMorph purpose="inline" state="loop" loader /> : status === "queued" ? <Clock size={16} aria-hidden /> : ai ? <RefreshCw size={13} aria-hidden /> : <ScanText size={13} aria-hidden />}
+      <AgentActivityMark kind={status === "running" ? "weave" : null} />
+      {status === "running" ? null : status === "queued" ? <Clock size={16} aria-hidden /> : ai ? <RefreshCw size={13} aria-hidden /> : <ScanText size={13} aria-hidden />}
       {status === "running" ? "Reading the meeting…" : status === "queued" ? "Queued" : ai ? "Read again" : "Suggest tasks"}
     </button>
   );

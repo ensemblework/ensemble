@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BrandMorph } from "../motion/brand-morph";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { usePersistentState } from "@/lib/prefs";
 
 import { LAUNCHER_SIZE, DEFAULT_LAUNCHER_SPOT, normalizeSpot, launcherPosition, snapLauncher, type LauncherSpot, type LauncherBounds } from "@ensemble/brand/assistant";
@@ -145,7 +145,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
         event.preventDefault();
       }}
     >
-      <BrandMorph size={32} kind="beacon" state={working ? "loop" : "idle"} />
+      <AgentActivityMark size="launcher" kind={working && !hidden ? "infinity" : null} rest />
     </button>, document.body
   );
 }

@@ -748,27 +748,6 @@ html[data-ide-resizing="horizontal"] * {
   color: var(--ok);
 }
 
-/* Live work: text that is being worked on shimmers; the rest stays still. */
-.agent-shimmer {
-  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--ink) 50%, var(--muted) 60%, var(--muted) 100%);
-  background-size: 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: agent-shimmer 1.8s linear infinite;
-}
-@keyframes agent-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -150% 0; }
-}
-.agent-live-mark {
-  color: var(--accent);
-  animation: agent-pulse 1.6s ease-in-out infinite;
-}
-@keyframes agent-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
 .agent-user-steer {
   border: 1px dashed rgb(var(--accent-rgb) / 0.45);
 }
@@ -782,26 +761,6 @@ html[data-ide-resizing="horizontal"] * {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-}
-.agent-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--muted);
-}
-.agent-dot-quiet {
-  width: 5px;
-  height: 5px;
-  background: var(--line-strong);
-}
-.agent-dot-live {
-  background: var(--accent);
-  box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.5);
-  animation: agent-ping 1.4s ease-out infinite;
-}
-@keyframes agent-ping {
-  0% { box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.5); }
-  100% { box-shadow: 0 0 0 6px rgb(var(--accent-rgb) / 0); }
 }
 .agent-cmd {
   padding: 0 6px;
@@ -916,7 +875,6 @@ html[data-ide-resizing="horizontal"] * {
   vertical-align: -2px;
   border-radius: 1px;
   background: var(--accent);
-  animation: agent-pulse 1s steps(2, start) infinite;
 }
 .agent-offline {
   display: flex;
@@ -1096,15 +1054,6 @@ html[data-ide-resizing="horizontal"] * {
   .agent-record {
     transition: none;
   }
-  .agent-shimmer,
-  .agent-live-mark,
-  .agent-dot-live,
-  .agent-streaming > :last-child::after {
-    animation: none;
-  }
-  .agent-shimmer {
-    color: var(--muted);
-  }
 }
 
 /* The machine Code shows (machine-switcher.tsx): one row at the top of the side panel. */
@@ -1184,37 +1133,7 @@ html[data-ide-resizing="horizontal"] * {
   }
 }
 
-/* A thread's dot in the sessions list (agent-actions.tsx threadState): working, finished and not read yet,
-   stopped on an error and not read yet, or read. */
-.thread-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--faint);
-  opacity: 0.6;
-}
-.thread-dot.is-running {
-  background: var(--warn);
-  opacity: 1;
-  animation: thread-dot-pulse 1.6s ease-in-out infinite;
-}
-.thread-dot.is-new {
-  background: var(--ok);
-  opacity: 1;
-}
-.thread-dot.is-failed {
-  background: var(--danger);
-  opacity: 1;
-}
-@keyframes thread-dot-pulse {
-  50% {
-    opacity: 0.45;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .thread-dot.is-running {
-    animation: none;
-  }
-}
+.agent-thread-mark { position: relative; display: inline-grid; place-items: center; flex: none; width: 20px; height: 18px; }
+.agent-thread-mark > * { grid-area: 1 / 1; }
+.agent-thread-mark:has(.agent-activity-mark) .agent-state-icon { visibility: hidden; }
 

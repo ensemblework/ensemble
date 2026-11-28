@@ -298,6 +298,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
     if (split) setAgentMounted(true);
   }, [split]);
   const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
+  const [visibleSession, setVisibleSession] = useState<string | null>(null);
   const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
   useIdeKeys(layout, openQuick);
   const label = useKeyLabel();
@@ -776,7 +777,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
   const threadTitles = new Map((threadList.data?.threads ?? []).map((row) => [row.id, row]));
   const agentTabs = threadTabs.map((key) => {
     const row = key === NEW_THREAD ? null : threadTitles.get(key);
-    return { key, title: key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread"), live: Boolean(row?.last && ["queued", "claimed", "running", "stopping", "waiting_approval"].includes(row.last.status)) };
+    return { key, title: key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread"), live: row?.last?.status === "running" };
   });
   const editingPaths = new Set(Object.values(agentEditing).flat());
   const agentSide = Math.max(AGENT_SIDE_MIN, Math.min(sideLive, typeof window === "undefined" ? sideLive : Math.floor(window.innerWidth * AGENT_SIDE_MAX_SHARE)));
@@ -1086,8 +1087,9 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
           {panel === "agent" ? (
             <AgentSessions
               selected={threadId}
+              onVisibleSelected={setVisibleSession}
               current={here}
-              machine={{ deviceId: here.deviceId }}
+              machine={{ deviceId: here.deviceId, online: reachable }}
               viewOnly={viewOnly}
               onSelect={(thread) => {
                 if (isHere(thread.place)) openThread(thread.id);
@@ -1245,6 +1247,7 @@ export function CodeIde({ source, initialFile = null, initialView = null, initia
                       folders={[{ deviceId: here.deviceId, path: data.repo, name: repoLabel || title, branch: shortBranch(scm.data?.branch ?? data.branch) }]}
                       viewOnly={viewOnly}
                       visible={shown}
+                      sidebarOwnsMotion={visibleSession === key}
                       onEditing={(paths) => setAgentEditing((current) => (sameList(current[key] ?? [], paths) ? current : { ...current, [key]: paths }))}
                       onOpenFile={(place, path) => (isHere(place) ? open(path) : navigate.go(agentHref(place, { view: "editor", file: path })))}
                     />
@@ -1412,7 +1415,7 @@ function TabStrip({
             onContextMenu={(event) => onThreadMenu?.(event, thread.key)}
             onDoubleClick={() => thread.key !== NEW_THREAD && onStartRename?.(thread.key)}
           >
-            <AgentIcon size={13} className={cx("shrink-0", thread.live ? "agent-live-mark" : "text-muted")} aria-hidden />
+            <AgentIcon size={13} className={cx("shrink-0", thread.live ? "text-accent" : "text-muted")} aria-hidden />
             {renamingThread === thread.key ? (
               <ThreadNameField title={thread.title} onDone={(title) => onRenameThread?.(thread.key, title)} />
             ) : (
@@ -1476,7 +1479,7 @@ function TabStrip({
             {previews[path] ? <Eye size={14} className="shrink-0 text-muted" /> : <FileIcon name={path} size={14} />}
             <span className="min-w-0 truncate">{previews[path] ? `Preview ${name}` : name}</span>
             {(names.get(name) ?? 0) > 1 && folder ? <span className="code-tab-folder">{folder.split("/").pop()}</span> : null}
-            {editing?.has(path) ? <AgentIcon size={11} className="agent-live-mark shrink-0" aria-label="The agent is editing this file" /> : null}
+            {editing?.has(path) ? <AgentIcon size={11} className="text-accent shrink-0" aria-label="The agent is editing this file" /> : null}
             <button
               type="button"
               className="code-tab-close"
@@ -2359,7 +2362,7 @@ function FilePane(props: {
         {props.changed ? <span><span className="text-ok">+{props.changed.added}</span> <span className="text-danger">−{props.changed.removed}</span></span> : null}
         {props.agentEditing ? (
           <span className="ide-agent-editing" role="status" data-testid="ide-agent-editing" title={dirty ? "Your unsaved typing is kept: saving asks which to keep." : "It updates here as the agent writes."}>
-            <AgentIcon size={12} className="agent-live-mark" aria-hidden /> {dirty ? "The agent is editing this too" : "The agent is editing"}
+            <AgentIcon size={12} className="text-accent" aria-hidden /> {dirty ? "The agent is editing this too" : "The agent is editing"}
           </span>
         ) : null}
         <div className="flex-1" />

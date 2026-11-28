@@ -35,7 +35,7 @@ for (const page of pages) {
 }
 for (const file of ["site.js", "site.css", "search.js", "site-search.js", "theme.js"]) await cp(join(app, "src", file), join(out, file));
 await build({ entryPoints: [join(app, "src/helper.js")], outfile: join(out, "helper.js"), bundle: true, format: "esm", minify: true });
-await cp(require.resolve("@ensemble/brand/motion.css"), join(out, "brand-motion.css"));
+await writeFile(join(out, "brand-motion.css"), (await Promise.all(["@ensemble/brand/motion.css", "@ensemble/brand/web-activity.css"].map(file => readFile(require.resolve(file), "utf8")))).join("\n"));
 await mkdir(join(out, "brand"));
 for (const icon of icons.icon) await cp(join(root, "apps/hub-web/public", icon.url), join(out, icon.url));
 const hubCss = await readFile(join(root, "apps/hub-web/app/globals.css"), "utf8");

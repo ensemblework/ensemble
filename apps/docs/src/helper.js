@@ -1,4 +1,5 @@
-import { mount, staticSVG } from '@ensemble/brand/motion';
+import { staticSVG } from '@ensemble/brand';
+import { AGENT_SHOW_DELAY_MS, mountAgentPlayer } from '@ensemble/brand/web-activity';
 import { helperLayout } from './helper-layout.js';
 
 const launcher = document.querySelector('#docs-launcher');
@@ -23,18 +24,31 @@ const moreChats = document.querySelector('#helper-more-chats');
 let chatId = null, chatsBefore = null, chatsFlight = null;
 const authRecovery = document.querySelector('#helper-auth-recovery');
 const apiBase = new URL(panel.dataset.endpoint).origin;
-const mark = mount(launcher.querySelector('.u-morph'), { size: 32, kind: 'beacon' });
-const waitMark = mount(waiting.querySelector('.u-morph'), { size: 64, kind: 'infinity' });
 let account = null, checked = false, pending = null, turns = [], before = null, sessionRequest = 0;
 let epoch = 0, historyFlight = null, mutating = false, deferredSession = false, authError = false, guestMode = false;
 let sync;
 let active = true;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+const waitHost = waiting.querySelector('.agent-activity-mark');
+const mark = mountAgentPlayer(launcher.querySelector('.agent-activity-mark'), 'launcher', () => {});
+const waitMark = mountAgentPlayer(waitHost, 'inline', () => {
+  waitHost.hidden = true;
+  if (!pending) waiting.hidden = true;
+});
+function syncMotion() {
+  const busy = active && pending?.revealed && !pending.controller.signal.aborted;
+  if (busy && !panel.hidden) waitHost.hidden = false;
+  waitMark.update(busy && !panel.hidden ? 'exchange' : null, reduce.matches);
+  mark.update(busy && panel.hidden ? 'infinity' : null, reduce.matches);
+}
+reduce.addEventListener('change', syncMotion);
 
 function open() {
   panel.hidden = false;
   launcher.hidden = true;
   launcher.setAttribute('aria-expanded', 'true');
   document.documentElement.dataset.assistantOpen = 'true';
+  syncMotion();
   sync();
   question.focus();
   if (checked) refreshSession();
@@ -44,6 +58,7 @@ function dismiss() {
   launcher.hidden = false;
   launcher.setAttribute('aria-expanded', 'false');
   delete document.documentElement.dataset.assistantOpen;
+  syncMotion();
   sync();
   launcher.focus();
 }
@@ -110,8 +125,11 @@ function updateAccount() {
 }
 function finishWaiting(operation) {
   clearInterval(operation?.timer);
-  waiting.hidden = true; waiting.removeAttribute('aria-busy');
-  waitMark.idle(); mark.idle();
+  clearTimeout(operation?.delay);
+  waiting.removeAttribute('aria-busy');
+  document.querySelector('#helper-wait-label').hidden = true;
+  document.querySelector('#helper-elapsed').textContent = '';
+  syncMotion();
 }
 function invalidate(invalidateSession = true) {
   epoch++; chatsFlight = null; closeHistory(); chatList.replaceChildren(); if (invalidateSession) sessionRequest++; historyFlight = null; mutating = false; deferredSession = false;
@@ -260,7 +278,7 @@ question.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !
 for (const starter of document.querySelectorAll('[data-docs-question]')) starter.addEventListener('click', () => { question.value = starter.dataset.docsQuestion; form.requestSubmit(); });
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (pending) { pending.controller.abort(); return; }
+  if (pending) { pending.controller.abort(); syncMotion(); return; }
   const text = question.value.trim();
   if (!text || !checked || historyFlight || mutating) return;
   const operation = { controller: new AbortController(), owner: account?.id ?? null, epoch, timer: null };
@@ -270,7 +288,8 @@ form.addEventListener('submit', async (event) => {
   const current = () => active && pending === operation && epoch === operation.epoch && (account?.id ?? null) === operation.owner;
   turns.push(draft); question.value = ''; question.style.height = '';
   showNotice(); waiting.hidden = false; waiting.setAttribute('aria-busy', 'true');
-  waitMark.loop({ delay: 350, kind: 'infinity' }); mark.loop({ delay: 350, kind: 'beacon' });
+  document.querySelector('#helper-wait-label').hidden = false;
+  operation.delay = setTimeout(() => { if (pending === operation) { operation.revealed = true; syncMotion(); } }, AGENT_SHOW_DELAY_MS);
   const since = Date.now();
   operation.timer = setInterval(() => { const seconds = Math.floor((Date.now() - since) / 1000); document.querySelector('#helper-elapsed').textContent = seconds >= 10 ? `${seconds}s elapsed` : ''; }, 1000);
   render(); conversation.scrollTop = conversation.scrollHeight;

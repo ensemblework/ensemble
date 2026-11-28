@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ArrowUpRight, Check, CircleCheck, Crosshair, Flame } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CircleCheck, Clock, Crosshair, Flame } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
 import type { ReactNode } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { api, type AgentJob, type DeskLive } from "@/lib/api";
-import { useElapsed } from "@/components/agent/job-card";
+import { JOB_STATE, useElapsed } from "@/components/agent/job-card";
 import { usePeek } from "@/components/shell/peek";
 import { useToast } from "@/components/toast";
 import { DueChip, PriorityChip, StatusGlyph, useFitRows } from "./rows";
@@ -150,7 +150,7 @@ function AgentsView({ running, queued, waiting, paused = false, preview = false 
   return (
     <div className="lwrap" data-visual="agents">
       <div className="agent-summary">
-        <span><b>{running.length}</b> working</span>
+        <span><b>{running.filter(job => job.status === "running").length}</b> working</span>
         {queued.length ? <span><b>{queued.length}</b> queued</span> : null}
         {paused ? <span className="agent-paused">Paused</span> : null}
         {needs}
@@ -165,20 +165,20 @@ function AgentsView({ running, queued, waiting, paused = false, preview = false 
 
 function AgentRow({ job, preview }: { job: JobLike; preview: boolean }) {
   const peek = usePeek();
-  const live = job.status !== "queued";
+  const live = job.status === "running";
   const elapsed = useElapsed(job.startedAt, live && !preview);
   const share = job.maxToolCalls > 0 && job.toolCalls > 0 ? Math.min(1, job.toolCalls / job.maxToolCalls) : null;
   const body = (
     <>
-      <span className="agent-glyph" data-state={live ? "running" : "queued"} aria-hidden="true" />
+      {live ? <AgentIcon size={14} aria-hidden /> : <Clock size={13} aria-hidden />}
       <span className="agent-main">
         <span className="agent-title" title={job.title}>{job.title}</span>
-        <span className="agent-line">{live ? job.progress || "Working…" : `#${job.position ?? 1} in the queue`}</span>
+        <span className="agent-line">{live ? job.progress || "Working…" : job.status === "queued" ? `#${job.position ?? 1} in the queue` : JOB_STATE[job.status].label}</span>
       </span>
       {elapsed ? <span className="agent-time">{elapsed}</span> : null}
-      {live ? (
-        <span className="agent-bar" data-indeterminate={share == null ? "1" : undefined} title={share == null ? undefined : `${job.toolCalls} of ${job.maxToolCalls} tool calls`}>
-          <i style={share == null ? undefined : { width: `${Math.max(4, share * 100)}%` }} />
+      {live && share !== null ? (
+        <span className="agent-bar" title={`${job.toolCalls} of ${job.maxToolCalls} tool calls`}>
+          <i style={{ width: `${share * 100}%` }} />
         </span>
       ) : null}
     </>

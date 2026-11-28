@@ -41,9 +41,7 @@ import { useLive } from "../live";
 import { usePeek } from "../shell/peek";
 import { useToast } from "../toast";
 import { BrandMorph } from "@/components/motion/brand-morph";
-import { ThinkingStatus } from "@/components/motion/slot";
-import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
-import { AI_SHOW_DELAY_MS } from "@/lib/motion/delay";
+import { AgentActivityMark } from "@/components/motion/agent-activity-mark";
 import { cx } from "../ui";
 import { pastedFiles } from "@/lib/files/pasted";
 import { AttachMenu, AttachmentShelf, MessageFiles, attachmentMentions, attachmentsOnlyMessage, fileCount, useChatAttachments, withAttachedFiles, type ChatAttachment } from "./chat-attachments";
@@ -54,8 +52,7 @@ import { mentionToken } from "@ensemble/shared-types";
 import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
 /** Only the first useful output is awaited here; arriving content is never held. */
-function ReplyMorph({ waiting }: { waiting: boolean }) {
-  const shown = useDelayedFlag(waiting, AI_SHOW_DELAY_MS);
+function WaitingTime({ waiting }: { waiting: boolean }) {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     setSeconds(0);
@@ -64,8 +61,7 @@ function ReplyMorph({ waiting }: { waiting: boolean }) {
     const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - since) / 1000)), 1000);
     return () => window.clearInterval(timer);
   }, [waiting]);
-  if (!waiting) return null;
-  return <span className="inline-flex flex-col items-center gap-2" aria-hidden><span className="inline-flex h-16 w-16 items-center justify-center">{shown ? <BrandMorph purpose="focused" state="loop" /> : null}</span>{seconds >= 10 ? <span className="text-[12px] tabular-nums text-muted">{seconds}s elapsed</span> : null}</span>;
+  return waiting && seconds >= 10 ? <span aria-hidden className="text-[12px] tabular-nums text-muted">{seconds}s elapsed</span> : null;
 }
 
 /** Short, page-aware starters. They never quote a record title, so an Untitled task never shows up here. */
@@ -131,6 +127,7 @@ export function Message({
   onChoose,
   onRetry,
   context,
+  sharedHeading = false,
 }: {
   message: AssistantMessageRecord;
   conversationId: string | null;
@@ -138,6 +135,7 @@ export function Message({
   onRetry?: () => void;
   /** The records this reply may name by id, and whether its question asked for ids. Default: its own. */
   context?: ReplyContext;
+  sharedHeading?: boolean;
 }) {
   if (message.outside) return <OutsideMessage message={message} outside={message.outside} />;
   if (message.role === "user") {
@@ -184,8 +182,8 @@ export function Message({
       };
     });
   return (
-    <article className="assistant-turn assistant-answer-turn" onContextMenu={menu}>
-      <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
+    <article className={sharedHeading ? "assistant-answer-turn" : "assistant-turn assistant-answer-turn"} onContextMenu={menu}>
+      {sharedHeading ? null : <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>}
       {message.toolCalls?.length ? <ToolSteps calls={message.toolCalls} conversationId={conversationId} refs={refs} /> : null}
       <div className="assistant-answer-body"><AssistantAnswer content={shown} /></div>
       {onChoose
@@ -422,6 +420,7 @@ export function AssistantDock() {
   /** Records the turn showed the model by id, sent before its text (the `refs` frame). */
   const [turnRefs, setTurnRefs] = useState<AssistantRef[]>([]);
   const [pending, setPending] = useState(false);
+  const [streamComplete, setStreamComplete] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   // Set once Stop is pressed: the turn ends with the server's own saved reply, so nothing else says "Stopped".
   const stoppingRef = useRef(false);
@@ -581,6 +580,7 @@ export function AssistantDock() {
     stoppingRef.current = false;
     setStopping(false);
     setPending(true);
+    setStreamComplete(false);
     setDraft("");
     setTurnError(null);
     setStreaming("");
@@ -687,11 +687,13 @@ export function AssistantDock() {
           }
           setTurnError(assistantErrorText(frame.message ?? ASSISTANT_UNAVAILABLE));
         }
+        if (event === "done") setStreamComplete(true);
         if (event === "done" && frame.conversationId) {
           nextId = frame.conversationId;
           if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed, refs: savedRefs(frame.refs) };
         }
       });
+      setStreamComplete(true);
       if (nextId) setConversationId(nextId);
       await client.invalidateQueries({ queryKey: ["assistant-messages", nextId] });
       void client.invalidateQueries({ queryKey: ["assistant-chats"] });
@@ -784,6 +786,11 @@ export function AssistantDock() {
 
   const saved = messages.data?.messages ?? [];
   const all = [...saved, ...optimistic.filter((row) => !saved.some((message) => message.id === row.id))];
+  const lastMessage = all.at(-1);
+  const tail = (!pending || streamComplete) && lastMessage?.role === "assistant" && !lastMessage.outside && !/^The model runtime (?:is not running|could not be reached)/i.test(lastMessage.content) ? lastMessage : null;
+  const executing = pending && !streamComplete && !stopping && !turnError;
+  const hasOutput = Boolean(streaming || liveTools.length);
+  const waiting = executing && !hasOutput;
   // While a reply streams: the records its calls returned, the ones the turn showed the model, and the question's mentions.
   const liveRefs = [...callRefs(liveTools), ...turnRefs, ...(lastRequest.current?.mentions ?? [])];
   const liveShowIds = asksForIds(lastRequest.current?.text);
@@ -843,12 +850,19 @@ export function AssistantDock() {
   const launcher = (
     <AskLauncher
       hidden={open || onCode || pathname.startsWith("/start")}
-      working={pending}
+      working={executing}
       onOpen={() => setOpen(true)}
       title={`Ask Ensemble (${chord}). Drag to move it.`}
     />
   );
   if (!open || onCode) return launcher;
+
+  const savedMessage = (message: AssistantMessageRecord, index: number, sharedHeading = false) => (
+    <Message key={message.id} message={message} sharedHeading={sharedHeading} context={replyContext(all, index)} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => {
+      const previous = all.slice(0, index).reverse().find(row => row.role === "user");
+      if (previous) void sendText(previous.content, previous.mentions ?? []);
+    }} />
+  );
 
   const filesDragged = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
 
@@ -950,21 +964,17 @@ export function AssistantDock() {
             }}
           />
         ) : (
-          all.map((message, index) => (
-            <Message key={message.id} message={message} context={replyContext(all, index)} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
-          ))
+          all.map((message, index) => message === tail ? null : savedMessage(message, index))
         )}
-        {pending ? (
-          <div className="assistant-turn assistant-live-turn">
-            {liveTools.length || streaming ? (
-              <div className="assistant-message-heading"><span className="assistant-message-avatar"><BrandMorph size={18} /></span><span>Ensemble</span></div>
-            ) : null}
-            {liveTools.length ? <ToolSteps live calls={liveTools} conversationId={conversationId} refs={liveRefs} running={streaming ? null : liveStep ?? "Thinking…"} /> : null}
+        <div className={pending || tail ? "assistant-turn assistant-live-turn" : "contents"}>
+          <div className="assistant-message-heading empty:hidden">
+            <AgentActivityMark kind={!executing ? null : waiting ? "exchange" : "weave"} rest={Boolean(tail) || hasOutput} />
+            {waiting ? <span role="status">{working && working !== "Working…" && working !== "Assistant is thinking…" ? working : "Waiting for a reply"}</span> : stopping ? <span role="status">Stopping…</span> : tail || hasOutput ? <span>Ensemble</span> : null}
+            <WaitingTime waiting={waiting} />
+          </div>
+          {tail ? savedMessage(tail, all.length - 1, true) : pending ? <>
+            {liveTools.length ? <ToolSteps live calls={liveTools} conversationId={conversationId} refs={liveRefs} running={!executing || streaming ? null : liveStep ?? "Thinking…"} /> : null}
             <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
-              <div className={!streaming && !liveTools.length ? "flex flex-col items-center gap-3 py-4" : "flex justify-center"}>
-                <ReplyMorph waiting={!streaming && !liveTools.length} />
-                {streaming || liveTools.length ? null : <ThinkingStatus real={working && working !== "Assistant is thinking…" && working !== "Working…" ? working : null} active art={false} />}
-              </div>
               {streaming ? (
                 <div className="assistant-answer-body">
                   <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
@@ -972,8 +982,8 @@ export function AssistantDock() {
               ) : null}
             </div>
             <ToolProposals calls={liveTools} conversationId={conversationId} refs={liveRefs} />
-          </div>
-        ) : null}
+          </> : null}
+        </div>
       </div>
 
       <div className="assistant-composer-area relative shrink-0">

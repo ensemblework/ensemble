@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
-import { MotionContextProvider } from "@/components/motion/slot";
+import { MotionContextProvider } from "@/components/motion/motion-context";
 import { ToastProvider } from "@/components/toast";
 import { JoinInvitation } from "@/components/sharing/join-invitation";
 import { AskHost } from "@/components/ask-dialog";

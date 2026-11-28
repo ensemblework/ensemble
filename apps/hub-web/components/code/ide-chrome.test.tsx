@@ -49,10 +49,11 @@ test("tabs that do not fit get an arrow at each end, and each click shows the ne
   }
 });
 
-test("a thread's dot: working, finished and not read yet, stopped on an error, or read", () => {
+test("only executing threads have running motion; the queue, approval, offline and read states stay distinct", () => {
   const thread = (status: string, id = "job-2") => ({ id: "t1", last: { id, status: status as never, engine: null, model: "" } });
   assert.equal(threadState(thread("running"), {}), "running");
-  assert.equal(threadState(thread("waiting_approval"), {}), "running");
+  for (const status of ["waiting_approval", "queued", "claimed", "stopping"]) assert.equal(threadState(thread(status), {}), status);
+  assert.equal(threadState(thread("running"), {}, false), "offline");
   assert.equal(threadState(thread("done"), {}), "new");
   assert.equal(threadState(thread("failed"), {}), "failed");
   assert.equal(threadState(thread("done"), { t1: "job-2" }), "read");

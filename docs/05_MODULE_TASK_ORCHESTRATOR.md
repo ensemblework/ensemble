@@ -2,7 +2,7 @@
 
 Open **Runs** to follow assigned work, see why it is waiting and respond when it needs you. Work runs on your paired computer, or on the server for operators. See [06](06_MODULE_WORKSPACE_AND_SURFACES.md) to assign work, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for device leases and [30](30_ENGINES.md) for external engines.
 
-The Hub separates an unfinished run from active execution (`apps/hub-web/lib/run-status.ts`). Queued, claimed/starting, stopping, approval, interrupted and ended jobs have static labels. Only actual running work gets motion in its focused detail; list rows remain still. Missing tool results never keep an ended run's loader alive.
+The Hub separates an unfinished run from active execution (`apps/hub-web/lib/run-status.ts`). Queued, claimed/starting, stopping, approval, interrupted and ended jobs have static labels. A reported running job shows Open weave beside its status in task and run detail, including before its first progress line. An open run without a job status stays still, as do queue and dashboard rows. Missing tool results never keep an ended run's loader alive.
 
 ## 4. Queue slots and limits
 

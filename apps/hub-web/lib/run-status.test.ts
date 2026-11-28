@@ -9,6 +9,7 @@ test("queueing, human decisions and cancellation never imply computation", () =>
     assert.equal(state.label, label);
   }
   assert.equal(runPresentation({ jobStatus: "running" }).active, true);
+  assert.equal(runPresentation({ jobStatus: null }).active, false);
 });
 
 test("a terminal run stops its animation even with stale running job state", () => {

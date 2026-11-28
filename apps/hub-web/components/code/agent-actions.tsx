@@ -449,10 +449,10 @@ export function useSeenThreads() {
   return { seen, markSeen };
 }
 
-/** A thread's state for its dot: running, finished and not read yet, stopped on an error and not read yet, or read. */
-export function threadState(thread: Pick<CodeThread, "id" | "last">, seen: Record<string, string>): "running" | "new" | "failed" | "read" {
+export function threadState(thread: Pick<CodeThread, "id" | "last">, seen: Record<string, string>, online = true) {
   const status = thread.last?.status;
-  if (status && isLive(status)) return "running";
+  if (!online && (status === "running" || status === "queued" || status === "claimed")) return "offline";
+  if (status === "running" || status === "queued" || status === "claimed" || status === "stopping" || status === "waiting_approval") return status;
   if (!thread.last || seen[thread.id] === thread.last.id) return "read";
   return status === "failed" || status === "blocked" || status === "interrupted" ? "failed" : "new";
 }

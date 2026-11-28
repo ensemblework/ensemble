@@ -41,7 +41,7 @@ import { api } from "@/lib/api";
 import { AgentIcon } from "@/components/agent-icon";
 import { AgentSessions, type ThreadPlace } from "@/components/code/agent-sessions";
 import { AgentView, type FolderChoice, type PlaceChoice } from "@/components/code/agent-view";
-import { agentHref, isLive, sessionsMinWidth, type IdeView } from "@/lib/code-agent";
+import { agentHref, sessionsMinWidth, type IdeView } from "@/lib/code-agent";
 import { MachineSwitcher } from "@/components/code/machine-switcher";
 import { FolderPicker } from "@/components/code/folder-picker";
 import { ThreadNameField, useCodePresence, useCodeThreads, useThreadTabActions } from "@/components/code/agent-actions";
@@ -105,6 +105,7 @@ export function CodeHome({
   const [view, setViewState] = usePersistentState<IdeView>("ensemble.code.view", "editor");
   const [agentMounted, setAgentMounted] = useState(false);
   const [homeThread, setHomeThread] = usePersistentState<string | null>("ensemble.code.homeThread", null);
+  const [visibleSession, setVisibleSession] = useState<string | null>(null);
   // The threads open as tabs beside the Welcome: their ids, "new" for one not started yet.
   const [homeTabs, setHomeTabs] = usePersistentState<string[]>("ensemble.code.homeThreadTabs", []);
   const [homeTabsClosed, setHomeTabsClosed] = useState(false);
@@ -317,8 +318,9 @@ export function CodeHome({
           {panel === "agent" ? (
             <AgentSessions
               selected={homeThread}
+              onVisibleSelected={setVisibleSession}
               viewOnly={viewOnly}
-              machine={{ deviceId: selectedId }}
+              machine={{ deviceId: selectedId, online: selected?.online }}
               onSelect={(thread) => openThread(thread.id)}
               onNew={(place) => {
                 if (place) setAgentDraft(place);
@@ -354,12 +356,11 @@ export function CodeHome({
               ) : null}
               {threadTabs.map((key) => {
                 const row = key === NEW_THREAD ? null : threadTitles.get(key);
-                const live = Boolean(row?.last && isLive(row.last.status));
                 return (
                   <EditorTab
                     key={key}
                     icon={AgentIcon}
-                    iconClass={live ? "agent-live-mark" : undefined}
+                    iconClass={row?.last?.status === "running" ? "text-accent" : undefined}
                     label={key === NEW_THREAD ? "New thread" : (row?.title ?? "Thread")}
                     active={view === "agent" && key === activeKey}
                     onSelect={() => openThread(key === NEW_THREAD ? null : key)}
@@ -418,6 +419,7 @@ export function CodeHome({
                       placesLoading={home.mode === "loading" || (home.mode === "computers" && home.devices.isLoading)}
                       viewOnly={viewOnly}
                       visible={shown}
+                      sidebarOwnsMotion={visibleSession === key}
                       onOpenFile={(place, path) => navigate.go(agentHref(place, { view: "editor", file: path }))}
                     />
                   </div>

@@ -48,6 +48,7 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
 
   const seen: { turnSignal: AbortSignal | null; endTurn: (() => void) | null; ended: boolean } = { turnSignal: null, endTurn: null, ended: false };
   const stops: string[] = [];
+  let write: (() => void) | undefined;
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -61,6 +62,7 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
       seen.turnSignal = init?.signal ?? null;
       const stream = new ReadableStream({
         start(controller) {
+          write = () => controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"Part of the answer"}\n\n'));
           controller.enqueue(
             new TextEncoder().encode(`event: status\ndata: ${JSON.stringify({ conversationId: CONVERSATION, userMessageId: "saved-user" })}\n\n`),
           );
@@ -149,15 +151,20 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
     for (let i = 0; i < 20 && (document.body.textContent?.match(/Hello from a new chat/g) ?? []).length !== 2; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
     assert.equal(textarea.value, "");
     assert.equal((document.body.textContent?.match(/Hello from a new chat/g) ?? []).length, 2);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 380)); });
+    assert.ok(document.querySelector('[data-agent-motion="exchange"]'), 'the dock waits for the first output');
+    await act(async () => { write?.(); });
+    assert.ok(document.querySelector('[data-agent-motion="weave"]'), 'a real reply changes the existing mark');
+    assert.match(document.body.textContent ?? '', /Part of the answer/);
     const close = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
     assert.ok(close);
     await act(async () => { close.click(); });
     const launcher = document.body.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]');
     assert.ok(launcher);
-    for (let i = 0; i < 100 && launcher.querySelector('.u-morph')?.getAttribute('data-state') !== 'loop'; i++) {
+    for (let i = 0; i < 100 && !launcher.querySelector('[data-agent-motion="infinity"]'); i++) {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
     }
-    assert.equal(launcher.querySelector('.u-morph')?.getAttribute('data-state'), 'loop', 'minimized assistant keeps the real pending work visible');
+    assert.ok(launcher.querySelector('[data-agent-motion="infinity"]'), 'minimized assistant keeps the real pending work visible');
     await act(async () => { launcher.click(); });
     const reopenedStop = document.body.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
     assert.ok(reopenedStop);
@@ -167,6 +174,7 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
       await new Promise((resolve) => setTimeout(resolve, 5));
     });
     assert.equal(document.body.querySelector('button[aria-label="Stopping"]')?.hasAttribute("disabled"), true, "Stop waits for the server");
+    assert.equal(document.querySelector('[data-agent-motion="weave"], [data-agent-motion="exchange"]'), null, 'Stop does not keep claiming execution until the server confirms');
     assert.doesNotMatch(document.body.textContent ?? "", /Stopped/, "nothing says stopped before the server confirms");
     for (let i = 0; i < 40 && !document.body.querySelector('button[aria-label="Send"]'); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
     for (let i = 0; i < 40 && !/Stopped/.test(document.body.textContent ?? ""); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });

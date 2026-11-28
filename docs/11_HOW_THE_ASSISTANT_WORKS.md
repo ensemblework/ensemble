@@ -259,7 +259,7 @@ Paths are under `apps/hub-api/src/` unless qualified.
 
 `lib/activity.ts` publishes `activity.changed` after a call starts, changes status or ends. Frames contain an activity ID and lifecycle phase, addressed only to its account (the owner when no request scope is present); a shared-space guest receives their own activity on their personal stream.
 
-`components/live.tsx` refreshes the `agent-state` query on these events and when the stream connects or reconnects. Polling reconciles missed events. The dock's working text belongs to its local turn; another conversation's broadcast frame cannot replace it.
+`components/live.tsx` refreshes the `agent-state` query on these events and when the stream connects or reconnects. Polling reconciles missed events. The dock's working text belongs to its local turn; another conversation's broadcast frame cannot replace it. The reply heading stays in place: Loop exchange while waiting, Open weave on streamed text or tool results, then the still logo. Stop, error and the end of the stream end working motion even if saving or cache refresh is still pending. Minimizing transfers the cue to the launcher. See [Brand and motion](BRAND.md#motion).
 
 Direct completions in `lib/runtime.ts` (meeting preparation, meeting tasks, triage, document enrichment and model/skill tests) register their own activity until the call succeeds, fails or is stopped.
 

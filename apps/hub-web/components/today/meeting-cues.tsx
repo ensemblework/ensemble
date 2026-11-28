@@ -134,7 +134,7 @@ function CueCard({
                   </button>
                 ) : null}
               </div>
-              {prepare.isPending ? <div className="mt-2"><ThinkingStatus real="Preparing your meeting brief…" active /></div> : null}
+              <ThinkingStatus real="Preparing your meeting brief…" active={prepare.isPending} />
               {previous.summary ? <p className="mt-1 text-muted">{markdownPlainText(previous.summary)}</p> : null}
               {previous.openTasks.length ? (
                 <ul className="mt-1 space-y-1">
