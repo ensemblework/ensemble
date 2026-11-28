@@ -65,8 +65,8 @@ export function DemoApp({ step, chapters, children }: { step: TourStep; chapters
   </div>;
 }
 
-function Heading({ title, line, action, target, kicker }: { title: string; line: string; action?: string; target?: string; kicker?: string }) {
-  return <div className="film-page-heading"><div>{kicker && <small className="film-kicker">{kicker}</small>}<h3>{title}</h3><p>{line}</p></div>{action && <span className="film-button" data-film-target={target}><Plus size={10} />{action}</span>}</div>;
+function Heading({ title, line, action, target, kicker }: { title: string; line?: string; action?: string; target?: string; kicker?: string }) {
+  return <div className="film-page-heading"><div>{kicker && <small className="film-kicker">{kicker}</small>}<h3>{title}</h3>{line ? <p>{line}</p> : null}</div>{action && <span className="film-button" data-film-target={target}><Plus size={10} />{action}</span>}</div>;
 }
 
 /** The live Today header: the date, a greeting, and the summary chips. */
@@ -107,7 +107,7 @@ function BoardScene({ live, ms }: { live: Live; ms: number }) {
   const dropped = ms >= 1950;
   const card = (task: Live["tasks"][number] | undefined, level: "high" | "medium", owner: string) => <><strong>{task?.title ?? "Choose a useful next step"}</strong><div><Priority level={level} /><span className="film-avatar">{owner}</span></div></>;
   // The pointer carries the card (`data-film-drag`) to the empty slot, which then shows it in place.
-  return <><Heading title="Task board" line="Proposed through done. Drag a card to move it." action="New task" /><div className="film-board-filter"><Search size={11} />Search tasks or #label…<span>All owners</span><span>By priority</span></div><div className="film-board">
+  return <><Heading title="Task board" action="New task" /><div className="film-board-filter"><Search size={11} />Search tasks or #label…<span>All owners</span><span>By priority</span></div><div className="film-board">
     <div className="film-lane"><header>To do<small>{dropped ? 2 : 3}</small><Plus size={11} /></header>
       <div className="film-task">{card(tasks[1], "high", "MC")}</div><div className="film-task">{card(tasks[2], "medium", "MC")}</div>
       {!dropped && <div className="film-task" data-film-drag data-film-target="drag-card">{card(tasks[0], "high", "MC")}</div>}</div>
