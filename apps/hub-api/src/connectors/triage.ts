@@ -16,6 +16,7 @@ import { complete } from "../lib/runtime.js";
 import type { StoredArtifact } from "./ingest.js";
 import { heuristicTodo, triageTodosFromReply, warnTriageFallback, type ModelTodo } from "./triage-todos.js";
 import type { Proposal } from "./types.js";
+import { ENSEMBLE_KEY, resolveLabels } from "../labels/board-labels.js";
 
 export const TRIAGE_PROMPT = `Identify actionable requests in items the person explicitly chose.
 
@@ -116,7 +117,8 @@ export async function createProposals(userId: string, proposals: Proposal[], via
         priority: proposal.priority,
         due: proposal.due ?? null,
         people: proposal.people ?? [],
-        labels: proposal.labels ?? [],
+        // A new task is on the Ensemble board: its names come from that board's list.
+        labels: await resolveLabels(prisma, userId, ENSEMBLE_KEY, proposal.labels ?? []),
         repoId: proposal.repoId ?? null,
         projectId,
         meetingNoteId: proposal.meetingNoteId ?? null,

@@ -137,7 +137,7 @@ Use the review step to choose how source fields become Ensemble fields. The rule
 - **Status** uses the review-step choice. Unseen values are matched by name: done, complete, closed, resolved, shipped, merged → Done; cancelled, won't do, duplicate, not planned → Dropped; blocked, on hold, waiting → Blocked; in progress, doing, started, review, testing, QA → In progress; backlog, to do, open, unstarted, not started, new, triage → To do. When the name says nothing, the app's status group decides (Linear state type, Jira status category, ClickUp status type); anything else is To do. A done checkbox or completion date makes the task Done.
 - **Priority** (`mapPriority`): critical, blocker, showstopper, P0 → Critical; urgent, highest, high, P1 → High; medium, normal, no priority → Medium; low, lowest, minor, P3 or lower → Low.
 - **Dates:** a date without a time is stored like Ensemble's date-only dues, midnight UTC on that day (`parseDue` in `src/lib/clock.ts`). A time with a zone keeps that instant; a time without one keeps its day. Spreadsheet dates may be ISO, `MM/DD/YYYY` (`DD/MM/YYYY` when the first part is over 12), Jira's `07/Oct/26`, "October 7, 2026" or "7 Oct 2026"; a range ("start → end") gives start and due.
-- **Labels** are trimmed and de-duplicated ignoring case: at most 20 per task, 40 characters each.
+- **Labels** are trimmed and de-duplicated ignoring case: at most 20 per task, 40 characters each. They are labels of the task's board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#labels)): a name the board has takes its spelling, and a new one joins the board's list.
 - **Assignees** become the task's people, by name.
 - **Descriptions:** a short single paragraph stays the task description. Anything longer or structured moves to the task's page and the task keeps its first paragraph. Trello checklists and unmapped properties go to the page too. Notion row properties stay on their ordinary page.
 - **Pages:** standalone pages start with an import credit and original link. Notion parents are stored in `TaskPage.parentId` and resolved after all batches (`finishPageImport` in `imports/apply.ts`), so children fetched before their parents still nest. The Pages browser indents children with each child group collapsed at first, and each page lists its child pages. Notion imports never create projects or board tasks.
@@ -185,7 +185,7 @@ Mapping, expiry, caps and re-import rules are the same. A started job is not rep
 
 ## In the code
 
-Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/routes/imports.ts` (API), `apps/hub-web/components/imports/` (dialog, summary, recent list), `apps/hub-web/lib/api-imports.ts` (client). Labels on tasks: `packages/shared-types/src/domain.ts` (`TaskLabels`), `apps/hub-api/src/services/tasks.ts`, `apps/hub-web/components/task/labels.tsx`. No test calls a real vendor API.
+Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/routes/imports.ts` (API), `apps/hub-web/components/imports/` (dialog, summary, recent list), `apps/hub-web/lib/api-imports.ts` (client). Labels on tasks: `packages/shared-types/src/domain.ts` (`TaskLabels`), `apps/hub-api/src/labels/board-labels.ts` (the board's list, `LabelBook`), `apps/hub-api/src/services/tasks.ts`, `apps/hub-web/components/task/labels.tsx`. No test calls a real vendor API.
 
 Mapping and writes use `src/imports/mapping.ts` and `src/imports/apply.ts`.
 
@@ -211,6 +211,6 @@ Task routes accept and return `labels` (`POST /api/tasks`, `PATCH /api/tasks/:id
 |---|---|
 | `apps/hub-api/src/routes/imports.integration.test.ts` | CSV, Trello JSON and Notion zip imports over HTTP; nested Notion parents; re-import without copies; sheet id scoping; page edits kept; undo; isolation; a cancelled token import that never stores the token; bad input; unverified hosted accounts; task labels |
 | `apps/hub-api/src/imports/importers.test.ts` | Mapping rules, CSV presets, the unzip budget and page-text cap, preview limits, 429 handling, and the Notion (native blocks), Linear, Jira and Todoist importers against mocked `fetch` |
-| `apps/hub-web/components/imports/import-dialog.test.tsx`, `components/task/labels.test.tsx` | The dialog flow, the recent list, the label editor |
+| `apps/hub-web/components/imports/import-dialog.test.tsx`, `components/task/labels.test.tsx` | The dialog flow, the recent list, the label picker |
 
 Fixtures (fictional Fieldnote data) are in `apps/hub-api/src/imports/fixtures/`.

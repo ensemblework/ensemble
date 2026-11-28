@@ -29,16 +29,18 @@ export const useLive = () => useContext(LiveContext);
 
 /** Which cached queries each server event makes stale. */
 const INVALIDATES: Record<string, string[][]> = {
-  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"], ["code-threads"], ["code-thread"]],
-  page: [["page"], ["pages"], ["boards"]],
+  task: [["tasks"], ["task"], ["pages"], ["boards"], ["labels"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"], ["code-threads"], ["code-thread"]],
+  page: [["page"], ["pages"], ["boards"], ["labels"]],
   "settings.changed": [["settings"]],
-  board: [["boards"], ["pages"], ["tasks"]],
+  board: [["boards"], ["pages"], ["tasks"], ["labels"]],
+  // A board's labels changed; a rename or a delete also changed the items that have the label.
+  labels: [["labels"], ["tasks"], ["task"], ["pages"], ["boards"], ["deliverables"], ["standalone-page"], ["home"]],
   // A run moved on: the Code tab's threads show its turn's work at once (components/code/agent-view.tsx).
   workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"], ["code-thread"], ["code-threads"], ["run"]],
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
   "activity.changed": [["agent-state"]],
-  deliverable: [["deliverables"], ["graph"]],
+  deliverable: [["deliverables"], ["graph"], ["labels"]],
   // A meeting's AI read, project or prep brief changed (connectors/meetings/ai.ts, cowork/prep.ts).
   meetings: [["meeting-note"], ["meetings-imported"], ["meeting-sessions"], ["meeting-session"], ["meeting-cues"], ["meeting-calendar"], ["graph"]],
   // A request answered or closed anywhere also leaves the bell's Needs me (hub-api notifications/needs.ts).
@@ -49,7 +51,7 @@ const INVALIDATES: Record<string, string[][]> = {
   diagram: [["diagrams"]],
   context: [["people"], ["projects"], ["project"], ["repos"], ["graph"], ["entities"], ["artifacts"], ["desk-live"]],
   sync: [["connections"], ["calendar"], ["artifacts"], ["shell"]],
-  "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
+  "assistant.acted": [["tasks"], ["labels"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
   routine: [["routines"], ["morning-brief"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],

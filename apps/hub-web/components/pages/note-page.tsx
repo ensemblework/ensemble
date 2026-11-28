@@ -34,6 +34,7 @@ import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from ".
 import { collabStatusText, useCollab } from "./use-collab";
 import { KeptEdits } from "./kept-edits";
 import { PageBoardPicker } from "./page-board-picker";
+import { NoteLabels } from "./note-labels";
 import { usePeek } from "../shell/peek";
 import { pageMenu } from "../context-menu/builders";
 import { openContextMenu } from "../context-menu/menu-store";
@@ -348,6 +349,7 @@ export function NotePage({
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
         )}
       </div>
+      <NoteLabels pageId={pageId} labels={record.labels ?? []} editable={canEdit && !shared} shared={Boolean(shared)} />
       <PageContent status={saveText} error={saveState === "error"} before={locked && unsaved ? (
         <KeptEdits
           message={gone ? "This page isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this page anymore, so your last changes weren't saved. They're still on screen."}

@@ -41,6 +41,8 @@ export type BoardPage = {
   title: string;
   columnId: string | null;
   boardOrder: number;
+  /** A note's own labels. A task page's labels are on its task. */
+  labels?: string[];
   createdAt: string;
   updatedAt: string;
 };

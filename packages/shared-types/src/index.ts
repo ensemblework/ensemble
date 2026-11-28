@@ -12,6 +12,7 @@ export * from "./page-latex.js";
 export * from "./page-notes.js";
 export * from "./page-images.js";
 export * from "./page-boards.js";
+export * from "./labels.js";
 export * from "./cli-channel.js";
 export * from "./connectors.js";
 export * from "./connector-guides.js";

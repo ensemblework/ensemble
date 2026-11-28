@@ -43,6 +43,7 @@ import { contextRoutes } from "./routes/context.js";
 import { boardRoutes } from "./routes/board.js";
 import { calendarRoutes } from "./routes/calendar.js";
 import { pageBoardRoutes } from "./routes/page-boards.js";
+import { labelRoutes } from "./routes/labels.js";
 import { skillRoutes } from "./routes/skills.js";
 import { runRoutes } from "./routes/runs.js";
 import { systemRoutes } from "./routes/system.js";
@@ -321,6 +322,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     boardRoutes,
     calendarRoutes,
     pageBoardRoutes,
+    labelRoutes,
     assistantRoutes,
     internalRoutes,
     includedRoutes,

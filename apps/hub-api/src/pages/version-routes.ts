@@ -9,6 +9,7 @@ import { copyPageDocument } from "./copy.js";
 import { collabHub } from "./live.js";
 import { sseHub } from "../lib/sse.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
+import { carryLabels, ENSEMBLE_KEY, LabelBook } from "../labels/board-labels.js";
 
 const Target = z.object({ kind: z.enum(["page", "task"]).default("page"), id: z.string().uuid() });
 const targetOf = (input: z.infer<typeof Target>) => input.kind === "task" ? { taskId: input.id } : { pageId: input.id };
@@ -59,7 +60,9 @@ export async function pageVersionRoutes(app: FastifyInstance) {
       const { page: source } = await editablePage(tx, request.userId, { pageId: id }, true);
       if (!source || source.taskId) throw problem("Choose a standalone page to duplicate.", 400);
       const copied = await createStandalonePage(tx, request.userId, { title: Array.from(`Copy of ${source.title || "Untitled"}`).slice(0, 200).join(""), content: await copyPageDocument(tx, request.userId, source.content ? PageDocument.parse(source.content) : null), sourceFileId: null });
-      if (source.parentId) await tx.taskPage.update({ where: { id: copied.id }, data: { parentId: source.parentId } });
+      // The copy is on no board, so its labels join the Ensemble board's list in their colours.
+      const labels = source.labels.length ? await carryLabels(new LabelBook(tx, request.userId), source.boardId ?? ENSEMBLE_KEY, ENSEMBLE_KEY, source.labels) : [];
+      if (source.parentId || labels.length) await tx.taskPage.update({ where: { id: copied.id }, data: { ...(source.parentId ? { parentId: source.parentId } : {}), ...(labels.length ? { labels } : {}) } });
       return copied;
     });
     sseHub.publish(request.userId, { event: "page", data: { id: page.id, action: "create" } });

@@ -12,6 +12,7 @@ import { assertOwned } from "./records.js";
 import { CreateTask, TaskLabels } from "@ensemble/shared-types";
 import { actorFor, madeBy, nodeActingIn } from "../sharing/context.js";
 import { actingAccount, assigneeOf, taskAssignmentChanged, type TaskAssignee } from "./task-assignee.js";
+import { ENSEMBLE_KEY, resolveLabels, taskBoardKey } from "../labels/board-labels.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -226,7 +227,8 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       due: parseDue(draft.due) ?? null,
       projectId: projectId ?? null,
       people: draft.people ?? [],
-      labels: draft.labels === undefined ? [] : TaskLabels.parse(draft.labels),
+      // A new task is on the Ensemble board; a name its list lacks is added to it.
+      labels: draft.labels === undefined ? [] : await resolveLabels(tx, userId, ENSEMBLE_KEY, TaskLabels.parse(draft.labels)),
       sourceKind: draft.sourceKind ?? "manual",
       sourceRef: draft.sourceRef ?? (actor === "agent" ? "assistant" : ""),
       todayFocus: draft.todayFocus ?? "auto",
@@ -319,7 +321,7 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       due: parseDue(patch.due),
       projectId,
       people: patch.people,
-      labels: patch.labels === undefined ? undefined : TaskLabels.parse(patch.labels),
+      labels: patch.labels === undefined ? undefined : await resolveLabels(tx, userId, await taskBoardKey(tx, userId, id), TaskLabels.parse(patch.labels)),
       todayFocus: patch.todayFocus,
       boardOrder: patch.boardOrder,
       repoId: patch.repoId,

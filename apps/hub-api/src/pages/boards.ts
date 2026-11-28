@@ -3,10 +3,11 @@ import { PageBoardColumns, PageBoardTiles, type BoardPage, type CreatePageBoard,
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { pageSearchText } from "./markdown.js";
 import { searchSnippet, TaskPageError, taskForPage } from "./store.js";
+import { carryItemLabels, ENSEMBLE_KEY, retireBoardLabels } from "../labels/board-labels.js";
 
 type Db = Prisma.TransactionClient;
 export const boardPageSelect = {
-  id: true, title: true, taskId: true, boardId: true, boardColumnId: true, boardOrder: true,
+  id: true, title: true, taskId: true, boardId: true, boardColumnId: true, boardOrder: true, labels: true,
   parentId: true, createdAt: true, updatedAt: true,
   board: { select: { id: true, title: true } },
   task: { select: { id: true, title: true, createdAt: true, updatedAt: true } },
@@ -17,7 +18,7 @@ export function boardPageDto(page: StoredBoardPage): BoardPage {
   return {
     id: page.taskId ?? page.id, kind: page.taskId ? "task" : "page",
     title: page.task?.title || page.title || "Untitled", columnId: page.boardColumnId,
-    boardOrder: page.boardOrder, createdAt: (page.task?.createdAt ?? page.createdAt).toISOString(),
+    boardOrder: page.boardOrder, ...(page.taskId ? {} : { labels: page.labels }), createdAt: (page.task?.createdAt ?? page.createdAt).toISOString(),
     updatedAt: new Date(Math.max(page.updatedAt.getTime(), page.task?.updatedAt.getTime() ?? 0)).toISOString(),
   };
 }
@@ -83,6 +84,7 @@ export async function updateBoard(db: Db, userId: string, id: string, revision: 
 /** Deletes a board and keeps its pages: notes become independent, task pages return to the Ensemble board. */
 export async function deleteBoard(db: Db, userId: string, id: string): Promise<void> {
   await ownedBoard(db, userId, id, true);
+  await retireBoardLabels(db, userId, id);
   // Organizational cleanup must not invalidate a page's pending Trash undo timestamp.
   await db.$executeRaw`UPDATE task_pages SET board_id = NULL, board_column_id = NULL, board_order = 0 WHERE user_id = ${userId} AND board_id = ${id}`;
   await db.pageBoard.delete({ where: { id } });
@@ -126,6 +128,8 @@ export async function assignBoardPage(db: Db, userId: string, kind: "page" | "ta
     return found;
   };
   const [before, after] = await Promise.all([neighbour(input.beforeId), neighbour(input.afterId)]);
+  // Labels belong to a board: the destination's list takes the ones it lacks, in their colours.
+  await carryItemLabels(db, userId, { kind, id }, page!.boardId ?? ENSEMBLE_KEY, input.boardId ?? ENSEMBLE_KEY);
   if (before && after && before.boardOrder >= after.boardOrder) throw new TaskPageError("INVALID_ORDER", "The column changed. Try again.", 409);
   const last = input.boardId && !before && !after ? await db.taskPage.aggregate({
     where: { userId, boardId: input.boardId, boardColumnId: input.columnId }, _max: { boardOrder: true },

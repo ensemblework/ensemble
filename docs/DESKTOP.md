@@ -46,7 +46,7 @@ Local only becomes an account once; an account never goes back to local only. St
 
 #### What moves to the account
 
-The transfer includes (`TRANSFER_TABLES`, `apps/hub-api/src/transfer/schema.ts`): pages, tasks, boards, projects, people, repos, deliverables, meetings and notes, files (with their bytes), datasets, plots, diagrams, skills, chats, routines, reminders, layouts and settings.
+The transfer includes (`TRANSFER_TABLES`, `apps/hub-api/src/transfer/schema.ts`): pages, tasks, boards and their labels, projects, people, repos, deliverables, meetings and notes, files (with their bytes), datasets, plots, diagrams, skills, chats, routines, reminders, layouts and settings.
 
 What stays on the computer: sign-ins, saved model keys, connected apps and calendar feeds (encrypted with this computer's key), agent runs and their logs, undo history and the activity ledger. Re-add keys and reconnect apps in the account.
 

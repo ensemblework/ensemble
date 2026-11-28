@@ -10,7 +10,7 @@ import { resolveHubApi } from "./hub-origin";
 import type { ApplyFailure } from "./assistant-apply";
 import type { CollabBatch, CollabJoin, CollabSend } from "@/components/editor/collab";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
-import type { BoardPage, CreatePageBoard, DirectoryPage, PageBoardRecord, PatchPageBoard } from "@ensemble/shared-types";
+import type { BoardLabelList, BoardLabelRecord, BoardPage, CreatePageBoard, DirectoryPage, LabelColor, PageBoardRecord, PatchPageBoard } from "@ensemble/shared-types";
 import { placeHeaders, PLACE_BLOCKED_EVENT } from "./active-place";
 import { chooseSave } from "./save-conflict";
 import { mergeSaveObject, saveObject, type SaveConflict, type SaveObject } from "@ensemble/shared-types/save-merge";
@@ -452,6 +452,8 @@ export type StandalonePageRecord = {
   notes: string;
   updatedAt: string | null;
   sourceFile?: PageSourceFile | null;
+  /** Names from its board's labels (the Ensemble board's when it is on no board). */
+  labels?: string[];
 };
 
 export type ApprovalRecord = {
@@ -515,6 +517,9 @@ export type NodeApprovalCard = {
   origin?: SessionOrigin | null;
 };
 
+/** Whose labels to list: a board's (`ensemble` or a custom board's id), or the list an item picks from. */
+export type LabelListOf = { board: string } | { task: string } | { page: string } | { deliverable: string };
+
 export type DeliverableRecord = {
   id: string;
   title: string;
@@ -522,6 +527,8 @@ export type DeliverableRecord = {
   due: string | null;
   projectId: string;
   project: { id: string; name: string };
+  /** Names from the Ensemble board's labels. */
+  labels?: string[];
 };
 
 export type ReminderRecord = { id: string; title: string; dueDate: string; dueTime: string | null };
@@ -1655,6 +1662,8 @@ export const api = bindClient({
   convertPage: (kind: "page" | "task", id: string, revision: number) =>
     post<{ kind: "page" | "task"; id: string; pageId: string }>(`/api/pages/${kind}/${id}/convert`, { revision }),
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),
+  /** A note's labels: names from its board's list; a new name is added to it. */
+  setPageLabels: (id: string, labels: string[]) => patch<{ labels: string[] }>(`/api/pages/${id}`, { labels }),
   deletePage: (id: string) => del<void>(`/api/pages/${id}`),
   standalonePage: (id: string) => get<StandalonePageRecord>(`/api/pages/${id}`),
   /** A page in Trash, to read before restoring it. The owner only. */
@@ -2111,6 +2120,12 @@ export const api = bindClient({
   pinTask: (id: string, pinned: boolean) => post(`/api/tasks/${id}/pin`, { pinned }),
   pinDeliverable: (id: string, pinned: boolean) => post(`/api/deliverables/${id}/pin`, { pinned }),
   deleteDeliverable: (id: string) => del<void>(`/api/deliverables/${id}`),
+
+  // board labels: each board's list its pages, tasks and deliverables pick from (`ensemble` is the Ensemble board)
+  labels: (of: LabelListOf) => get<BoardLabelList>(`/api/labels${qs(of)}`),
+  createLabel: (body: { board: string; name: string; color?: LabelColor }) => post<{ label: BoardLabelRecord }>("/api/labels", body),
+  patchLabel: (id: string, body: { name?: string; color?: LabelColor }) => patch<{ label: BoardLabelRecord; changed: number }>(`/api/labels/${id}`, body),
+  deleteLabel: (id: string) => del<{ changed: number }>(`/api/labels/${id}`),
   deleteReminder: (id: string) => del<void>(`/api/reminders/${id}`),
   githubGit: () => get<{ hint: string | null }>(`/api/secrets/github`),
   saveGithubGit: (token: string) => put<{ hint: string }>(`/api/secrets/github`, { token }),

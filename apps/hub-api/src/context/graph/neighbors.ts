@@ -15,6 +15,7 @@ import { ON_BOARD } from "../../lib/node-tasks.js";
 import { filesOnPage, filesOnTask } from "../../files/attached.js";
 import { meetingsInSeries } from "../../cowork/series.js";
 import { hubPath, isUuid, mentionGraphKind, refOf, type GraphKind, type ItemRef } from "./refs.js";
+import { labelSpellings } from "../../labels/board-labels.js";
 
 export type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -551,13 +552,13 @@ const personSpec: KindSpec<PersonAnchor> = {
       rel: "open_tasks",
       label: "Open tasks with them",
       run: async (ctx, person, page) =>
-        (await ctx.db.task.findMany({ where: { userId: ctx.userId, deletedAt: null, ...ON_BOARD, ...OPEN_TASK, AND: [personTasks(person), { NOT: { labels: { has: "waiting-on" } } }] }, orderBy: [{ due: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }], ...take(page), select: TASK_CARD_SELECT })).map((row) => taskCard(row)),
+        (await ctx.db.task.findMany({ where: { userId: ctx.userId, deletedAt: null, ...ON_BOARD, ...OPEN_TASK, AND: [personTasks(person), { NOT: { labels: { hasSome: await labelSpellings(ctx.db, ctx.userId, "waiting-on") } } }] }, orderBy: [{ due: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }], ...take(page), select: TASK_CARD_SELECT })).map((row) => taskCard(row)),
     },
     {
       rel: "waiting_on",
       label: "Waiting on them",
       run: async (ctx, person, page) =>
-        (await ctx.db.task.findMany({ where: { userId: ctx.userId, deletedAt: null, ...ON_BOARD, ...OPEN_TASK, labels: { has: "waiting-on" }, ...personTasks(person) }, orderBy: [{ due: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }], ...take(page), select: TASK_CARD_SELECT })).map((row) => taskCard(row)),
+        (await ctx.db.task.findMany({ where: { userId: ctx.userId, deletedAt: null, ...ON_BOARD, ...OPEN_TASK, labels: { hasSome: await labelSpellings(ctx.db, ctx.userId, "waiting-on") }, ...personTasks(person) }, orderBy: [{ due: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }], ...take(page), select: TASK_CARD_SELECT })).map((row) => taskCard(row)),
     },
     {
       rel: "meetings",

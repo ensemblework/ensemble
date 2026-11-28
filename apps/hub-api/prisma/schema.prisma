@@ -231,7 +231,7 @@ model Task {
   pipelineStage     String?          @map("pipeline_stage")
   /// Limitation Act period, such as 30d or 3m. The due date is computed, not stored.
   limitationRule    String?          @map("limitation_rule")
-  /// Free-form tags. Imports bring labels, tags and multi-selects here.
+  /// Names from the labels of the task's board (`BoardLabel`). Imports bring labels, tags and multi-selects here.
   labels            String[]         @default([])
   /// Set by importers and connectors so running an import again updates rather than duplicates.
   externalSource    String?          @map("external_source")
@@ -290,6 +290,8 @@ model TaskPage {
   boardColumnId   String?           @map("board_column_id")
   boardOrder      Float             @default(0) @map("board_order")
   board           PageBoard?        @relation(fields: [boardId], references: [id], onDelete: SetNull)
+  /// A standalone note's labels. A task page's labels are its task's (`Task.labels`).
+  labels          String[]          @default([])
   historySavedAt  DateTime?         @map("history_saved_at")
   editorAccountId String?           @map("editor_account_id")
   /// The node that last edited the page for `editorAccountId` (Ensemble Node acting in a space).
@@ -349,6 +351,27 @@ model PageBoard {
 
   @@index([userId, createdAt])
   @@map("page_boards")
+}
+
+/// A board's labels: the list its pages, tasks and deliverables pick from (src/labels/board-labels.ts).
+/// Items keep the names (`Task.labels`, a note's `TaskPage.labels`, `Deliverable.labels`); this gives each its colour.
+model BoardLabel {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// The custom board's id, or "" for the Ensemble board, whose list items on no board use too.
+  boardKey  String   @default("") @map("board_key")
+  name      String
+  /// lower(name): one label per name on a board, whatever its case.
+  nameKey   String   @map("name_key")
+  /// A theme tag colour (LABEL_COLORS). Null: the colour the name hashes to (labelTone).
+  color     String?
+  position  Float    @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, boardKey, nameKey])
+  @@index([userId, boardKey, position])
+  @@map("board_labels")
 }
 
 /// No entity foreign key: deleting an entity must leave its saved mention.
@@ -1060,6 +1083,8 @@ model Deliverable {
   owner       String?
   notes       String            @default("")
   sourceRef   String?           @map("source_ref")
+  /// Names from the Ensemble board's labels (`BoardLabel`).
+  labels      String[]          @default([])
   createdBy   Actor             @default(agent) @map("created_by")
   completedAt DateTime?         @map("completed_at")
   pinned      Boolean           @default(false)

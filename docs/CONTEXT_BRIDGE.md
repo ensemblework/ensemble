@@ -195,7 +195,7 @@ The allowlist (each name is the assistant's tool, [34](34_ASSISTANT_ACTIONS.md))
 | Group | Reads | Changes |
 |---|---|---|
 | guides | `hub_how_to` (the assistant's playbooks: boards, diagrams, plots…) | None |
-| tasks | `hub_list_tasks`, `hub_get_task`, `hub_read_task_page`, `hub_list_due` | `hub_create_tasks`, `hub_update_task` (title, status, owner, priority, due, labels, people, project, repository, deliverable, page), `hub_delete_task`, `hub_delete_tasks` (many, to Trash) |
+| tasks | `hub_list_tasks`, `hub_get_task`, `hub_read_task_page`, `hub_list_due` | `hub_create_tasks`, `hub_update_task` (title, status, owner, priority, due, labels by name from the task's board, people, project, repository, deliverable, page), `hub_delete_task`, `hub_delete_tasks` (many, to Trash) |
 | pages | `hub_list_pages`, `hub_read_page`, `hub_read_page_blocks` | `hub_create_page`, `hub_update_page`, `hub_edit_page`, `hub_move_page`, `hub_delete_page`, `hub_delete_pages`. People and records are linked in a page as `[@Name](ensemble://person/<id>)` |
 | boards | `hub_list_boards`, `hub_read_board` | `hub_create_board`, `hub_update_board`, `hub_move_to_board` (a task or page into a column), `hub_remove_from_board`, `hub_delete_board` (keeps its cards). Task status columns on the Ensemble board move with `hub_update_task` |
 | diagrams | `hub_list_diagrams`, `hub_get_diagram`, `hub_validate_diagram`, `hub_explain_diagram`, `hub_diagram_context` | `hub_create_diagram`, `hub_update_diagram`, `hub_edit_diagram` |

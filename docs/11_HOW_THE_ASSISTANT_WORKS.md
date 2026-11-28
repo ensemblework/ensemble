@@ -84,6 +84,8 @@ Writes use real IDs, revisions and schema validation; record tools cover impleme
 
 Custom boards (`tools/boards.ts`) share `pages/boards.ts` with `routes/page-boards.ts`, so a tool checks and changes a board exactly as the Board screen does; a board is named by id, pasted link or title, and its changes have no Undo (deleting one always waits for Apply). Original-file edits are format-specific and hash-guarded ([32](32_FILES.md)).
 
+Task labels are names (`tools/tasks.ts`): `hub_create_tasks` and `hub_update_task` go through `services/tasks.ts`, where a name takes the spelling of the label the task's board has, in any case, and a new one joins that board's list (`labels/board-labels.ts`, [02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#labels)). The `label` filter of `hub_list_tasks` and `hub_delete_tasks` matches whatever the case.
+
 Profile layouts differ from the widgets view ([34 §3](34_ASSISTANT_ACTIONS.md#3-tiles-and-layouts)). Personal skills use versioned routes ([04](04_MODULE_SKILL_FORGE.md)).
 
 ### 8.2 Connected apps

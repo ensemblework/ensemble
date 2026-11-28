@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Maximize2, Minimize2, SquareArrowOutUpRight, X } from "lucide-react";
+import { Maximize2, Minimize2, SquareArrowOutUpRight, Tag as TagIcon, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api, type DeliverableRecord } from "@/lib/api";
 import { ProjectPage } from "../project/project-page";
@@ -15,6 +15,9 @@ import { isFreshPage } from "../pages/fresh-page";
 import { PersonPanel, personRef } from "../context/person-panel";
 import { useContextItem } from "../context/item-relations";
 import { titleMenuProps } from "../context-menu/text-field-menu";
+import { LabelPicker } from "../task/labels";
+import { useSpaceAccess } from "@/lib/access";
+import { useToast } from "../toast";
 
 
 export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }) {
@@ -78,11 +81,20 @@ function PagePeek({ id }: { id: string }) {
 
 function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | undefined; onOpenProject: (projectId: string) => void }) {
   const client = useQueryClient();
+  const access = useSpaceAccess();
+  const toast = useToast();
   const save = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patchDeliverable(row!.id, data),
-    onSuccess: () => {
+    onMutate: (data) => {
+      // Labels show at once; the other fields wait for the save.
+      if (!("labels" in data)) return;
+      client.setQueriesData<{ deliverables: DeliverableRecord[] }>({ queryKey: ["deliverables"] }, (old) => old && { ...old, deliverables: old.deliverables.map((item) => (item.id === row!.id ? { ...item, labels: data.labels as string[] } : item)) });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+    onSettled: (_data, _error, data) => {
       void client.invalidateQueries({ queryKey: ["deliverables"] });
       void client.invalidateQueries({ queryKey: ["home"] });
+      if ("labels" in data) void client.invalidateQueries({ queryKey: ["labels"] });
     },
   });
   if (!row) return <p className="p-6 text-[13.5px] text-muted">This deliverable is not on the list.</p>;
@@ -109,6 +121,10 @@ function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | unde
           {done ? "Completed" : "Upcoming"}
         </button>
         {row.due ? <span className="text-muted">Due {shortDate(row.due)}</span> : null}
+      </div>
+      <div className="mt-3 flex min-h-7 items-center gap-1.5 text-[13px] text-muted">
+        <TagIcon size={14} strokeWidth={1.8} aria-hidden />
+        <LabelPicker of={{ deliverable: row.id }} value={row.labels ?? []} disabled={!access.canEdit} empty="Add labels" onChange={(labels) => save.mutate({ labels })} />
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ import { setLocalPort } from "./workspace/engines/registry.js";
 import { trustChanged } from "./workspace/trust-share.js";
 import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
+import { repairLabelKeys } from "./labels/board-labels.js";
 import { switchSandboxBetaOff } from "./lib/sandbox-beta.js";
 import { serverRunsOwnCode } from "./devices/constants.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
@@ -122,6 +123,14 @@ export async function startHub(): Promise<HubServer> {
     if (upgraded > 0) app.log.info({ upgraded }, "copied saved folders into the Code folders list");
   } catch (error) {
     app.log.error({ err: error }, "could not copy saved folders into the Code folders list");
+  }
+  // Board labels keyed by the migration's SQL lower() get the Hub's own key (labels/board-labels.ts).
+  // Idempotent; a failure is logged and the Hub still starts.
+  try {
+    const repaired = await repairLabelKeys(prisma);
+    if (repaired > 0) app.log.info({ repaired }, "fixed board label keys");
+  } catch (error) {
+    app.log.error({ err: error }, "could not fix board label keys");
   }
 
   const host = env.HUB_API_HOST;

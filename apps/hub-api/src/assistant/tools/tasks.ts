@@ -7,6 +7,7 @@ import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js
 import { MAX_MARKDOWN, appendToTaskPage, droppedNote, pageNow } from "./pages.js";
 import { titleList } from "../refs.js";
 import { ON_BOARD } from "../../lib/node-tasks.js";
+import { labelSpellings } from "../../labels/board-labels.js";
 
 const Due = z
   .string()
@@ -44,7 +45,7 @@ const TaskDraftInput = z.preprocess(foldIntoPage, z
     projectId: z.string().uuid().optional(),
     projectName: z.string().min(1).optional().describe("Resolved when the write is applied, so a project created earlier in the turn can be used."),
     people: z.array(z.string()).optional(),
-    labels: z.array(z.string().max(40)).max(20).optional().describe("Tags such as client, area or type."),
+    labels: z.array(z.string().max(40)).max(20).optional().describe("Label names such as client, area or type. Reuse the board's labels; a new name is added to its list."),
     todayFocus: z.enum(["auto", "keep", "hidden"]).optional(),
     skillIds: z.array(z.string()).optional(),
     taskId: z.string().optional(),
@@ -65,7 +66,7 @@ export const taskTools = [
       owner: z.enum(["me", "agent", "unassigned"]).optional(),
       query: z.string().min(1).max(200).optional(),
       ids: z.array(z.string().uuid()).max(100).optional().describe("Only these real task IDs, for a selection or visible board rows."),
-      label: z.string().min(1).max(40).optional().describe("Only tasks with this tag."),
+      label: z.string().min(1).max(40).optional().describe("Only tasks with this label, whatever its case."),
       limit: z.number().int().min(1).max(100).default(50),
       offset: z.number().int().min(0).max(500).default(0),
     }),
@@ -79,7 +80,7 @@ export const taskTools = [
         ...(input.ids ? { id: { in: input.ids } } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.owner ? { owner: input.owner } : {}),
-        ...(input.label ? { labels: { has: input.label } } : {}),
+        ...(input.label ? { labels: { hasSome: await labelSpellings(ctx.prisma, ctx.userId, input.label) } } : {}),
         ...(input.query
           ? {
               OR: [
@@ -205,7 +206,7 @@ export const taskTools = [
         projectId: z.string().uuid().nullable().optional(),
         projectName: z.string().min(1).optional(),
         people: z.array(z.string()).optional(),
-        labels: z.array(z.string().max(40)).max(20).optional().describe("Replaces the task's tags."),
+        labels: z.array(z.string().max(40)).max(20).optional().describe("Replaces the task's labels. Reuse its board's labels; a new name is added to that list."),
         repoId: z.string().uuid().nullable().optional(),
         deliverableId: z.string().uuid().nullable().optional(),
         skillIds: z.array(z.string()).optional(),
@@ -297,7 +298,7 @@ export const taskTools = [
         all: z.boolean().optional().describe("Every task on the board (not already in Trash)."),
         status: TaskStatus.optional(),
         owner: z.enum(["me", "agent", "unassigned"]).optional(),
-        label: z.string().min(1).max(40).optional().describe("Only tasks with this tag."),
+        label: z.string().min(1).max(40).optional().describe("Only tasks with this label, whatever its case."),
         projectId: z.string().uuid().optional(),
         query: z.string().min(1).max(200).optional().describe("Only tasks whose title, description or notes contain this."),
       })
@@ -391,7 +392,7 @@ async function bulkTaskIds(ctx: ToolContext, input: BulkTaskInput): Promise<stri
       ...ON_BOARD,
       ...(input.status ? { status: input.status } : {}),
       ...(input.owner ? { owner: input.owner } : {}),
-      ...(input.label ? { labels: { has: input.label } } : {}),
+      ...(input.label ? { labels: { hasSome: await labelSpellings(ctx.prisma, ctx.userId, input.label) } } : {}),
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.query
         ? {

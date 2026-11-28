@@ -121,6 +121,8 @@ const RULES: Rule[] = [
 
   ["*", "/api/tasks*", "shared"],
   ["*", "/api/boards*", "shared"],
+  // A board's labels: viewers read them, editors add, rename, recolour and delete them.
+  ["*", "/api/labels*", "shared"],
   ["*", "/api/pages*", "shared"],
   ["*", "/api/comments/*", "shared"],
   ["*", "/api/projects*", "shared"],
