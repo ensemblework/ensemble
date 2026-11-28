@@ -30,7 +30,7 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionBusyError, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { BUSY_CARD, BUSY_WAIT, CodexThreadBusy, resumeCodexThread } from "./session-restart.js";
-import { otherCodexThread, SUB_AGENT } from "./sub-agents.js";
+import { otherCodexThread, SUB_AGENT, SubAgentLog } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { codexProject, codexProjectThreads, fileCodexAppProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
 import { agentProjectOf } from "../agent-projects.js";
@@ -198,6 +198,7 @@ export async function runCodex(
   const trace = options.trace ?? new EngineTrace(ctx, "codex");
   const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };
   const files = new Map<string, string[]>();
+  const children = new SubAgentLog((kind, data) => ctx.event(kind, data), "codex");
   let stderr = "";
   let threadId: string | null = null;
   let turnId: string | null = null;
@@ -237,6 +238,14 @@ export async function runCodex(
           error?: unknown;
         };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
+        // Codex's `spawn_agent` names the threads it started, with what they were asked and the model: only those are the
+        // session's children (another thread on this connection is not proof, and deleting a thread deletes its descendants).
+        if (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") {
+          const spawn = item as { receiverThreadIds?: unknown; senderThreadId?: unknown; prompt?: unknown; model?: unknown };
+          for (const id of Array.isArray(spawn.receiverThreadIds) ? spawn.receiverThreadIds : []) {
+            if (typeof id === "string") void children.note(threadId, { id, kind: "thread", parent: typeof spawn.senderThreadId === "string" ? spawn.senderThreadId : null, title: typeof spawn.prompt === "string" ? spawn.prompt : null, model: typeof spawn.model === "string" ? spawn.model : null });
+          }
+        }
         if (!child && method === "item/completed" && item.type === "agentMessage" && item.text?.trim() && (item.phase === "final_answer" || item.phase === null || item.phase === undefined)) result.text = item.text.trim();
         const isTool = item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall";
         // Trace calls come first, before any await: these handlers run concurrently, and a call's

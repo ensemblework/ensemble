@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { cursorChatParent, cursorSubAgents } from "./cursor-chats.js";
-import { deleteNativeSession } from "./delete-session.js";
+import { deleteNativeChildren, deleteNativeSession } from "./delete-session.js";
 
 test("native Claude, Cursor and pinned Antigravity deletion removes only exact recorded history", async () => {
   const home = await mkdtemp(join(tmpdir(), "ensemble-session-delete-"));
@@ -311,6 +311,38 @@ lines.on("line", (line) => {
   process.env.PATH = `${bin}:${saved ?? ""}`;
   try {
     await deleteNativeSession("codex", "0199a0b2-1111-7222-8333-444455556666", bin);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});
+
+test("a session's recorded Codex sub-agent threads are deleted in one app-server, ones the parent's deletion removed counting as deleted", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-codex-children-"));
+  const saved = process.env.PATH;
+  const log = join(bin, "calls.log");
+  // One start per app-server; the first thread is still there, the second went with its parent.
+  await writeFile(
+    join(bin, "codex"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(log)}, "start\\n");
+const lines = require("node:readline").createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: "codex/0.163.0" } }) + "\\n");
+  if (message.method !== "thread/delete") return;
+  fs.appendFileSync(${JSON.stringify(log)}, "delete " + message.params.threadId + "\\n");
+  process.stdout.write(JSON.stringify(message.params.threadId.endsWith("1") ? { id: message.id, result: {} } : { id: message.id, error: { code: -32600, message: "no rollout found for thread id " + message.params.threadId } }) + "\\n");
+});
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeChildren("codex", ["0199a0b2-1111-7222-8333-444455556661", "0199a0b2-1111-7222-8333-444455556662"]);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), ["start", "delete 0199a0b2-1111-7222-8333-444455556661", "delete 0199a0b2-1111-7222-8333-444455556662"]);
+    await assert.rejects(deleteNativeChildren("cursor-agent", ["agent-7"]), /invalid/);
   } finally {
     process.env.PATH = saved;
     await rm(bin, { recursive: true, force: true });

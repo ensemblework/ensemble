@@ -18,6 +18,53 @@ export const SUB_AGENT = "Sub-agent: ";
  */
 export const CLAUDE_SETTINGS_ENV = { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" } as const;
 
+/**
+ * A child a session started, as the run's own events show it (docs/41 §6): `inside` the session's own files
+ * (a Claude Code or Copilot sub-agent), or a session of its own (`thread`: a Codex sub-agent's thread; `chat`: a
+ * Cursor sub-agent's chat). `parent` is the session or child that started it, when the event names it.
+ */
+export type SubAgentKind = "inside" | "thread" | "chat";
+export type SubAgent = { id: string; kind: SubAgentKind; parent?: string | null; title?: string | null; model?: string | null };
+/** The kinds that are sessions of their own, deleted with the session that started them and counted as "more sessions". */
+export const OWN_SESSION_KINDS: readonly SubAgentKind[] = ["thread", "chat"];
+
+const clip = (value: string | null | undefined, max: number) => value?.replace(/\s+/g, " ").trim().slice(0, max) || null;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+/** An id deleteNativeSession takes: a Cursor chat's is a UUID, a Codex thread's a session id. */
+const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/;
+/** Whether a child of this kind has an id its session's deletion can use; a sub-agent inside the session is never deleted by its id. */
+export const deletableId = (kind: SubAgentKind, id: string): boolean => kind === "chat" ? UUID.test(id) : kind === "thread" ? SESSION_ID.test(id) : true;
+
+/**
+ * The children a run saw start, each noted once as a `sub_agent` event of the run: the engine, the session it
+ * belongs to, its id and kind, and what it was started for. A child first seen without a title is noted again
+ * when its title arrives. Noting never fails the run.
+ */
+export class SubAgentLog {
+  private readonly titled = new Map<string, boolean>();
+  constructor(private readonly event: (kind: string, data: Record<string, unknown>) => Promise<void>, private readonly engine: string) {}
+
+  note(session: string | null, child: SubAgent): Promise<void> {
+    const id = child.id.trim();
+    if (!id || id.length > 200 || id === session || !deletableId(child.kind, id)) return Promise.resolve();
+    const title = clip(child.title, 200);
+    const before = this.titled.get(id);
+    if (before === true || (before === false && !title)) return Promise.resolve();
+    this.titled.set(id, !!title);
+    const parent = clip(child.parent, 200);
+    const model = clip(child.model, 200);
+    return this.event("sub_agent", { engine: this.engine, session, id, kind: child.kind, ...(parent && parent !== session ? { parent } : {}), ...(title ? { title } : {}), ...(model ? { model } : {}) }).catch(() => undefined);
+  }
+}
+
+/** The session a run's event names for deletion: the run's own (`engine` `{session}`), or one its agent started that is a session of its own (`sub_agent` of this engine). */
+export function sessionToDelete(event: { kind: string; data: unknown }, engine: string): string | null {
+  const data = (event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data : {}) as Record<string, unknown>;
+  if (event.kind === "engine") return typeof data.session === "string" && data.session ? data.session : null;
+  if (event.kind !== "sub_agent" || data.engine !== engine || !OWN_SESSION_KINDS.includes(data.kind as SubAgentKind)) return null;
+  return typeof data.id === "string" && deletableId(data.kind as SubAgentKind, data.id) ? data.id : null;
+}
+
 /** How deep Claude Code's sub-agents may nest in a run Ensemble starts: Claude Code's documented default, which a remote flag of its own can otherwise change. */
 export const CLAUDE_SUB_AGENT_DEPTH = 3;
 

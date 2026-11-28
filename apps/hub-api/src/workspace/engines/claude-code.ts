@@ -36,7 +36,7 @@ import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
-import { addClaudeResult, CLAUDE_SETTINGS_ENV, claudeFromSubAgent, SUB_AGENT, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
+import { addClaudeResult, CLAUDE_SETTINGS_ENV, claudeFromSubAgent, SUB_AGENT, SubAgentLog, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
@@ -274,6 +274,7 @@ export async function runClaudeCode(
   let failure: string | null = null;
   let started = false;
   let sessionId: string | null = null;
+  const children = new SubAgentLog((kind, data) => ctx.event(kind, data), "claude-code");
   // The run's tokens and cost over every result it gives (a run with background sub-agents answers more than once).
   let spend: ClaudeSpend | null = null;
   let stderr = "";
@@ -338,6 +339,11 @@ export async function runClaudeCode(
             appendLive(ctx.job.id, `· ${summary}\n`);
             await ctx.event("tool", { name: part.name, ok: true, summary, engine: "claude-code" });
             await trace.toolStart(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {}, summary);
+            // The Agent tool (Task before Claude Code 2.1) starts a sub-agent inside the session, named by the call.
+            if ((part.name === "Agent" || part.name === "Task") && typeof part.id === "string") {
+              const input = (part.input ?? {}) as { description?: unknown; model?: unknown };
+              await children.note(sessionId, { id: part.id, kind: "inside", parent: sub ? String(message.parent_tool_use_id) : null, title: typeof input.description === "string" ? input.description : null, model: typeof input.model === "string" ? input.model : null });
+            }
           }
         }
         await options.stopCheck();
