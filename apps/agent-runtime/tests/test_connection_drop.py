@@ -96,3 +96,35 @@ def test_socket_closed_before_headers_is_not_saved_or_sent(monkeypatch) -> None:
     assert CONNECTION_DROPPED_NOTICE not in payload
     for needle in RAW:
         assert needle not in payload
+
+
+def test_a_failure_with_no_words_is_named_in_words(monkeypatch) -> None:
+    """The production frame was {"message": "", "kind": "other", "status": 502}: the stream's error frame always says what failed."""
+    import httpx
+
+    from ensemble_agent.models import _public_failure
+    from ensemble_agent.provider_error import ProviderError
+
+    async def failing(_body):
+        raise RuntimeError()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("ensemble_agent.models._chat_frames", failing)
+    monkeypatch.setattr("ensemble_agent.models.require_verified_user", lambda _user: None)
+
+    async def once() -> list[str]:
+        return [frame async for frame in stream_with_tools({"userId": "empty-user", "provider": "openai", "model": "gpt-4.1-mini", "messages": []})]
+
+    frames = asyncio.run(once())
+    error = [json.loads(line[len("data:") :]) for frame in frames for line in frame.splitlines() if line.startswith("data:")][-1]
+    assert error == {"message": "The model call failed, and the provider gave no reason.", "kind": "other", "status": 502}
+
+    request = httpx.Request("POST", "https://api.example.test/v1/responses")
+    assert _public_failure(httpx.RemoteProtocolError("", request=request))["message"] == "The model provider closed the connection before it answered."
+    assert _public_failure(httpx.ReadTimeout("", request=request))["message"] == "The model provider did not answer in time."
+    assert _public_failure(TimeoutError())["message"] == "The model provider did not answer in time."
+    assert _public_failure(ProviderError(502, "other", "  "))["message"] == "The model provider returned an error."
+    # A failure with words keeps them.
+    assert _public_failure(RuntimeError("Upstream quota exceeded."))["message"] == "Upstream quota exceeded."
+    for exc in (RuntimeError(), RuntimeError("   "), httpx.RemoteProtocolError("", request=request), TimeoutError(), ProviderError(500, "other", "")):
+        assert _public_failure(exc)["message"].strip(), exc

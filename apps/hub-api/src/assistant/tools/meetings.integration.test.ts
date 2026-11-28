@@ -235,6 +235,38 @@ test("a search narrowed to meetings that finds none names the page titled as ask
   assert.equal((await search({ query: "Quarterly planning", kinds: ["meeting"] })).summary, "Nothing matched “Quarterly planning”.");
 });
 
+test("hub_list_due puts a timed due on its day in the owner's zone, west and east of UTC: near midnight it stays on its own day", async () => {
+  // Fixed offsets (Etc/GMT+8 is UTC-8), so each due's UTC instant falls on the other side of a UTC midnight.
+  for (const [zone, offset] of [["Etc/GMT+8", "-08:00"], ["Asia/Kolkata", "+05:30"]] as const) {
+    const owner = await harness.asUser();
+    const day = zonedParts(zone).date;
+    const yesterday = addCalendarDays(day, -1);
+    const tomorrow = addCalendarDays(day, 1);
+    const due = async (title: string, when: Date) => db.task.create({ data: { userId: owner.id, title, status: "todo", due: when } });
+    const local = (date: string, time: string) => new Date(`${date}T${time}:00${offset}`);
+    await due("Late yesterday", local(yesterday, "23:50"));
+    await due("Early today", local(day, "00:10"));
+    await due("Today, a date only", new Date(`${day}T00:00:00.000Z`));
+    await due("Late today", local(day, "23:45"));
+    await due("Early tomorrow", local(tomorrow, "00:15"));
+    const listDue = tool("hub_list_due");
+    const owned = { ...ctx(owner.id), settings: { ...DEFAULT_SETTINGS, timezone: zone } };
+    const list = async (from: string, to: string) => {
+      const result = await listDue.run(owned, listDue.input.parse({ from, to }));
+      const data = result.data as { tasks: Array<{ title: string }>; overdue?: { count: number; mostRecent: Array<{ title: string }> } };
+      return { summary: result.summary, titles: data.tasks.map((task) => task.title), overdue: data.overdue?.mostRecent.map((task) => task.title) ?? [] };
+    };
+    const today = await list(day, day);
+    assert.deepEqual(today.titles.slice().sort(), ["Early today", "Late today", "Today, a date only"], `${zone}: today's dues, whatever their UTC day`);
+    assert.deepEqual(today.overdue, ["Late yesterday"], `${zone}: late yesterday in the owner's zone is overdue, not today`);
+    assert.match(today.summary, new RegExp(`^3 task\\(s\\), 0 deliverable\\(s\\), 0 reminder\\(s\\) due ${day} to ${day}\\. 1 more task\\(s\\) overdue, the most recent first: “Late yesterday” \\(due ${yesterday}\\)\\.$`), today.summary);
+    const next = await list(tomorrow, tomorrow);
+    assert.deepEqual(next.titles, ["Early tomorrow"], `${zone}: tomorrow holds only what is due tomorrow in the owner's zone`);
+    assert.deepEqual(next.overdue, [], `${zone}: a range without today counts nothing overdue`);
+    assert.deepEqual((await list(yesterday, yesterday)).titles, ["Late yesterday"], `${zone}: yesterday's late due is on yesterday`);
+  }
+});
+
 test("hub_weekly_recap returns the week's done, slipped, upcoming and meetings", async () => {
   const mira = await harness.asUser();
   await db.preference.create({ data: { userId: mira.id, key: "hub.settings", value: { timezone: TZ }, source: "me" } });
