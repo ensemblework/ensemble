@@ -23,6 +23,7 @@ import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
 import { workspaceRoot } from "../workspace/guard.js";
 import { removeWorktrees } from "../workspace/worktrees.js";
 import { codeTurnResultOf } from "../workspace/code-turn.js";
+import { runContextOf } from "../workspace/run-context.js";
 import { runCompletionOf } from "../workspace/completion.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
@@ -869,6 +870,10 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const codeTurn = current ? await codeTurnResultOf(prisma, local, scrubOutgoing).catch(() => null) : null;
   // Any other run's checks as Ensemble ran them again here, which decide whether the web marks its task done.
   const completion = current && !codeTurn ? await runCompletionOf(prisma, local, scrubOutgoing).catch(() => null) : null;
+  const runContext = current ? await runContextOf(prisma, local.runId).catch((error: unknown) => {
+    app.log.warn({ err: error, jobId: local.id }, "could not read the run's context provenance");
+    return null;
+  }) : null;
   const send = async () => {
     // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
@@ -878,7 +883,7 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
       app.log.warn({ err: error }, "could not send the run's evidence");
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}), ...(completion ? { completion } : {}) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}), ...(codeTurn ? { codeTurn } : {}), ...(completion ? { completion } : {}), ...(runContext ? { runContext: { ...runContext, skills: runContext.skills.map((skill) => ({ ...skill, name: scrubOutgoing(skill.name) })) } } : {}) });
   };
   try {
     await send();

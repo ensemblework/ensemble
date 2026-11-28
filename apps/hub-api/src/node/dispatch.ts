@@ -26,7 +26,7 @@ import { placeStep, type Located } from "./placement.js";
 import { packetOrigin, stepProgress, storeStepPacket, type PlanData, type PlanStep } from "./plans.js";
 import { CHECKING_KINDS, reportFormatOf } from "./report.js";
 import { charterOf } from "./templates.js";
-import { computerWorkAsks, holdForOwner, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
+import { computerWorkAsks, holdForOwner, nodeRunProfile, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
 import { updateMessageData } from "./store.js";
 
 export type Dispatch = { done: true; summary: string } | { done: false; why: string };
@@ -172,22 +172,34 @@ export async function noteTold(prisma: PrismaClient, jobId: unknown, told: strin
  * turn). `done: false`: the hand-over failed, and its node takes the turn with why.
  */
 export async function dispatchStep(app: FastifyInstance, data: PlanData, step: PlanStep, reason: AttemptReason, planRoomId: string): Promise<Dispatch | null> {
-  if (!dispatchable(data, step, reason)) return null;
+  if (!dispatchable(data, step, reason, true)) return null;
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: step.nodeId } });
   // A paused or deleted node: the turn path ends the step as it always has.
   if (!node || node.status !== "active") return null;
-  if (await alreadyDispatched(prisma, data, step)) return { done: true, summary: "Already handed over." };
   const env = await envFor(app, node, planRoomId, data.missionId, step.id);
+  const profile = env ? nodeRunProfile(env.ctx.settings, node) : null;
+  if (!dispatchable(data, step, reason, profile?.place?.kind === "folder")) return null;
+  if (await alreadyDispatched(prisma, data, step)) return { done: true, summary: "Already handed over." };
   const who = env ? await packetWho(prisma, data, step) : null;
-  if (!env || !who) return null;
+  if (!env || !who || !profile) return null;
 
   const constraints = data.constraints;
+  // A plan that names no folder and no clonable repository works in the worker's run profile folder, when it has one.
+  const profileFolder = !constraints.folder && !(constraints.repos ?? []).some(cloneable) && profile.place?.kind === "folder" ? profile.place : null;
+  /** Where a new session works. startSession takes the profile's folder itself, so only a computer the plan names goes with it. */
+  const newPlace = async (): Promise<{ place: Place; located: Located | null } | { why: string }> => {
+    if (!profileFolder) return placeFor(prisma, node.userId, constraints);
+    const named: Place = constraints.computer ? { computer: constraints.computer } : {};
+    if (!profile.deviceId) return { place: named, located: null };
+    const found = await placeFor(prisma, node.userId, { ...constraints, folder: profileFolder.label, computer: constraints.computer ?? profile.deviceId });
+    return "why" in found ? found : { place: named, located: found.located };
+  };
   const continuing = await sessionFor(prisma, data, step, reason);
   let place: Place = {};
   let located: Located | null = null;
   if (!continuing) {
-    const found = await placeFor(prisma, node.userId, constraints);
+    const found = await newPlace();
     if ("why" in found) return { done: false, why: found.why };
     place = found.place;
     located = found.located;
@@ -219,9 +231,9 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
       started = call.action === "start" ? await startSession(env, call.input) : await sendToSession(env, call.input);
     } catch (error) {
       // The session it would continue cannot go on (gone, or its computer too old): a new one in the
-      // mission's place, found as for a first attempt; with no such place its node decides.
+      // mission's place (or the profile's folder), found as for a first attempt; with no such place its node decides.
       if (call.action !== "send") throw error;
-      const found = await placeFor(prisma, node.userId, constraints);
+      const found = await newPlace();
       if ("why" in found) return { done: false, why: `${why(error)} ${found.why}` };
       place = found.place;
       started = await startSession(env, startInput());

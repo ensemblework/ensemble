@@ -54,6 +54,16 @@ test("/run asks for a code run in this folder under the run profile, with the ch
   assert.equal(titleFrom("  fix the failing\nCI step "), "fix the failing");
 });
 
+test("/profile gives /run its saved folder and computer, while a chat explicitly stays in its launch folder", () => {
+  const place = { kind: "folder" as const, label: "live-test", path: "/work/live-test" };
+  const profile = { ...quickRunProfile(), place, deviceId: "studio" };
+  const body = runRequest({ taskId: "t", folder: "/launch", instructions: "fix it", profile, engine: null });
+  assert.deepEqual([body.place, body.deviceId, body.folder, body.repoUrl], [place, "studio", undefined, undefined]);
+  assert.match(profileSummary(profile), /live-test$/);
+  const chat = chatTurnRequest({ taskId: "t", folder: "/launch", message: "fix it here", profile, engine: "codex", model: null, previousJobId: null });
+  assert.deepEqual([chat.place, chat.folder, chat.deviceId], [undefined, "/launch", undefined]);
+});
+
 test("/run with a profile that ends in a pull request runs in a clone of this folder and sends the plan; a chat message never does", () => {
   const profile = { ...quickRunProfile(), engine: "claude-code" as const, branchMode: "new" as const, delivery: "push" as const, pullRequest: { base: "testing", merge: "auto" as const } };
   const run = runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile, engine: null });

@@ -25,7 +25,7 @@ Read it again before editing." The Markdown body is what agents follow.
 | Hub assistant (`assistant/state.ts`) | The names and descriptions of enabled skills (up to 12, not one with `scope.purpose`) in its instructions; it reads a body with `hub_read_skill` when one applies |
 | Ensemble Node (`node/skills.ts`) | One catalogue with Ensemble's bundled skills (§2.1): the enabled skills (not one with `scope.purpose`) whose name, description or first 1,000 characters share words with the turn's request, one line each, in a turn its owner started and reads alone, and the best one's body in full (up to 1,500 characters) when the request has its keywords or name; `node_skill` reads one in full by its name ([35 §5.6](35_ENSEMBLE_NODE.md#56-context-db-memory-and-skills-implementation-reference)). Node turns leave the assistant's own list out |
 
-Runs do not record which skills were used: `Run.skillIds` and `Run.skillSignatures` exist in the schema but are not written.
+Workspace runs record the supplied skills' ids and content signatures in `Run.skillIds` and `Run.skillSignatures`, including an explicit empty list when none were supplied. The instruction fingerprint and linked context pack keep their provenance ([06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)).
 
 A skill is guidance, never a permission, credential or schedule.
 

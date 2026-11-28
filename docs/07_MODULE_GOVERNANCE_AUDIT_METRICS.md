@@ -42,6 +42,7 @@ Keep an item by pinning or reopening it before its retention window expires. The
 | MCP OAuth credentials | Consent/code requests: 10 minutes. Access keys: one hour. Refresh tokens: 30 days, rotation by default; confidential persistent linking extends expiry on refresh ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). Daily `purgeMcpOAuth` removes expired consent, refresh/access rows 30 days past expiry and grants 30 days after revocation; account deletion removes them immediately |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; their snapshots are unpinned |
+| Runs' context packs (`context_packs`, [06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)) | Deleted by each retention pass once no run uses them, as when their task is purged |
 
 Pinning, reopening, active jobs, a learning pass waiting for its model or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
 

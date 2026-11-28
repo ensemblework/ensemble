@@ -1,4 +1,4 @@
-import type { RunProfile } from "@ensemble/shared-types";
+import { runPlaceProblem, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput } from "./api";
 import { engineAssign } from "./engine-models";
 import { defaultProfile, quickProfile } from "./run-profiles";
@@ -14,6 +14,7 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
       : engineAssign(engine, { model: model ?? "", effort: profile.effort, context: profile.context, fast: profile.fast })),
     instructions: profile.instructions, markDone: profile.markDone, network: profile.network,
     ...(profile.deviceId ? { deviceId: profile.deviceId } : {}),
+    ...(profile.place ? { place: profile.place } : {}),
     ...(profile.maxMinutes ? { maxMinutes: profile.maxMinutes } : {}),
     ...(profile.maxToolCalls ? { maxToolCalls: profile.maxToolCalls } : {}),
     ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
@@ -38,8 +39,9 @@ export async function quickAssignTask(taskId: string): Promise<{ jobId: string; 
   const [{ settings }, computers] = await Promise.all([api.settings(), api.devices()]);
   const profile = defaultProfile(settings.runProfiles, settings.defaultRunProfileId, quickProfile(settings.orchestration));
   const input = quickAssignInput(taskId, profile);
-  if (input.deviceId && !computers.devices.some((device) => device.id === input.deviceId)) throw new Error("This profile's computer is no longer paired. Choose another in Assign.");
-  if (!input.deviceId && (!computers.serverRunner || input.engine !== "ensemble")) {
+  const problem = runPlaceProblem(profile.place, profile.deviceId, computers.devices.find((device) => device.id === profile.deviceId) ?? null);
+  if (problem) throw new Error(problem);
+  if (!input.deviceId && profile.place?.kind !== "folder" && (!computers.serverRunner || input.engine !== "ensemble")) {
     const device = computers.devices.find((row) => row.online) ?? computers.devices[0];
     if (device) {
       input.deviceId = device.id;

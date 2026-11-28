@@ -5,7 +5,7 @@
  * (docs/25). The assistant never runs commands itself.
  */
 import { z } from "zod";
-import { CODE_ENGINES, isCodeEngine, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { CODE_ENGINES, isCodeEngine, pickRunProfile, runPlaceLabel, runPlaceProblem, type RunPlace, type RunProfile } from "@ensemble/shared-types";
 import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
 import { deviceEngines, deviceOpensPullRequests, folderLabels, repositoryLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
@@ -64,14 +64,27 @@ export function chooseProfile(ctx: ToolContext, wanted?: string): RunProfile {
 
 export type Where = { deviceId?: string; computer?: Computer };
 
-/** Where the run happens: the computer named, the profile's computer, this server when it can, else a paired computer. */
-export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string): Promise<Where> {
+/** The profile's saved folder, when this assignment uses it: it names no folder, repository or session, and does not ask for its own checkout. */
+export function savedFolderOf(profile: RunProfile, input: { folder?: string; repoUrl?: string; place?: "checkout"; session?: unknown }): Extract<RunPlace, { kind: "folder" }> | undefined {
+  if (profile.place?.kind !== "folder" || input.session || input.folder?.trim() || input.repoUrl?.trim() || input.place === "checkout") return undefined;
+  return profile.place;
+}
+
+const UNPAIRED = "This profile's computer is no longer paired. Choose another computer in Settings → Run profiles.";
+
+/**
+ * Where the run happens: the computer named, the profile's computer, this server when it can, else a paired
+ * computer. With `savedFolder` (the run works in the profile's saved folder) only the profile's computer will
+ * do, so an unpaired one is refused instead of replaced; whether it is online is checked once the place is known.
+ */
+export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string, savedFolder = false): Promise<Where> {
   const computers = await pairedComputers(ctx);
   const named = wanted?.trim();
   if (named && named.toLowerCase() !== "any") {
     const key = named.toLowerCase();
     const found = computers.find((row) => row.id === named || row.name.toLowerCase() === key) ?? computers.find((row) => row.name.toLowerCase().includes(key));
     if (!found) {
+      if (savedFolder && named === profile.deviceId) throw new ToolBlockedError(UNPAIRED);
       throw new ToolBlockedError(
         computers.length ? `No paired computer is called “${named}”. Paired: ${computers.map((row) => `“${row.name}”`).join(", ")}.` : `No computer is paired. ${PAIR_A_COMPUTER}`,
         "Ask which computer, or use \"any\" for their usual one.",
@@ -81,6 +94,9 @@ export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engi
   }
   const profiled = profile.deviceId ? computers.find((row) => row.id === profile.deviceId) : undefined;
   if (profiled) return { deviceId: profiled.id, computer: profiled };
+  if (savedFolder && profile.deviceId) throw new ToolBlockedError(UNPAIRED);
+  // A saved folder without a computer is a path on this server.
+  if (savedFolder && !named) return {};
   // Ensemble's agent with no computer to go to researches and writes on the server.
   if (!named && engine === "ensemble" && (serverRunnerEnabled() || !computers.length)) return {};
   const picked = computers.find((row) => row.online) ?? computers[0];
@@ -101,7 +117,8 @@ export const AssignInput = z
     agent: Engine.optional().describe("Only when the person names who should do the work: ensemble (Ensemble's agent), claude-code, codex, cursor-agent or copilot-cli (GitHub Copilot). Leave out to follow the profile."),
     mode: z.enum(["ask", "review", "unattended"]).optional().describe("Only when the person says: ask (asks before commands), review (asks only for decisions), unattended."),
     repoUrl: z.string().max(500).optional().describe("A repository to clone and work in (https URL or owner/repo), e.g. from the task's page."),
-    folder: z.string().max(200).optional().describe("One of the computer's shared folder names (hub_list_agent_options). Never a path."),
+    folder: z.string().max(200).optional().describe("One of the computer's shared folder names (hub_list_agent_options). Never a path. Leave folder and repoUrl out to use the profile's saved place."),
+    place: z.literal("checkout").optional().describe("Only when the person asks for its own checkout instead of the profile's saved folder. A named folder, repository or session still wins."),
     instructions: z.string().max(6000).optional().describe("What to do, how to check it, what done looks like. The profile's own instructions are added."),
     model: z.string().max(120).optional().describe("Only when the person names a model for the agent (e.g. gpt-5.6-luna for GitHub Copilot). Leave out to follow the profile."),
     effort: z.string().max(20).optional().describe("Only when the person names a thinking level (low, medium, high, xhigh, max). Leave out to follow the profile."),
@@ -134,14 +151,22 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
   const session = input.session ? await resolveSession(ctx.prisma, { space: ctx.userId, runner: actorFor(ctx.userId) }, input.session) : null;
   if (input.session && !session) throw new ToolBlockedError("That agent session is not one of theirs, or no longer exists.", "List them again with hub_list_agent_sessions.");
   const engine = session?.agent ?? input.agent ?? profile.engine;
+  // The place first: a named folder, repository or session wins over the profile's saved folder.
+  const saved = savedFolderOf(profile, { ...input, session });
+  const place = saved ?? (!session && !input.folder?.trim() && !input.repoUrl?.trim() && input.place === "checkout" ? { kind: "checkout" as const } : undefined);
   const where: Where = session
     ? session.deviceId
       ? await chooseComputer(ctx, profile, engine, session.deviceId).catch(() => {
           throw new ToolBlockedError(`The computer that session ran on (${session.computer ?? "a paired computer"}) is no longer paired, so the session cannot go on.`, "Assign the task without a session to start a new one.");
         })
       : {}
-    : await chooseComputer(ctx, profile, engine, input.computer);
-  const kind = autoKind({ engine, deviceId: where.deviceId, folder: input.folder, repoUrl: input.repoUrl, pullRequest: input.pullRequest }, serverRunnerEnabled() && !actorFor(ctx.userId));
+    : await chooseComputer(ctx, profile, engine, input.computer, Boolean(saved));
+  if (place?.kind === "folder") {
+    if (profile.deviceId !== (where.deviceId ?? null)) throw new ToolBlockedError("This profile's folder belongs to another computer. Choose a folder on the computer you named.");
+    const problem = runPlaceProblem(place, where.deviceId ?? null, where.computer ?? null);
+    if (problem) throw new ToolBlockedError(problem);
+  }
+  const kind = autoKind({ engine, deviceId: where.deviceId, place, folder: input.folder, repoUrl: input.repoUrl, pullRequest: input.pullRequest }, serverRunnerEnabled() && !actorFor(ctx.userId));
   if (input.folder && where.computer && !where.computer.folders.includes(input.folder.trim())) {
     throw new ToolBlockedError(
       `“${where.computer.name}” has no shared folder called “${input.folder}”.${where.computer.folders.length ? ` Its folders: ${where.computer.folders.map((name) => `“${name}”`).join(", ")}.` : " It has not shared any folders."}`,
@@ -156,6 +181,7 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
     taskId: task.id,
     kind,
     engine,
+    ...(place ? { place } : {}),
     ...(session ? { session: session.id } : {}),
     ...(input.newSession ? { newSession: true } : {}),
     ...(model && fromProfile ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
@@ -208,8 +234,8 @@ export function describePlan(found: Plan): string {
     ? `, in its session “${found.session.title}” (${found.session.folder})`
     : found.body.repoUrl
       ? `, in a fresh clone of ${found.body.repoUrl}`
-      : found.body.folderLabel
-        ? `, in its “${found.body.folderLabel}” folder`
+      : found.body.folderLabel || found.body.place?.kind === "folder"
+        ? `, in its “${found.body.folderLabel ?? (found.body.place?.kind === "folder" ? found.body.place.label : "")}” folder`
         : "";
   const mode = found.body.mode && found.body.mode !== found.profile.mode ? ` (mode: ${found.body.mode === "unattended" ? "Run unattended" : found.body.mode === "review" ? "Review only" : "Ask"})` : "";
   const pull = found.body.pullRequest
@@ -273,6 +299,9 @@ export const agentAssignTools = [
         default: profile.id === fallback.id,
         agent: engineName(profile.kind === "research" ? "ensemble" : profile.engine),
         computer: profile.deviceId ? (computers.find((row) => row.id === profile.deviceId)?.name ?? "a computer no longer paired") : null,
+        place: profile.place ?? { kind: "checkout" },
+        placeSummary: runPlaceLabel(profile.place, computers.find((row) => row.id === profile.deviceId)?.name),
+        problem: runPlaceProblem(profile.place, profile.deviceId, computers.find((row) => row.id === profile.deviceId) ?? null),
         summary: profileLine(profile),
       }));
       return toolOk(`${profiles.length} run profile(s), ${computers.length} paired computer(s).`, {

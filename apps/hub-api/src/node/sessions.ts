@@ -20,8 +20,8 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ENGINE_LABELS, engineHasSandbox, isCodeEngine, pickRunProfile, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
-import { AssignInput, chooseComputer, chooseProfile, plan, type Plan } from "../assistant/tools/agent-assign.js";
+import { CODE_ENGINES, ENGINE_LABELS, engineHasSandbox, isCodeEngine, pickRunProfile, runPlaceLabel, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
+import { AssignInput, chooseComputer, chooseProfile, plan, savedFolderOf, type Plan } from "../assistant/tools/agent-assign.js";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { isPaused } from "../lib/activity.js";
 import { nodeTaskRef } from "../lib/node-tasks.js";
@@ -254,14 +254,15 @@ export function nodeRunProfile(settings: Pick<Settings, "runProfiles" | "default
  * coding agent takes one signed in on the computer (`agentOn`).
  */
 export function agentDefaults(profile: RunProfile): string {
-  if (!isCodeEngine(profile.engine)) return `a coding agent signed in on the computer, on its default model (the run profile “${profile.name}”)`;
+  const place = profile.place?.kind === "folder" ? ` in “${runPlaceLabel(profile.place)}”` : "";
+  if (!isCodeEngine(profile.engine)) return `a coding agent signed in on the computer, on its default model${place} (the run profile “${profile.name}”)`;
   const parts = [
     ENGINE_LABELS[profile.engine as CodeEngine],
     profile.model.trim() || "its default model",
     profile.effort && profile.effort !== "default" ? `${profile.effort} thinking` : "",
     profile.context === "long_context" ? "1M context" : "",
   ].filter(Boolean);
-  return `${parts.join(" · ")} (the run profile “${profile.name}”)`;
+  return `${parts.join(" · ")}${place} (the run profile “${profile.name}”)`;
 }
 
 /**
@@ -580,7 +581,7 @@ export type Started = { summary: string; data: Record<string, unknown> };
 
 function placeLine(found: Plan): string {
   const where = found.where.computer ? ` on ${found.where.computer.name}${found.where.computer.online ? "" : " (offline now: it starts when that computer is back)"}` : "";
-  const folder = found.session ? ` in ${found.session.folder}` : found.body.repoUrl ? ` in a fresh clone of ${found.body.repoUrl}` : found.body.folderLabel ? ` in “${found.body.folderLabel}”` : " in a new folder";
+  const folder = found.session ? ` in ${found.session.folder}` : found.body.repoUrl ? ` in a fresh clone of ${found.body.repoUrl}` : found.body.place?.kind === "folder" ? ` in “${found.body.place.label}”` : found.body.folderLabel ? ` in “${found.body.folderLabel}”` : " in a new folder";
   return `${where}${folder}`;
 }
 
@@ -633,7 +634,8 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   // What was asked, as asked (the step's settings count as asked); the profile fills in the rest.
   const requested = requestedSettings(input);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
-  const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
+  const saved = savedFolderOf(profile, input);
+  const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer, Boolean(saved));
   // The profile's agent is only a default: a model named here that it cannot run goes to an agent that can.
   if (!input.agent && agent && input.model?.trim()) {
     const { listing, agents } = await listingOf(env.prisma, where.deviceId, agent);
@@ -645,7 +647,7 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   input = { ...input, ...named };
   // Only here, when the node is about to start a session: its own sessions this work may fit, for it to choose (node/session-fit.ts).
   if (!input.newSession && !env.plan?.planStep && !input.repoUrl?.trim() && isCodeEngine(agent)) {
-    const fits = await nodeFits(env, agent, where.deviceId ?? null, input).catch(() => []);
+    const fits = await nodeFits(env, agent, where.deviceId ?? null, saved ? { ...input, folder: saved.label } : input).catch(() => []);
     if (fits.length) return { summary: fitMessage(fits), data: { started: false, fits } };
   }
   const task = await taskFor(env, input);

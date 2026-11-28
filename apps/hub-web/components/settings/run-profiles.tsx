@@ -1,17 +1,18 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ChevronRight, FolderOpen, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { MAX_RUN_PROFILES, type RunProfile, type Settings } from "@ensemble/shared-types";
+import { MAX_RUN_PROFILES, runPlaceProblem, type RunProfile, type Settings } from "@ensemble/shared-types";
 import { confirmAction } from "@/components/ask-dialog";
 import { api } from "@/lib/api";
 import { agentFields, canAddProfile, defaultProfile, newProfileId, profileAgent, profileSummary, quickProfile, removeProfile } from "@/lib/run-profiles";
-import { useModuleOn } from "@/lib/use-module";
+import { useHostCode, useModuleOn } from "@/lib/use-module";
 import { AgentPicker, TuningPicker, agentOptions, modelOf } from "../agent/agent-picker";
 import { ToolsPicker } from "../agent/tools-picker";
-import { BetaTag, SectionCard, Toggle, cx } from "../ui";
+import { BetaTag, InfoTip, SectionCard, Toggle, cx } from "../ui";
 import { activeComputer } from "./subscriptions";
+import { FolderPicker } from "../code/folder-picker";
 
 type Props = { settings: Settings; patch: (value: Record<string, unknown>) => void };
 
@@ -44,7 +45,10 @@ function ProfileEditor({ profile, onChange }: { profile: RunProfile; onChange: (
   const catalog = useQuery({ queryKey: ["models"], queryFn: api.models, staleTime: 5 * 60_000 });
   const subscriptions = useQuery({ queryKey: ["subscriptions"], queryFn: api.subscriptions, staleTime: 30_000 });
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, staleTime: 30_000 });
-  const computer = (profile.deviceId ? subscriptions.data?.computers.find((row) => row.id === profile.deviceId) : null) ?? activeComputer(subscriptions.data);
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const hostCode = useHostCode() === true;
+  const device = devices.data?.devices.find((row) => row.id === profile.deviceId) ?? null;
+  const computer = profile.deviceId ? subscriptions.data?.computers.find((row) => row.id === profile.deviceId) ?? null : activeComputer(subscriptions.data);
   const agents = agentOptions({ catalog: catalog.data, computer });
   const choice = profileAgent(profile);
   const set = (fields: Partial<RunProfile>) => onChange({ ...profile, ...fields });
@@ -59,19 +63,52 @@ function ProfileEditor({ profile, onChange }: { profile: RunProfile; onChange: (
           {choice ? <TuningPicker label={`${profile.name}: thinking and context`} value={choice} model={modelOf(agents, choice)} onChange={(next) => set(agentFields(next))} /> : null}
         </div>
       </div>
-      {devices.data?.devices.length ? (
+      {devices.data ? (
         <label className="block">
-          <span className="mb-1 block font-medium text-muted">Runs on</span>
-          <select aria-label={`${profile.name}: runs on`} className="field w-full" value={profile.deviceId ?? ""} onChange={(event) => set({ deviceId: event.target.value || null })}>
+          <span className="mb-1 flex items-center gap-1.5 font-medium text-muted">Runs on <InfoTip text="Changing the computer clears its folder choice. Choose where it works again on that computer." /></span>
+          <select aria-label={`${profile.name}: runs on`} className="field w-full" value={profile.deviceId ?? ""} onChange={(event) => { setPickingFolder(false); set({ deviceId: event.target.value || null, place: { kind: "checkout" } }); }}>
             <option value="">{devices.data.serverRunner ? "This computer" : "A paired computer that is online"}</option>
+            {profile.deviceId && !device ? <option value={profile.deviceId}>Computer no longer paired</option> : null}
             {devices.data.devices.map((device) => (
               <option key={device.id} value={device.id}>
-                {device.name}
+                {device.name}{device.online ? "" : " (offline)"}
               </option>
             ))}
           </select>
         </label>
       ) : null}
+      <div>
+        <div className="mb-1 font-medium text-muted">Where it works</div>
+        <Choice label={`${profile.name}: where it works`} value={profile.place?.kind ?? "checkout"} options={[{ id: "checkout", label: "Its own checkout" }, { id: "folder", label: device ? `A folder on ${device.name}` : "A folder on this computer" }]} onChange={(kind) => {
+          if (kind === "checkout") set({ place: { kind } });
+          else setPickingFolder(true);
+        }} />
+        {profile.place?.kind === "folder" || pickingFolder ? (
+          <div className="mt-2 flex gap-2">
+            {device ? (
+              <select aria-label={`${profile.name}: shared folder`} className="field min-w-0 flex-1" value={profile.place?.kind === "folder" ? profile.place.label : ""} onChange={(event) => set({ place: { kind: "folder", label: event.target.value } })}>
+                <option value="" disabled>Choose a shared folder</option>
+                {profile.place?.kind === "folder" && !device.folders.includes(profile.place.label) ? <option value={profile.place.label}>{profile.place.label} (not shared)</option> : null}
+                {device.folders.map((label) => <option key={label} value={label}>{label}</option>)}
+              </select>
+            ) : <span className="min-w-0 flex-1 truncate py-2 font-mono text-muted">{profile.place?.kind === "folder" ? profile.place.path ?? profile.place.label : "Choose a computer first"}</span>}
+            <button type="button" className="btn shrink-0" disabled={profile.deviceId ? !device?.online : !hostCode} onClick={() => setPickingFolder(true)}><FolderOpen size={13} /> Choose…</button>
+          </div>
+        ) : null}
+        <FolderPicker
+          open={pickingFolder && (profile.deviceId ? Boolean(device?.online) : hostCode)}
+          onClose={() => setPickingFolder(false)}
+          target={device ? { kind: "device", deviceId: device.id } : { kind: "local" }}
+          computerName={device?.name ?? "this computer"}
+          title="Choose where it works"
+          action="Choose"
+          share={device !== null}
+          onPick={(folder) => {
+            set({ place: { kind: "folder", label: folder.label ?? folder.name, path: folder.path } });
+            setPickingFolder(false);
+          }}
+        />
+      </div>
       <div>
         <div className="mb-1 font-medium text-muted">Mode</div>
         <Choice label={`${profile.name}: mode`} value={profile.mode} options={MODES} onChange={(mode) => set({ mode })} />
@@ -125,6 +162,7 @@ function SecretNames({ profile, onChange }: { profile: RunProfile; onChange: (na
 /** The saved run profiles: up to three, one the default. Each is edited here or in Assign to agent. */
 export function RunProfilesSection({ settings, patch }: Props) {
   const on = useModuleOn("workspace");
+  const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, staleTime: 30_000, enabled: on });
   const [renaming, setRenaming] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -161,6 +199,8 @@ export function RunProfilesSection({ settings, patch }: Props) {
         <ul className="divide-y divide-[var(--line)]" role="radiogroup" aria-label="Default run profile">
           {saved.map((profile) => {
             const isDefault = profile.id === chosen.id;
+            const computer = devices.data?.devices.find((row) => row.id === profile.deviceId) ?? null;
+            const problem = devices.data ? runPlaceProblem(profile.place, profile.deviceId, computer) : null;
             return (
               <li key={profile.id} className="py-2.5">
                 <div className="flex items-center gap-3">
@@ -201,7 +241,18 @@ export function RunProfilesSection({ settings, patch }: Props) {
                         {isDefault ? <span className="rounded-full bg-[var(--accent-soft)] px-2 py-px text-[11px] font-medium text-accent">Default</span> : null}
                       </button>
                     )}
-                    <div className="truncate pl-[21px] text-[12px] text-muted">{profileSummary(profile)}</div>
+                    <div className="truncate pl-[21px] text-[12px] text-muted">{profileSummary(profile, computer?.name)}</div>
+                    {problem ? <div role="alert" className="pl-[21px] text-[12px] text-danger">{problem}</div> : null}
+                    {devices.data && profile.deviceId && !computer ? (
+                      <select aria-label={`${profile.name}: choose another computer`} className="field mt-1 w-full max-w-64" value="" onChange={(event) => {
+                        if (!event.target.value) return;
+                        update({ ...profile, deviceId: event.target.value, place: { kind: "checkout" } });
+                        setOpen(profile.id);
+                      }}>
+                        <option value="" disabled>Choose computer</option>
+                        {devices.data.devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+                      </select>
+                    ) : null}
                   </div>
                   <button
                     type="button"

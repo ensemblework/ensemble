@@ -5,6 +5,9 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { randomBytes } from "node:crypto";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { createHttpHarness } from "../test/http.js";
 
@@ -85,6 +88,145 @@ test("the options list marks the default profile and the computers", async () =>
   assert.deepEqual(result.profiles.map((row) => [row.name, row.default]), [["Careful", true], ["Away", false], ["Research", false]]);
   assert.equal(result.profiles[0]!.computer, "Chinmay's MacBook Pro");
   assert.deepEqual(result.computers.map((row) => [row.name, row.online]), [["Chinmay's MacBook Pro", true], ["Office Mac", false]]);
+});
+
+test("the assistant applies a profile's saved place and exposes it in agent options; explicit assignments still win", async () => {
+  const { task, ctx, laptop } = await setup();
+  const profile = { ...ctx.settings.runProfiles[0]!, place: { kind: "folder" as const, label: "Papers" } };
+  ctx.settings = { ...ctx.settings, runProfiles: [profile], defaultRunProfileId: profile.id };
+  const tool = getTool("hub_assign_to_agent")!;
+  const input = await tool.prepare!(ctx, tool.input.parse({ taskId: task.id }));
+  assert.match(await tool.preview!(ctx, input), /in its “Papers” folder/);
+  const result = await tool.run(ctx, input);
+  const job = await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: (result.data as { jobId: string }).jobId } });
+  assert.deepEqual([job.folderLabel, job.deviceId, job.externalRoot], ["Papers", laptop.id, null]);
+  const listed = (await getTool("hub_list_agent_options")!.run(ctx, {})).data as { profiles: Array<{ place: unknown; placeSummary: string }> };
+  assert.deepEqual(listed.profiles[0]?.place, { kind: "folder", label: "Papers" });
+  assert.match(listed.profiles[0]!.placeSummary, /^Papers on /);
+  const { plan } = await import("./tools/agent-assign.js");
+  assert.equal((await plan(ctx, { taskId: task.id, repoUrl: "fieldnote/app" })).body.place, undefined);
+  assert.equal((await plan(ctx, { taskId: task.id, folder: "Papers" })).body.place, undefined);
+  assert.deepEqual((await plan(ctx, { taskId: task.id, place: "checkout" })).body.place, { kind: "checkout" });
+});
+
+test("offline, unpaired and no-longer-shared profile places fail at preview and the assignment API without a fallback", async () => {
+  const { task, ctx, laptop, user } = await setup();
+  const place = { kind: "folder" as const, label: "Papers" };
+  const profile = { ...ctx.settings.runProfiles[0]!, place };
+  ctx.settings = { ...ctx.settings, runProfiles: [profile] };
+  const tool = getTool("hub_assign_to_agent")!;
+  const assign = () => user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: task.id, deviceId: laptop.id, engine: "claude-code", place } });
+  for (const [data, message] of [
+    [{ lastSeenAt: null }, /is offline/],
+    [{ lastSeenAt: new Date(), capabilities: { folders: [] } }, /no longer shares “Papers”/],
+    [{ revokedAt: new Date() }, /no longer paired/],
+  ] as const) {
+    await h.prisma.device.update({ where: { id: laptop.id }, data });
+    await assert.rejects(() => tool.prepare!(ctx, tool.input.parse({ taskId: task.id })), message);
+    const response = await assign();
+    assert.ok(response.statusCode >= 400, response.body);
+    assert.match(response.body, message);
+  }
+  assert.equal(await h.prisma.workspaceJob.count({ where: { taskId: task.id } }), 0);
+});
+
+test("a profile's saved folder checks its computer only when the run works there: a named folder, repository, checkout or session goes ahead while it is offline", async () => {
+  const { task, ctx, laptop } = await setup();
+  const profile = { ...ctx.settings.runProfiles[0]!, place: { kind: "folder" as const, label: "Papers" } };
+  ctx.settings = { ...ctx.settings, runProfiles: [profile], defaultRunProfileId: profile.id };
+  const tool = getTool("hub_assign_to_agent")!;
+  const { plan } = await import("./tools/agent-assign.js");
+  // A session on the laptop, from a run made while it was online.
+  const earlier = await tool.run(ctx, await tool.prepare!(ctx, tool.input.parse({ taskId: task.id, folder: "Papers" })));
+  const session = (earlier.data as { jobId: string }).jobId;
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: null } });
+  await assert.rejects(() => plan(ctx, { taskId: task.id }), /is offline/);
+  for (const input of [{ folder: "Papers" }, { repoUrl: "fieldnote/app" }, { place: "checkout" as const }, { session }]) {
+    const found = await plan(ctx, { taskId: task.id, ...input });
+    assert.equal(found.where.deviceId, laptop.id, JSON.stringify(input));
+    assert.notEqual(found.body.place?.kind, "folder", JSON.stringify(input));
+  }
+});
+
+test("a profile whose computer is no longer paired falls back to another computer unless the run works in its saved folder", async () => {
+  const { task, ctx, laptop, office } = await setup();
+  const tool = getTool("hub_assign_to_agent")!;
+  const { plan } = await import("./tools/agent-assign.js");
+  await h.prisma.device.update({ where: { id: office.id }, data: { revokedAt: new Date() } });
+  const away = await tool.prepare!(ctx, tool.input.parse({ taskId: task.id, profile: "away" }));
+  assert.equal((away as { computer: string }).computer, laptop.id, "a profile without a place goes to another computer, as it always has");
+  const placed = ctx.settings.runProfiles.map((row) => (row.id === "away" ? { ...row, place: { kind: "folder" as const, label: "Papers" } } : row));
+  ctx.settings = { ...ctx.settings, runProfiles: placed };
+  assert.equal((await plan(ctx, { taskId: task.id, profile: "away", repoUrl: "fieldnote/app" })).where.deviceId, laptop.id, "a named repository does not use the saved folder");
+  await assert.rejects(() => plan(ctx, { taskId: task.id, profile: "away" }), /no longer paired/);
+});
+
+test("a one-off folder pick works as before: an offline computer queues it and a repository share is cloned there", async () => {
+  const { task, user, office } = await setup();
+  await h.prisma.device.update({ where: { id: office.id }, data: { capabilities: { codeApi: 6, folders: [{ label: "source", kind: "repo", access: "read-write" }] } } });
+  const response = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: task.id, deviceId: office.id, engine: "claude-code", folderLabel: "source" } });
+  assert.equal(response.statusCode, 201, response.body);
+  const job = await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: response.json().jobId } });
+  assert.deepEqual([job.status, job.folderLabel, job.deviceId], ["queued", "source", office.id]);
+  const { planLocalJob, isRefusal } = await import("../remote/policy.js");
+  const here = { acceptWebApprovals: true, webEdit: true, folders: [{ label: "source", path: "/work/source", kind: "repo", access: "read-write" }] } as never;
+  const local = planLocalJob({ id: job.id, leaseToken: "lease", kind: "code", delivery: "local", unattended: false, useCredentials: false, folderLabel: job.folderLabel } as never, here, () => null);
+  assert.ok(!isRefusal(local));
+  assert.deepEqual([local.assign.repoUrl, local.assign.folder], ["/work/source", undefined], "a repository share is worked on in a clone, never in place");
+});
+
+test("the picker trusts and shares a new folder once, keeps label collisions apart and preserves an existing read-only grant", async () => {
+  const { user } = await setup();
+  const root = await mkdtemp(join(tmpdir(), "ensemble-run-place-"));
+  const before = process.env.ENSEMBLE_REMOTE_STATE_DIR;
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "remote");
+  try {
+    const { trustFolder } = await import("../lib/code-browse.js");
+    const { loadSettings: remote, updateSettings: updateRemote } = await import("../remote/store.js");
+    const first = join(root, "one", "notes");
+    const second = join(root, "two", "notes");
+    await mkdir(first, { recursive: true });
+    await mkdir(second, { recursive: true });
+    const one = await trustFolder(h.prisma, user.id, first, false, true);
+    const again = await trustFolder(h.prisma, user.id, first, false, true);
+    const two = await trustFolder(h.prisma, user.id, second, false, true);
+    assert.deepEqual([one.label, again.label, two.label], ["notes", "notes", "notes-2"]);
+    assert.equal(remote().folders.length, 2);
+    assert.deepEqual(remote().folders.map((row) => row.source), ["web", "web"], "a share made from the picker follows Change code from the web");
+    assert.ok((await loadSettings(h.prisma, user.id)).code.roots.includes(first));
+    updateRemote({ folders: [{ label: "read-only", path: first, kind: "folder", access: "review" }] });
+    const limited = await trustFolder(h.prisma, user.id, first, false, true);
+    assert.equal(limited.label, "read-only");
+    assert.deepEqual(remote().folders, [{ label: "read-only", path: first, kind: "folder", access: "review" }]);
+  } finally {
+    if (before === undefined) delete process.env.ENSEMBLE_REMOTE_STATE_DIR;
+    else process.env.ENSEMBLE_REMOTE_STATE_DIR = before;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a folder shared through the Code relay is available for assignment immediately, without waiting for a heartbeat", async () => {
+  const { user, laptop, task } = await setup();
+  const share = () => user.inject({ method: "POST", url: `/api/devices/${laptop.id}/code`, headers: { origin: process.env.HUB_WEB_ORIGIN ?? "http://localhost:3000" }, payload: { method: "POST", path: "/api/code/folders/trust", body: { path: "/work/live-test", share: true } } });
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { code: true, codeApi: 6, folders: [] } } });
+  const old = await share();
+  assert.equal(old.statusCode, 409, "an older runtime never gets the share call");
+  assert.match(old.body, /Update Ensemble/);
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { code: true, codeApi: 7, folders: [] } } });
+  const { sseHub } = await import("../lib/sse.js");
+  const { storeAnswer } = await import("../devices/file-relay.js");
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${laptop.id}` || frame.event !== "code.request") return;
+    const request = frame.data as { id: string };
+    void storeAnswer(h.app.redis, laptop.id, request.id, { status: 200, body: { path: "/work/live-test", added: true, label: "live-test", folders: [{ label: "live-test", kind: "folder", access: "read-write" }] } });
+  });
+  try {
+    const response = await share();
+    assert.equal(response.statusCode, 200, response.body);
+    const assigned = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: task.id, engine: "claude-code", deviceId: laptop.id, place: { kind: "folder", label: "live-test" } } });
+    assert.equal(assigned.statusCode, 201, assigned.body);
+    assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: assigned.json().jobId } })).folderLabel, "live-test");
+  } finally { stop(); }
 });
 
 test("without a marked default the first saved profile is the default, everywhere", () => {

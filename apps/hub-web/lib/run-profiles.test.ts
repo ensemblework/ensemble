@@ -43,6 +43,17 @@ test("a changed field marks the form as modified", () => {
   assert.equal(differs(quick, { ...fields, maxMinutes: 30 }), true);
 });
 
+test("a folder place is saved, compared by value and carried by Quick assign; checkout and an older profile are equivalent", () => {
+  const place = { kind: "folder" as const, label: "live-test", path: "/work/live-test" };
+  const profile = { ...quick, deviceId: "studio", place };
+  assert.deepEqual(upsertProfile([], profile)[0]?.place, place);
+  assert.equal(differs(profile, { ...profileFields(profile), place: { ...place } }), false);
+  assert.equal(differs(profile, { ...profileFields(profile), place: { kind: "checkout" } }), true);
+  assert.equal(differs(quick, { ...profileFields(quick), place: { kind: "checkout" } }), false);
+  assert.deepEqual(quickAssignInput("task", profile).place, place);
+  assert.match(profileSummary(profile, "Studio"), /live-test on Studio$/);
+});
+
 test("the summary names who does the work, the mode and git permission", () => {
   assert.equal(profileSummary(quick), "Matches the task · Review only · no git limits");
   assert.equal(profileSummary({ ...quick, mode: "ask", askBeforePublish: true }), "Matches the task · Ask · no git limits (asks before each commit)");
@@ -61,7 +72,31 @@ test("the agent picker's choice and a profile's fields map both ways", () => {
   assert.deepEqual(agentFields(null), { engine: "ensemble", model: "", effort: "default", context: undefined, fast: undefined });
 });
 
-import { quickAssignInput } from "./quick-assign.js";
+import { quickAssignInput, quickAssignTask } from "./quick-assign.js";
+
+test("Quick assign blocks unavailable saved places before sending a run, and otherwise sends that place", async () => {
+  const profile = { ...quick, deviceId: "studio", place: { kind: "folder" as const, label: "live-test" } };
+  let computers = [{ id: "studio", name: "Studio", online: true, folders: ["live-test"] }];
+  const assigned: Array<Record<string, unknown>> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const body = path.endsWith("/api/settings") ? { settings: { runProfiles: [profile], defaultRunProfileId: profile.id } } : path.endsWith("/api/devices") ? { devices: computers, serverRunner: true } : { jobId: "job" };
+    if (path.endsWith("/api/agent/assign")) assigned.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    await quickAssignTask("task");
+    assert.deepEqual(assigned[0]?.place, profile.place);
+    computers = [{ ...computers[0]!, online: false }];
+    await assert.rejects(() => quickAssignTask("task"), /Studio is offline/);
+    computers = [{ ...computers[0]!, online: true, folders: [] }];
+    await assert.rejects(() => quickAssignTask("task"), /no longer shares/);
+    computers = [];
+    await assert.rejects(() => quickAssignTask("task"), /no longer paired/);
+    assert.equal(assigned.length, 1, "no fallback run on the server");
+  } finally { globalThis.fetch = realFetch; }
+});
 
 test("quick assignment preserves the default profile's permissions and exact provider", () => {
   const input = quickAssignInput("task-12345678", { ...quick, id: "careful", name: "Careful", branchMode: "new", deviceId: "studio", model: "anthropic::claude-sonnet-5-5", effort: "high", mode: "review", delivery: "local", askBeforePublish: true, useCredentials: false, network: false, sandbox: true, maxMinutes: 12 });

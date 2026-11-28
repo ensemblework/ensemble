@@ -574,7 +574,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       const started = await api.json<{ jobId: string }>("/api/agent/assign", {
         body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: agentChat ? agentChoice : null }),
       });
-      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${baseLabel(profile.pullRequest.base)}` : ""}.`, "ok");
+      const place = profile.place?.kind === "folder" ? `, in “${profile.place.label}”${profile.pullRequest ? `; it ends in a pull request into ${baseLabel(profile.pullRequest.base)}` : ""}` : profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${baseLabel(profile.pullRequest.base)}` : "";
+      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${place}.`, "ok");
       setPrefs({ tab: "tasks" });
       setSelectedKey(`job:${started.jobId}`);
       void refresh();
@@ -583,7 +584,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       say(
         /trust/i.test(message)
           ? `${message} Type /trust to trust this folder.`
-          : profile.pullRequest && /not a git repository/i.test(message)
+          : profile.pullRequest && profile.place?.kind !== "folder" && /not a git repository/i.test(message)
             ? `${message} The run profile ends in a pull request, so /run works in a clone of this folder, which must be a git repository.`
             : message,
         "error",

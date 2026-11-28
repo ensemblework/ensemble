@@ -355,19 +355,48 @@ export type RoleChoice = z.infer<typeof RoleChoice>;
 export const RoleMap = z.record(z.enum(NODE_ROLES), RoleChoice);
 export type RoleMap = z.infer<typeof RoleMap>;
 
+export const RunPlace = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("checkout") }),
+  z.object({
+    kind: z.literal("folder"),
+    label: z.string().trim().min(1).max(200).regex(/^[^/\\\0\r\n]+$/, "Use a shared folder's name, not a path."),
+    path: z.string().trim().min(1).max(1000).optional(),
+  }),
+]);
+export type RunPlace = z.infer<typeof RunPlace>;
+
+/** Why a saved place cannot run, checked again by the assignment API and the computer. */
+export function runPlaceProblem(
+  place: RunPlace | undefined,
+  deviceId: string | null,
+  computer: { name: string; online: boolean; folders: readonly string[] } | null,
+): string | null {
+  if (deviceId && !computer) return "This profile's computer is no longer paired. Choose another computer.";
+  if (place?.kind !== "folder") return null;
+  if (!deviceId) return place.path ? null : "Choose the folder again on the computer where this profile runs.";
+  if (!computer!.online) return `${computer!.name} is offline. Open Ensemble there before assigning.`;
+  if (!computer!.folders.includes(place.label)) return `${computer!.name} no longer shares “${place.label}”. Choose the folder again.`;
+  return null;
+}
+
+export function runPlaceLabel(place: RunPlace | undefined, computer?: string | null): string {
+  return place?.kind === "folder" ? `${place.label}${computer ? ` on ${computer}` : ""}` : "Its own checkout";
+}
+
 /**
  * A saved set of Assign options, picked in one click from the Assign dialog,
  * the board or the CLI. At most three per person; one can be the default.
- * Task-specific choices (which folder, which earlier task, a branch name) are
- * not part of a profile.
+ * Continuing an earlier task and a branch name stay per-assignment choices.
  */
 export const RunProfile = z.object({
   id: z.string().min(1).max(40),
   name: z.string().trim().min(1).max(40),
   /** Kept for older clients; the kind of run follows from the agent and where it runs. */
   kind: z.enum(["research", "code"]).default("code"),
-  /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
+  /** A preferred paired computer. Null: this computer for a saved folder, else the usual runner. */
   deviceId: z.string().max(100).nullable().default(null),
+  /** Where runs work on that computer. Unset: its own checkout. A path is kept for this computer's local runner. */
+  place: RunPlace.optional(),
   /** Who does the work: Ensemble's own agent, or the person's own coding agent on their computer (CODE_ENGINES). */
   engine: z.enum(["ensemble", ...CODE_ENGINES]).default("ensemble"),
   /** `provider::model`, or empty for the task's tier. With an engine: its model name, or empty for its default. */

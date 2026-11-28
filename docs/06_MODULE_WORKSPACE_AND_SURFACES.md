@@ -14,7 +14,11 @@ Choose **Assign task** in Runs, or open Assign from the task you want to run. Ch
 
 Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier, the sandbox as Settings → Agents → Sandbox by default says). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named.
 
-**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
+**+ New profile** in the dialog saves the current choices as a profile; Settings → Agents → Run profiles creates one too, edits its agent, computer, folder, mode, Git, sandbox, internet and connected-app tools, sets the default, renames and deletes.
+
+`RunProfile.place` is optional: absent or `{kind: "checkout"}` keeps its own checkout; `{kind: "folder", label, path?}` saves a folder on the profile's computer. Assign restores it, and **Save to** or **New profile** saves it. A dialog override affects only that run until saved. **Continue an earlier task** is never saved as a profile choice.
+
+Quick assign, `hub_assign_to_agent`, node and crew runs, and the CLI use the saved place unless the assignment names a folder, repository, session or its own checkout. A run in the saved folder blocks if its computer is offline or unpaired, or the folder is no longer shared, and never substitutes another computer or a checkout. Only the saved folder, unchanged, is sent as the profile's `place`; a folder picked in the dialog goes as `folderLabel`, as any one-off choice does. Profiles without a saved folder, and assignments that name their own place, keep the usual fallback: an unpaired computer is replaced by another, and an offline one queues the run.
 
 **Connected-app tools**, under More options in the dialog, start from the profile: which connected apps, or single tools in them, the run may use. A change is for this run only and marks the profile changed until saved with *Save to*; the run keeps its own list, so a later profile edit leaves it as it was ([Context Bridge §5.5](CONTEXT_BRIDGE.md#55-choosing-which-apps-an-agent-may-use)). Opening the name editor selects the name, so typing replaces it
 
@@ -26,7 +30,7 @@ Only what can run is listed (signed in, key working), plus the current choice wi
 
 ### Runs on
 
-Permitted server execution or a paired computer (an offline computer keeps the job queued); a coding agent goes to a computer that has it signed in. Without either, Ensemble's agent researches and writes on the server
+Permitted server execution or a paired computer; a coding agent goes to a computer that has it signed in. Queued work waits if that computer goes offline. A run in a profile's saved folder needs its computer online when assigned. Without a saved computer or folder, Ensemble's agent can research and write on the server
 
 ### Kind
 
@@ -34,7 +38,7 @@ Not chosen: work by a coding agent, on a computer or on a server that runs code 
 
 ### Where it works
 
-Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's
+Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder (the same agent resumes its own session there; [41 §1](41_AGENT_SESSIONS.md#1-coding-sessions)), or a folder of the person's. **A folder on…** opens the Code tab's `FolderPicker` ([16 §1](16_CODE_TAB.md#open-a-folder)); the shared-folder list stays beside **Choose** as a quick choice. Picking always asks first, then trusts an outside folder once and shares it for runs; a share made this way takes runs only while *Change code from the web* is on there ([25 §4.4](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#44-web-ui)). A folder shared as a repository is still worked on in a clone, and an existing read-only grant still applies.
 
 ### Mode
 
@@ -65,6 +69,10 @@ Success and output are saved before the UI reports them. Research saves the deli
 ## 4. Evidence and review
 
 Open the job card or the task's **Agent output** to review its Run. Check Results, Files and Traces. The evidence shows the reported model, tokens, reported or estimated cost, bounded changed-file status and line counts, result and run ID. Unknown prices remain unknown. Tool, thinking and message events are recorded, but previews omit secrets-file reads.
+
+Before dispatch, `workspace/run-context.ts` records each workspace agent run's instruction fingerprint in `Run.promptVersion`, the Ensemble-supplied skills in `skillIds` and `skillSignatures`, and a linked `contextPackId`. This covers assigned tasks, research, agent chat and Code tab turns, including runs whose model or engine fails. Skill signatures hash the supplied bodies (the brief's 900-character excerpts, or Code's skill-file signatures), not a later edit. Empty skills are recorded as an empty list; skills loaded independently by the agent are not inferred. Code turns keep their packet's instruction version and retain the skills already in a resumed read-only session; the packet itself (`Run.packet`) is kept only once the agent has the turn, so a turn that fails before then does not count as delivered for the next turn's delta ([16 §9](16_CODE_TAB.md#9-the-agent)). Recording is best-effort: a write that fails is logged and never stops or fails the run. Skill names are cut to 200 characters.
+
+The context pack (`ensemble.run-context/1` in `ContextPack.items`) holds only prompt-part names, SHA-256 hashes, character counts and skill signatures, plus an estimated token count. It retains no prompt, skill body or attachment text. Each run has its own pack; an engine retry updates that pack before dispatch. Runs that fail before prompt preparation and older runtimes have no provenance snapshot, not evidence that no context was used. A paired computer sends this metadata as `complete.runContext`; the web creates a pack under its own task, account and id once the leased completion is kept. A `runContext` that does not fit the schema is logged and not kept; the job completes all the same. Retention deletes an account's packs once no run uses them ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)).
 
 `changed-files.ts` compares start and end snapshots without rename detection and never runs unsafe Git configuration to inspect a cloned repository. `planted.ts` flags changed files that may run later; a flag does not certify the rest as safe.
 
