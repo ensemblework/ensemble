@@ -9,7 +9,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
 import { unpinReviewSnapshots } from "../lib/code-commit.js";
 import { purgeDeletedStandalonePages } from "../pages/store.js";
-import { purgeThreads } from "../workspace/thread-bin.js";
+import { NOT_THREAD, purgeThreads } from "../workspace/thread-bin.js";
 import { AI_ACTIVITY_RETENTION_DAYS, deleteOldAiActivity } from "../lib/ai-activity.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -161,7 +161,7 @@ export async function runRetention(
 
   counts.purged += await hardPurge(app.prisma, userId, deletedCutoff);
   // A deleted thread of the Code tab's agent keeps its own, shorter Bin, and goes once its agent sessions are deleted (workspace/thread-bin.ts).
-  counts.purged += await purgeThreads(app.prisma, userId, { now, keepSessions: options.cleanSessions === false });
+  counts.purged += await purgeThreads(app.prisma, userId, { now, keepSessions: options.cleanSessions === false, giveUpDays: options.deletedDays });
   // A purged task takes its runs with it; their context packs (workspace/run-context.ts) go too.
   counts.contextPacksPurged = await deleteUnusedContextPacks(app.prisma, userId);
   if (options.historyDays && options.historyDays > 0) {
@@ -215,7 +215,8 @@ async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Pr
   const fileArtifacts = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));
   const counts = await prisma.$transaction([
     prisma.completionRecord.deleteMany({ where: { userId, createdAt: { lt: cutoff } } }),
-    prisma.task.deleteMany({ where }),
+    // Code threads keep their own Bin, whatever Trash's window (purgeThreads).
+    prisma.task.deleteMany({ where: { ...where, ...NOT_THREAD } }),
     prisma.project.deleteMany({ where }),
     prisma.person.deleteMany({ where }),
     prisma.skill.deleteMany({ where }),

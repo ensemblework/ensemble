@@ -579,6 +579,51 @@ test("a Code thread in the Bin keeps its agent session; deleted for good or past
   assert.equal(await db.task.count({ where: { id: binned.id } }), 0);
 });
 
+test("Trash shows a Code thread only while it is in the Bin: its purge, Empty Trash and Restore leave the thread's sessions to the Bin", async () => {
+  const user = await h.asUser();
+  const laptop = await laptopFor(user);
+  const { binStart, purgeThreads } = await import("./thread-bin.js");
+  const { restoreOne } = await import("../services/records.js");
+  const { runRetention } = await import("../jobs/retention.js");
+  const thread = (title: string, deletedAt: Date) => db.task.create({ data: { userId: user.id, title, createdBy: "me", sourceRef: `code:${randomUUID()}`, deletedAt } });
+  const listed = async () => ((await user.inject({ method: "GET", url: "/api/deleted" })).json() as { items: Array<{ id: string }> }).items.map((row) => row.id);
+
+  // Trash's own window (here 1 day) does not purge a thread in the Bin, with its session on the computer.
+  const binned = await thread("Three days in the Bin", new Date(Date.now() - 3 * DAY));
+  const binnedRun = await ranOn(user.id, binned.id, laptop.id);
+  const task = await db.task.create({ data: { userId: user.id, title: "A board task", createdBy: "me", deletedAt: new Date(Date.now() - 3 * DAY) } });
+  await runRetention(h.app, user.id, { deletedDays: 1, completedDays: 365_000 });
+  assert.equal(await db.task.count({ where: { id: binned.id } }), 1, "the thread waits in the Bin");
+  assert.equal(await db.task.count({ where: { id: task.id } }), 0, "a board task goes with Trash");
+
+  // Deleted for good: not in Trash, and neither Restore, Restore all nor the assistant's restore brings it back.
+  const left = await thread("Deleted for good", new Date(binStart().getTime() - 1));
+  await ranOn(user.id, left.id, laptop.id);
+  const shown = await listed();
+  assert.ok(shown.includes(binned.id) && !shown.includes(left.id));
+  assert.deepEqual((await user.inject({ method: "POST", url: "/api/deleted/restore", payload: { kind: "task", id: left.id } })).json(), { restored: 0 });
+  await assert.rejects(restoreOne(db, user.id, "task", left.id));
+  await user.inject({ method: "POST", url: "/api/deleted/restore", payload: {} });
+  assert.ok((await db.task.findUniqueOrThrow({ where: { id: left.id } })).deletedAt, "Restore all leaves it");
+  assert.equal((await db.task.findUniqueOrThrow({ where: { id: binned.id } })).deletedAt, null, "and brings back the one in the Bin");
+
+  // Empty Trash: a thread that never ran goes; one with a session leaves the Bin for the clean-up, like Delete for good.
+  await db.task.update({ where: { id: binned.id }, data: { deletedAt: new Date(Date.now() - DAY) } });
+  const never = await thread("Never ran", new Date(Date.now() - 60_000));
+  assert.equal((await user.inject({ method: "POST", url: "/api/deleted/empty" })).statusCode, 200);
+  assert.equal(await db.task.count({ where: { id: never.id } }), 0);
+  const out = await db.task.findUniqueOrThrow({ where: { id: binned.id } });
+  assert.ok(out.deletedAt && out.deletedAt < binStart(), "out of the Bin, waiting for its session to be deleted");
+  assert.ok(!(await listed()).includes(binned.id));
+  const removed: string[] = [];
+  await sweepAgentSessions({ prisma: db, log: { info: () => undefined } } as unknown as FastifyInstance, user.id, { completedDays: 60, remove: async (id) => removed.push(id) });
+  assert.ok(removed.includes(binnedRun.id));
+
+  // A computer that never comes back: the thread goes Trash's window after it left the Bin, session or not.
+  assert.equal(await purgeThreads(db, user.id, { keepSessions: false, giveUpDays: 30 }), 0);
+  assert.equal(await purgeThreads(db, user.id, { keepSessions: false, giveUpDays: 30, now: new Date(Date.now() + 31 * DAY) }), 2);
+});
+
 test("a claim of a project's task by the person's own agent carries the project's brief for its folder", async () => {
   const user = await h.asUser();
   const key = await h.asToken(user, "device");

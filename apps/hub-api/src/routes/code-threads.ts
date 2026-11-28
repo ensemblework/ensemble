@@ -31,7 +31,7 @@ import { parseCompletion } from "../workspace/completion.js";
 import { parseHandoff, renderHandoff } from "../workspace/handoff-record.js";
 import { forkOf } from "../workspace/sessions.js";
 import { PacketSummarySchema } from "../workspace/turn-packet.js";
-import { binStart, deleteThreadForGood } from "../workspace/thread-bin.js";
+import { binStart, deleteFromBin } from "../workspace/thread-bin.js";
 import { stopJob } from "../workspace/worker.js";
 import { card, onCurrentDevices } from "./agents.js";
 
@@ -242,12 +242,12 @@ export async function codeThreadRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * Deletes a thread in the Bin for good, with its turns and, through the session clean-up, its agent sessions
-   * (workspace/thread-bin.ts). A thread not in the Bin goes there first (DELETE /api/tasks/:id).
+   * (`deleteFromBin` in workspace/thread-bin.ts). A thread not in the Bin goes there first (DELETE /api/tasks/:id).
    */
   app.delete("/api/agent/threads/:id", async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const settings = await loadSettings(prisma, request.userId);
-    const gone = await deleteThreadForGood(prisma, request.userId, id, { keepSessions: settings.orchestration.cleanSessions === false });
+    const gone = await deleteFromBin(prisma, request.userId, { id, keepSessions: settings.orchestration.cleanSessions === false });
     if (!gone) return reply.code(404).send({ error: "That thread is not in the Bin." });
     await appendLedger({ userId: request.userId, actor: "me", action: "code.thread_purge", payload: { threadId: id } });
     sseHub.publish(request.userId, { event: "task", data: { id, action: "delete" } });
