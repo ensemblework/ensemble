@@ -54,7 +54,7 @@ import { promptsOf, withPrompts } from "../workspace/outside-runs.js";
 import { addClaudeDesktopSession, codexProject, codexProjectThreads, copilotSessionName, fileCodexAppProject, helpHas, nameCodexThread, sessionTitle, titledPrompt } from "../workspace/engines/app-sessions.js";
 import { chatFolder, dropOneOff, forgetSession, instructionsUpdate, lookSession, notePrompts, saveSession, SESSION_KEY, sessionFolder, takeSession, untakeSession, type SessionHome, type SessionUsage } from "./turn-sessions.js";
 import { BUSY_STATUS, BUSY_WAIT, CodexThreadBusy, provenGone, resumeCodexThread, restartOf, type Restart } from "../workspace/engines/session-restart.js";
-import { addClaudeResult, claudeFromSubAgent, otherCodexThread, type ClaudeSpend } from "../workspace/engines/sub-agents.js";
+import { addClaudeResult, claudeFromSubAgent, otherCodexThread, withClaudeSubAgentLimits, type ClaudeSpend } from "../workspace/engines/sub-agents.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -308,7 +308,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns ?? null, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude"), name }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
-    env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
+    env: withClaudeSubAgentLimits(agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" })),
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,

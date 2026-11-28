@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addClaudeResult, claudeFromSubAgent, copilotEventFromSubAgent, copilotUpdateAgent, otherCodexThread } from "./sub-agents.js";
+import { addClaudeResult, claudeFromSubAgent, copilotEventFromSubAgent, copilotUpdateAgent, otherCodexThread, withClaudeSubAgentLimits } from "./sub-agents.js";
 
 test("a Codex notification about another thread is a sub-agent's", () => {
   assert.equal(otherCodexThread({ threadId: "child" }, "parent"), true);
@@ -64,4 +64,13 @@ test("an older Claude Code without the per-stretch field: each result's own usag
   const both = addClaudeResult(first, { total_cost_usd: 0.012, usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 70 } });
   assert.deepEqual(both, { tokensIn: 200, tokensOut: 25, costUsd: 0.012, perResult: false });
   assert.deepEqual(addClaudeResult(null, { usage: {} }), { tokensIn: 0, tokensOut: 0, costUsd: null, perResult: false });
+});
+
+test("a Claude Code run Ensemble starts nests sub-agents at most 3 deep, unless the person chose a depth, and has no agent teams", () => {
+  const env = withClaudeSubAgentLimits({ PATH: "/usr/bin", CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" });
+  assert.equal(env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "3");
+  assert.equal(env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "0", "a teammate would be a session of its own, outside Ensemble's");
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(withClaudeSubAgentLimits({ CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: " 1 " }).CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "1", "the person's own depth stays");
+  assert.equal(withClaudeSubAgentLimits({ CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "deep" }).CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "3");
 });

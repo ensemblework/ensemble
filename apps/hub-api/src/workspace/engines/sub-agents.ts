@@ -11,6 +11,27 @@
 /** How a sub-agent's tool call starts its summary in a run's trace and live log. */
 export const SUB_AGENT = "Sub-agent: ";
 
+/**
+ * The `env` of the per-run settings (`--settings`) of a Claude Code run Ensemble starts with its own tools: agent
+ * teams off. Claude Code applies the `env` of its settings over its environment, so a person's `~/.claude/settings.json`
+ * that turns teams on would otherwise win; the per-run settings come above theirs.
+ */
+export const CLAUDE_SETTINGS_ENV = { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" } as const;
+
+/** How deep Claude Code's sub-agents may nest in a run Ensemble starts: Claude Code's documented default, which a remote flag of its own can otherwise change. */
+export const CLAUDE_SUB_AGENT_DEPTH = 3;
+
+/**
+ * The environment of a Claude Code run Ensemble starts, with its limits on sub-agents (docs/30 §6). Sub-agents
+ * nest at most `CLAUDE_SUB_AGENT_DEPTH` deep unless the person set a depth of their own. Agent teams, an
+ * experimental Claude Code feature, stay off: with them on, a named sub-agent starts as a teammate, a session of
+ * its own outside the one Ensemble owns.
+ */
+export function withClaudeSubAgentLimits(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const own = env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH?.trim();
+  return { ...env, CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: own && /^\d+$/.test(own) ? own : String(CLAUDE_SUB_AGENT_DEPTH), CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" };
+}
+
 /** Whether a Codex app-server notification is about another thread than the session's: a sub-agent's (`spawn_agent`). */
 export function otherCodexThread(params: Record<string, unknown>, threadId: string | null): boolean {
   return threadId !== null && typeof params.threadId === "string" && params.threadId !== threadId;
