@@ -138,3 +138,22 @@ test("the notes are a page editor for this meeting, with inline @ensemble and no
     assert.equal(view.host.querySelector<HTMLTextAreaElement>('textarea:not([aria-label="Meeting title"])')!.value, "Original");
   } finally { await view.done(); }
 });
+
+test("notes saved as Markdown in plain paragraphs open as blocks and save once; other notes are not written", async () => {
+  const lines = ["## Decisions", "- **Ship** the `beta`", "- Review on Monday", "| Who | What |", "", "| --- | --- |", "", "| Mira | Launch |"];
+  const record = { ...session("markdown-paragraphs"), content: { type: "doc", content: lines.map((line) => (line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" })) } } as MeetingSessionRecord;
+  const writes: Array<{ content?: PageDocument }> = [];
+  api.updateMeeting = async (_id, data) => { writes.push(data); return { session: { ...record, ...data, notes: "## Decisions" } }; };
+  const view = await mount(record);
+  try {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0]!.content!.content.map((node) => node.type), ["heading", "bulletList", "table"]);
+  } finally { await view.done(); }
+  writes.length = 0;
+  const plain = await mount(session("plain-notes"));
+  try {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+    assert.equal(writes.length, 0, "notes that are not Markdown in paragraphs are not saved on open");
+  } finally { await plain.done(); api.updateMeeting = original; }
+});

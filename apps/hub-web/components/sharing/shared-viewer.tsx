@@ -15,6 +15,7 @@ import { PagePeople, PresenceInHeader } from "./page-people";
 import { Tag } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { MarkdownText } from "@/components/markdown-text";
+import { markdownParagraphsText } from "@ensemble/shared-types";
 
 const NotePage = dynamic(() => import("@/components/pages/note-page").then((mod) => mod.NotePage), { ssr: false });
 const TaskPage = dynamic(() => import("@/components/task/task-page").then((mod) => mod.TaskPage), { ssr: false });
@@ -249,7 +250,9 @@ function SharedMeeting({ id }: { id: string }) {
     queryFn: async () => {
       try {
         const { session } = await api.meetingSession(id);
-        return { title: session.title, when: session.startedAt, body: [session.recap, session.notes].filter(Boolean).join("\n\n"), decisions: [] as string[], actions: [] as string[] };
+        // Notes saved as Markdown in plain paragraphs read as the Markdown they hold.
+        const notes = markdownParagraphsText(session.content) ?? session.notes;
+        return { title: session.title, when: session.startedAt, body: [session.recap, notes].filter(Boolean).join("\n\n"), decisions: [] as string[], actions: [] as string[] };
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         const { note } = await api.importedMeetingNote(id);

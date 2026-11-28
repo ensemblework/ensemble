@@ -2,6 +2,7 @@ import { checkpointPage, pageEditor } from "./history.js";
 import { Prisma, type Actor, type PrismaClient, type Task } from "@prisma/client";
 import {
   EMPTY_PAGE,
+  markdownParagraphsDocument,
   notesDocument,
   PageAnnotation,
   PageDocument,
@@ -547,7 +548,8 @@ export async function writePageContent(
   target: PageTarget,
   next: (current: CurrentPage) => { content: PageDocument; title?: string },
   actor: Actor = "me",
-  options: { restoring?: boolean } = {},
+  /** `checkpoint`: keep the version before this write in the page's history even when one was kept recently. */
+  options: { restoring?: boolean; checkpoint?: boolean } = {},
 ): Promise<{ id: string; taskId: string | null; title: string; revision: number }> {
   await lockUserTransaction(db, userId);
   const found = await editablePage(db, userId, target, true);
@@ -560,7 +562,7 @@ export async function writePageContent(
   const content = storable(restoreMentionLinks(PageDocument.parse(wanted.content)));
   if (!options.restoring) await assertNewPageImages(db, userId, content, found.page?.content ?? null);
   const title = task ? task.title : wanted.title?.trim() || currentTitle;
-  await checkpointPage(db, page, currentTitle);
+  await checkpointPage(db, page, currentTitle, options.checkpoint === true);
   const updated = await db.taskPage.update({
     where: { id: page.id },
     data: {
@@ -775,3 +777,19 @@ export async function writeCollabPage(
 }
 
 export { EMPTY_PAGE };
+
+/**
+ * A page whose stored body is Markdown in plain paragraphs, one per line (saved before the editor
+ * read Markdown), rewritten once as real blocks (`markdownParagraphsDocument`). The version before
+ * is kept in the page's history and the change can be undone. False when the page does not qualify.
+ */
+export async function repairMarkdownPage(prisma: PrismaClient, userId: string, target: PageTarget): Promise<{ id: string; taskId: string | null; revision: number } | null> {
+  return prisma.$transaction(async (tx) => {
+    const found = await editablePage(tx, userId, target, true).catch(() => null);
+    const stored = found?.page?.content ? PageDocument.safeParse(found.page.content) : null;
+    const repaired = stored?.success ? markdownParagraphsDocument(stored.data) : null;
+    if (!repaired) return null;
+    const saved = await writePageContent(tx, userId, target, () => ({ content: repaired }), "me", { checkpoint: true });
+    return { id: saved.id, taskId: saved.taskId, revision: saved.revision };
+  });
+}

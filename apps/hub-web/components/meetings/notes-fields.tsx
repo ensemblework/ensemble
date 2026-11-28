@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType, type Reac
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderKanban } from "lucide-react";
-import type { PageDocument, PageMention } from "@ensemble/shared-types";
+import { markdownParagraphsDocument, type PageDocument, type PageMention } from "@ensemble/shared-types";
 import { api, type MeetingSessionRecord } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { meetingDoc } from "@/lib/export/items";
@@ -106,7 +106,10 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
   const router = useRouter();
   const entities = useEntities();
   const Editor = useNotesEditor(editor);
-  const [draft, setDraft] = useState<Draft>(() => drafts.get(session.id) ?? { title: session.title, content: docOf(session) });
+  // Notes saved as Markdown in plain paragraphs (before the editor read Markdown) open as real
+  // blocks, saved once.
+  const [repaired] = useState(() => (drafts.has(session.id) ? null : markdownParagraphsDocument(session.content)));
+  const [draft, setDraft] = useState<Draft>(() => drafts.get(session.id) ?? { title: session.title, content: repaired ?? docOf(session) });
   const [initial] = useState(() => draft.content);
   const known = useRef(JSON.stringify(session.content ?? null));
   const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
@@ -175,7 +178,8 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
 
   useEffect(() => {
     mounted.current = true;
-    if (pending.current) void flushRef.current();
+    if (repaired) edit({ title: session.title, content: repaired });
+    else if (pending.current) void flushRef.current();
     const leave = (event: BeforeUnloadEvent) => {
       if (!pending.current && !saving.current) return;
       event.preventDefault();

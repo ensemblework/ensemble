@@ -319,3 +319,38 @@ test("a request of steps over 4 MiB (one large paste of CJK text) is taken, not 
   assert.equal(sent.statusCode, 200, sent.body.slice(0, 200));
   assert.equal((sent.json() as Batch).version, 3);
 });
+
+test("a page saved as Markdown in plain paragraphs becomes blocks when someone who may edit opens it, once, with the old version kept in history", async () => {
+  const mira = await person("Mira Chen");
+  const vic = await person("Vic Ward");
+  const lines = ["## What it is", "A workspace for tasks and pages.", "## Repositories", "- **ensemblework/ensemble**: read its `AGENTS.md` first", "- **ensemblework/docs**", "| Path | What |", "", "| --- | --- |", "", "| `apps/hub-web` | The Hub |"];
+  const content = { type: "doc", content: lines.map((line) => (line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" })) };
+  const make = async () => {
+    const id = (await ok<{ page: { id: string } }>(as(mira, { method: "POST", url: "/api/pages" }), 201)).page.id;
+    await ok(as(mira, { method: "PUT", url: `/api/pages/${id}`, payload: { revision: 1, content } }));
+    return id;
+  };
+  const stored = async (id: string) => db.taskPage.findUniqueOrThrow({ where: { id } });
+  const types = (doc: unknown) => ((doc as { content: Array<{ type: string }> }).content).map((node) => node.type);
+
+  const viewed = await make();
+  const share = (await ok<{ shares: Array<{ id: string; person: { id: string } }> }>(as(mira, { method: "POST", url: "/api/sharing/items", payload: { kind: "page", resourceId: viewed, personId: vic.id, role: "view" } }), 201)).shares.find((row) => row.person.id === vic.id)!.id;
+  const before = await stored(viewed);
+  await ok(as(vic, { method: "GET", url: `/api/pages/${viewed}/collab` }, share));
+  assert.equal((await stored(viewed)).revision, before.revision, "a viewer's opening saves nothing");
+
+  const opened = await make();
+  const old = await stored(opened);
+  const joined = await ok<{ doc: unknown; revision: number }>(as(mira, { method: "GET", url: `/api/pages/${opened}/collab` }));
+  assert.deepEqual(types(joined.doc), ["heading", "paragraph", "heading", "bulletList", "table"]);
+  assert.equal(joined.revision, old.revision + 1);
+  assert.deepEqual(types((await stored(opened)).content), ["heading", "paragraph", "heading", "bulletList", "table"]);
+  const versions = await ok<{ versions: Array<{ id: string; revision: number }> }>(as(mira, { method: "GET", url: `/api/page-versions?kind=page&id=${opened}` }));
+  const kept = versions.versions.find((row) => row.revision === old.revision);
+  assert.ok(kept, "the version before the rewrite is in the page's history");
+  const version = await ok<{ version: { content: unknown } }>(as(mira, { method: "GET", url: `/api/page-versions/${kept.id}` }));
+  assert.deepEqual(types(version.version.content), lines.map(() => "paragraph"));
+  await collabHub.close();
+  await ok(as(mira, { method: "GET", url: `/api/pages/${opened}/collab` }));
+  assert.equal((await stored(opened)).revision, old.revision + 1, "opening it again changes nothing");
+});

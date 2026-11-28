@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { EMPTY_PAGE } from "@ensemble/shared-types";
+import { EMPTY_PAGE, markdownParagraphsDocument } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { relative } from "@/lib/format";
@@ -76,7 +76,7 @@ export function TrashedPage({ pageId, onRestored }: { pageId: string; onRestored
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-ink/80">{page.data.title || "Untitled"}</h1>
           <div className="mt-6 border-t border-line pt-4" aria-label="Page content (read-only)">
             {Editor ? (
-              <Editor initial={page.data.content ?? EMPTY_PAGE} entities={entities.get} onChange={() => undefined} editable={false} comments={false} placeholder="" />
+              <Editor initial={markdownParagraphsDocument(page.data.content) ?? page.data.content ?? EMPTY_PAGE} entities={entities.get} onChange={() => undefined} editable={false} comments={false} placeholder="" />
             ) : (
               <Skeleton className="mt-4 h-64 w-full" />
             )}

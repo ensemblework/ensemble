@@ -9,8 +9,8 @@ import { Trash2 } from "lucide-react";
 import { NestedPages, useLinkedPages } from "./nested-pages";
 import { PageCrumbs, type Crumb } from "./page-crumbs";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { EMPTY_PAGE, type PageDocument, type PageMention, markdownParagraphsDocument } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, type StandalonePageRecord } from "@/lib/api";
 import { quickAssignTask } from "@/lib/quick-assign";
 import { useEntities } from "@/lib/entities";
@@ -115,6 +115,10 @@ export function NotePage({
   const { flush } = sync;
   // The editor opens on the live document; everyone's changes arrive in it as they are typed.
   const initialDoc = sync.joined?.doc ?? null;
+  // A view-only copy of a body saved as Markdown in plain paragraphs (before the editor read
+  // Markdown) shows as blocks, without saving or live changes; someone who may edit it rewrites it
+  // when they open it (hub-api routes/collab.ts).
+  const shownDoc = useMemo(() => (!canEdit && initialDoc ? markdownParagraphsDocument(initialDoc) : null), [canEdit, initialDoc]);
 
   const rename = useMutation({
     mutationFn: (title: string) => api.renamePage(pageId, title),
@@ -363,14 +367,14 @@ export function NotePage({
           <PageLoadFailure missing={false} onRetry={() => window.location.reload()} />
         ) : initialDoc && Editor ? (
           <Editor
-            key={pageId}
-            initial={initialDoc}
+            key={shownDoc ? `${pageId}:shown` : pageId}
+            initial={shownDoc ?? initialDoc}
             entities={entities.get}
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "page", id: pageId, depth: (record.ancestors?.length ?? (record.parentId ? 1 : 0)) + 1 }}
             editable={!leaving && canEdit}
-            collab={sync.binding}
+            collab={shownDoc ? null : sync.binding}
           />
         ) : sync.stalled ? (
           <div className="mt-4 text-[13px] text-muted" role="status">

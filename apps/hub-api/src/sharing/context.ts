@@ -36,6 +36,15 @@ export type Access =
   /** A share header that names nothing this account can open. Every route answers 404. */
   | { kind: "gone" };
 
+/** Whether this request may change what it opened: the owner, an editor, or an edit share or link. */
+export function mayWrite(): boolean {
+  const access = currentScope()?.access;
+  if (!access || access.kind === "owner") return true;
+  if (access.kind === "member") return access.role === "editor";
+  if (access.kind === "share" || access.kind === "link") return access.role === "edit";
+  return false;
+}
+
 /** Account ids of anonymous link visitors start with this; they are never a `users` row. */
 export const VISITOR_PREFIX = "visitor:";
 

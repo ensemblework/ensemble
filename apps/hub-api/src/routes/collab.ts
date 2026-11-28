@@ -5,6 +5,8 @@ import { sseHub } from "../lib/sse.js";
 import { CollabError, type CollabCode } from "../pages/collab-core.js";
 import type { DocKey, DocKind } from "../pages/collab.js";
 import { collabHub } from "../pages/live.js";
+import { repairMarkdownPage } from "../pages/store.js";
+import { mayWrite } from "../sharing/context.js";
 
 export { collabHub };
 
@@ -84,6 +86,16 @@ export async function collabRoutes(app: FastifyInstance): Promise<void> {
       if (query.version === undefined) {
         const flag = (name: string) => query[name] === "1" || query[name] === "true";
         return answer(reply, kind, async () => {
+          // A body saved as Markdown in plain paragraphs is rewritten as blocks once, when someone who
+          // may edit opens it and it is not open live (then it waits for the next opening).
+          if (mayWrite() && !collabHub.isOpen(key)) {
+            try {
+              const repaired = await repairMarkdownPage(app.prisma, request.userId, kind === "task" ? { taskId: key.id } : { pageId: key.id });
+              if (repaired) sseHub.publish(request.userId, { event: "page", data: { id: repaired.id, taskId: repaired.taskId, action: "save", revision: repaired.revision } });
+            } catch (error) {
+              request.log.warn({ err: error }, "markdown page repair failed");
+            }
+          }
           const joined = await collabHub.join(key, { stored: flag("stored"), start: flag("start") });
           const clientID = `${accountOf(request)}/${randomUUID().slice(0, 8)}`;
           return joined && { ...joined, clientID, token: tokenFor(clientID) };

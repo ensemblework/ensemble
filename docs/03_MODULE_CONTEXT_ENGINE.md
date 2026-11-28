@@ -400,7 +400,7 @@ Summaries, decisions and tasks must come from the selected note. There is no mic
 
 Open a project to edit its name, summary, notes and status, or connect people, repositories and work. Its page gathers the related tasks, deliverables, files and source items. Edit relationships yourself or ask the assistant. Adding an attendee does not invent a new person.
 
-Hub saves for people, projects, repositories, task fields, deliverables and manual meeting notes carry `_base`. Row locks protect the comparison and write; disjoint fields merge and overlapping saves ask which version to save ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Whole project and meeting documents use this save path, not the page/task live authority.
+Hub saves for people, projects, repositories, task fields, deliverables and manual meeting notes carry `_base`. Row locks protect the comparison and write; disjoint fields merge and overlapping saves ask which version to save ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Whole project and meeting documents use this save path, not the page/task live authority. A project or meeting body saved as Markdown in plain paragraphs opens as real blocks and is saved once ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages)); `notes` sent without `content` rebuild the page.
 
 ## 6. Profile and preferences in context
 
