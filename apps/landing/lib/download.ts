@@ -63,7 +63,7 @@ export function desktopOtherBuilds(version = DESKTOP_VERSION): Partial<Record<Os
  * the bundle, so macOS can call a downloaded copy damaged. These commands seal it on the Mac (docs/DESKTOP.md §7).
  */
 export const MAC_DAMAGED_THROUGH = "0.9.1";
-export const macDamagedRepair = ["xattr -cr /Applications/Ensemble.app", "codesign --force --deep --sign - /Applications/Ensemble.app"];
+export const macDamagedRepair = ["xattr -cr /Applications/Ensemble.app", "codesign --force --sign - /Applications/Ensemble.app"];
 
 export function desktopUrl(file: string, version = DESKTOP_VERSION): string {
   return `${RELEASES_URL}/download/desktop-v${version}/${file}`;

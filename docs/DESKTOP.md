@@ -123,10 +123,10 @@ Mac builds of 0.9.1 and older carry only the signature the linker puts on the ex
 
 ```bash
 xattr -cr /Applications/Ensemble.app
-codesign --force --deep --sign - /Applications/Ensemble.app
+codesign --force --sign - /Applications/Ensemble.app
 ```
 
-The download page (`apps/landing/app/download/page.tsx`, commands in `macDamagedRepair` in `lib/download.ts`) gives the same steps.
+The second command leaves out `--deep`, so `CuaDriver.app` keeps Cua's signature, which its Accessibility and Screen Recording grants follow. The download page (`apps/landing/app/download/page.tsx`, commands in `macDamagedRepair` in `lib/download.ts`) gives the same steps.
 
 With an account (and on first run) the updater calls `GET https://api.ensemblework.com/api/desktop/update/:target/:arch/:current` (`apps/hub-api/src/routes/misc.ts`), which resolves only the latest published desktop tag, independent of CLI releases. The API validates the manifest version and official asset URLs.
 
