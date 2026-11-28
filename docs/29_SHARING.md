@@ -24,7 +24,7 @@ The sharing dialog searches as you type, offers roles and shows usage meters suc
 ### Open work shared with you
 
 
-Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space content: viewers may read them; editors may create boards, manage columns/tiles and move pages. They have no individual-board share link. Sharing a page or task does not expose its board directory or allow membership changes. Board labels (`/api/labels*`) are space content too: viewers read them; editors add, rename, recolour and delete them. A shared page or task shows its labels but not its board's list.
+Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space content: viewers may read them; editors may create boards, manage columns/tiles and move pages. They have no individual-board share link. Sharing a page or task does not expose its board directory or allow membership changes. Board labels (`/api/labels*`) are space content too: viewers read them; editors add, rename, recolour and delete them. A shared page, task or board shows its labels but not the board's list, and its guests cannot change labels (`labels` on `POST /api/tasks`, `PATCH /api/tasks/:id` or `PATCH /api/pages/:id` answers 403).
 
 The `board` item-share kind grants task access, not access to custom boards or their standalone pages; organizing a task on a custom board does not revoke its existing task-access grants.
 - **`/shared`**: everything shared with you, with a "New" mark until opened, live page and task titles, first-line previews and share dates (`sharing/previews.ts`, batched). The sidebar link appears when there is something.

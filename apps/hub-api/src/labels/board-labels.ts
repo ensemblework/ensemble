@@ -13,13 +13,25 @@ import {
   LabelColor,
   MAX_TASK_LABELS,
   cleanLabelName,
+  labelKey,
   labelTone,
   nextLabelColor,
   type BoardLabelList,
   type BoardLabelRecord,
 } from "@ensemble/shared-types";
+import { currentScope } from "../sharing/context.js";
 
 type Db = Prisma.TransactionClient | PrismaClient;
+
+/**
+ * Someone a single page or task is shared with, or a public link's visitor. They see an item's labels
+ * but do not change them: a label write adds to the owner's board list, which is the space's.
+ */
+export function labelsRefused(): boolean {
+  const kind = currentScope()?.access.kind;
+  return kind === "share" || kind === "link";
+}
+export const LABELS_REFUSED = "Only the people in this space change labels.";
 
 /** The Ensemble board's key. */
 export const ENSEMBLE_KEY = "";
@@ -77,16 +89,16 @@ function colorOf(row: { name: string; color: string | null }): LabelColor {
   return parsed.success ? parsed.data : labelTone(row.name);
 }
 
-/** Cleaned names, each once whatever its case, at most MAX_TASK_LABELS. */
-export function cleanNames(names: Iterable<string>): string[] {
+/** Cleaned names, each once whatever its case, at most `cap` (an item holds MAX_TASK_LABELS). */
+export function cleanNames(names: Iterable<string>, cap = MAX_TASK_LABELS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const value of names) {
-    const name = cleanLabelName(value.replace(/^#/, ""));
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
+    const name = cleanLabelName(value);
+    if (!name || seen.has(labelKey(name))) continue;
+    seen.add(labelKey(name));
     out.push(name);
-    if (out.length >= MAX_TASK_LABELS) break;
+    if (out.length >= cap) break;
   }
   return out;
 }
@@ -110,38 +122,41 @@ export class LabelBook {
     return board;
   }
 
-  /** The colours of a board's labels by name, for carrying them to another board. */
+  /** The colours of a board's labels by key, for carrying them to another board. */
   async colors(key: string): Promise<Map<string, LabelColor>> {
     const board = await this.load(key);
     return new Map([...board.values()].map((row) => [row.nameKey, colorOf(row)]));
   }
 
   /**
-   * The names as the board spells them, each once. Names the board lacks are added to it, with the
-   * colour in `colors` (by lower-case name) or the next free one.
+   * Puts cleaned names on a board's list, any number: a name it lacks is added with the colour in
+   * `colors` (by key) or the next free one. Returns the board's spelling by key.
    */
-  async resolve(key: string, names: Iterable<string>, colors?: ReadonlyMap<string, LabelColor>): Promise<string[]> {
-    const wanted = cleanNames(names);
-    if (!wanted.length) return [];
+  async ensure(key: string, names: readonly string[], colors?: ReadonlyMap<string, LabelColor>): Promise<Map<string, string>> {
     const board = await this.load(key);
-    const missing = wanted.filter((name) => !board.has(name.toLowerCase()));
+    const missing = names.filter((name) => !board.has(labelKey(name)));
     if (missing.length) {
       const used = [...board.values()].map(colorOf);
       let position = Math.max(-1, ...[...board.values()].map((row) => row.position)) + 1;
       const data = missing.map((name) => {
-        const color = colors?.get(name.toLowerCase()) ?? nextLabelColor(name, used);
+        const color = colors?.get(labelKey(name)) ?? nextLabelColor(name, used);
         used.push(color);
-        return { userId: this.userId, boardKey: key, name, nameKey: name.toLowerCase(), color, position: position++ };
+        return { userId: this.userId, boardKey: key, name, nameKey: labelKey(name), color, position: position++ };
       });
       // Another write may add the same name at the same moment: keep whichever landed first.
       await this.db.boardLabel.createMany({ data, skipDuplicates: true });
-      const rows = await this.db.boardLabel.findMany({
-        where: { userId: this.userId, boardKey: key, nameKey: { in: missing.map((name) => name.toLowerCase()) } },
-        select: labelSelect,
-      });
+      const rows = await this.db.boardLabel.findMany({ where: { userId: this.userId, boardKey: key, nameKey: { in: missing.map(labelKey) } }, select: labelSelect });
       for (const row of rows) board.set(row.nameKey, row);
     }
-    return wanted.map((name) => board.get(name.toLowerCase())?.name ?? name);
+    return new Map(names.map((name) => [labelKey(name), board.get(labelKey(name))?.name ?? name]));
+  }
+
+  /** One item's names as the board spells them, each once; names the board lacks are added to it. */
+  async resolve(key: string, names: Iterable<string>, colors?: ReadonlyMap<string, LabelColor>): Promise<string[]> {
+    const wanted = cleanNames(names);
+    if (!wanted.length) return [];
+    const spelled = await this.ensure(key, wanted, colors);
+    return wanted.map((name) => spelled.get(labelKey(name)) ?? name);
   }
 }
 
@@ -157,25 +172,82 @@ export async function carryLabels(book: LabelBook, from: string, to: string, nam
   return book.resolve(to, names, await book.colors(from));
 }
 
-function sameNames(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+/** Which items a label rewrite reaches: every item of a board (Trash included), or one task or note. */
+type Scope = { board: string } | { task: string } | { note: string };
+
+function taskWhere(userId: string, scope: Scope): Prisma.Sql | null {
+  if ("note" in scope) return null;
+  if ("task" in scope) return Prisma.sql`t.user_id = ${userId} AND t.id = ${scope.task}`;
+  return scope.board
+    ? Prisma.sql`t.user_id = ${userId} AND EXISTS (SELECT 1 FROM task_pages p WHERE p.task_id = t.id AND p.board_id = ${scope.board})`
+    : Prisma.sql`t.user_id = ${userId} AND NOT EXISTS (SELECT 1 FROM task_pages p WHERE p.task_id = t.id AND p.board_id IS NOT NULL)`;
+}
+
+function noteWhere(userId: string, scope: Scope): Prisma.Sql | null {
+  if ("task" in scope) return null;
+  if ("note" in scope) return Prisma.sql`n.user_id = ${userId} AND n.task_id IS NULL AND n.id = ${scope.note}`;
+  return scope.board
+    ? Prisma.sql`n.user_id = ${userId} AND n.task_id IS NULL AND n.board_id = ${scope.board}`
+    : Prisma.sql`n.user_id = ${userId} AND n.task_id IS NULL AND n.board_id IS NULL`;
+}
+
+/** Deliverables are on no board: they use the Ensemble board's list. */
+function deliverableWhere(userId: string, scope: Scope): Prisma.Sql | null {
+  return "board" in scope && !scope.board ? Prisma.sql`d.user_id = ${userId}` : null;
+}
+
+/** Every spelling the items in scope hold (Trash included), each once. */
+async function scopeLabels(db: Db, userId: string, scope: Scope): Promise<string[]> {
+  const parts: Prisma.Sql[] = [];
+  const tasks = taskWhere(userId, scope), notes = noteWhere(userId, scope), deliverables = deliverableWhere(userId, scope);
+  if (tasks) parts.push(Prisma.sql`SELECT unnest(t.labels) AS l FROM tasks t WHERE ${tasks}`);
+  if (notes) parts.push(Prisma.sql`SELECT unnest(n.labels) AS l FROM task_pages n WHERE ${notes}`);
+  if (deliverables) parts.push(Prisma.sql`SELECT unnest(d.labels) AS l FROM deliverables d WHERE ${deliverables}`);
+  const rows = await db.$queryRaw<Array<{ l: string }>>`SELECT DISTINCT x.l FROM (${Prisma.join(parts, " UNION ALL ")}) x`;
+  return rows.map((row) => row.l);
+}
+
+/**
+ * Rewrites labels in scope with one statement per table: each `from` spelling becomes its `to` (null
+ * removes it), each label kept once, in order. The new array is computed from the row being written,
+ * so a write landing at the same moment is not lost. `updated_at` is left alone: a label rename is
+ * not an edit of the item, and pending Undo entries (lib/undo.ts) refuse a row whose version moved.
+ */
+async function remapLabels(db: Db, userId: string, scope: Scope, pairs: ReadonlyArray<readonly [string, string | null]>): Promise<number> {
+  const changes = pairs.filter(([from, to]) => from !== to);
+  if (!changes.length) return 0;
+  const from = changes.map(([name]) => name);
+  const to = changes.map(([, name]) => name ?? "");
+  const next = (column: Prisma.Sql) => Prisma.sql`(
+    SELECT coalesce(array_agg(y.v ORDER BY y.first), '{}'::text[]) FROM (
+      SELECT NULLIF(coalesce(m.to_name, u.l), '') AS v, min(u.ord) AS first
+      FROM unnest(${column}) WITH ORDINALITY AS u(l, ord)
+      LEFT JOIN unnest(${from}::text[], ${to}::text[]) AS m(from_name, to_name) ON m.from_name = u.l
+      GROUP BY 1
+    ) y WHERE y.v IS NOT NULL)`;
+  let changed = 0;
+  const tasks = taskWhere(userId, scope), notes = noteWhere(userId, scope), deliverables = deliverableWhere(userId, scope);
+  if (tasks) changed += await db.$executeRaw`UPDATE tasks t SET labels = ${next(Prisma.sql`t.labels`)} WHERE ${tasks} AND t.labels && ${from}::text[]`;
+  if (notes) changed += await db.$executeRaw`UPDATE task_pages n SET labels = ${next(Prisma.sql`n.labels`)} WHERE ${notes} AND n.labels && ${from}::text[]`;
+  if (deliverables) changed += await db.$executeRaw`UPDATE deliverables d SET labels = ${next(Prisma.sql`d.labels`)} WHERE ${deliverables} AND d.labels && ${from}::text[]`;
+  return changed;
+}
+
+/** For each spelling, the destination board's label (created with the source's colour when missing). */
+async function carryPairs(book: LabelBook, from: string, to: string, spellings: string[]): Promise<Array<[string, string]>> {
+  const names = cleanNames(spellings, Number.POSITIVE_INFINITY);
+  if (!names.length) return [];
+  const spelled = await book.ensure(to, names, await book.colors(from));
+  return spellings.map((label) => [label, spelled.get(labelKey(cleanLabelName(label))) ?? label]);
 }
 
 /** Moves a task's or a note's labels to the board it is moving to. Call before the move is written. */
 export async function carryItemLabels(db: Db, userId: string, item: { kind: "task" | "page"; id: string }, from: string, to: string): Promise<void> {
   if (from === to) return;
-  const book = new LabelBook(db, userId);
-  if (item.kind === "task") {
-    const task = await db.task.findFirst({ where: { id: item.id, userId }, select: { labels: true } });
-    if (!task?.labels.length) return;
-    const labels = await carryLabels(book, from, to, task.labels);
-    if (!sameNames(labels, task.labels)) await db.task.update({ where: { id: item.id }, data: { labels } });
-    return;
-  }
-  const page = await db.taskPage.findFirst({ where: { id: item.id, userId, taskId: null }, select: { labels: true } });
-  if (!page?.labels.length) return;
-  const labels = await carryLabels(book, from, to, page.labels);
-  if (!sameNames(labels, page.labels)) await db.taskPage.update({ where: { id: item.id }, data: { labels } });
+  const scope: Scope = item.kind === "task" ? { task: item.id } : { note: item.id };
+  const labels = await scopeLabels(db, userId, scope);
+  if (!labels.length) return;
+  await remapLabels(db, userId, scope, await carryPairs(new LabelBook(db, userId), from, to, labels));
 }
 
 /**
@@ -183,17 +255,9 @@ export async function carryItemLabels(db: Db, userId: string, item: { kind: "tas
  * independent, so their labels move to the Ensemble board's list with their colours. Then its own list goes.
  */
 export async function retireBoardLabels(db: Db, userId: string, boardId: string): Promise<void> {
-  const book = new LabelBook(db, userId);
-  const tasks = await db.task.findMany({ where: { userId, page: { is: { boardId } }, NOT: { labels: { isEmpty: true } } }, select: { id: true, labels: true } });
-  for (const task of tasks) {
-    const labels = await carryLabels(book, boardId, ENSEMBLE_KEY, task.labels);
-    if (!sameNames(labels, task.labels)) await db.task.update({ where: { id: task.id }, data: { labels } });
-  }
-  const notes = await db.taskPage.findMany({ where: { userId, boardId, taskId: null, NOT: { labels: { isEmpty: true } } }, select: { id: true, labels: true } });
-  for (const note of notes) {
-    const labels = await carryLabels(book, boardId, ENSEMBLE_KEY, note.labels);
-    if (!sameNames(labels, note.labels)) await db.taskPage.update({ where: { id: note.id }, data: { labels } });
-  }
+  const scope: Scope = { board: boardId };
+  const labels = await scopeLabels(db, userId, scope);
+  if (labels.length) await remapLabels(db, userId, scope, await carryPairs(new LabelBook(db, userId), boardId, ENSEMBLE_KEY, labels));
   await db.boardLabel.deleteMany({ where: { userId, boardKey: boardId } });
 }
 
@@ -201,29 +265,18 @@ function recordOf(row: Stored, count: number): BoardLabelRecord {
   return { id: row.id, name: row.name, color: colorOf(row), count };
 }
 
-/** How many of a board's items (Trash left out) have each label, by lower-case name. */
+/** How many of a board's items (Trash left out) have each label, by key. */
 async function labelCounts(db: Db, userId: string, key: string): Promise<Map<string, number>> {
-  const rows = key
-    ? await db.$queryRaw<Array<{ name_key: string; n: number }>>`
-        SELECT name_key, count(*)::int AS n FROM (
-          SELECT lower(l) AS name_key FROM tasks t JOIN task_pages p ON p.task_id = t.id, unnest(t.labels) AS l
-          WHERE t.user_id = ${userId} AND t.deleted_at IS NULL AND p.board_id = ${key}
-          UNION ALL
-          SELECT lower(l) FROM task_pages p, unnest(p.labels) AS l
-          WHERE p.user_id = ${userId} AND p.task_id IS NULL AND p.deleted_at IS NULL AND p.board_id = ${key}
-        ) x GROUP BY name_key`
-    : await db.$queryRaw<Array<{ name_key: string; n: number }>>`
-        SELECT name_key, count(*)::int AS n FROM (
-          SELECT lower(l) AS name_key FROM tasks t LEFT JOIN task_pages p ON p.task_id = t.id, unnest(t.labels) AS l
-          WHERE t.user_id = ${userId} AND t.deleted_at IS NULL AND p.board_id IS NULL
-          UNION ALL
-          SELECT lower(l) FROM task_pages p, unnest(p.labels) AS l
-          WHERE p.user_id = ${userId} AND p.task_id IS NULL AND p.deleted_at IS NULL AND p.board_id IS NULL
-          UNION ALL
-          SELECT lower(l) FROM deliverables d, unnest(d.labels) AS l
-          WHERE d.user_id = ${userId} AND d.deleted_at IS NULL
-        ) x GROUP BY name_key`;
-  return new Map(rows.map((row) => [row.name_key, Number(row.n)]));
+  const scope: Scope = { board: key };
+  const parts: Prisma.Sql[] = [Prisma.sql`SELECT unnest(t.labels) AS l FROM tasks t WHERE ${taskWhere(userId, scope)!} AND t.deleted_at IS NULL`];
+  parts.push(Prisma.sql`SELECT unnest(n.labels) AS l FROM task_pages n WHERE ${noteWhere(userId, scope)!} AND n.deleted_at IS NULL`);
+  const deliverables = deliverableWhere(userId, scope);
+  if (deliverables) parts.push(Prisma.sql`SELECT unnest(d.labels) AS l FROM deliverables d WHERE ${deliverables} AND d.deleted_at IS NULL`);
+  // Grouped by the stored text; the key is computed here, the one way names are compared.
+  const rows = await db.$queryRaw<Array<{ l: string; n: number }>>`SELECT x.l, count(*)::int AS n FROM (${Prisma.join(parts, " UNION ALL ")}) x GROUP BY x.l`;
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(labelKey(row.l), (counts.get(labelKey(row.l)) ?? 0) + Number(row.n));
+  return counts;
 }
 
 /** A board's labels in order, each with how many of its items have it. */
@@ -243,50 +296,11 @@ export async function boardLabelList(db: Db, userId: string, board: { key: strin
 export async function createBoardLabel(db: Db, userId: string, key: string, input: { name: string; color?: LabelColor }): Promise<{ label: BoardLabelRecord; created: boolean }> {
   const name = cleanLabelName(input.name);
   if (!name) throw new LabelError("Give the label a name.");
-  const existing = await db.boardLabel.findFirst({ where: { userId, boardKey: key, nameKey: name.toLowerCase() }, select: labelSelect });
+  const existing = await db.boardLabel.findFirst({ where: { userId, boardKey: key, nameKey: labelKey(name) }, select: labelSelect });
   if (existing) return { label: recordOf(existing, (await labelCounts(db, userId, key)).get(existing.nameKey) ?? 0), created: false };
-  const book = new LabelBook(db, userId);
-  await book.resolve(key, [name], input.color ? new Map([[name.toLowerCase(), input.color]]) : undefined);
-  const row = await db.boardLabel.findFirstOrThrow({ where: { userId, boardKey: key, nameKey: name.toLowerCase() }, select: labelSelect });
+  await new LabelBook(db, userId).ensure(key, [name], input.color ? new Map([[labelKey(name), input.color]]) : undefined);
+  const row = await db.boardLabel.findFirstOrThrow({ where: { userId, boardKey: key, nameKey: labelKey(name) }, select: labelSelect });
   return { label: recordOf(row, 0), created: true };
-}
-
-/** The ids of a board's items that carry a label (Trash included), by table. */
-async function itemsWith(db: Db, userId: string, key: string, nameKey: string) {
-  const tasks = key
-    ? await db.$queryRaw<Array<{ id: string }>>`SELECT t.id FROM tasks t JOIN task_pages p ON p.task_id = t.id WHERE t.user_id = ${userId} AND p.board_id = ${key} AND EXISTS (SELECT 1 FROM unnest(t.labels) AS l WHERE lower(l) = ${nameKey})`
-    : await db.$queryRaw<Array<{ id: string }>>`SELECT t.id FROM tasks t LEFT JOIN task_pages p ON p.task_id = t.id WHERE t.user_id = ${userId} AND p.board_id IS NULL AND EXISTS (SELECT 1 FROM unnest(t.labels) AS l WHERE lower(l) = ${nameKey})`;
-  const notes = key
-    ? await db.$queryRaw<Array<{ id: string }>>`SELECT id FROM task_pages WHERE user_id = ${userId} AND task_id IS NULL AND board_id = ${key} AND EXISTS (SELECT 1 FROM unnest(labels) AS l WHERE lower(l) = ${nameKey})`
-    : await db.$queryRaw<Array<{ id: string }>>`SELECT id FROM task_pages WHERE user_id = ${userId} AND task_id IS NULL AND board_id IS NULL AND EXISTS (SELECT 1 FROM unnest(labels) AS l WHERE lower(l) = ${nameKey})`;
-  const deliverables = key ? [] : await db.$queryRaw<Array<{ id: string }>>`SELECT id FROM deliverables WHERE user_id = ${userId} AND EXISTS (SELECT 1 FROM unnest(labels) AS l WHERE lower(l) = ${nameKey})`;
-  return { tasks: tasks.map((row) => row.id), notes: notes.map((row) => row.id), deliverables: deliverables.map((row) => row.id) };
-}
-
-/** Renames (`to`) or removes (`to` null) a label on every item of its board that has it. */
-async function rewriteItems(db: Db, userId: string, key: string, nameKey: string, to: string | null): Promise<number> {
-  const found = await itemsWith(db, userId, key, nameKey);
-  const next = (labels: string[]) => {
-    const out: string[] = [];
-    for (const label of labels) {
-      const value = label.toLowerCase() === nameKey ? to : label;
-      if (value && !out.some((kept) => kept.toLowerCase() === value.toLowerCase())) out.push(value);
-    }
-    return out;
-  };
-  for (const id of found.tasks) {
-    const row = await db.task.findUniqueOrThrow({ where: { id }, select: { labels: true } });
-    await db.task.update({ where: { id }, data: { labels: next(row.labels) } });
-  }
-  for (const id of found.notes) {
-    const row = await db.taskPage.findUniqueOrThrow({ where: { id }, select: { labels: true } });
-    await db.taskPage.update({ where: { id }, data: { labels: next(row.labels) } });
-  }
-  for (const id of found.deliverables) {
-    const row = await db.deliverable.findUniqueOrThrow({ where: { id }, select: { labels: true } });
-    await db.deliverable.update({ where: { id }, data: { labels: next(row.labels) } });
-  }
-  return found.tasks.length + found.notes.length + found.deliverables.length;
 }
 
 async function ownedLabel(db: Db, userId: string, id: string, lock = false): Promise<Stored & { boardKey: string }> {
@@ -296,38 +310,66 @@ async function ownedLabel(db: Db, userId: string, id: string, lock = false): Pro
   return row;
 }
 
-/** Renames or recolours a label. A rename reaches every item of the board that has it. */
+/** Renames or recolours a label. A rename reaches every item of the board that has it, Trash included. */
 export async function updateBoardLabel(db: Db, userId: string, id: string, patch: { name?: string; color?: LabelColor }): Promise<{ label: BoardLabelRecord; boardKey: string; changed: number }> {
   const row = await ownedLabel(db, userId, id, true);
   const name = patch.name === undefined ? row.name : cleanLabelName(patch.name);
   if (!name) throw new LabelError("Give the label a name.");
-  const nameKey = name.toLowerCase();
+  const nameKey = labelKey(name);
   if (nameKey !== row.nameKey && await db.boardLabel.findFirst({ where: { userId, boardKey: row.boardKey, nameKey }, select: { id: true } })) {
     throw new LabelError(`This board already has a label called “${name}”.`, 409);
   }
-  const changed = name !== row.name ? await rewriteItems(db, userId, row.boardKey, row.nameKey, name) : 0;
-  const updated = await db.boardLabel.update({
-    where: { id },
-    data: { name, nameKey, ...(patch.color ? { color: patch.color } : {}) },
-    select: labelSelect,
-  });
+  let changed = 0;
+  if (name !== row.name) {
+    // Any spelling of the old name, or of the new one, becomes the new name.
+    const spellings = (await scopeLabels(db, userId, { board: row.boardKey })).filter((label) => [row.nameKey, nameKey].includes(labelKey(label)));
+    changed = await remapLabels(db, userId, { board: row.boardKey }, spellings.map((label) => [label, name] as const));
+  }
+  const updated = await db.boardLabel.update({ where: { id }, data: { name, nameKey, ...(patch.color ? { color: patch.color } : {}) }, select: labelSelect });
   const counts = await labelCounts(db, userId, row.boardKey);
   return { label: recordOf(updated, counts.get(updated.nameKey) ?? 0), boardKey: row.boardKey, changed };
 }
 
-/** Deletes a label from its board and from every item there that has it. */
+/** Deletes a label from its board and from every item there that has it, Trash included. */
 export async function deleteBoardLabel(db: Db, userId: string, id: string): Promise<{ boardKey: string; changed: number }> {
   const row = await ownedLabel(db, userId, id, true);
-  const changed = await rewriteItems(db, userId, row.boardKey, row.nameKey, null);
+  const spellings = (await scopeLabels(db, userId, { board: row.boardKey })).filter((label) => labelKey(label) === row.nameKey);
+  const changed = await remapLabels(db, userId, { board: row.boardKey }, spellings.map((label) => [label, null] as const));
   await db.boardLabel.delete({ where: { id } });
   return { boardKey: row.boardKey, changed };
 }
 
 /** Every spelling of a label the space's boards have, for filters that match names exactly. */
 export async function labelSpellings(db: Db, userId: string, name: string): Promise<string[]> {
-  const nameKey = cleanLabelName(name.replace(/^#/, "")).toLowerCase();
-  if (!nameKey) return [];
-  const rows = await db.boardLabel.findMany({ where: { userId, nameKey }, select: { name: true } });
-  return [...new Set([cleanLabelName(name.replace(/^#/, "")), ...rows.map((row) => row.name)])];
+  const cleaned = cleanLabelName(name.replace(/^#/, ""));
+  if (!cleaned) return [];
+  const rows = await db.boardLabel.findMany({ where: { userId, nameKey: labelKey(cleaned) }, select: { name: true } });
+  return [...new Set([cleaned, ...rows.map((row) => row.name)])];
 }
 
+/**
+ * Labels whose stored key is not `labelKey(name)`. The migration keyed existing labels with SQL
+ * `lower()`, which folds only ASCII on a database with the C locale (the desktop's PGlite), so
+ * "Über" and "über" may have become two labels. Each gets its key fixed, or merges into the board's
+ * label that has that key (its items take that spelling). Idempotent; only non-ASCII names can differ.
+ */
+export async function repairLabelKeys(db: PrismaClient): Promise<number> {
+  const rows = await db.$queryRaw<Array<{ id: string; user_id: string; board_key: string; name: string; name_key: string }>>`
+    SELECT id, user_id, board_key, name, name_key FROM board_labels WHERE octet_length(name) <> char_length(name) ORDER BY created_at, id`;
+  let fixed = 0;
+  for (const row of rows) {
+    const key = labelKey(row.name);
+    if (key === row.name_key) continue;
+    await db.$transaction(async (tx) => {
+      const other = await tx.boardLabel.findFirst({ where: { userId: row.user_id, boardKey: row.board_key, nameKey: key, NOT: { id: row.id } }, select: { name: true } });
+      if (other) {
+        await remapLabels(tx, row.user_id, { board: row.board_key }, [[row.name, other.name]]);
+        await tx.boardLabel.delete({ where: { id: row.id } });
+      } else {
+        await tx.boardLabel.update({ where: { id: row.id }, data: { nameKey: key } });
+      }
+    });
+    fixed += 1;
+  }
+  return fixed;
+}

@@ -192,3 +192,30 @@ test("label chips show a few, count the rest, and use the board's colours", asyn
     host.remove();
   }
 });
+
+test("opened from a share, the picker only shows the labels and asks the server for nothing", async () => {
+  const realFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requests.push(String(input));
+    throw new Error("No request expected");
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => root.render(
+    <QueryClientProvider client={client}><ToastProvider><LabelPicker of={null} value={["Draft"]} onChange={() => assert.fail("read-only")} /></ToastProvider></QueryClientProvider>,
+  ));
+  await tick();
+  try {
+    assert.equal(host.querySelector(".tag")?.textContent, "Draft");
+    assert.equal(Boolean(host.querySelector("button[aria-haspopup='listbox']")), false, "no picker to open");
+    assert.deepEqual(requests, []);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    client.clear();
+    globalThis.fetch = realFetch;
+  }
+});

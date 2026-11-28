@@ -25,7 +25,8 @@ CREATE UNIQUE INDEX "board_labels_user_id_board_key_name_key_key" ON "board_labe
 
 -- Every free-text label a task has (Trash included) becomes a label of the task's board, once per name
 -- whatever its case: the spelling most tasks use wins, the earliest on a tie. Colour stays null, so each
--- keeps the colour its name already had (labelTone).
+-- keeps the colour its name already had (labelTone). name_key here is SQL lower(), which folds only ASCII
+-- under the C locale; the Hub fixes keys that differ from its own on start (repairLabelKeys).
 WITH used AS (
     SELECT t."user_id", COALESCE(p."board_id", '') AS board_key,
            regexp_replace(btrim(u.label), '\s+', ' ', 'g') AS name, t."created_at"
@@ -49,21 +50,23 @@ SELECT gen_random_uuid()::text, "user_id", board_key, name, name_key,
        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM chosen;
 
--- Tasks then carry their board's spelling, each label once, in the order they had them.
+-- Tasks then carry their board's spelling, each label once, in the order they had them. The new array
+-- is computed in SET from the row being written, so a label the running app writes meanwhile is kept:
+-- a name the list lacks stays as written (cleaned), and no name is dropped. updated_at is left alone.
 UPDATE "tasks" t
-SET "labels" = fixed.labels
-FROM (
-    SELECT x."id", array_agg(x.name ORDER BY x.first_ord) AS labels
+SET "labels" = (
+    SELECT coalesce(array_agg(x.name ORDER BY x.first_ord), '{}'::text[])
     FROM (
-        SELECT t."id", b."name" AS name, min(u.ord) AS first_ord
-        FROM "tasks" t
-        LEFT JOIN "task_pages" p ON p."task_id" = t."id"
-        CROSS JOIN LATERAL unnest(t."labels") WITH ORDINALITY AS u(label, ord)
-        JOIN "board_labels" b ON b."user_id" = t."user_id"
-            AND b."board_key" = COALESCE(p."board_id", '')
-            AND b."name_key" = lower(regexp_replace(btrim(u.label), '\s+', ' ', 'g'))
-        GROUP BY t."id", b."name"
+        SELECT COALESCE(b."name", c.cleaned) AS name, min(c.ord) AS first_ord
+        FROM (
+            SELECT regexp_replace(btrim(u.label), '\s+', ' ', 'g') AS cleaned, u.ord
+            FROM unnest(t."labels") WITH ORDINALITY AS u(label, ord)
+        ) c
+        LEFT JOIN "board_labels" b ON b."user_id" = t."user_id"
+            AND b."board_key" = COALESCE((SELECT p."board_id" FROM "task_pages" p WHERE p."task_id" = t."id"), '')
+            AND b."name_key" = lower(c.cleaned)
+        WHERE c.cleaned <> ''
+        GROUP BY 1
     ) x
-    GROUP BY x."id"
-) fixed
-WHERE fixed."id" = t."id" AND fixed.labels IS DISTINCT FROM t."labels";
+)
+WHERE cardinality(t."labels") > 0;

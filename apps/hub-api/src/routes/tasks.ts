@@ -13,6 +13,7 @@ import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
 import { INTERNAL_TASK } from "../lib/node-tasks.js";
 import { guardedSave, lockSave, saveBase, SaveConflictError } from "../lib/save-conflict.js";
 import { waitingTaskIds } from "../lib/needs-me.js";
+import { LABELS_REFUSED, labelsRefused } from "../labels/board-labels.js";
 
 export function serializeTask(task: {
   due: Date | null;
@@ -99,6 +100,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/tasks", async (request, reply) => {
     const body = CreateTask.parse(request.body);
+    if (body.labels?.length && labelsRefused()) return reply.code(403).send({ error: LABELS_REFUSED });
     const userId = request.userId;
     const created = await prisma.$transaction(async (tx) => {
       const task = await createTask(tx, userId, body, "me");
@@ -112,6 +114,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/api/tasks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = PatchTask.parse(request.body);
+    if (body.labels !== undefined && labelsRefused()) return reply.code(403).send({ error: LABELS_REFUSED });
     const userId = request.userId;
     let task;
     try {

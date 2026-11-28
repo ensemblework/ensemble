@@ -585,7 +585,7 @@ export function TaskPage({
         </PropertyRow>
 
         <PropertyRow icon={TagIcon} label="Labels">
-          <LabelPicker of={{ task: taskId }} value={record.labels ?? []} disabled={!canEditProperties} onChange={(labels) => update.mutate({ labels })} />
+          <LabelPicker of={shared ? null : { task: taskId }} value={record.labels ?? []} disabled={!canEditProperties} onChange={(labels) => update.mutate({ labels })} />
         </PropertyRow>
 
         <PropertyRow icon={FolderKanban} label="Project">

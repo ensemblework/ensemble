@@ -16,6 +16,7 @@ import {
   TaskPageError,
 } from "../pages/store.js";
 import { TaskLabels } from "@ensemble/shared-types";
+import { LABELS_REFUSED, labelsRefused } from "../labels/board-labels.js";
 import { appendLedger } from "../lib/ledger.js";
 import { collabHub } from "../pages/live.js";
 import { pageDirectory } from "../pages/boards.js";
@@ -95,6 +96,7 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/api/pages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = PatchPage.parse(request.body);
+    if (body.labels !== undefined && labelsRefused()) return reply.code(403).send({ error: LABELS_REFUSED });
     try {
       const page = body.title !== undefined ? await renameStandalonePage(prisma, request.userId, id, body.title) : undefined;
       const labelled = body.labels !== undefined ? await setStandalonePageLabels(prisma, request.userId, id, body.labels) : undefined;

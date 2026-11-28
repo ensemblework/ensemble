@@ -20,13 +20,21 @@ export const ENSEMBLE_LABEL_BOARD = "ensemble";
 /** The colour a label has before anyone picks one: the same name gets the same colour everywhere. */
 export function labelTone(name: string): LabelColor {
   let hash = 0;
-  for (const char of name.toLowerCase()) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  for (const char of labelKey(name)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return AUTO_LABEL_COLORS[hash % AUTO_LABEL_COLORS.length]!;
 }
 
 /** One label name as stored: inner spaces folded, trimmed, at most 40 characters. */
 export function cleanLabelName(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_TASK_LABEL_LENGTH).trim();
+}
+
+/**
+ * The one key a name is compared by, whatever its case (`BoardLabel.nameKey`). Always computed here,
+ * never with SQL `lower()`, which folds only ASCII on a database with the C locale.
+ */
+export function labelKey(name: string): string {
+  return name.toLowerCase();
 }
 
 /**

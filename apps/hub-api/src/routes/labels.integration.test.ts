@@ -153,3 +153,108 @@ test("bad input is refused", async () => {
   await harness.prisma.boardLabel.create({ data: { userId: user.id, boardKey: "", name: "Legacy", nameKey: "legacy", color: null } });
   assert.equal((await list(user, "board=ensemble")).labels[0]!.color, labelTone("Legacy"));
 });
+
+test("renaming or deleting a label on thousands of items finishes, Trash included, keeping each item's order", async () => {
+  const user = await harness.asUser();
+  await newTask(user, "Seed", ["Wide"]);
+  const label = (await list(user, "board=ensemble")).labels.find((row) => row.name === "Wide")!;
+  const many = 3000;
+  await harness.prisma.task.createMany({
+    data: Array.from({ length: many }, (_, index) => ({ userId: user.id, title: `Bulk ${index}`, labels: index % 2 ? ["Other", "Wide"] : ["wide"], ...(index % 3 === 0 ? { deletedAt: new Date() } : {}) })),
+  });
+  const renamed = await json<{ changed: number }>(user, "PATCH", `/api/labels/${label.id}`, { name: "Broad" });
+  assert.equal(renamed.changed, many + 1, "every spelling, live and in Trash");
+  assert.equal(await harness.prisma.task.count({ where: { userId: user.id, labels: { has: "Broad" } } }), many + 1);
+  assert.equal(await harness.prisma.task.count({ where: { userId: user.id, labels: { hasSome: ["Wide", "wide"] } } }), 0);
+  assert.deepEqual((await harness.prisma.task.findFirstOrThrow({ where: { userId: user.id, title: "Bulk 1" } })).labels, ["Other", "Broad"]);
+  const removed = await json<{ changed: number }>(user, "DELETE", `/api/labels/${label.id}`);
+  assert.equal(removed.changed, many + 1);
+  assert.deepEqual((await harness.prisma.task.findFirstOrThrow({ where: { userId: user.id, title: "Bulk 1" } })).labels, ["Other"]);
+  assert.deepEqual((await harness.prisma.task.findFirstOrThrow({ where: { userId: user.id, title: "Bulk 0" } })).labels, []);
+});
+
+test("label edits leave items' versions alone, so a pending Undo still restores them", async () => {
+  const user = await harness.asUser();
+  const live = await newTask(user, "Live", ["Launch"]);
+  const binned = await newTask(user, "Binned", ["Launch"]);
+  const trashed = await json<{ undoEntryId: string }>(user, "DELETE", `/api/tasks/${binned.id}`);
+  const version = async (id: string) => (await harness.prisma.task.findUniqueOrThrow({ where: { id }, select: { updatedAt: true } })).updatedAt.getTime();
+  const liveBefore = await version(live.id);
+  const launch = (await list(user, "board=ensemble")).labels.find((row) => row.name === "Launch")!;
+  await json(user, "PATCH", `/api/labels/${launch.id}`, { name: "Go live" });
+  assert.equal(await version(live.id), liveBefore, "a rename is not an edit of the item");
+  const restored = await user.inject({ method: "POST", url: "/api/undo", payload: { entryId: trashed.undoEntryId } });
+  assert.equal(restored.statusCode, 200, restored.body);
+  assert.deepEqual(await taskLabels(user, binned.id), ["Go live"]);
+
+  // Deleting a board carries a trashed note's labels (to the Ensemble board's spelling) without breaking its Trash undo.
+  await newTask(user, "Lab work", ["lab"]);
+  const board = await newBoard(user);
+  const note = (await json<{ page: { id: string } }>(user, "POST", "/api/pages")).page;
+  await toBoard(user, "page", note.id, board);
+  await json(user, "PATCH", `/api/pages/${note.id}`, { labels: ["Lab"] });
+  const binnedNote = await json<{ undoEntryId: string }>(user, "POST", "/api/pages/delete-many", { pageIds: [note.id] }, 200);
+  assert.equal((await user.inject({ method: "DELETE", url: `/api/boards/${board.id}` })).statusCode, 204);
+  const back = await user.inject({ method: "POST", url: "/api/undo", payload: { entryId: binnedNote.undoEntryId } });
+  assert.equal(back.statusCode, 200, back.body);
+  assert.deepEqual((await json<{ labels: string[] }>(user, "GET", `/api/pages/${note.id}`)).labels, ["lab"]);
+});
+
+test("someone a page, task or board is shared with sees labels but does not change the owner's list", async () => {
+  const owner = await harness.asUser(), guest = await harness.asUser();
+  const note = (await json<{ page: { id: string } }>(owner, "POST", "/api/pages")).page;
+  await json(owner, "PATCH", `/api/pages/${note.id}`, { labels: ["Draft"] });
+  const task = await newTask(owner, "Shared work", ["Draft"]);
+  const share = async (kind: "page" | "task" | "board", resourceId: string) =>
+    (await harness.prisma.share.create({ data: { spaceId: owner.id, kind, resourceId, recipientId: guest.id, role: "edit", createdBy: owner.id } })).id;
+  const as = (shareId: string) => ({ "x-ensemble-share": shareId });
+  const pageShare = await share("page", note.id);
+  assert.deepEqual((await guest.inject({ method: "GET", url: `/api/pages/${note.id}`, headers: as(pageShare) })).json().labels, ["Draft"]);
+  assert.equal((await guest.inject({ method: "PATCH", url: `/api/pages/${note.id}`, payload: { labels: ["Mine"] }, headers: as(pageShare) })).statusCode, 403);
+  assert.equal((await guest.inject({ method: "PATCH", url: `/api/pages/${note.id}`, payload: { title: "Renamed by a guest" }, headers: as(pageShare) })).statusCode, 200, "other edits still work");
+  assert.equal((await guest.inject({ method: "GET", url: `/api/labels?page=${note.id}`, headers: as(pageShare) })).statusCode, 403);
+  const taskShare = await share("task", task.id);
+  assert.equal((await guest.inject({ method: "PATCH", url: `/api/tasks/${task.id}`, payload: { labels: ["Mine"] }, headers: as(taskShare) })).statusCode, 403);
+  assert.equal((await guest.inject({ method: "PATCH", url: `/api/tasks/${task.id}`, payload: { priority: "p0" }, headers: as(taskShare) })).statusCode, 200);
+  const boardShare = await share("board", owner.id);
+  assert.equal((await guest.inject({ method: "POST", url: "/api/tasks", payload: { title: "From a guest", labels: ["Mine"] }, headers: as(boardShare) })).statusCode, 403);
+  assert.equal((await guest.inject({ method: "POST", url: "/api/tasks", payload: { title: "From a guest" }, headers: as(boardShare) })).statusCode, 201);
+  assert.deepEqual(names((await list(owner, "board=ensemble")).labels), ["Draft"]);
+});
+
+test("names compare by the Hub's own key, and labels the migration keyed another way are repaired", async () => {
+  const user = await harness.asUser();
+  await newTask(user, "A", ["Über"]);
+  assert.deepEqual((await newTask(user, "B", ["über"])).labels, ["Über"], "one label, whatever the case, beyond ASCII too");
+  assert.equal((await json<{ label: BoardLabelRecord }>(user, "POST", "/api/labels", { board: "ensemble", name: "ÜBER" }, 200)).label.name, "Über");
+  // As the migration leaves them on a C-locale database: SQL lower() did not fold Á or É.
+  const other = await harness.asUser();
+  await harness.prisma.boardLabel.createMany({ data: [
+    { userId: other.id, boardKey: "", name: "Éclair", nameKey: "Éclair", position: 0 },
+    { userId: other.id, boardKey: "", name: "éclair", nameKey: "éclair", position: 1 },
+    { userId: other.id, boardKey: "", name: "Ärger", nameKey: "Ärger", position: 2 },
+  ] });
+  await harness.prisma.task.createMany({ data: [
+    { userId: other.id, title: "E1", labels: ["Éclair", "Plain"] },
+    { userId: other.id, title: "E2", labels: ["éclair"] },
+    { userId: other.id, title: "E3", labels: ["Ärger"], deletedAt: new Date() },
+  ] });
+  const { repairLabelKeys } = await import("../labels/board-labels.js");
+  assert.equal(await repairLabelKeys(harness.prisma), 2);
+  assert.deepEqual(names((await list(other, "board=ensemble")).labels), ["éclair", "Ärger"]);
+  const labelsOf = async (title: string) => (await harness.prisma.task.findFirstOrThrow({ where: { userId: other.id, title } })).labels;
+  assert.deepEqual(await labelsOf("E1"), ["éclair", "Plain"], "items of the merged label take the kept spelling");
+  assert.deepEqual(await labelsOf("E3"), ["Ärger"]);
+  assert.deepEqual((await newTask(other, "E4", ["ärger"])).labels, ["Ärger"], "the fixed key is found");
+  assert.equal(await repairLabelKeys(harness.prisma), 0, "a second run changes nothing");
+});
+
+test("meeting follow-ups take their labels from the board's list", async () => {
+  const user = await harness.asUser();
+  await json(user, "POST", "/api/labels", { board: "ensemble", name: "Waiting-On" });
+  const { createProposals } = await import("../connectors/triage.js");
+  await createProposals(user.id, [{ sourceRef: `test:${randomUUID()}`, sourceKind: "meeting", title: "Send the deck", description: "", priority: "p1", artifactId: randomUUID(), rationale: "Asked in the meeting.", labels: ["waiting-on", "Deck"], linkArtifact: false }], "heuristic");
+  const task = await harness.prisma.task.findFirstOrThrow({ where: { userId: user.id, title: "Send the deck" } });
+  assert.deepEqual(task.labels, ["Waiting-On", "Deck"]);
+  assert.deepEqual(names((await list(user, "board=ensemble")).labels), ["Waiting-On", "Deck"]);
+});

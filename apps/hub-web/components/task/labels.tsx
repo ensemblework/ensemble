@@ -68,10 +68,11 @@ type Row = { kind: "label"; label: BoardLabelRecord; known: boolean } | { kind: 
  * as you type; Enter or a click adds or removes one, and a name the board lacks is created on it with
  * the next free colour. Each label's ⋯ renames, recolours or deletes it for the whole board.
  */
-export function LabelPicker({ of, value, onChange, disabled, labelledBy, empty = "Empty" }: { of: LabelListOf; value: string[]; onChange: (labels: string[]) => void; disabled?: boolean; labelledBy?: string; empty?: string }) {
+export function LabelPicker({ of, value, onChange, disabled, labelledBy, empty = "Empty" }: { of: LabelListOf | null; value: string[]; onChange: (labels: string[]) => void; disabled?: boolean; labelledBy?: string; empty?: string }) {
+  // `of` null: opened from a share, where the board's list is not open to the reader; read-only.
   const list = useLabelList(of);
   const colors = useMemo(() => labelColors(list.data?.labels), [list.data]);
-  if (disabled) return value.length ? <LabelChips labels={value} max={MAX_LABELS} colors={colors} /> : <span className="px-1.5 text-faint">{empty}</span>;
+  if (disabled || !of) return value.length ? <LabelChips labels={value} max={MAX_LABELS} colors={colors} /> : <span className="px-1.5 text-faint">{empty}</span>;
   return (
     <Popover
       width={264}
