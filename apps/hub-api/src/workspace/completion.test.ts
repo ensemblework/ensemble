@@ -700,12 +700,25 @@ test("a check's baseline: the package script it runs and that script's files, a 
   writeFileSync(join(root, "test_new.js"), "");
   assert.equal((await checkChanges(later)).changed.size, 0);
 
-  // A make target's Makefile is hashed like a package script.
+  // A make target's Makefile is hashed like a package script, with the files its recipe's checks name.
   writeFileSync(join(root, "Makefile"), "test:\n\tnode check.js\n");
   const made = await checkBaseline(root, [{ check: { command: "make test" }, cwd: root }], "Make `make test` pass.", null);
-  assert.deepEqual(made.entries.map((row) => row.label), ["Makefile"]);
+  assert.deepEqual(made.entries.map((row) => row.label), ["Makefile", "check.js"]);
   writeFileSync(join(root, "Makefile"), "test:\n\ttrue\n");
   assert.deepEqual((await checkChanges(made)).changed.get(checkKey(root, "make test")), ["Makefile"]);
+  // What the recipe runs: the target's and its prerequisites' lines, and the makefiles it includes.
+  const recipeRoot = folder("make-recipe");
+  mkdirSync(join(recipeRoot, "tests"));
+  writeFileSync(join(recipeRoot, "tests", "test_api.py"), "def test_ok():\n    assert True\n");
+  writeFileSync(join(recipeRoot, "lint_check.py"), "");
+  writeFileSync(join(recipeRoot, "rules.mk"), "PY := python3\n");
+  writeFileSync(join(recipeRoot, "Makefile"), "-include rules.mk\n.PHONY: test lint\ntest: lint\n\t@pytest -q tests/\n\t$(PY) -m pytest tests/\nlint: ; python lint_check.py\n");
+  const recipe = await checkBaseline(recipeRoot, [{ check: { command: "make test" }, cwd: recipeRoot }], "", null);
+  assert.deepEqual(recipe.entries.map((row) => row.label), ["Makefile", "rules.mk", "tests", "lint_check.py"], "a line with a variable names nothing");
+  writeFileSync(join(recipeRoot, "tests", "test_api.py"), "def test_ok():\n    pass\n");
+  assert.deepEqual((await checkChanges(recipe)).changed.get(checkKey(recipeRoot, "make test")), ["tests"], "an edited test folder the recipe runs is a changed check");
+  writeFileSync(join(recipeRoot, "rules.mk"), "PY := true\n");
+  assert.deepEqual((await checkChanges(recipe)).changed.get(checkKey(recipeRoot, "make test")), ["rules.mk", "tests"]);
   assert.equal(checkFilesNote([{ command: "make test" }]), "Do not edit the Makefile or reset what the check keeps between runs: `make test` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
 
   assert.equal(checkFilesNote([{ command: "node accept.js" }]), "Do not edit accept.js or reset what the check keeps between runs: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");

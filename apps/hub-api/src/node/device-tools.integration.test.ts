@@ -1131,6 +1131,7 @@ test("a node's agent run gets only the secrets it names: none by default, a save
   const claim = await key.inject({ method: "POST", url: "/api/devices/self/claim" });
   assert.equal(claim.statusCode, 200, claim.body);
   assert.deepEqual(json(claim).secrets, [], "the computer is told: none");
+  assert.equal(json(claim).keepsProcesses, true, "a node's session run outside a plan keeps what its agent left running, there too");
 
   await postMessage(h.prisma, { roomId: room.id, userId: mira.id, authorKind: "node", authorNodeId: node.id, kind: "approval", body: "To call the payments API.", data: { type: "secret", status: "saved", name: "STRIPE_KEY", deviceId: "x", computer: "Mira's laptop" }, visibleTo: [mira.id] });
   await say(mira, room.id, "run them again with the key");

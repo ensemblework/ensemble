@@ -14,7 +14,7 @@ import { truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
 import { env } from "../config.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
-import { listSessionGroups, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
+import { childSessionsOf, listSessionGroups, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
 import { stepLive } from "./plans.js";
 import { sessionOwners, sessionSnapshot } from "./session-queue.js";
 import { deleteAgentSession } from "../workspace/delete-session.js";
@@ -137,6 +137,8 @@ export function registerSessionRoutes(app: FastifyInstance): void {
     const agents = await prisma.nodeAgent.findMany({ where: { userId: accountId, id: { in: [...new Set(cards.map(row => row.nodeId))] } }, select: { id: true, name: true, slug: true } });
     const nodes = new Map(agents.map(row => [row.id, row]));
     const needle = query.q?.toLocaleLowerCase();
+    // The sessions of their own each session's agent started, deleted with it (docs/41 §6).
+    const children = await childSessionsOf(prisma, groups.flatMap(group => group.runIds));
     const rows = groups.map(({ session: row, runIds }) => {
       const inSession = new Set(runIds);
       const history = cards.filter(card => inSession.has(card.jobId));
@@ -170,7 +172,7 @@ export function registerSessionRoutes(app: FastifyInstance): void {
         model: row.model && row.model !== "default" ? row.model : null,
         computer: row.computer, folder: row.folder, title: row.title,
         latestTask: row.latestTask.title, summary: truncateText(row.summary, 300),
-        runs: row.runs, lastActiveAt: row.lastActiveAt, usedBy, deletion: row.deletion,
+        runs: row.runs, children: children.filter(child => inSession.has(child.runId)).length, lastActiveAt: row.lastActiveAt, usedBy, deletion: row.deletion,
         files: [...files.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
       };
     });

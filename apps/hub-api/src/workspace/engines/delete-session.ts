@@ -14,6 +14,7 @@ import { ACP_AGENTS } from "./acp.js";
 import { codexBinary } from "./codex.js";
 import { RpcConnection } from "./rpc.js";
 import { removeClaudeDesktopSessions } from "./app-sessions.js";
+import { cursorConfigDir, cursorDataDir, cursorSubAgents } from "./cursor-chats.js";
 
 const SessionId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -56,14 +57,6 @@ async function folders(path: string): Promise<string[]> {
 async function files(path: string): Promise<string[]> {
   try { return (await readdir(path, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name); }
   catch (error) { if (missing(error)) return []; throw error; }
-}
-
-/** cursor-agent's config folder (cursor-config `paths.js`, 2026.09 to 2026.11), which holds its terminal chats and its ACP sessions. */
-function cursorConfigDir(): string {
-  const configured = process.env.CURSOR_CONFIG_DIR;
-  if (configured?.trim()) return configured;
-  const xdg = process.env.XDG_CONFIG_HOME;
-  return xdg?.trim() ? join(xdg, "cursor") : join(homedir(), ".cursor");
 }
 
 /** The session id a Gemini CLI session file records: in its first line (JSON Lines), else in the whole file (JSON). */
@@ -178,11 +171,41 @@ export async function deleteCodexProjects(ids: string[]): Promise<void> {
   });
 }
 
+/**
+ * Deletes the sessions of their own a session's agent started, by the ids its runs recorded (sub-agents.ts), after the
+ * session itself, each agent's in one go: Codex's threads in one app-server (`thread/delete`; one the parent's deletion
+ * already removed counts as deleted), Cursor's chats by their exact folders and transcripts, without reading every chat
+ * again. The other agents keep their sub-agents in the session's own files.
+ */
+export async function deleteNativeChildren(engine: CodeEngine, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  for (const id of ids) SessionId.parse(id);
+  if (engine === "codex") {
+    const done = await withCodexServer(async rpc => {
+      for (const threadId of ids) {
+        try { await rpc.request("thread/delete", { threadId }); }
+        catch (error) { if (!(error instanceof Error && absentSession(error.message, threadId))) throw error; }
+      }
+    });
+    if (!done) throw new Error("Install or update Codex on this computer to delete its saved thread.");
+  } else if (engine === "cursor-agent") {
+    if (ids.some(id => !uuid.test(id))) throw new Error("This agent's recorded session ID is invalid.");
+    const chats = join(cursorConfigDir(), "chats"), projects = join(cursorDataDir(), "projects");
+    const workspaces = await folders(chats), places = await folders(projects);
+    for (const id of ids) {
+      for (const workspace of workspaces) await removeHistory(chats, [workspace, id]);
+      for (const place of places) await removeHistory(projects, [place, "agent-transcripts", id]);
+    }
+  }
+}
+
 export async function deleteNativeSession(engine: CodeEngine, sessionId: string, cwd: string): Promise<void> {
   SessionId.parse(sessionId);
   if (engine === "claude-code" || engine === "cursor-agent") {
     if (!uuid.test(sessionId)) throw new Error("This agent's recorded session ID is invalid.");
-    // Cursor's agent run over ACP, as Ensemble runs it, keeps the session apart from its terminal chats.
+    // Cursor's agent run over ACP, as Ensemble runs it, keeps the session apart from its terminal chats. Each
+    // sub-agent it started is a chat of its own, found by the parent its metadata names (cursor-chats.ts).
+    const children = engine === "cursor-agent" ? await cursorSubAgents(sessionId) : [];
     if (engine === "cursor-agent") await removeHistory(cursorConfigDir(), ["acp-sessions", sessionId]);
     const root = engine === "claude-code"
       ? join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects")
@@ -190,6 +213,13 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     for (const folder of await folders(root)) {
       await removeHistory(root, [folder, engine === "claude-code" ? `${sessionId}.jsonl` : sessionId]);
       if (engine === "claude-code") await removeHistory(root, [folder, sessionId]);
+    }
+    if (engine === "cursor-agent") {
+      // A sub-agent found only by its transcript may still have a chat: in whichever workspace's folder holds it.
+      const workspaces = await folders(root);
+      for (const child of children) for (const workspace of child.workspace ? [child.workspace] : workspaces) await removeHistory(root, [workspace, child.id]);
+      const projects = join(cursorDataDir(), "projects");
+      for (const folder of await folders(projects)) for (const id of [sessionId, ...children.map(child => child.id)]) await removeHistory(projects, [folder, "agent-transcripts", id]);
     }
     // Its entry in the Claude app's Code tab goes with it (app-sessions.ts).
     if (engine === "claude-code") await removeClaudeDesktopSessions(sessionId);

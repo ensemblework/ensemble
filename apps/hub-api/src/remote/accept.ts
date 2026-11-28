@@ -111,6 +111,8 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       ...(Array.isArray(spec.secrets) ? { secrets: spec.secrets } : {}),
       // The shared folder's path stays on this computer: for the folder claims (one mission's runs wait for each other) and removing worktrees.
       ...(mission ? { mission: { ...mission, ...(tree?.folder ? { root: tree.folder } : {}) } } : {}),
+      // A node's session run keeps what its agent left running here too (engines/registry.ts `stopsLeftovers`).
+      ...(spec.keepsProcesses === true ? { keepsProcesses: true } : {}),
       // The project's brief: createJob puts a new session in the project's folder here (agent-projects.ts).
       ...(agentProjectOf(spec.project) ? { agentProject: agentProjectOf(spec.project) } : {}),
       // The task's facts as the web knows them, kept so later runs here can be matched against this one (session-choice).

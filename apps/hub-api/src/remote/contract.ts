@@ -140,8 +140,10 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * has a `purpose` (a human check too), is seen done by the computer itself (`ROUTES.loginState`), may ask
  * for a one-time code (`needs_code`, answered with `code`), and a sign-in's takeover runs in a clean
  * browser whose frames say which site they show.
+ * 9 (28 Nov 2026): progress may carry `sub_agent` events, each a child the run's agent started (its id, kind,
+ * the session it belongs to and what it was asked; `SubAgentLog` in `workspace/engines/sub-agents.ts`).
  */
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
 export const MAX_AUTO_RESUMES = 2;
 /** A run interrupted longer ago than this is not carried on by itself. */
@@ -271,6 +273,8 @@ export const JobSpec = z
      * value this computer does not understand never refuses the whole job.
      */
     mission: z.unknown().optional(),
+    /** The run keeps what its agent left running when it ends (a node's session run, a chat turn): `stopsLeftovers`. */
+    keepsProcesses: z.boolean().optional(),
     /**
      * The Ensemble project of a task for the person's own coding agent: its id, name, brief (Markdown)
      * and the brief's hash (workspace/agent-projects.ts). The computer runs the task in the project's
@@ -423,13 +427,15 @@ export function parseRegistered(body: unknown): { token: string; deviceId: strin
  * Kinds a device may post on progress. The server writes `needs_me`,
  * `interrupted`, and every other kind itself, and rejects them from a computer.
  */
-export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed"] as const;
+export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed", "sub_agent"] as const;
 const DEVICE_EVENT_KIND = new Set<string>(DEVICE_EVENT_KINDS);
+/** What servers on protocols 5 to 8 take: no `sub_agent`. */
+const V5_EVENT_KINDS = new Set<string>(DEVICE_EVENT_KINDS.filter((kind) => kind !== "sub_agent"));
 /** What servers on protocols 2 to 4 take; they refuse a post with any other kind. */
 const V2_EVENT_KINDS = new Set<string>(["prepared", "tool", "command", "engine", "sandbox"]);
 
 export function deviceOwnedEvents<T extends { kind: string }>(rows: T[], protocol = PROTOCOL): T[] {
-  const kinds: ReadonlySet<string> = protocol >= 5 ? DEVICE_EVENT_KIND : protocol >= 2 ? V2_EVENT_KINDS : new Set<string>(LEGACY_EVENT_KINDS);
+  const kinds: ReadonlySet<string> = protocol >= 9 ? DEVICE_EVENT_KIND : protocol >= 5 ? V5_EVENT_KINDS : protocol >= 2 ? V2_EVENT_KINDS : new Set<string>(LEGACY_EVENT_KINDS);
   return rows.filter((row) => kinds.has(row.kind)).slice(0, 50);
 }
 

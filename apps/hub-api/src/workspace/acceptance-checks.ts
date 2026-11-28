@@ -323,8 +323,47 @@ export async function makefileAt(cwd: string): Promise<string | null> {
 
 /** Whether a Makefile has a rule for `target` (`test:`, `lint test: deps`), not a variable set with `:=`. */
 export function definesTarget(text: string, target: string): boolean {
+  return ruleLines(text, target).length > 0;
+}
+
+/** The rule lines for `target` (`test: deps ; cmd`), with what follows the colon, in the file's order. */
+function ruleLines(text: string, target: string): Array<{ at: number; rest: string }> {
   const name = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^(?:[^\\s:#=]+[ \\t]+)*${name}(?:[ \\t]+[^\\s:#=]+)*[ \\t]*::?(?!=)`, "m").test(text);
+  const rule = new RegExp(`^(?:[^\\s:#=]+[ \\t]+)*${name}(?:[ \\t]+[^\\s:#=]+)*[ \\t]*::?(?!=)(.*)$`, "gm");
+  return [...text.matchAll(rule)].map((match) => ({ at: match.index! + match[0].length, rest: match[1] ?? "" }));
+}
+
+/**
+ * What `make <target>` runs, as far as the Makefile's own words show it: the recipe lines of the target and of the
+ * targets it needs, in turn (at most 20 targets), each without make's `@`, `-` and `+` in front; and the files it
+ * includes (`include`, `-include`, `sinclude`) that are plain paths in its folder. A line or a path with a variable,
+ * a glob or shell syntax is left out.
+ */
+export function makeRecipe(text: string, target: string): { commands: string[]; includes: string[] } {
+  const lines = text.replace(/\r\n/g, "\n");
+  const commands: string[] = [];
+  const seen = new Set<string>();
+  const queue = [target];
+  while (queue.length && seen.size < 20) {
+    const name = queue.shift()!;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    for (const { at, rest } of ruleLines(lines, name)) {
+      const [needs = "", inline] = rest.split(/;(.*)/s);
+      for (const word of needs.split("|")[0]!.trim().split(/\s+/)) if (/^[\w.-]+$/.test(word) && !seen.has(word)) queue.push(word);
+      const recipe = inline === undefined ? [] : [inline];
+      for (const line of lines.slice(at + 1).split("\n")) {
+        if (line.startsWith("\t")) recipe.push(line);
+        else if (line.trim() && !line.trim().startsWith("#")) break;
+      }
+      for (const line of recipe) {
+        const command = line.trim().replace(/^[@+-]+\s*/, "").trim();
+        if (command) commands.push(command);
+      }
+    }
+  }
+  const includes = [...lines.matchAll(/^[ \t]*(?:-|s)?include[ \t]+(.+)$/gm)].flatMap((match) => match[1]!.trim().split(/\s+/)).filter((path) => /^[\w./-]+$/.test(path) && staysInside(path));
+  return { commands, includes };
 }
 
 /** Why `make <target>` cannot run as a check in `cwd`: the Makefile there (in the run's folder) has no rule of that name. */

@@ -140,6 +140,8 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
     assert.equal(job.status, "succeeded", `${job.error ?? ""}\n${side.logs().slice(-3000)}`);
     const summary = job.summary ?? "";
     assert.match(summary, /noask:true/, "questions go through ask_person, not Copilot's own prompt");
+    const children = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events.filter((event) => event.kind === "sub_agent");
+    assert.deepEqual(children.map((event) => [event.data.engine, event.data.id, event.data.kind]), [["copilot-cli", "f1905b8e", "inside"]], "the task tool's sub-agent is recorded once, inside the session");
     assert.match(summary, /sandbox:false/, "the sandbox was off for this run");
     assert.match(summary, /context:long_context/, "the long context window the task chose");
     assert.match(summary, /allowensemble:true/, "Ensemble's own MCP tools do not ask; its browser and capture tools are judged");

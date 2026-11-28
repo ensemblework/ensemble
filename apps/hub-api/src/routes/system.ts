@@ -10,6 +10,7 @@ import { complete, runtime } from "../lib/runtime.js";
 import { hasModule, MODULE_DENIED } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
+import { deleteFromBin, notOutOfBin, NOT_THREAD } from "../workspace/thread-bin.js";
 import { sseHub } from "../lib/sse.js";
 import { encrypt } from "../lib/secrets.js";
 import { listActivities } from "../lib/activity.js";
@@ -260,7 +261,8 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/deleted", async (request) => {
     const where = { userId: request.userId, deletedAt: { not: null } };
     const [tasks, projects, people, skills, documents, repos, deliverables, reminders, comments, meetings, diagrams, pages] = await Promise.all([
-      prisma.task.findMany({ where, select: { id: true, title: true, deletedAt: true } }),
+      // A Code thread is in Trash only while it is in the Code tab's Bin (workspace/thread-bin.ts).
+      prisma.task.findMany({ where: { ...where, ...notOutOfBin() }, select: { id: true, title: true, deletedAt: true } }),
       prisma.project.findMany({ where, select: { id: true, name: true, deletedAt: true } }),
       prisma.person.findMany({ where, select: { id: true, name: true, deletedAt: true } }),
       hasModule(request.modules, "skills")
@@ -376,7 +378,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       const delegate = DELEGATES[kind] as unknown as {
         updateMany: (args: unknown) => Promise<{ count: number }>;
       };
-      restored += (await delegate.updateMany({ where: { ...where, ...(kind === "page" ? { taskId: null } : {}) }, data: { deletedAt: null } })).count;
+      restored += (await delegate.updateMany({ where: { ...where, ...(kind === "page" ? { taskId: null } : {}), ...(kind === "task" ? notOutOfBin() : {}) }, data: { deletedAt: null } })).count;
     }
     sseHub.publish(request.userId, { event: "task", data: { action: "restore" } });
     sseHub.publish(request.userId, { event: "page", data: { action: "restore" } });
@@ -388,6 +390,13 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     let removed = 0;
     for (const [kind, delegate] of Object.entries(DELEGATES)) {
       if (kind === "page") { removed += await purgeDeletedStandalonePages(prisma, request.userId); continue; }
+      if (kind === "task") {
+        // Code threads in the Bin are deleted for good as from the Bin, so their agent sessions are deleted first.
+        const settings = await loadSettings(prisma, request.userId);
+        removed += await deleteFromBin(prisma, request.userId, { keepSessions: settings.orchestration.cleanSessions === false });
+        removed += (await prisma.task.deleteMany({ where: { ...where, ...NOT_THREAD } })).count;
+        continue;
+      }
       if (kind === "document") {
         const files = await prisma.document.findMany({ where, select: { artifactId: true } });
         const artifactIds = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));

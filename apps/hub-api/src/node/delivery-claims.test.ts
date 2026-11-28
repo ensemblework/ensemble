@@ -1,6 +1,6 @@
 /**
- * The delivery check's English phrase list (node/delivery-claims.ts): which replies say that something reached
- * the chat, what backs each claim, and how a claim nothing backs is taken out of the reply.
+ * The delivery check's English and Spanish phrase lists (node/delivery-claims.ts): which replies say that something
+ * reached the chat, what backs each claim, and how a claim nothing backs is taken out of the reply.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -108,4 +108,212 @@ test("whose act a claim is: the node's own, said with I or we or with no subject
   // Emphasis that holds more than the claim keeps its marks.
   assert.equal(checkDelivery("**Prices are in. Here is the screenshot.**", none)!.corrected, "**Prices are in.**\n\nNo screenshot was attached.");
   assert.equal(checkDelivery("**Here is the screenshot. Prices are in.**", none)!.corrected, "**Prices are in.**\n\nNo screenshot was attached.");
+});
+
+// Spanish: the second language the check reads. The same claims, exclusions and corrections as in English.
+
+test("in Spanish, a reply that says a screenshot, picture, video or file is here, attached, sent or shared makes a claim, with or without accents and a subject", () => {
+  assert.deepEqual(kinds("Aquí está la captura de pantalla."), ["screenshot"]);
+  assert.deepEqual(kinds("Aquí tienes las capturas de la página de estado."), ["screenshot"]);
+  assert.deepEqual(kinds("La captura de pantalla está adjunta."), ["screenshot"]);
+  assert.deepEqual(kinds("**Captura de pantalla:** adjunta"), ["screenshot"]);
+  assert.deepEqual(kinds("Abajo tienes el pantallazo del pago."), ["screenshot"]);
+  assert.deepEqual(kinds("Te he enviado las capturas."), ["screenshot"]);
+  assert.deepEqual(kinds("Yo te envié la captura de pantalla."), ["screenshot"]);
+  assert.deepEqual(kinds("Listo. Añadí la tarea y aquí está una imagen del tablero."), ["picture"]);
+  assert.deepEqual(kinds("Las fotos están más abajo."), ["picture"]);
+  assert.deepEqual(kinds("Aqui estan las imagenes del panel."), ["picture"], "without accents");
+  assert.deepEqual(kinds("Aquí está la grabación de la calculadora."), ["video"]);
+  assert.deepEqual(kinds("He enviado el vídeo a este chat."), ["video"]);
+  assert.deepEqual(kinds("Te paso el video de la demo."), ["video"]);
+  assert.deepEqual(kinds("He adjuntado el informe."), ["file"]);
+  assert.deepEqual(kinds("Hemos adjuntado el informe."), ["file"]);
+  assert.deepEqual(kinds("El resumen va adjunto."), ["file"]);
+  assert.deepEqual(kinds("Adjunto el archivo con las cifras."), ["file"]);
+  assert.deepEqual(kinds("Te acabo de enviar el PDF."), ["file"]);
+  assert.deepEqual(kinds("Consulta el informe adjunto."), ["file"]);
+  assert.deepEqual(deliveryClaims("Aquí están las capturas de pantalla.").map((claim) => claim.noun), ["capturas de pantalla"]);
+  assert.deepEqual(deliveryClaims("Adjunto encontrarás informe_económico.pdf con las cifras.").map((claim) => claim.noun), ["informe_económico.pdf"], "a file's name, accents and all");
+  assert.deepEqual(kinds("7 × 6 = 42. He adjuntado la captura. La página muestra 3 servicios."), ["screenshot"], "one claim, in its own sentence");
+});
+
+test("what is not a claim, in English and in Spanish: a denial, a question, a plan or condition, someone else's act, the owner's own file, another person or app, and quoted, code or block-quoted text", () => {
+  const english = [
+    "I haven't attached the report.",
+    "Did I attach the report?",
+    "If the build passes, I'll send the report.",
+    "I'll send you the screenshot tomorrow.",
+    "Mira attached the report.",
+    "The PDF you attached says 42.",
+    "I've sent the report to Mira by email.",
+    'The bot replies "I\'ve attached the report." after each run.',
+    "`I've attached the report.`",
+    "> Here is the screenshot.",
+    "```\nHere is the screenshot.\n```",
+  ];
+  const spanish = [
+    // A denial.
+    "No he adjuntado el informe.",
+    "Todavía no te he enviado la captura.",
+    "No pude adjuntar la captura de pantalla.",
+    // A question.
+    "¿He adjuntado el informe?",
+    "¿Te envío el informe?",
+    // A plan or a condition.
+    "Si termina, enviaré el informe.",
+    "Si termina, te envío el informe.",
+    "Cuando acabe la prueba, te mando el vídeo.",
+    "Te enviaré la captura mañana.",
+    "Voy a adjuntar el informe.",
+    "Te envío el informe más tarde.",
+    // Someone else's act, or words someone else said.
+    "Mira adjuntó el informe.",
+    "Mira ha enviado las capturas.",
+    "Mira revisa el informe adjunto cada lunes.",
+    "El envío del informe tardó dos días.",
+    "El cliente dice que el informe está adjunto.",
+    "Mira dijo que aquí está la captura.",
+    // The owner's own file.
+    "El PDF que adjuntaste dice 42.",
+    "Las fotos que me enviaste están abajo.",
+    // Another person or app.
+    "He enviado el informe a Mira por correo.",
+    "He adjuntado la captura a la tarea.",
+    "He subido el archivo a tu Drive.",
+    "He publicado el informe en #general.",
+    "He compartido el documento con Mira.",
+    "He compartido el informe con el equipo.",
+    // Quoted, code or block-quoted text.
+    "Tu correo de bienvenida empieza con «Aquí está la captura que pediste».",
+    'El bot responde "He adjuntado el informe." tras cada ejecución.',
+    "`He adjuntado el informe.`",
+    "> Aquí está la captura de pantalla.",
+    "```\nHe adjuntado el informe.\n```",
+    // Written in the reply itself, or no screenshot at all.
+    "Aquí está el informe del tercer trimestre: los ingresos crecieron.",
+    "La captura de datos está abajo en la lista de prioridades.",
+    "Aquí tienes un resumen de la reunión:",
+  ];
+  for (const text of [...english, ...spanish]) assert.deepEqual(deliveryClaims(text), [], text);
+});
+
+test("in Spanish, a claim holds when what it names reached the chat; missing or the wrong kind, it does not", () => {
+  assert.equal(checkDelivery("Aquí está la captura de pantalla.", deliveredWith([{ kind: "screenshot" }], "")), null);
+  assert.equal(checkDelivery("Aquí está la captura.", deliveredWith(heldCaptures([{ data: { evidence: [{ id: "e1", kind: "screenshot", held: true }] } }]), "")), null, "held for the owner's preview card");
+  assert.equal(checkDelivery("Te he enviado el vídeo.", deliveredWith([{ kind: "video" }], "")), null);
+  assert.equal(checkDelivery("He adjuntado informe.md.", deliveredWith([{ kind: "report" }], "")), null);
+  const linked = "He adjuntado el informe: [informe.md](ensemble://file/0d7f6c2e-4a5b-4c3d-8e9f-0a1b2c3d4e5f).";
+  assert.equal(checkDelivery(linked, deliveredWith([], linked)), null, "a link to the saved file");
+  assert.ok(checkDelivery("He adjuntado el informe.", none), "nothing reached the chat");
+  assert.ok(checkDelivery("Aquí está la captura de pantalla.", deliveredWith([{ kind: "report" }], "")), "a file is not a picture");
+  assert.ok(checkDelivery("Te he enviado el vídeo.", deliveredWith([{ kind: "screenshot" }], "")), "a picture is not a video");
+  assert.ok(checkDelivery("Las fotos están más abajo.", deliveredWith([{ kind: "video" }], "")), "a video is not a picture");
+});
+
+test("in Spanish, a claim nothing backs: the feedback names it, then the claim goes from the reply and a note in Spanish says what was not attached, Unicode and Markdown kept", () => {
+  const only = checkDelivery("Aquí están las capturas de pantalla.", none)!;
+  assert.equal(only.count, 1);
+  assert.equal(only.feedback, "You said the screenshots are attached, but nothing reached the chat. Attach them with the right tool, or correct your reply.");
+  assert.equal(only.corrected, "No se adjuntó ninguna captura de pantalla.", "a sentence that only made the claim goes");
+  assert.equal(checkDelivery("He adjuntado el informe.", none)!.feedback, "You said the file is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  assert.equal(claimFeedback(deliveryClaims("He adjuntado informe.md.")), "You said informe.md is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+
+  const mixed = checkDelivery("7 × 6 = 42.\nAquí está la captura de pantalla de la página.\nLa pantalla muestra 42.", none)!;
+  assert.equal(mixed.corrected, "7 × 6 = 42.\nLa pantalla muestra 42.\n\nNo se adjuntó ninguna captura de pantalla.");
+
+  const kept = "Aquí está la captura de la página de estado: muestra 3 servicios activos y 1 caído.";
+  assert.equal(checkDelivery(kept, none)!.corrected, `${kept}\n\nNo se adjuntó ninguna captura de pantalla.`, "a sentence that says more stays");
+
+  const two = checkDelivery("He adjuntado informe.md. Aquí está la grabación.", none)!;
+  assert.equal(two.count, 2);
+  assert.equal(two.corrected, "No se adjuntó ningún archivo. No se adjuntó ningún video.");
+  assert.equal(checkDelivery("Las fotos están más abajo.", none)!.corrected, "No se adjuntó ninguna imagen.");
+
+  const corrected = (text: string) => checkDelivery(text, none)?.corrected ?? text;
+  assert.equal(corrected("Ya está 🎉. Aquí está la captura de pantalla. Revisé la página «Precios» también."), "Ya está 🎉. Revisé la página «Precios» también.\n\nNo se adjuntó ninguna captura de pantalla.");
+  // "Dra." ends no sentence: all of the claim's sentence goes, and nothing of it is left behind.
+  assert.equal(corrected("He adjuntado el informe para la Dra. Ruiz. Cubre las cifras de marzo."), "Cubre las cifras de marzo.\n\nNo se adjuntó ningún archivo.");
+  // Neither does "EE. UU.": the sentence says more than the claim, so it stays whole, and none of it is left behind on its own.
+  const abroad = "He enviado el informe sobre EE. UU. y México. Las cifras son de marzo.";
+  assert.equal(corrected(abroad), `${abroad}\n\nNo se adjuntó ningún archivo.`);
+  // Neither does "p. ej.": the whole sentence says more than the claim, so it stays, whole, with the note.
+  const example = "Adjunta está la captura, p. ej. la página de pago con 3 artículos a 4,99 € cada uno.";
+  assert.equal(corrected(example), `${example}\n\nNo se adjuntó ninguna captura de pantalla.`);
+  // A sentence goes with its emphasis and, alone on its line, with its bullet.
+  assert.equal(
+    corrected("Los precios ya están. **Te he adjuntado la captura.** El más barato es Mercadona:\n\n- **Aquí está la captura de pantalla.**\n- Mercadona: 4,99 €\n- Día: 5,49 €"),
+    "Los precios ya están. El más barato es Mercadona:\n\n- Mercadona: 4,99 €\n- Día: 5,49 €\n\nNo se adjuntó ninguna captura de pantalla.",
+  );
+  assert.equal(checkDelivery("Resultados:\n1. Aquí está la captura.\n2. Mercadona lo tiene a 4,99 €.", none)!.corrected, "Resultados:\n2. Mercadona lo tiene a 4,99 €.\n\nNo se adjuntó ninguna captura de pantalla.");
+  assert.equal(checkDelivery("**Los precios ya están. Aquí está la captura.**", none)!.corrected, "**Los precios ya están.**\n\nNo se adjuntó ninguna captura de pantalla.");
+  for (const text of [only.feedback, only.corrected, mixed.corrected, two.corrected]) assert.doesNotMatch(text, /—|--/, "no long dashes");
+});
+
+test("in Spanish, whose act a claim is: the node's own, said with yo or nosotros or with no subject; never one someone else did or said", () => {
+  for (const text of [
+    "Te he enviado las capturas.",
+    "Yo te he enviado las capturas.",
+    "Corregí el error y te envié las capturas.",
+    "Revisé la página, corregí el fallo y adjunté la captura.",
+    "Mira revisó la página y yo adjunté la captura.",
+    "Hola Mira, te he adjuntado el informe.",
+    "Como pediste, te envío el informe.",
+    "Te confirmo que he adjuntado el informe.",
+    "Listo: adjunté el informe.",
+  ]) {
+    assert.equal(deliveryClaims(text).length, 1, text);
+  }
+  for (const text of [
+    "Mira envió la captura ayer.",
+    "El cliente ya ha compartido el informe.",
+    "Tu jefa revisó la página y adjuntó la captura.",
+    "Según Mira, te he enviado el informe.",
+    "«He adjuntado el informe», escribió Mira.",
+  ]) {
+    assert.deepEqual(deliveryClaims(text), [], text);
+  }
+  // A quoted sentence ends where its quote does: the claim after it is the node's.
+  assert.deepEqual(kinds("Mira dijo «Gracias.» Aquí está la captura."), ["screenshot"]);
+});
+
+test("in Spanish, a summary given in the reply, a plan in the present, what a sentence says besides its claim, and accents typed apart or left out", () => {
+  // "Te dejo el resumen:" with the summary after it is the reply's own text, as English "here is a summary" is; a file it names, or one handed over before, is a claim.
+  for (const text of ["Aquí te dejo un resumen de la reunión:", "Te paso el informe: las ventas subieron en marzo.", "Te comparto el resumen de la llamada:", "Comparto el informe de la semana:"]) {
+    assert.deepEqual(deliveryClaims(text), [], text);
+  }
+  assert.deepEqual(kinds("Te dejo el PDF con el resumen."), ["file"]);
+  assert.deepEqual(kinds("Te paso informe.md."), ["file"]);
+  assert.deepEqual(kinds("Te pasé el informe."), ["file"]);
+  assert.deepEqual(kinds("Te dejo la captura de pantalla."), ["screenshot"]);
+
+  // Spanish says a plan in the present: a time still to come anywhere in the sentence makes one. A past act, or "aquí está", is still a claim.
+  for (const text of [
+    "Te envío el informe cuando termine la compilación.",
+    "Te paso las capturas después de la reunión.",
+    "Te mando el vídeo en cuanto acabe.",
+    "Te envío el PDF luego.",
+    "Adjunto el informe esta tarde.",
+    "Te paso el archivo el lunes.",
+    "Te envío el informe si quieres.",
+  ]) {
+    assert.deepEqual(deliveryClaims(text), [], text);
+  }
+  assert.deepEqual(kinds("Revisé la página y luego te envié la captura."), ["screenshot"]);
+  assert.deepEqual(kinds("Aquí está la captura de cuando falló el pago."), ["screenshot"]);
+  assert.deepEqual(kinds("Te dejo la captura por si la necesitas."), ["screenshot"]);
+
+  // A correction keeps what the sentence says besides the claim: anything after a colon, and every word, counted as English counts them.
+  for (const text of ["Te envío la captura: el login falla en Safari.", "Aquí está la captura: falla el login.", "Aquí está la captura del error en la página de pago."]) {
+    assert.equal(checkDelivery(text, none)!.corrected, `${text}\n\nNo se adjuntó ninguna captura de pantalla.`, text);
+  }
+  assert.equal(checkDelivery("Aquí está la captura de pantalla de la página.", none)!.corrected, "No se adjuntó ninguna captura de pantalla.");
+
+  // Accents typed as a letter and a separate mark (NFD) read as one; the reply keeps its own characters.
+  const apart = "Revisé la página. Aquí está la captura de pantalla. Todo bien.".normalize("NFD");
+  assert.deepEqual(kinds(apart), ["screenshot"]);
+  assert.equal(checkDelivery(apart, none)!.corrected, `${"Revisé la página. Todo bien.".normalize("NFD")}\n\nNo se adjuntó ninguna captura de pantalla.`);
+  assert.deepEqual(kinds("He enviado el vídeo.".normalize("NFD")), ["video"]);
+  // A first-person past left without its accent counts after "te" or "yo"; without one it is a command ("Envíe el informe.") or follows "que" (a wish).
+  for (const text of ["Te envie el informe.", "Ayer te adjunte la captura.", "Yo mande el PDF.", "Yo publique el informe."]) assert.equal(deliveryClaims(text).length, 1, text);
+  for (const text of ["Mira quiere que te envie el informe.", "Adjunte la captura de pantalla.", "Envie el informe."]) assert.deepEqual(deliveryClaims(text), [], text);
 });
