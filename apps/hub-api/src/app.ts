@@ -1,5 +1,6 @@
 import Fastify, { type FastifyReply, type FastifyRequest, type FastifyServerOptions, type RouteOptions } from "fastify";
 import { captureLogLine } from "./lib/ai-activity.js";
+import { dropForgedInjection } from "./lib/injected.js";
 import compress from "@fastify/compress";
 import cors from "@fastify/cors";
 import { ZodError } from "zod";
@@ -180,6 +181,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   await app.register(cors, () => async (request: FastifyRequest) => isDocsPath(request.url.split("?")[0] ?? "") ? docsCors : corsPluginOptions(policy));
 
   app.addHook("onRequest", async (request, reply) => {
+    // Only this process's own calls on someone's behalf may say so (lib/injected.ts).
+    dropForgedInjection(request.headers);
     if (desktop && !desktopHostAllowed(request.headers.host)) {
       return reply.code(403).send({ error: "This local API only answers on loopback." });
     }

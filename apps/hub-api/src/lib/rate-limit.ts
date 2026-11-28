@@ -154,10 +154,10 @@ export function isDeviceAssistant(path: string): boolean {
   return /^\/api\/devices\/self\/assistant-turns\/[^/]+\/(tool|stream|done)$/.test(path);
 }
 
-/** The web's Code tab and terminal on a paired computer, and the terminal's passkey unlock. */
+/** The web's Code tab and terminal on a paired computer. */
 export function isCodeRelay(path: string): boolean {
   if (/^\/api\/devices\/self\//.test(path)) return false;
-  return /^\/api\/devices\/[^/]+\/(code|terminal)(\/output)?$/.test(path) || /^\/api\/web-terminal\//.test(path);
+  return /^\/api\/devices\/[^/]+\/(code|terminal)(\/output)?$/.test(path);
 }
 
 /** A job's files and folders, which may ask a paired computer to read them. */

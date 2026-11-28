@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { ArrowUpRight, CircleStop, Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw } from "lucide-react";
+import { ArrowUpRight, CircleStop, Code2, FileText, MessageSquare, OctagonX, Play, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { activityPollInterval } from "@/lib/activity-poll";
@@ -99,22 +99,18 @@ export function ActivityControls({ connected = true, serverError = false }: { co
   };
   const stop = useMutation({ mutationFn: (id: string) => api.stopActivity(id), onSuccess: refresh });
   const stopJob = useMutation({ mutationFn: (id: string) => api.stopJob(id), onSuccess: refresh });
-  const kill = useMutation({
+  /**
+   * Stop everything: stops running work and model calls and holds new runs (`/api/agent/pause`); queued
+   * work keeps its place. The pill then reads Paused, and the same button resumes.
+   */
+  const halt = useMutation({
     mutationFn: () => (data?.paused ? api.resumeAgent() : api.pauseAgent()),
     onSuccess: (result) => {
       const stopped = (result as { stopped?: number } | undefined)?.stopped;
-      toast(data?.paused ? "Resumed. Model calls are allowed again." : `Paused. ${stopped ? `${stopped} running task${stopped === 1 ? "" : "s"} stopped. ` : ""}Nothing calls a model until you resume.`, {
-        tone: data?.paused ? "ok" : "error",
-      });
+      if (!data?.paused && stopped) toast(`Stopped ${stopped} running task${stopped === 1 ? "" : "s"}.`);
       refresh();
     },
-  });
-  const stopAll = useMutation({
-    mutationFn: api.stopAll,
-    onSuccess: (result) => {
-      toast(`Stopped ${result.stopped} and cleared ${result.cancelled} from the queue.`);
-      refresh();
-    },
+    onError: (error) => toast(error.message, { tone: "error" }),
   });
 
   const calls: AgentCall[] = data?.calls ?? [];
@@ -159,16 +155,6 @@ export function ActivityControls({ connected = true, serverError = false }: { co
         {count ? <span className="activity-pill-count">{count}</span> : null}
         {!paused && busy && queued.length ? <span className="activity-pill-more" title={`${queued.length} queued`}>+{queued.length}</span> : null}
       </button>
-      <button
-        type="button"
-        onClick={() => kill.mutate()}
-        disabled={kill.isPending || !data}
-        className={cx("icon-btn", paused ? "bg-[var(--tag-red-bg)] text-[var(--tag-red-fg)] hover:text-ink" : "hover:text-danger")}
-        title={paused ? "Resume: allow model calls again" : "Kill switch: stop every AI call and task now, start nothing new"}
-        aria-label={paused ? "Resume model calls" : "Kill switch: pause every AI call and task"}
-      >
-        {kill.isPending ? <Spinner size={13} /> : paused ? <Play size={14} /> : <Pause size={14} />}
-      </button>
       {open ? (
         <div data-activity-panel role="dialog" aria-label="Activity" className="activity-panel pop-in fixed inset-x-3 top-12 z-50 lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-2 lg:w-[380px]">
           <header className="activity-head">
@@ -209,17 +195,14 @@ export function ActivityControls({ connected = true, serverError = false }: { co
           ) : null}
           {shell.data?.space?.shared ? (
             <p className="activity-note">
-              The kill switch here is {shell.data.space.shared.owner.name}'s. Stop your own runs from their cards; they run on your computer.
+              Stop everything here is {shell.data.space.shared.owner.name}'s. Stop your own runs from their cards; they run on your computer.
             </p>
           ) : (
             <div className="activity-foot">
-              <button type="button" className="btn flex-1 justify-center text-danger" disabled={stopAll.isPending || !anything} onClick={() => stopAll.mutate()}>
-                <OctagonX size={13} /> Stop everything
+              <button type="button" className={cx("btn flex-1 justify-center", paused ? "border-ok text-ok" : "text-danger")} disabled={halt.isPending || !data} onClick={() => halt.mutate()}>
+                {halt.isPending ? <Spinner size={13} /> : paused ? <Play size={13} /> : <OctagonX size={13} />} {paused ? "Resume" : "Stop everything"}
               </button>
-              <button type="button" className={cx("btn flex-1 justify-center", paused && "border-ok text-ok")} disabled={kill.isPending} onClick={() => kill.mutate()}>
-                {paused ? <Play size={13} /> : <Pause size={13} />} {paused ? "Resume" : "Pause (kill switch)"}
-              </button>
-              <InfoTip label="About stopping" text="Stop kills running commands and aborts model requests at once. A provider may still bill a request it already received." />
+              <InfoTip label="About stopping" text="Stops running work at once and starts nothing new until you resume. A provider may still bill a request it already received." />
             </div>
           )}
         </div>

@@ -103,9 +103,6 @@ export class ApiError extends Error {
 /** True when the API refused because the route needs this server's own folders (Ensemble on the web, not the operator). */
 export const hostOnly = (error: unknown) => error instanceof ApiError && error.status === 403 && error.code === "HOST_ACCESS_DENIED";
 
-/** True when the terminal refused because it is locked or its unlock ran out (a 423, never the 401 of a sign-in that ended). */
-export const terminalLocked = (error: unknown) => error instanceof ApiError && (error.status === 423 || error.code === "TERMINAL_LOCKED");
-
 function errorCode(text: string): string | null {
   try {
     const body = JSON.parse(text) as { code?: unknown };
@@ -979,7 +976,7 @@ export type RemoteMac = {
   browseFiles?: boolean;
   /** The web's Code tab may change code here: accept/reject, edit, commit, push (on by default). */
   webEdit?: boolean;
-  /** The terminal may open from the web, after a passkey unlock there (on by default). */
+  /** The terminal may open from the web, for the person signed in there (on by default). */
   webTerminal?: boolean;
   online: boolean;
   lastHeartbeatAt: number | null;
@@ -1165,21 +1162,8 @@ export type JobEvent = { id: string; kind: string; data: Record<string, unknown>
 
 export type TerminalStatus = {
   enabled: boolean;
-  unlocked: boolean;
-  expiresAt: string | null;
-  passkeys: Array<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }>;
   roots: string[];
   home: string;
-};
-
-/** The web terminal's lock on Ensemble on the web (`/api/web-terminal/status`). */
-export type WebTerminalStatus = {
-  unlocked: boolean;
-  expiresAt: string | null;
-  passkeys: Array<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }>;
-  /** The account has a password to confirm a new passkey with; otherwise a mailed code. */
-  password: boolean;
-  emailCode: boolean;
 };
 
 /** The versions of one file the Code tab's editor works from (`/api/code/versions`, docs/16 §1). LF text. */
@@ -1942,24 +1926,9 @@ export const api = bindClient({
 
   // terminal
   terminalStatus: () => get<TerminalStatus>("/api/terminal/status"),
-  terminalPasskeyOptions: (password: string) => post<Record<string, unknown>>("/api/terminal/passkeys/options", { password }),
-  terminalPasskeyVerify: (response: unknown, label: string) => post("/api/terminal/passkeys/verify", { response, label }),
-  terminalRemovePasskey: (id: string) => del(`/api/terminal/passkeys/${id}`),
-  terminalUnlockOptions: () => post<Record<string, unknown>>("/api/terminal/unlock/options"),
-  terminalUnlockVerify: (response: unknown) => post<{ unlocked: boolean; expiresAt: string | null }>("/api/terminal/unlock/verify", { response }),
-  terminalLock: () => post("/api/terminal/lock"),
   terminalKill: () => post("/api/terminal/kill"),
   terminalCd: (cwd: string, path: string) => post<{ cwd: string; scope: string }>("/api/terminal/cd", { cwd, path }),
 
-  // the web terminal's passkey lock (Ensemble on the web)
-  webTerminalStatus: () => get<WebTerminalStatus>("/api/web-terminal/status"),
-  webTerminalSendCode: () => post<{ sent: boolean; to: string }>("/api/web-terminal/passkeys/code", {}),
-  webTerminalPasskeyOptions: (proof: { password?: string; code?: string }) => post<Record<string, unknown>>("/api/web-terminal/passkeys/options", proof),
-  webTerminalPasskeyVerify: (response: unknown, label: string) => post("/api/web-terminal/passkeys/verify", { response, label }),
-  webTerminalRemovePasskey: (id: string) => del(`/api/web-terminal/passkeys/${id}`),
-  webTerminalUnlockOptions: () => post<Record<string, unknown>>("/api/web-terminal/unlock/options", {}),
-  webTerminalUnlockVerify: (response: unknown) => post<{ unlocked: boolean; expiresAt: string | null }>("/api/web-terminal/unlock/verify", { response }),
-  webTerminalLock: () => post("/api/web-terminal/lock", {}),
   /** One call to a paired computer's own Code API, passed through Ensemble on the web (protocol 4). */
   deviceCode: <T>(deviceId: string, method: "GET" | "POST" | "PUT", path: string, query: Record<string, string> = {}, body?: unknown) =>
     post<T>(`/api/devices/${encodeURIComponent(deviceId)}/code`, { method, path, query, ...(body === undefined ? {} : { body }) }),

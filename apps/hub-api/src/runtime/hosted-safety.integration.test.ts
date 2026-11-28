@@ -118,12 +118,11 @@ test("hosted gates preserve core data and paired execution, with durable transac
     assert.equal((await prisma.devicePairing.findUniqueOrThrow({ where: { id: pairing.id } })).usedAt, null);
   });
 
-  await t.test("OAuth-only operator sessions stay valid but cannot bypass passkey enrollment step-up", async () => {
+  await t.test("OAuth-only operator sessions stay valid, and the terminal has no passkey step left to bypass", async () => {
     const operator = await harness.asUser("operator@example.test");
     await prisma.user.update({ where: { id: operator.id }, data: { passwordHash: null, emailVerifiedAt: new Date() } });
     const enrollment = await operator.inject({ method: "POST", url: "/api/terminal/passkeys/options", headers: { origin: "http://localhost:3000" }, payload: { password: "not-an-account-password" } });
-    assert.equal(enrollment.statusCode, 403, enrollment.body);
-    assert.match(enrollment.json<{ error: string }>().error, /OAuth-only sign-in is valid/);
+    assert.equal(enrollment.statusCode, 404, enrollment.body);
     const tasks = await operator.inject({ method: "GET", url: "/api/tasks" });
     assert.equal(tasks.statusCode, 200, tasks.body);
   });

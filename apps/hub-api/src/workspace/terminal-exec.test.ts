@@ -6,10 +6,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { readRepoFile, writeRepoFile } from "../lib/git.js";
+import { blockedReason, holdsReason } from "./guard.js";
 import { prepareRun, resolveCd, scopeOf } from "./terminal-exec.js";
 
 function folder(): string {
@@ -33,19 +34,64 @@ test("one allow-listed command in an allowed folder; destructive ones ask first;
   for (const line of ["ls; rm -rf /", "cat a | sh", "echo $(id)", "sudo ls", "ssh example.com", "bash -c 'id'"]) {
     await assert.rejects(prepareRun({ allowed, cwd: root, line, confirmed: true, sandboxed: true }), Error, line);
   }
-  await assert.rejects(prepareRun({ allowed, cwd: tmpdir(), line: "ls", confirmed: false, sandboxed: true }), /outside/);
+  // A system folder is refused with the reason Open a folder gives.
+  await assert.rejects(prepareRun({ allowed, cwd: "/etc", line: "ls", confirmed: false, sandboxed: true }), /holds the operating system/);
 });
 
-test("cd stays inside the allowed folders, and an absolute path may only move to another of them", async () => {
+test("cd moves within the allowed folders, and to any other folder Open a folder accepts, each its own scope", async () => {
   const root = folder();
   const other = folder();
   const allowed = [root, other];
   assert.deepEqual(await resolveCd(allowed, root, "src"), { cwd: join(root, "src"), scope: root });
   assert.deepEqual(await resolveCd(allowed, join(root, "src"), ""), { cwd: root, scope: root }, "cd alone goes to the folder's top");
   assert.deepEqual(await resolveCd(allowed, root, other), { cwd: other, scope: other });
-  await assert.rejects(resolveCd(allowed, root, "../.."));
-  await assert.rejects(resolveCd(allowed, root, "/etc"), /outside/);
   assert.equal(scopeOf(allowed, join(other, "x")), other);
+
+  // A folder that is not one of the terminal's roots: open, confined to itself.
+  const loose = folder();
+  assert.deepEqual(await resolveCd([root], root, loose), { cwd: loose, scope: loose });
+  assert.deepEqual(await resolveCd([root], loose, "src"), { cwd: join(loose, "src"), scope: join(loose, "src") }, "a folder inside it is its own scope too");
+  const run = await prepareRun({ allowed: [root], cwd: loose, line: "ls", confirmed: false, sandboxed: true });
+  assert.equal(run.kind === "run" ? run.scope : null, loose);
+
+  // What Open a folder refuses, the terminal refuses: system folders, the disk, the home folder itself, dot-folders in it.
+  await assert.rejects(resolveCd(allowed, root, "/etc"), /holds the operating system/);
+  await assert.rejects(resolveCd(allowed, root, "/"), /too broad/);
+  await assert.rejects(resolveCd(allowed, root, homedir()), /too broad/);
+  await assert.rejects(resolveCd(allowed, root, join(homedir(), ".ssh")));
+  // A link named directly is refused, like in Open a folder; choose the real folder.
+  const link = join(loose, "elsewhere");
+  symlinkSync(other, link);
+  await assert.rejects(resolveCd([root], loose, link), /link/);
+  // The folder of all accounts (/home on Linux, /Users on a Mac) would make the whole home folder one scope.
+  await assert.rejects(resolveCd([root], root, dirname(homedir())), /too broad/);
+});
+
+test("no scope holds the home folder, another account, a mount or the kernel's folders", () => {
+  for (const [path, says] of [
+    ["/home", /too broad/],
+    ["/mnt", /too broad/],
+    ["/srv", /too broad/],
+    ["/media", /too broad/],
+    ["/mnt/c", /whole disk/],
+    ["/proc/1", /operating system/],
+    ["/sys", /operating system/],
+    ["/boot", /operating system/],
+    ["/home/someone-else", /Another account/],
+  ] as const) {
+    if (path === dirname(homedir()) || path === homedir()) continue;
+    assert.match(blockedReason(path) ?? "", says, path);
+  }
+  if (!homedir().startsWith("/root")) assert.match(blockedReason("/root/project") ?? "", /Another account/);
+  // A project inside a shared folder is fine.
+  assert.equal(blockedReason("/srv/app"), null);
+  assert.equal(blockedReason("/mnt/data/project"), null);
+  // A folder that holds the home folder is refused even where blockedReason has nothing against it.
+  assert.match(holdsReason("/data/users", "/data/users/me") ?? "", /holds your home folder/);
+  assert.match(holdsReason("/data/users/me/..", "/data/users/me") ?? "", /holds your home folder/);
+  assert.match(holdsReason("/data", "/data/users/me") ?? "", /holds your home folder/);
+  assert.equal(holdsReason("/data/users/me/project", "/data/users/me"), null);
+  assert.equal(holdsReason(folder()), null, "a plain project folder holds nothing protected");
 });
 
 test("the Code tab reads and writes inside the repository only: no links out, no git internals, no huge files", async () => {

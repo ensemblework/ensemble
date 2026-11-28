@@ -42,7 +42,7 @@ Publishing resumes from the reviewed payload and approval instead of replanning.
 
 ## 6. Stop, interruption and retry
 
-Choose **Pause** to stop new work and cancel active model and command activity. Choose **Stop** on a task to stop that task, or **Stop everything** to cancel queued jobs too. Your partial files and the run evidence remain.
+Choose **Stop everything** in the top bar's activity panel to cancel active model and command activity and start nothing new until you choose **Resume** there (queued jobs keep their place; *Pause all* on Runs does the same). Choose **Stop** on a task to stop that task. `POST /api/agent/stop-all` also cancels queued jobs. Your partial files and the run evidence remain.
 
 Stop always ends the run: a command is killed with everything in its session, including processes that moved to a process group of their own (`killGroup`, `sessionMembers` in `workspace/runner.ts`; on Windows its process tree, and not a process that starts a session of its own; what a run's end stops: [24 §6](24_DESKTOP_SANDBOXING.md#6-commands-and-processes)); a tool call still going 30 s after Stop is left behind (`untilStopped`, `STOP_GRACE_MS`); and a paired computer that keeps checking in without ending a stopped run for 3 minutes has the run ended on the web (`endUnconfirmedStops` in `devices/settle.ts`), its slot freed and its task back in To do, while the computer keeps being told to stop it.
 

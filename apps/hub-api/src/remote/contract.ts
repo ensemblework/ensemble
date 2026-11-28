@@ -113,8 +113,8 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * 3 (14 Oct 2026): the text of the files a run changed goes to `ROUTES.files` before complete, and the
  * server may ask for a folder's entries or a file's text (`files.request` on the event stream).
  * 4 (14 Oct 2026): the web's Code tab works on this computer: the server sends `code.request` (one call
- * to this computer's own `/api/code/*`) and `terminal.request` (the web terminal, after a passkey unlock
- * on the web); answers go to `ROUTES.codeAnswer`, terminal output to `ROUTES.terminalOutput`. A computer
+ * to this computer's own `/api/code/*`) and `terminal.request` (the web terminal, from the person's signed-in
+ * browser); answers go to `ROUTES.codeAnswer`, terminal output to `ROUTES.terminalOutput`. A computer
  * says it takes them with `capabilities.code`.
  * 5 (25 Oct 2026): after an outage a computer reattaches a run whose lease ran out while it kept
  * going (`ROUTES.reattach`), and asks to carry on a run it lost by restarting (`ROUTES.resume`); a
@@ -630,7 +630,7 @@ export type CodeAnswer = z.infer<typeof CodeAnswer>;
 export const PROJECT_DELETE_API = 1;
 
 /**
- * `terminal.request` on the event stream: the web terminal, unlocked with a passkey on the web. `status`
+ * `terminal.request` on the event stream: the web terminal, from the person's signed-in browser. `status`
  * gives the folders it may use, `cd` resolves a folder, `run` starts one allow-listed command (its output
  * goes to `ROUTES.terminalOutput` under the request id), `kill` stops a run.
  */

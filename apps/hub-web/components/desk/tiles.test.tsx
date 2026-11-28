@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { sampleLive } from "../onboarding/sample";
 import { ROLES } from "../onboarding/roles";
 import { AddTileDialog } from "./add-tile";
-import { PreviewTiles, specPool } from "./live-board";
+import { PreviewTiles, specPool, tileHref } from "./live-board";
 import { deskRole, tileFitsRole } from "./tile-catalog";
 import { activeProjects, byUrgency, datedItems, dayGlance, dayLabel, doneByDay, doneStreak, focusQueue, isLate, mockScores, personLine, ratio, taskSegments, timeSegments, weekAhead } from "./tile-data";
 import { RowList, rowsForSpan, taskRow } from "./rows";
@@ -307,3 +307,11 @@ test("Context people and projects say something useful at a glance", () => {
   assert.deepEqual(activeProjects(rows).map((r) => r.id), ["a", "c"]);
 });
 
+
+test("a tile's View all and corner arrow open its full list, never an unrelated page", () => {
+  assert.equal(tileHref("repos"), "/context?view=widgets&tab=repos", "every repository, with Add");
+  assert.equal(tileHref("reviews"), "/context?tab=reviews");
+  assert.equal(tileHref("checks"), "/context?tab=tests");
+  assert.equal(tileHref("deploys"), "/context?tab=deploys");
+  for (const key of ["repos", "reviews", "checks", "deploys"]) assert.doesNotMatch(tileHref(key) ?? "", /^\/(code|runs|metrics)\b/, key);
+});

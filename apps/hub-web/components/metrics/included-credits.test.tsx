@@ -187,8 +187,11 @@ test("the Metrics page leads with the credits card and shows credits, not dollar
     assert.doesNotMatch(included.textContent ?? "", /\$/);
     assert.match(own.textContent ?? "", /gpt-6-luna.*2 calls · \$0\.12/);
     const calls = Array.from(view.host.querySelectorAll("[data-call-provider]"));
-    assert.match(calls[0]!.querySelector("summary")!.textContent ?? "", /Included with Ensemble · GPT-6 Luna \(2026-09-22\).*0\.4 credits$/);
-    assert.match(calls[1]!.querySelector("summary")!.textContent ?? "", /OpenAI · gpt-6-luna.*\$0\.06$/);
+    assert.match(calls[0]!.textContent ?? "", /Included with Ensemble · GPT-6 Luna \(2026-09-22\).*0\.4 credits$/);
+    assert.match(calls[1]!.textContent ?? "", /OpenAI · gpt-6-luna.*\$0\.06$/);
+    // No expander: the purpose and time are on the row's second line.
+    assert.equal(view.host.querySelector("[data-call-provider] summary, details[data-call-provider]"), null);
+    assert.match(calls[0]!.querySelector("[data-call-line]")?.textContent ?? "", /^Hub chat · .+ · Included with Ensemble · GPT-6 Luna/);
     assert.ok(view.host.querySelector('[aria-label="Daily AI activity"]'));
     assert.match(text, /Input tokens/);
     assert.match(text, /Output tokens/);
@@ -228,7 +231,7 @@ test("AI plan calls never show credits, and calls carry no repeated explanation"
     assert.match(view.host.querySelector('[data-model-row="claude-code:claude-sonnet-5-5"]')?.textContent ?? "", /2 calls · Your AI plan/);
     const calls = Array.from(view.host.querySelectorAll("[data-call-provider]"));
     assert.equal(calls.length, 2);
-    for (const call of calls) assert.match(call.querySelector("summary")?.textContent ?? "", /Your AI plan$/);
+    for (const call of calls) assert.equal(call.querySelector("[data-call-cost]")?.textContent, "Your AI plan");
     assert.doesNotMatch(text, /Input is the context|This call used|Plan balance/);
     const measures = Array.from(view.host.querySelectorAll('[aria-label="Chart measure"] button')).map((node) => node.textContent);
     assert.deepEqual(measures, ["Calls", "Input tokens", "Output tokens"]);

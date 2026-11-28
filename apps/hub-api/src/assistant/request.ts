@@ -1,5 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { NODE_ACCOUNT_HEADER, NODE_HEADER, NODE_SPACE_HEADER } from "../lib/auth.js";
+import { injectedHeaders } from "../lib/injected.js";
 import type { ToolContext } from "./types.js";
 
 /** The credentials a route-backed tool forwards: the person's own, an internal call's, or a node's delegated identity. */
@@ -12,10 +13,13 @@ export function assistantHeaders(request: Pick<FastifyRequest, "headers">): Reco
   return headers;
 }
 
-/** Reuse the web route's validation, access checks, quotas and side effects. */
+/**
+ * Reuse the web route's validation, access checks, quotas and side effects. Marked as Ensemble's own
+ * call (`lib/injected.ts`), so routes for the person alone, such as the terminal, refuse it.
+ */
 export async function assistantRequest(ctx: ToolContext, method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: unknown, contentType?: string): Promise<any> {
   if (!ctx.requestHeaders) throw new Error("Open this action in the signed-in Ensemble assistant.");
-  const response = await ctx.app.inject({ method, url, headers: { ...ctx.requestHeaders, ...(contentType ? { "content-type": contentType } : {}) }, ...(payload === undefined ? {} : { payload: payload as object }) });
+  const response = await ctx.app.inject({ method, url, headers: { ...ctx.requestHeaders, ...injectedHeaders(), ...(contentType ? { "content-type": contentType } : {}) }, ...(payload === undefined ? {} : { payload: payload as object }) });
   let result: any;
   try { result = response.json(); } catch { result = {}; }
   if (response.statusCode >= 400) throw Object.assign(new Error(result.error ?? result.message ?? `The action failed (${response.statusCode}).`), { statusCode: response.statusCode });

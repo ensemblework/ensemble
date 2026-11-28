@@ -657,10 +657,11 @@ const TILE_HREF: Record<string, string> = {
   "focus-now": "/board",
   agents: "/runs",
   "your-week": "/recap",
-  reviews: "/code",
-  repos: "/code",
-  checks: "/runs",
-  deploys: "/metrics",
+  // Where each tile's full list is: Context tabs open by link even when not pinned (`ContextLens`).
+  reviews: "/context?tab=reviews",
+  repos: "/context?view=widgets&tab=repos",
+  checks: "/context?tab=tests",
+  deploys: "/context?tab=deploys",
   issues: "/board",
   wip: "/board",
   blocked: "/board",
@@ -685,13 +686,16 @@ export function tileFilled(spec: Pick<Spec, "rows" | "stat">, live: DeskLive): b
   return spec.rows(live).length > 0 || Boolean(spec.stat?.(live));
 }
 
-/** A tile's content. `footer` is its quiet action; list tiles put it beside "View all", other tiles below the picture. */
-export function TileBody({ spec, live, preview = false, interactivePreview = false, footer }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean; footer?: ReactNode }) {
+/**
+ * A tile's content. `footer` is its quiet action; list tiles put it beside "View all", other tiles below the picture.
+ * `href` overrides where "View all" goes; null leaves it out (the full list is the page already open).
+ */
+export function TileBody({ spec, live, preview = false, interactivePreview = false, footer, href }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean; footer?: ReactNode; href?: string | null }) {
   if (spec.key === "diagrams") return <div className="visual-body"><DiagramStrip c={spec.c} preview={preview} /></div>;
   const rows = spec.rows(live);
   const stat = spec.stat?.(live) ?? null;
   const hero = spec.hero ? liveHero({ specKey: spec.key, live, rows, stat }) : null;
-  const visual = spec.key === "agenda" || hero ? null : tileVisual({ spec, live, preview, interactive: !preview || interactivePreview, footer, href: tileHref(spec.key) ?? (live.tasks.some((task) => task.id === rows[0]?.id) ? "/board" : undefined) });
+  const visual = spec.key === "agenda" || hero ? null : tileVisual({ spec, live, preview, interactive: !preview || interactivePreview, footer, href: href === null ? undefined : href ?? tileHref(spec.key) ?? (live.tasks.some((task) => task.id === rows[0]?.id) ? "/board" : undefined) });
   return <>
     <div className="visual-body" data-live-count={rows.length} data-live-hero={hero ? spec.key : undefined} data-list={visual?.list ? "1" : undefined}>
       {spec.key === "agenda" ? <CalendarAgenda live={live} preview={preview} /> : hero || visual?.node}

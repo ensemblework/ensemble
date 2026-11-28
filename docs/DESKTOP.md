@@ -93,7 +93,7 @@ Desktop 0.6.6 uses file-scoped protection for Node's original viewer: a safe gen
 | Folder picker | Native dialog | Native dialog | Native dialog |
 | Notifications | System permission, app running | System permission, app running | Desktop notification service and permission, app running |
 
-A missing sandbox backend is reported explicitly. On Linux the capability depends on kernel and namespaces; Landlock does not hide Unix sockets and needs TCP rule support to turn the network off. Path and argument checks do not replace OS confinement. The terminal's passkey unlock depends on the browser and the configured origin; IP-address aliases are not interchangeable ([16](16_CODE_TAB.md)).
+A missing sandbox backend is reported explicitly. On Linux the capability depends on kernel and namespaces; Landlock does not hide Unix sockets and needs TCP rule support to turn the network off. Path and argument checks do not replace OS confinement. The terminal opens only on Ensemble's own page for a signed-in browser session; IP-address aliases are not interchangeable ([16](16_CODE_TAB.md)).
 
 Mobile native apps, the Mac App Store and Flatpak are not targets.
 
