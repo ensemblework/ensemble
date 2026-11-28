@@ -23,11 +23,13 @@ export type MathResult = { html: string } | { error: string };
 
 /**
  * One equation as KaTeX HTML, or why it cannot be drawn. Commands that would load or link
- * anything (`\href`, `\includegraphics`, `\htmlClass`) are refused.
+ * anything (`\href`, `\includegraphics`, `\htmlClass`) are refused, and sizes (`\rule`, `\kern`,
+ * `\raisebox`) are capped at 10em. Inline equations are also clipped to their own box
+ * (`.page-math-inline > .page-math-shown` in globals.css), since a negative kern is not capped.
  */
 export function mathHtml(engine: Katex, latex: string, display: boolean): MathResult {
   try {
-    return { html: engine.renderToString(latex, { displayMode: display, throwOnError: true, strict: "ignore", trust: false, output: "htmlAndMathml", maxSize: 50, maxExpand: 1000 }) };
+    return { html: engine.renderToString(latex, { displayMode: display, throwOnError: true, strict: "ignore", trust: false, output: "htmlAndMathml", maxSize: 10, maxExpand: 1000 }) };
   } catch (error) {
     const message = error instanceof Error ? error.message.replace(/^KaTeX parse error:\s*/i, "") : "Not valid TeX";
     return { error: message };

@@ -4,17 +4,25 @@
  * Markdown all read math with these rules, so an equation an agent writes, a person pastes or an
  * import brings in becomes the same `inlineMath` or `blockMath` node.
  *
- * A dollar sign only opens math when the next character is not a space, and only closes it after a
- * character that is not a space and before one that is not a digit, so prices such as "$5 and
- * $10" stay text. `\$` is a literal dollar sign.
+ * A dollar sign opens math only before a character that is not a space, and closes it only after a
+ * character that is not a space and before one that is not a letter, digit, `_` or `{`. So prices
+ * ("$5 and $10") and shell variables ("$PATH:$HOME", "${A}${B}") stay text.
+ *
+ * Every pattern is bounded (TeX up to `MAX_TEX` characters, a display equation up to
+ * `MAX_BLOCK_LINES` lines) and stops at the next opener, so hostile text parses in linear time.
  */
 
+/** The longest inline TeX read as one equation. */
+const MAX_TEX = 2000;
+/** The most lines a display equation spans. */
+export const MAX_BLOCK_LINES = 200;
+
 /** `$$x$$` inside a line of text: display math in a sentence. */
-const DISPLAY = String.raw`\$\$(?![\s$])((?:\\[^\n]|[^$\\\n])+?)\$\$`;
-/** `$x$`: no space just inside the dollars, no letter or digit before the first, no digit after the last. */
-const DOLLAR = String.raw`(?<![\\$\p{L}\p{N}])\$(?![\s$])((?:\\[^\n]|[^$\\\n\x60])*?(?:\\[^\n]|[^\s$\\\x60]))\$(?![\p{N}$])`;
-/** `\(x\)`, as many models write inline math. */
-const PAREN = String.raw`\\\(([^\n]+?)\\\)`;
+const DISPLAY = String.raw`(?<![\\$])\$\$(?![\s$])((?:\\[^\n]|[^$\\\n]){1,${MAX_TEX}}?)\$\$`;
+/** `$x$`: no space just inside the dollars, no letter or digit before the first, nothing word-like after the last. */
+const DOLLAR = String.raw`(?<![\\$\p{L}\p{N}])\$(?![\s$])((?:\\[^\n]|[^$\\\n\x60]){0,${MAX_TEX}}?(?:\\[^\n]|[^\s$\\\x60]))\$(?![\p{L}\p{N}_{$])`;
+/** `\(x\)`, as many models write inline math. The TeX holds no other `\(` or `\)`. */
+const PAREN = String.raw`(?<!\\)\\\(((?:[^\\\n]|\\[^()\n]){1,${MAX_TEX}}?)\\\)`;
 
 /**
  * Inline math in a line of Markdown text. Group 1: `$$…$$` (display), group 2: `$…$`, group 3: `\(…\)`.
@@ -33,9 +41,21 @@ export function inlineMathMatch(display: string | undefined, dollar: string | un
   return latex ? { latex, display: false } : null;
 }
 
-/** Whether a line of text holds inline math. */
-export function hasInlineMath(text: string): boolean {
-  return inlineMathPattern().test(text);
+const DOLLAR_AT = new RegExp(`${DISPLAY}|${DOLLAR}`, "uy");
+const PAREN_AT = new RegExp(PAREN, "uy");
+
+/** How far past a backslash the reader looks to see whether the escaped `$` or `\(` would be math. */
+const ESCAPE_WINDOW = 256;
+
+/**
+ * Whether `pattern` would match at the backslash at `at` once that backslash is removed. Only a
+ * short window is tried, so a run of escapes stays linear.
+ */
+function opensWithout(pattern: RegExp, text: string, at: number): boolean {
+  const from = Math.max(0, at - 1);
+  const window = text.slice(from, at) + text.slice(at + 1, at + 1 + ESCAPE_WINDOW);
+  pattern.lastIndex = at - from;
+  return pattern.test(window);
 }
 
 function dedent(lines: string[]): string {
@@ -44,15 +64,17 @@ function dedent(lines: string[]): string {
   return lines.map((line) => line.slice(cut).trimEnd()).join("\n").trim();
 }
 
+const opener = (line: string) => (line.startsWith("$$") ? "$$" : line.startsWith("\\[") ? "\\[" : null);
+
 /**
  * A display equation starting at line `i`: `$$ … $$` on one line, or `$$` (or `\[`) with the TeX on
  * the following lines up to a line ending in `$$` (or `\]`). Null when the line does not open one,
- * or when it closes with text after it (that is inline math in a sentence) or never closes before
- * a blank line, since TeX math has no blank lines.
+ * when it closes with text after it (that is inline math in a sentence), or when no close comes
+ * before a blank line (TeX math has none), another opener or `MAX_BLOCK_LINES` lines.
  */
 export function mathBlockAt(lines: readonly string[], i: number): { latex: string; next: number } | null {
   const first = lines[i]?.trim() ?? "";
-  const open = first.startsWith("$$") ? "$$" : first.startsWith("\\[") ? "\\[" : null;
+  const open = opener(first);
   if (!open) return null;
   const close = open === "$$" ? "$$" : "\\]";
   const rest = first.slice(2);
@@ -63,7 +85,7 @@ export function mathBlockAt(lines: readonly string[], i: number): { latex: strin
     return latex ? { latex, next: i + 1 } : null;
   }
   const body = [rest];
-  for (let j = i + 1; j < lines.length; j += 1) {
+  for (let j = i + 1; j < lines.length && j <= i + MAX_BLOCK_LINES; j += 1) {
     const line = lines[j]!.trimEnd();
     if (!line.trim()) return null;
     const at = line.indexOf(close);
@@ -73,6 +95,7 @@ export function mathBlockAt(lines: readonly string[], i: number): { latex: strin
       const latex = dedent(body);
       return latex ? { latex, next: j + 1 } : null;
     }
+    if (opener(line.trim())) return null;
     body.push(line);
   }
   return null;
@@ -83,20 +106,101 @@ export const startsMathBlock = (lines: readonly string[], i: number) => mathBloc
 
 type MathNode = { type?: string; attrs?: Record<string, unknown> | null };
 
+/** TeX as it is saved: trimmed, without blank lines (a blank line would end the equation in Markdown). */
+export function cleanLatex(latex: string): string {
+  return latex.split("\n").filter((line) => line.trim()).join("\n").trim();
+}
+
 /**
  * The Markdown of an `inlineMath` or `blockMath` node, which reads back as the same node:
  * `$x$`, `$$x$$` for display math in a sentence, and a display equation on lines of its own.
  * Null for any other node.
  */
 export function mathMarkdown(node: MathNode): string | null {
-  const latex = String(node.attrs?.latex ?? "").trim();
+  const latex = cleanLatex(String(node.attrs?.latex ?? ""));
   if (node.type === "blockMath") return `$$\n${latex}\n$$`;
   if (node.type !== "inlineMath") return null;
-  return node.attrs?.display ? `$$${latex}$$` : `$${latex}$`;
+  const line = latex.replace(/\s*\n\s*/g, " ");
+  return node.attrs?.display ? `$$${line}$$` : `$${line}$`;
 }
 
-/** Escapes the dollar signs of text that would read back as math (`\$`), so it stays text. */
+/**
+ * Whether the `\$` at `at` (the backslash) is an escape, read as a dollar sign: before a digit (a
+ * price) or another `$`, when the dollar would otherwise open math, and anywhere but inside a word
+ * or path such as `C:\$Recycle.Bin`, where the backslash is text.
+ */
+function dollarEscape(text: string, at: number): boolean {
+  const before = text[at - 1] ?? "";
+  const after = text[at + 2] ?? "";
+  if (/[\p{N}$]/u.test(after)) return true;
+  if (!(/[\p{L}\p{N}:\\/.]/u.test(before) && /[\p{L}_{]/u.test(after))) return true;
+  return opensWithout(DOLLAR_AT, text, at);
+}
+
+/**
+ * Plain Markdown text as page text: `\$` that is an escape becomes `$`, `\\$` a backslash and a
+ * dollar sign, and `\\(` that would otherwise be math `\(`. `atStart` (the start of a paragraph):
+ * `\\[` there becomes `\[`. Other backslashes are text.
+ */
+export function unescapeMathText(text: string, atStart = false): string {
+  if (!text.includes("\\")) return text;
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]!;
+    if (char === "\\") {
+      if (text[i + 1] === "\\" && text[i + 2] === "$") {
+        out += "\\$";
+        i += 2;
+        continue;
+      }
+      if (text[i + 1] === "$" && dollarEscape(text, i)) {
+        out += "$";
+        i += 1;
+        continue;
+      }
+      if (text[i + 1] === "\\" && text[i + 2] === "(" && opensWithout(PAREN_AT, text, i)) {
+        out += "\\(";
+        i += 2;
+        continue;
+      }
+      if (atStart && i === 0 && text.startsWith("\\\\[") && mathBlockAt([text.slice(1)], 0)) {
+        out += "\\[";
+        i += 2;
+        continue;
+      }
+    }
+    out += char;
+  }
+  return out;
+}
+
+/**
+ * Page text as Markdown that reads back as the same text (`unescapeMathText`): a backslash the
+ * reader would take as an escape is doubled, and anything that would read as math gets a
+ * backslash before it (`\$x$`, `\\(a\)`).
+ */
 export function escapeMathText(text: string): string {
-  if (!text.includes("$")) return text;
-  return text.replace(inlineMathPattern(), (match) => match.replace(/(?<!\\)\$/g, "\\$"));
+  if (!text.includes("$") && !text.includes("\\")) return text;
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]!;
+    if (char === "\\" && text[i + 1] === "$" && (dollarEscape(text, i) || text[i - 1] === "\\")) out += "\\\\";
+    else out += char;
+  }
+  for (let round = 0; round < 4; round += 1) {
+    let changed = false;
+    out = out.replace(inlineMathPattern(), (match) => {
+      changed = true;
+      return `\\${match}`;
+    });
+    if (!changed) break;
+  }
+  return out;
+}
+
+/** A paragraph's Markdown with every line that would open a display equation escaped (`\$$`, `\\[`). */
+export function escapeMathBlockStarts(markdown: string): string {
+  if (!markdown.includes("$$") && !markdown.includes("\\[")) return markdown;
+  const lines = markdown.split("\n");
+  return lines.map((line, index) => (startsMathBlock(lines, index) ? line.replace(/^(\s*)/, "$1\\") : line)).join("\n");
 }

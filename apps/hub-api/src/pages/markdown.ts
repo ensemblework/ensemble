@@ -9,7 +9,7 @@
 import { checkpointPage, pageEditor } from "./history.js";
 import { nodeActingIn } from "../sharing/context.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { escapeMathText, imageMarkdown, markdownToNodes, mathMarkdown, PageDocument, type PageNode } from "@ensemble/shared-types";
+import { escapeMathBlockStarts, escapeMathText, imageMarkdown, markdownToNodes, mathMarkdown, PageDocument, type PageNode } from "@ensemble/shared-types";
 import { sseHub } from "../lib/sse.js";
 
 export { markdownToNodes };
@@ -96,7 +96,8 @@ function blockMarkdown(node: PageNode, indent = ""): string {
   };
   switch (node.type) {
     case "paragraph":
-      return `${indent}${inlineMarkdown(children)}`;
+      // A line that would open a display equation (`$$ a $$`, `\[1\]` typed as text) is escaped.
+      return `${indent}${escapeMathBlockStarts(inlineMarkdown(children))}`;
     case "heading":
       return `${"#".repeat(Math.min(6, Math.max(1, Number(node.attrs?.level ?? 2))))} ${inlineMarkdown(children)}`;
     case "bulletList":

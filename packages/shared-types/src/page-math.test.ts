@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { looksLikeMarkdown, markdownToNodes } from "./page-markdown.js";
-import { escapeMathText, mathBlockAt, mathMarkdown } from "./page-math.js";
+import { escapeMathBlockStarts, escapeMathText, mathBlockAt, mathMarkdown } from "./page-math.js";
 import type { PageNode } from "./domain.js";
 
 const ISSUE_EXAMPLE = String.raw`A colour image with height $H$, width $W$ and three channels can be represented as a vector:
@@ -67,4 +67,64 @@ test("an equation's Markdown reads back as the same node, and text that looks li
   const literal = "Paths like $HOME/$USER and $x$ typed as text";
   assert.equal(escapeMathText("It costs $5 and $10"), "It costs $5 and $10");
   assert.deepEqual(markdownToNodes(escapeMathText(literal)), [{ type: "paragraph", content: [{ type: "text", text: literal }] }]);
+});
+
+test("hostile input parses in well under a second (no lookahead or backtracking blow-up)", () => {
+  const cases = {
+    "unclosed \\[ lines": "\\[a\n".repeat(50_000),
+    "unclosed $$ lines": "$$ a\nb\n".repeat(30_000),
+    "\\( on one line": "\\(a ".repeat(50_000),
+    "\\( with backslashes": "\\(\\a".repeat(50_000),
+    "$ on one line": "$a ".repeat(66_000),
+    "$$ on one line": "$$a ".repeat(50_000),
+    "mixed": "$x \\(y $$z \\[w\n".repeat(13_000),
+    "unclosed [ lines": "[a\n".repeat(66_000),
+    "escaped dollars": "\\$a".repeat(66_000),
+    "escaped \\( runs": "\\\\(a".repeat(40_000),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    const start = performance.now();
+    markdownToNodes(text);
+    markdownToNodes(text, { lineBreaks: true });
+    looksLikeMarkdown(text);
+    escapeMathText(text);
+    const took = performance.now() - start;
+    assert.ok(took < 1000, `${name}: ${Math.round(took)} ms for ${text.length} characters`);
+  }
+});
+
+test("shell variables and paths stay text, and inline math alone does not make a paste Markdown", () => {
+  for (const text of ["export PATH=$PATH:$HOME/bin", "cp $SRC/$DST", "echo ${A}${B}", "rm $TMP_$ID.log", "mv $a$b"]) {
+    assert.deepEqual(maths(markdownToNodes(text)), [], text);
+    assert.equal(looksLikeMarkdown(text), false, text);
+  }
+  assert.equal(looksLikeMarkdown("where $x$ holds"), false);
+  assert.equal(looksLikeMarkdown("then\n$$\nx^2\n$$"), true);
+  assert.deepEqual(markdownToNodes(String.raw`C:\$Recycle.Bin and foo\$bar`), [{ type: "paragraph", content: [{ type: "text", text: String.raw`C:\$Recycle.Bin and foo\$bar` }] }]);
+});
+
+test("escaped prices and equations inside bold, italics, strikethrough and links", () => {
+  const line = (markdown: string) => markdownToNodes(markdown)[0]!.content;
+  assert.deepEqual(line(String.raw`**Total: \$5**`), [{ type: "text", text: "Total: $5", marks: [{ type: "bold" }] }]);
+  assert.deepEqual(line("**the value $x$ here**"), [
+    { type: "text", text: "the value ", marks: [{ type: "bold" }] },
+    { type: "inlineMath", attrs: { latex: "x" } },
+    { type: "text", text: " here", marks: [{ type: "bold" }] },
+  ]);
+  assert.deepEqual(maths(markdownToNodes("*see $y$* and ~~$z$~~ and [area $\\pi r^2$](https://example.com)")).map((node) => node.attrs?.latex), ["y", "z", "\\pi r^2"]);
+});
+
+test("text that would read as math is escaped so it reads back as the same text, however often", () => {
+  const roundTrip = (text: string) => {
+    const markdown = escapeMathBlockStarts(escapeMathText(text));
+    const back = markdownToNodes(markdown);
+    assert.deepEqual(back, [{ type: "paragraph", content: [{ type: "text", text }] }], `${text} → ${markdown}`);
+    assert.equal(escapeMathBlockStarts(escapeMathText(texts(back))), markdown, `${text} is stable`);
+  };
+  for (const text of ["$x$", "a $b$ and $c$ end", "($x$)", "ratio:$x$", String.raw`\(a\)`, "$$ a $$", String.raw`\[1\]`, "$$x$$ mid", String.raw`C:\$Recycle.Bin`, String.raw`costs \$5`, String.raw`\$x$`, "It costs $5 and $10", String.raw`a \\$5`]) roundTrip(text);
+});
+
+test("an equation with blank lines in its TeX writes without them, so it stays one equation", () => {
+  const markdown = mathMarkdown({ type: "blockMath", attrs: { latex: "a = b\n\n\nc = d" } })!;
+  assert.deepEqual(markdownToNodes(markdown), [{ type: "blockMath", attrs: { latex: "a = b\nc = d" } }]);
 });

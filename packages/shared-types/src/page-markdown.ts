@@ -5,16 +5,19 @@
  */
 import type { PageNode } from "./domain.js";
 import { pageImageAlign, pageImageSide, pageImageWidth } from "./page-images.js";
-import { INLINE_MATH_SOURCE, hasInlineMath, inlineMathMatch, mathBlockAt, startsMathBlock } from "./page-math.js";
+import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, startsMathBlock, unescapeMathText } from "./page-math.js";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
 
-// Underscores inside a word (snake_case) are not emphasis. Math (page-math.ts) comes last: it only
-// starts at a dollar sign or `\(`, and starting there it wins over the emphasis inside the TeX.
+// Underscores inside a word (snake_case) are not emphasis. A link's text stops at the next `[`, so
+// a run of brackets cannot make the scan quadratic. Math (page-math.ts) comes last: it only starts
+// at a dollar sign or `\(`, and starting there it wins over the emphasis inside the TeX.
 const INLINE = new RegExp(
-  String.raw`(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|\x60([^\x60]+)\x60|\[([^\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))|${INLINE_MATH_SOURCE}`,
+  String.raw`(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|\x60([^\x60]+)\x60|\[([^\[\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))|${INLINE_MATH_SOURCE}`,
   "gu",
 );
+
+const mathNode = (math: { latex: string; display: boolean }): PageNode => ({ type: "inlineMath", attrs: math.display ? { latex: math.latex, display: true } : { latex: math.latex } });
 
 function inline(text: string): PageNode[] {
   const out: PageNode[] = [];
@@ -24,26 +27,38 @@ function inline(text: string): PageNode[] {
     if (!value) return;
     out.push(marks?.length ? { type: "text", text: value, marks } : { type: "text", text: value });
   };
-  // `\$` is a dollar sign that is not math.
-  const plain = (value: string) => push(value.replace(/\\\$/g, () => "$"));
+  // Escaped dollar signs (`\$5`) are text; `atStart`: the paragraph's first text.
+  const plain = (value: string, marks?: Mark[], atStart = false) => push(unescapeMathText(value, atStart), marks);
+  /** Bold, italic, struck or linked text keeps its mark; equations inside it are equations. */
+  const marked = (value: string, marks: Mark[]) => {
+    let at = 0;
+    for (const found of value.matchAll(inlineMathPattern())) {
+      const math = inlineMathMatch(found[1], found[2], found[3]);
+      if (!math) continue;
+      plain(value.slice(at, found.index), marks);
+      out.push(mathNode(math));
+      at = found.index! + found[0].length;
+    }
+    plain(value.slice(at), marks);
+  };
   for (const match of text.matchAll(INLINE)) {
-    plain(text.slice(last, match.index));
+    plain(text.slice(last, match.index), undefined, last === 0);
     const math = match[1] === undefined ? inlineMathMatch(match[11], match[12], match[13]) : null;
     if (math) {
-      out.push({ type: "inlineMath", attrs: math.display ? { latex: math.latex, display: true } : { latex: math.latex } });
+      out.push(mathNode(math));
       last = match.index! + match[0].length;
       continue;
     }
-    if (match[2] ?? match[3]) push((match[2] ?? match[3])!, [{ type: "bold" }]);
-    else if (match[4]) push(match[4], [{ type: "strike" }]);
-    else if (match[5] ?? match[6]) push((match[5] ?? match[6])!, [{ type: "italic" }]);
+    if (match[2] ?? match[3]) marked((match[2] ?? match[3])!, [{ type: "bold" }]);
+    else if (match[4]) marked(match[4], [{ type: "strike" }]);
+    else if (match[5] ?? match[6]) marked((match[5] ?? match[6])!, [{ type: "italic" }]);
     else if (match[7]) push(match[7], [{ type: "code" }]);
-    else if (match[8]) push(match[8], [{ type: "link", attrs: { href: match[9] } }]);
+    else if (match[8]) marked(match[8], [{ type: "link", attrs: { href: match[9] } }]);
     else if (match[10]) push(match[10], [{ type: "link", attrs: { href: match[10] } }]);
     else if (match[1] === undefined) push(match[0]);
     last = match.index! + match[0].length;
   }
-  plain(text.slice(last));
+  plain(text.slice(last), undefined, last === 0);
   return out;
 }
 
@@ -246,11 +261,12 @@ const INLINE_SYNTAX = /\*\*[^*\s][^*]*\*\*|(?<![\p{L}\p{N}])__[^_\s][^_]*__|~~[^
 
 /**
  * Whether plain text reads as Markdown: a heading, list, checklist, quote, fence, table, rule or
- * display equation at the start of a line, or bold, code, strikethrough, a link or math inside one. A lone URL or
+ * display equation at the start of a line, or bold, code, strikethrough or a link inside one. A lone URL or
  * ordinary prose is not, so it pastes as it always did.
  */
 export function looksLikeMarkdown(text: string): boolean {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  // A display equation counts; `$` math alone does not, since logs and shell lines are full of dollar signs.
   if (lines.some((line, index) => BLOCK_SYNTAX.test(line) || startsTable(lines, index) || startsMathBlock(lines, index))) return true;
-  return INLINE_SYNTAX.test(text) || lines.some(hasInlineMath);
+  return INLINE_SYNTAX.test(text);
 }

@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, refKind, refPath, type PageMention } from "@ensemble/shared-types";
+import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, refKind, refPath, unescapeMathText, type PageMention } from "@ensemble/shared-types";
 import Link from "next/link";
 import { Fragment, createContext, useContext, useState, type ReactNode } from "react";
 import { ADDRESS_SOURCE, addressLink } from "@/lib/linkify";
@@ -341,8 +341,8 @@ function inline(text: string): ReactNode[] {
   let last = 0;
   let match: RegExpExecArray | null;
   let key = 0;
-  // `\$` is a dollar sign that is not math.
-  const plain = (value: string) => nodes.push(<Plain key={key++} text={value.replace(/\\\$/g, () => "$")} />);
+  // Escaped dollar signs (`\$5`) are text, as on pages.
+  const plain = (value: string) => nodes.push(<Plain key={key++} text={unescapeMathText(value)} />);
   while ((match = pattern.exec(text))) {
     if (match.groups?.math) {
       const parts = inlineMathPattern().exec(match.groups.math);

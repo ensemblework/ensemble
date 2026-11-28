@@ -972,6 +972,8 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
 @media (hover: none) { .page-code-copy { opacity: 1; width: 44px; height: 44px; } .ProseMirror .page-code-block pre { padding-top: 58px; } }
 /* Equations: page nodes (components/editor/math.ts) and Markdown (components/math-text.tsx). KaTeX's own styles load with it (lib/katex-style.ts). */
 .page-math-inline { position: relative; border-radius: 4px; }
+/* An inline equation paints only inside its own box, so TeX such as \kern or \raisebox cannot draw over the page around it. clip-path keeps the baseline, where overflow would not. */
+:is(.page-math-inline > .page-math-shown, .md-math-inline) { display: inline-block; max-width: 100%; clip-path: inset(-0.25em -0.15em); }
 .page-math-block { position: relative; margin: 6px 0; padding: 4px 8px; border-radius: 8px; text-align: center; }
 .page-math-block > .page-math-shown, .md-math-block { overflow-x: auto; overflow-y: hidden; }
 .md-math-block { margin: 4px 0; text-align: center; }

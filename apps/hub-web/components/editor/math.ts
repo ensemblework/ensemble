@@ -4,14 +4,14 @@
  * them (lib/math.ts). Markdown reads and writes them as `$…$` and `$$…$$` (shared-types page-math.ts).
  *
  * Click an equation, or press Enter on a selected one, to edit its TeX below it: the equation
- * redraws as you type, Enter saves, Shift+Enter starts a new line, Escape puts it back. An
- * equation saved with no TeX is removed.
+ * redraws as you type, Enter saves, Shift+Enter starts a new line in an equation on its own line,
+ * Escape puts it back. TeX is saved without blank lines; an equation saved with none is removed.
  */
 import { Extension, InputRule, Node, mergeAttributes, type Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { NodeSelection, Selection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, Selection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import type { EditorView, NodeView } from "@tiptap/pm/view";
-import { mathMarkdown } from "@ensemble/shared-types";
+import { cleanLatex, mathMarkdown } from "@ensemble/shared-types";
 import { drawMath } from "@/lib/math";
 
 declare module "@tiptap/core" {
@@ -30,6 +30,8 @@ const MATH_TYPES = new Set(["inlineMath", "blockMath"]);
 const EDIT_EVENT = "page-math-edit";
 
 const latexOf = (node: ProseMirrorNode) => String(node.attrs.latex ?? "");
+/** Stands for an equation in TipTap's own text of a line (`renderText`). */
+const OBJECT = "\ufffc";
 /** The equation's Markdown (`$x$`, `$$x$$`): its text for copies and search. */
 const sourceOf = (node: ProseMirrorNode) => mathMarkdown({ type: node.type.name, attrs: node.attrs }) ?? "";
 
@@ -121,7 +123,7 @@ class MathView implements NodeView {
     if (event.key === "Escape") {
       event.preventDefault();
       this.close("cancel");
-    } else if (event.key === "Enter" && !event.shiftKey) {
+    } else if (event.key === "Enter" && (!event.shiftKey || this.node.type.name !== "blockMath")) {
       event.preventDefault();
       this.close("done");
     }
@@ -133,7 +135,8 @@ class MathView implements NodeView {
   private close(how: "done" | "cancel" | "blur") {
     const field = this.field;
     if (!field) return;
-    const value = how === "cancel" ? this.original : field.value.trim();
+    const typed = cleanLatex(field.value);
+    const value = how === "cancel" ? this.original : this.node.type.name === "blockMath" ? typed : typed.replace(/\s*\n\s*/g, " ");
     this.field = null;
     field.removeEventListener("blur", this.onBlur);
     this.box?.remove();
@@ -210,9 +213,15 @@ function emptyLine(state: EditorState): { from: number; to: number } | null {
   return { from: $from.before(), to: $from.after() };
 }
 
-// `$x$` typed: inline math. The rules match pasted Markdown (shared-types page-math.ts): no space just
-// inside the dollars and no letter or digit before the first, so "$5 and $10" stays text.
-const INLINE_RULE = /(?<![\\$\p{L}\p{N}])\$(?![\s$])((?:\\.|[^$\\])*?(?:\\.|[^\s$\\]))\$$/u;
+// `$x$` typed: inline math, made once a space or punctuation follows the closing `$` (or Enter is
+// pressed), so a price range ("$5-$10", "$5/$10", "$1k–$2k") stays text. The rules match pasted
+// Markdown (shared-types page-math.ts): no space just inside the dollars and no letter or digit
+// before the first, so "$5 and $10" stays text too.
+const INLINE_TEX = String.raw`(?<![\\$\p{L}\p{N}])\$(?![\s$])((?:\\.|[^$\\]){0,2000}?(?:\\.|[^\s$\\]))\$`;
+// Not "\n": TipTap runs input rules on Enter too, and Enter (MathKeys) must still start a new line.
+const INLINE_RULE = new RegExp(`${INLINE_TEX}([ \\t\u00a0.,;:!?)\\]}'"”’])$`, "u");
+/** `$x$` right before the caret, for Enter. */
+const INLINE_BEFORE_CARET = new RegExp(`${INLINE_TEX}$`, "u");
 // `$$x$$` typed: an equation on its own line, or display math inside a sentence.
 const DISPLAY_RULE = /(?<![\\$])\$\$(?![\s$])((?:\\.|[^$\\])+?)\$\$$/;
 // `$$` and a space on an empty line: a new equation on its own line.
@@ -244,10 +253,12 @@ export const InlineMath = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     return ["span", mergeAttributes({ "data-type": "inline-math" }, HTMLAttributes), sourceOf(node)];
   },
-  renderText({ node }) {
-    return sourceOf(node);
+  // One character, as the node is one position: TipTap reads the text before the caret through this
+  // for input rules, and a longer text would shift where they apply. `leafText` below is the source.
+  renderText() {
+    return OBJECT;
   },
-  // The Markdown source is the equation's text: plain-text copies, agent block fingerprints.
+  // The Markdown source is the equation's text (`textContent`): plain-text copies, agent block fingerprints.
   extendNodeSchema(extension) {
     return MATH_TYPES.has(extension.name) ? { leafText: (node: ProseMirrorNode) => sourceOf(node) } : {};
   },
@@ -285,7 +296,11 @@ export const InlineMath = Node.create({
       new InputRule({
         find: INLINE_RULE,
         handler: ({ state, range, match }) => {
-          state.tr.replaceWith(range.from, range.to, inline.create({ latex: match[1]!.trim() }));
+          const after = match[2]!;
+          const { tr } = state;
+          tr.replaceWith(range.from, range.to, inline.create({ latex: match[1]!.trim() }));
+          tr.insertText(after, range.from + 1);
+          tr.setSelection(TextSelection.create(tr.doc, range.from + 1 + after.length));
         },
       }),
     ];
@@ -312,8 +327,8 @@ export const BlockMath = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     return ["div", mergeAttributes({ "data-type": "block-math" }, HTMLAttributes), sourceOf(node)];
   },
-  renderText({ node }) {
-    return sourceOf(node);
+  renderText() {
+    return OBJECT;
   },
   addNodeView() {
     return ({ node, editor, getPos }) => new MathView(node, editor, getPos as () => number | undefined);
@@ -352,15 +367,35 @@ export const BlockMath = Node.create({
   },
 });
 
+/** Turns `$x$` typed right before the caret into an equation, as a following space would. */
+function mathBeforeCaret(editor: Editor): void {
+  const { state } = editor;
+  const { $from, empty } = state.selection;
+  const type = state.schema.nodes.inlineMath;
+  if (!type || !empty || !$from.parent.isTextblock || $from.parent.type.spec.code || $from.marks().some((mark) => mark.type.spec.code)) return;
+  // Each equation or other leaf counts as one character, so text offsets are document offsets.
+  const before = $from.parent.textBetween(Math.max(0, $from.parentOffset - 2100), $from.parentOffset, undefined, "\ufffc");
+  const match = INLINE_BEFORE_CARET.exec(before);
+  if (!match) return;
+  editor.view.dispatch(state.tr.replaceWith($from.pos - match[0].length, $from.pos, type.create({ latex: match[1]!.trim() })));
+}
+
 /**
- * Enter on a selected equation opens its TeX. Ahead of TipTap's own Enter, which would add a line
- * after it; a separate extension, since a higher priority on the nodes would reorder the schema.
+ * Enter on a selected equation opens its TeX; after `$x$` it makes the equation, then starts the
+ * new line. Ahead of TipTap's own Enter, which would add a line after a selected equation; a
+ * separate extension, since a higher priority on the nodes would reorder the schema.
  */
 export const MathKeys = Extension.create({
   name: "mathKeys",
   priority: 1000,
   addKeyboardShortcuts() {
-    return { Enter: ({ editor }) => editSelectedMath(editor.view) };
+    return {
+      Enter: ({ editor }) => {
+        if (editSelectedMath(editor.view)) return true;
+        mathBeforeCaret(editor);
+        return false;
+      },
+    };
   },
 });
 

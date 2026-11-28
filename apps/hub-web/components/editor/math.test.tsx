@@ -143,3 +143,41 @@ test("/equation and $$ then a space start an equation with its TeX open; a read-
   assert.equal(field(reader), null);
   done(reader);
 });
+
+test("typed $x$ becomes an equation only once a space, punctuation or Enter follows, so price ranges stay text", () => {
+  const editor = make(true);
+  for (const text of ["$5-$10", "$5/$10", "$1k–$2k", "from $5-$9 up"]) {
+    editor.commands.setContent({ type: "doc", content: [p()] });
+    type(editor, text);
+    assert.deepEqual(json(editor), [p(text)], text);
+  }
+  editor.commands.setContent({ type: "doc", content: [p()] });
+  type(editor, "so $y$. And $z$");
+  assert.deepEqual(json(editor)[0]!.content, [
+    { type: "text", text: "so " },
+    { type: "inlineMath", attrs: { latex: "y", display: false } },
+    { type: "text", text: ". And $z$" },
+  ]);
+  editor.view.someProp("handleKeyDown", (handle) => handle(editor.view, new KeyboardEvent("keydown", { key: "Enter", cancelable: true })));
+  const [first, second] = json(editor);
+  assert.deepEqual((first!.content as Json[]).at(-1), { type: "inlineMath", attrs: { latex: "z", display: false } }, "Enter makes the equation");
+  assert.deepEqual(second, p(), "and still starts a new line");
+  done(editor);
+});
+
+test("Enter or more typing right after an equation leaves the text before it alone", () => {
+  const editor = make(true, { type: "paragraph", content: [{ type: "text", text: "And " }, { type: "inlineMath", attrs: { latex: "z" } }] });
+  editor.commands.focus("end");
+  editor.view.someProp("handleKeyDown", (handle) => handle(editor.view, new KeyboardEvent("keydown", { key: "Enter", cancelable: true })));
+  assert.deepEqual(json(editor), [{ type: "paragraph", content: [{ type: "text", text: "And " }, { type: "inlineMath", attrs: { latex: "z", display: false } }] }, p()]);
+  editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "inlineMath", attrs: { latex: "a" } }] }] });
+  editor.commands.focus("end");
+  type(editor, "$ and **b** ");
+  assert.deepEqual(json(editor)[0]!.content, [
+    { type: "inlineMath", attrs: { latex: "a", display: false } },
+    { type: "text", text: "$ and " },
+    { type: "text", text: "b", marks: [{ type: "bold" }] },
+    { type: "text", text: " " },
+  ]);
+  done(editor);
+});

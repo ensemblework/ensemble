@@ -29,8 +29,10 @@ test("a page's equations read back as the Markdown they came from", () => {
 });
 
 test("text that only looks like an equation stays text through a rewrite", () => {
-  const doc: PageDocument = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Use $HOME/$USER here" }] }] };
-  assert.equal(pageMarkdown(doc, ""), String.raw`Use \$HOME/\$USER here`);
+  const shell: PageDocument = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Use $HOME/$USER here" }] }] };
+  assert.equal(pageMarkdown(shell, ""), "Use $HOME/$USER here", "shell variables need no escape");
+  const doc: PageDocument = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Type $x$ here" }] }] };
+  assert.equal(pageMarkdown(doc, ""), String.raw`Type \$x$ here`);
   assert.deepEqual(markdownToNodes(pageMarkdown(doc, "")), doc.content);
 });
 
@@ -42,4 +44,30 @@ test("the server's page schema holds equations, and search and fingerprints see 
   assert.match(pageSearchText("Vectors", doc, ""), /\\mathbb\{R\}\^\{d\}/);
   const other = markdownToNodes(SOURCE.replace("$H$", "$K$"));
   assert.notEqual(fingerprint(doc.content), fingerprint(other));
+});
+
+test("read and replace keeps text that looks like math, escaped prices and backslashes, however often", () => {
+  const para = (...content: PageDocument["content"]): PageDocument["content"][number] => ({ type: "paragraph", content });
+  const doc: PageDocument = {
+    type: "doc",
+    content: [
+      para({ type: "text", text: String.raw`Literal \(a\) and $x$ typed as text` }),
+      para({ type: "text", text: "$$ a $$" }),
+      para({ type: "text", text: String.raw`\[1\]` }),
+      para({ type: "text", text: String.raw`C:\$Recycle.Bin and costs \$5 typed with a backslash` }),
+      para({ type: "text", text: "Total: $5", marks: [{ type: "bold" }] }, { type: "text", text: " and " }, { type: "text", text: "$y$ as text", marks: [{ type: "italic" }] }),
+      para({ type: "text", text: "The value ", marks: [{ type: "bold" }] }, { type: "inlineMath", attrs: { latex: "x" } }),
+      { type: "blockMath", attrs: { latex: "a = b\nc = d" } },
+    ],
+  };
+  const once = pageMarkdown(doc, "");
+  assert.deepEqual(markdownToNodes(once), doc.content, once);
+  const twice = pageMarkdown({ type: "doc", content: markdownToNodes(once) }, "");
+  assert.equal(twice, once, "a second read-and-replace changes nothing");
+  assert.deepEqual(markdownToNodes(String.raw`**Total: \$5**`), [para({ type: "text", text: "Total: $5", marks: [{ type: "bold" }] })], "an agent's escaped price");
+});
+
+test("an equation saved with blank lines in its TeX stays one equation", () => {
+  const doc: PageDocument = { type: "doc", content: [{ type: "blockMath", attrs: { latex: "a = b\n\nc = d" } }] };
+  assert.deepEqual(markdownToNodes(pageMarkdown(doc, "")), [{ type: "blockMath", attrs: { latex: "a = b\nc = d" } }]);
 });
