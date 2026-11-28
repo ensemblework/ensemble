@@ -293,7 +293,7 @@ Public discovery and OAuth protocol routes do not inherit a browser's sharing sc
 
 It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space.
 
-It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it.
+It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, spaces, sharing and device pairing refuse it.
 
 Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
 

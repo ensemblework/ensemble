@@ -7,10 +7,11 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import type { PrismaClient } from "@prisma/client";
+import { openableFolder } from "../lib/code-folders.js";
 import { loadSettings } from "../lib/settings.js";
 import { blockedReason, checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable, within, workspaceRoot } from "./guard.js";
 
-/** The workspace, the terminal's own folders (`settings.terminal.roots`, never Code's), and the folders tasks ran in outside it. */
+/** The workspace, the terminal's own folders (`settings.terminal.roots`), and the folders tasks ran in outside it. Any other folder Open a folder accepts is its own scope (`scopeFor`). */
 export async function terminalRoots(prisma: PrismaClient, userId: string): Promise<string[]> {
   const settings = await loadSettings(prisma, userId);
   const jobs = await prisma.workspaceJob.findMany({ where: { userId, externalRoot: { not: null } }, select: { externalRoot: true }, distinct: ["externalRoot"] });
@@ -28,21 +29,24 @@ export function scopeOf(allowed: string[], path: string): string | null {
   return allowed.filter((root) => within(root, path)).sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
-/** Resolves `cd`: relative paths stay in the current scope; absolute ones may jump to another allowed root. */
+/**
+ * The folder a command in `path` is confined to: its deepest allowed root, or else the folder itself when
+ * Open a folder accepts it (`openableFolder`: not a disk, system folder, the home folder, keys or app
+ * data, Ensemble's own code, a dot-folder in the home folder or a link). Throws GuardError with the reason.
+ */
+export async function scopeFor(allowed: string[], path: string): Promise<string> {
+  return scopeOf(allowed, path) ?? (await openableFolder(path));
+}
+
+/** Resolves `cd` (relative to `cwd`, or absolute) to a folder the terminal may use, and the scope it runs in. */
 export async function resolveCd(allowed: string[], cwd: string, path: string): Promise<{ cwd: string; scope: string }> {
-  const scope = scopeOf(allowed, cwd);
-  if (!scope) throw new GuardError("That folder is outside what the terminal may use.");
+  const scope = await scopeFor(allowed, cwd);
   const target = path.trim() === "" || path.trim() === "~" ? scope : path.trim();
-  if (isAbsolute(target)) {
-    const next = scopeOf(allowed, resolve(target));
-    if (!next) throw new GuardError(`${target} is outside the folders the terminal may use.`);
-    const real = await jailPath(next, resolve(target), true);
-    if (!(await stat(real)).isDirectory()) throw new GuardError("That is not a folder.");
-    return { cwd: real, scope: next };
-  }
-  const real = await jailPath(scope, resolve(cwd, target), true);
+  const wanted = isAbsolute(target) ? resolve(target) : resolve(cwd, target);
+  const next = await scopeFor(allowed, wanted);
+  const real = await jailPath(next, wanted, true);
   if (!(await stat(real)).isDirectory()) throw new GuardError("That is not a folder.");
-  return { cwd: real, scope };
+  return { cwd: real, scope: next };
 }
 
 export const DESTRUCTIVE: Array<[RegExp, string]> = [
@@ -64,8 +68,7 @@ export type PreparedRun =
  * hardening, and a confirmation for destructive commands. Throws GuardError with the reason when refused.
  */
 export async function prepareRun(input: { allowed: string[]; cwd: string; line: string; confirmed: boolean; sandboxed?: boolean }): Promise<PreparedRun> {
-  const scope = scopeOf(input.allowed, input.cwd);
-  if (!scope) throw new GuardError("That folder is outside what the terminal may use.");
+  const scope = await scopeFor(input.allowed, input.cwd);
   const cwd = await jailPath(scope, input.cwd, true);
   const line = input.line.trim();
   const argv = parseCommand(line);

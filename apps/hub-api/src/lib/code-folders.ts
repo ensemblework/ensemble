@@ -82,6 +82,11 @@ export function dotUnderHome(path: string, homeDir = home()): string | null {
  */
 export async function resolveCodeFolder(input: string, userId?: string): Promise<string> {
   await requireHostAccess(userId, "Code filesystem");
+  return openableFolder(input);
+}
+
+/** `resolveCodeFolder` without the hosted-access check: the folder rule alone, also for the terminal (`workspace/terminal-exec.ts`). */
+export async function openableFolder(input: string): Promise<string> {
   const typed = typeof input === "string" ? input.trim() : "";
   if (!typed) throw new GuardError("Give the full path, starting with / or ~.");
   if (hasParentSegment(typed)) throw new GuardError("Write the folder's path without “..”.");

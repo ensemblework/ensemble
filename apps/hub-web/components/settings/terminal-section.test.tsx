@@ -16,7 +16,7 @@ type DesktopWindow = Window & {
   __TAURI__?: { dialog?: { open: (options: unknown) => Promise<string | null> } };
 };
 
-const STATUS = { enabled: true, unlocked: false, expiresAt: null, passkeys: [], roots: ["/work"], home: "/work" };
+const STATUS = { enabled: true, roots: ["/work"], home: "/work" };
 // Each list has a folder the other does not, so a section showing the wrong list is caught.
 const SETTINGS = Settings.parse({ terminal: { roots: ["/srv/terminal-only"] }, code: { roots: ["/srv/code-only"] } });
 
@@ -48,7 +48,7 @@ type Patch = Record<string, unknown>;
 type View = { host: HTMLDivElement; calls: string[]; patches: Patch[]; done: () => Promise<void> };
 
 /** POST /api/code/folders/resolve refuses /etc (as hub-api does) and returns "<path>-real" for anything else. */
-async function mount(options: { webStatus?: unknown } = {}): Promise<View> {
+async function mount(): Promise<View> {
   const calls: string[] = [];
   const patches: Patch[] = [];
   const realFetch = globalThis.fetch;
@@ -63,7 +63,7 @@ async function mount(options: { webStatus?: unknown } = {}): Promise<View> {
         headers: { "Content-Type": "application/json" },
       });
     }
-    const body = url.endsWith("/api/web-terminal/status") ? options.webStatus ?? { unlocked: false, passkeys: [] } : url.endsWith("/api/terminal/status") ? STATUS : url.endsWith("/api/code/repos") ? { repos: [], roots: ["/work"] } : {};
+    const body = url.endsWith("/api/terminal/status") ? STATUS : url.endsWith("/api/code/repos") ? { repos: [], roots: ["/work"] } : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
@@ -192,7 +192,7 @@ function assertCodeFolders(view: View, desktop: boolean, label: string) {
   if (note) assert.equal(Boolean(note.compareDocumentPosition(codeBlock(view.host)!) & Node.DOCUMENT_POSITION_FOLLOWING), true, `${label}: after the note`);
 }
 
-test("desktop Settings: the note, then the commit settings; no Terminal toggle, folder list or Touch ID set-up line that would contradict it", async () => {
+test("desktop Settings: the note, then the commit settings; no Terminal toggle or folder list that would contradict it", async () => {
   await at("http://127.0.0.1:1430/settings", true, (view) => {
     assert.equal(hasDesktopNote(view.host), true, "desktop note is shown");
     const note = desktopNote(view.host)?.textContent ?? "";
@@ -211,31 +211,27 @@ test("desktop Settings: the note, then the commit settings; no Terminal toggle, 
   });
 });
 
-test("web Settings on localhost: no desktop note, and the toggle, folder list and passkey set-up line as before", async () => {
+test("web Settings on localhost: no desktop note, the toggle and folder list, and no passkeys", async () => {
   await at("http://localhost:3000/settings", false, (view) => {
     assert.equal(hasDesktopNote(view.host), false);
     assert.equal(text(view.host).includes(TERMINAL_DESKTOP_TITLE), false);
     assert.equal(hasAddressNote(view.host), false);
     assert.equal(hasToggle(view.host), true, "Terminal toggle");
-    assert.ok(text(view.host).includes("Touch ID passkeys"));
-    assert.ok(text(view.host).includes("None yet. Open the terminal in the Code tab to set one up."));
-    assert.ok(view.calls.some((url) => url.endsWith("/api/terminal/status")), `status was fetched: ${view.calls.join(", ")}`);
+    assert.doesNotMatch(text(view.host), /passkey|Touch ID/i);
     assertFolders(view, true, "localhost");
     assertCodeFolders(view, false, "localhost");
     assertCommitSettingsStay(view.host, "localhost");
   });
 });
 
-test("Ensemble on the web: this server's terminal is not offered; the passkeys for the terminal on your computers are", async () => {
+test("Ensemble on the web: this server's terminal is not offered, and there is nothing to set up for your computers' terminal", async () => {
   await at("https://app.ensemblework.com/settings", false, (view) => {
     assert.equal(hasDesktopNote(view.host), false);
     assert.equal(hasAddressNote(view.host), false, "no message that sends you to localhost");
-    const block = view.host.querySelector('[data-testid="web-terminal-passkeys"]');
-    assert.ok(block, "the web terminal's passkeys");
-    assert.match(block.textContent ?? "", /Terminal passkeys/);
+    assert.equal(view.host.querySelector('[data-testid="web-terminal-passkeys"]'), null);
+    assert.doesNotMatch(text(view.host), /passkey|Touch ID/i);
     assert.equal(hasToggle(view.host), false, "no Terminal toggle for this server");
-    assert.equal(view.calls.some((call) => call.endsWith("/api/terminal/status")), false);
-    assert.ok(view.calls.some((call) => call.endsWith("/api/web-terminal/status")));
+    assert.equal(view.calls.some((call) => call.endsWith("/api/terminal/status") || call.includes("/api/web-terminal/")), false);
     assertFolders(view, false, "web");
     assertCommitSettingsStay(view.host, "web");
   });
@@ -307,14 +303,3 @@ test("desktop: Choose folder… opens the native picker and saves the chosen fol
   });
 });
 
-
-test("hosted passkeys provide a visible way to unlock management", async () => {
-  setTestUrl("https://app.ensemble.test/settings");
-  const view = await mount({ webStatus: { unlocked: false, passkeys: [{ id: "key", label: "This laptop", createdAt: new Date().toISOString(), lastUsedAt: null }] } });
-  try {
-    const remove = view.host.querySelector<HTMLButtonElement>('[aria-label="Remove This laptop"]');
-    assert.ok(remove);
-    assert.equal(remove.disabled, true);
-    assert.ok([...view.host.querySelectorAll("button")].some((button) => button.textContent === "Unlock to manage passkeys"));
-  } finally { await view.done(); setTestUrl("http://localhost/"); }
-});

@@ -181,7 +181,7 @@ The API's `HOST_ACCESS_DENIED` is the fallback before the shell loads. The host 
 
 On the web the tab works on your paired computers (`lib/code-home.ts`), one at a time (§1): the Explorer lists the chosen computer's **repositories** (its Code folders and Ensemble's workspace) and *Changes to review* its **agent changes**, read from that computer.
 
-Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the passkey-unlocked **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
+Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
 
 - only from you, in your browser; never an API key, an agent or the assistant;
 - never git's own files or secrets files; keys in code are hidden and a file holding one is read-only; files over 1 MB are read-only;
@@ -233,41 +233,33 @@ Before assigning a run, open the Assign dialog’s **Optional information → Wh
 
 A terminal panel under the editor (resizable, §1) for what would otherwise send you to a shell: make or switch a branch, install a package, run tests, commit and push. It opens:
 
-- **on the computer itself**, at Ensemble's page on `localhost` (`routes/terminal.ts`). The desktop app's window shows a note instead, because its webview cannot run the passkey check (`components/code/terminal-desktop-note.tsx`);
+- **on the computer itself**, at Ensemble's page on `localhost` (`routes/terminal.ts`). The desktop app's window shows a note instead: the app signs in with a token its agents use too, so it cannot show a command comes from you (`components/code/terminal-desktop-note.tsx`);
 - **on Ensemble on the web, for a paired computer**: the Terminal button on its Explorer section in Code, *Terminal* with that computer selected, or in a review of its code. Commands run on that computer through the relay ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `remote/terminal.ts`).
 
 **It is not a shell:**
 
 #### Who
 
-a **passkey** with user verification (Touch ID, Windows Hello, a phone or a security key) once per session: 30 minutes idle, 8 hours at most, *Lock now* any time. No agent, MCP call, API key, script or the assistant can produce one, and every terminal route refuses anything but a signed-in browser on Ensemble's own page.
-
-Adding a passkey needs the account password, or on the web, for an account that signs in with Google or GitHub, a code mailed to the account.
-
-On the web the passkey covers only the terminal; review, editing and Source control use your sign-in and the computer's *Change code from the web* switch. A locked terminal (*Lock now*, `lock`, or expiry) refuses commands with `423` and code `TERMINAL_LOCKED` (`lib/terminal-human.ts`), never `401`, so you stay signed in and the panel returns to its unlock button.
+you, in your own signed-in browser session on Ensemble's own page; it opens at once, with no other step. Every terminal route refuses anything else: API keys, bridge and device tokens, the desktop app's token, MCP clients, agents and the assistant (`humanOnlyRefusal` in `lib/terminal-human.ts` for the computer's own page, `requireWebPerson` in `devices/web-person.ts` on the web). A change must name the page as its `Origin`.
 #### What
 
 one allow-listed program at a time, run by name, never through a shell: no pipes, redirects, `;`, `&&`, `$()` or backticks (`parseCommand`, `checkProgram` in `workspace/guard.ts`). `git` is hardened: hooks off, no fsmonitor, no `ext::` transports, `--force` refused in favour of `--force-with-lease`.
 
 Developer tools (`python`, `pip`, `uv`, `node`, `npm`, `pnpm`, `pytest`, `make`, `cargo`, `go` and similar), file tools (`ls`, `cat`, `grep`, `find`, `mkdir`, `cp`, `mv`, `rm` and similar) and `curl`/`wget`. Shell scripts run only as `sh script.sh` inside the sandbox, never `sh -c`. Never: `sudo`, `ssh`, `docker`, `osascript`, `open`, `launchctl`, `security`, `env`, `kill` and the rest of `NEVER`.
 
-Destructive commands (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) need you to type `yes`. Built in: `cd`, `pwd`, `clear`, `help`, `lock`.
+Destructive commands (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) need you to type `yes`. Built in: `cd`, `pwd`, `clear`, `help`, `exit` (closes the panel).
 #### Where
 
-Ensemble's workspace, folders tasks ran in, and folders added in *Settings → Terminal and commits*; never above them, never a system or credential folder (`workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable.
+any folder *Open a folder* accepts (`openableFolder` in `lib/code-folders.ts`): never a disk, a system folder, the home folder itself, keys or app data, a dot-folder in the home folder, a link named directly or Ensemble's own code. Ensemble's workspace, folders tasks ran in and folders added in *Settings → Terminal and commits* are each one scope; any other folder is its own (`scopeFor` in `workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable.
 
 From the web, a computer without a working sandbox refuses commands (`ensemble sandbox setup`). 15 minutes per command; the web shows up to 1 MB of output.
-- **Record**: the computer's ledger records that a command ran (arguments, folder, exit code; `via: "web"` from the web), **never its output**. Ensemble on the web records the unlock and which computer ran a command, and keeps output only while you read it (an hour at most, in Redis).
+- **Record**: the computer's ledger records that a command ran (arguments, folder, exit code; `via: "web"` from the web), **never its output**. Ensemble on the web records which computer ran a command, and keeps output only while you read it (an hour at most, in Redis).
 
 *Settings → Terminal and commits* can turn the terminal off on the computer; *Terminal from the web* (Settings → This computer, or `ensemble web terminal off`) turns off only the web's.
 
-### Passkeys and addresses
+### Addresses
 
-A passkey belongs to the **site it was made on** and stays on the device that made it (or your phone or key). On the computer's own page register at `http://localhost:<port>`, not `127.0.0.1`: browsers refuse passkeys on a raw IP. On the web it belongs to the web's address (`app.ensemblework.com`), so one passkey opens the terminal on each paired computer.
-
-The fingerprint or PIN never reaches Ensemble.
-
-On the web, Settings shows **Unlock to manage passkeys**, which runs the same check as the terminal; removing a passkey needs an unlocked session. The buttons stay visible for touch and keyboard users.
+The terminal on the computer itself opens only at its `localhost` address: at `127.0.0.1` it points to `http://localhost:<port>`, and on any other address it says it opens only on the computer running Ensemble (`components/code/terminal-address.ts`, the same words as the server). On the web, a paired computer's terminal opens on the web's own address.
 
 ---
 
@@ -368,9 +360,9 @@ The **Search and jump** dialog offers **Local repositories** and **Code reviews*
 
 - Not supported: side-by-side view, a change overview on the scrollbar, autocomplete, go-to-definition, formatting (it is a review-and-edit surface with highlighting, brackets, indentation, multi-cursor and find/replace, **not a language server**), an interactive shell or programs that wait for typed input, and diffing in a Web Worker.
 - **Agents with the sandbox off run as you.** The terminal adds nothing they can reach, but only the OS sandbox separates them from your account.
-- A process running as you could register a passkey first. Every registration is in the ledger and listed in Settings, so an unexpected one is visible and removable.
+- **Your browser session is the key.** Anyone using your signed-in browser can open the terminal; sign out on a shared computer. Keys, tokens, agents and the assistant never can.
 - Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `npm install`, `make` or `pytest` run the repository's code, inside the sandbox.
-- **On the web, Ensemble's server relays the commands.** While the terminal is unlocked, a compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless turned off). The computer still applies its allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
+- **On the web, Ensemble's server relays the commands.** A compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless turned off). The computer still applies its allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
 
 ## In the code
 

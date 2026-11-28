@@ -121,7 +121,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   evidence:
     "Usage: ensemble evidence [status] | on | off\nOn (default): files a run's agent attaches for you (screenshots, reports, logs), and the screenshots and videos a run or a node captures here, go to Ensemble on the web, for you only. Off: they stay on this computer, and the web shows their names as on this computer, not uploaded. Keys, .env files and anything holding a saved secret are never attached.",
   web:
-    "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
+    "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, for you signed in there in your browser; the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). It is in beta: a run uses it when its run profile turns the sandbox on. No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   browser:
@@ -711,7 +711,7 @@ async function commandWeb(args: string[]): Promise<void> {
   console.log(`Ensemble on the web, on this computer:
   files     ${word(access.browseFiles)}  task files and code in the Code tab
   edit      ${word(access.webEdit)}  accept/reject, edit, commit, push from the Code tab
-  terminal  ${word(access.webTerminal)}  the terminal, after a passkey unlock on the web`);
+  terminal  ${word(access.webTerminal)}  the terminal, for you signed in on the web`);
 }
 
 async function commandHooks(args: string[]): Promise<void> {

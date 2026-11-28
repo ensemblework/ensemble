@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, ChevronDown, Info, RefreshCw, Search } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Info, RefreshCw, Search } from "lucide-react";
 import { useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
 import { IncludedCreditsCard, IncludedLocalOnly } from "@/components/metrics/included-credits";
@@ -50,15 +50,14 @@ function ActivityChart({ days, credits }: { days: MetricsSummary["days"]; credit
   </section>;
 }
 
+/** One call: what it was, then its purpose, time, provider and model on the second line. */
 function RecentCall({ call }: { call: UsageCall }) {
-  return <details className="group border-t border-line" data-call-provider={call.provider}>
-    <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-3 py-4 marker:content-none [&::-webkit-details-marker]:hidden">
-      <div className="min-w-0 flex-[2] basis-56"><p className="truncate text-sm font-medium" title={call.title}>{call.title}</p><p className="mt-1 text-xs text-muted">{providerName(call.provider)} · {modelName(call.provider, call.model)}</p></div>
-      <div className="flex min-w-0 flex-1 basis-48 justify-between gap-4 text-xs tabular-nums"><span><span className="block text-faint">Input tokens</span><strong className="mt-1 block font-medium">{count(call.tokensIn)}</strong></span><span><span className="block text-faint">Output tokens</span><strong className="mt-1 block font-medium">{count(call.tokensOut)}</strong></span></div>
-      <div className="ml-auto flex items-center gap-3"><span className="min-w-24 text-right text-sm font-medium">{costOf(call.provider, call)}</span><ChevronDown size={14} className="text-muted transition-transform group-open:rotate-180" /></div>
-    </summary>
-    <p className="mb-4 rounded-lg bg-raised px-4 py-3 text-xs text-muted">{call.purpose} · {dateTime(call.at)}</p>
-  </details>;
+  const second = `${call.purpose} · ${dateTime(call.at)} · ${providerName(call.provider)} · ${modelName(call.provider, call.model)}`;
+  return <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line py-4" data-call-provider={call.provider}>
+    <div className="min-w-0 flex-[2] basis-56"><p className="truncate text-sm font-medium" title={call.title}>{call.title}</p><p className="mt-1 truncate text-xs text-muted" title={second} data-call-line>{second}</p></div>
+    <div className="flex min-w-0 flex-1 basis-48 justify-between gap-4 text-xs tabular-nums"><span><span className="block text-faint">Input tokens</span><strong className="mt-1 block font-medium">{count(call.tokensIn)}</strong></span><span><span className="block text-faint">Output tokens</span><strong className="mt-1 block font-medium">{count(call.tokensOut)}</strong></span></div>
+    <span className="ml-auto min-w-24 text-right text-sm font-medium" data-call-cost>{costOf(call.provider, call)}</span>
+  </div>;
 }
 
 export default function MetricsPage() {

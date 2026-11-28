@@ -141,7 +141,7 @@ Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears i
 
 The native desk header (`components/desk/view.tsx`, `glance.tsx`) shows the date, a greeting and day-at-a-glance links: open, due today and overdue (from `/api/desk/live`), needs you (the Needs me count), agents working (`/api/agent/state`, workspace module on) and meetings today (a one-day `/api/calendar` read, shown once a calendar is connected).
 
-Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. `/api/desk/live` task rows include `priority`.
+Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. View all and a tile's corner arrow open its full list (`tileHref` in `components/desk/live-board.tsx`): Repos the repository list (`/context?view=widgets&tab=repos`), Reviews, Checks and Deploys their Context tab, which a link opens even when the tab is not pinned; a tile on its own tab has no View all. `/api/desk/live` task rows include `priority`.
 
 Add a tile also offers Focus now (the next three open tasks with Done and Undo), Your week (finished tasks per day, the streak and a link to `/recap`) and, for engineer and builder profiles, Agents at work (running and queued agent jobs, the Needs you count, a link to `/runs`) (`components/desk/now-tiles.tsx`).
 
@@ -259,7 +259,7 @@ Skills edits each personal instruction body, its enablement and retained version
 
 ### 3.7 Code
 
-Code opens a review or folder with changed-file diff, editor and Source control. On the hosted app ordinary users work on their paired computer. The terminal is for the person only, needs passkey unlock, and is not an assistant tool. Details: [16](16_CODE_TAB.md).
+Code opens a review or folder with changed-file diff, editor and Source control. On the hosted app ordinary users work on their paired computer. The terminal is for the person only (their signed-in browser session), and is not an assistant tool. Details: [16](16_CODE_TAB.md).
 
 ### 3.8 Metrics
 
@@ -571,7 +571,7 @@ Conversions and history restores keep document identity and have their own safeg
 
 Activity state and SSE show work actually running or waiting. The top bar's activity pill (`components/shell/activity-panel.tsx`) reads Idle, Working with the number of model calls and agent tasks running (Ensemble's mark animates, and holds still with reduced motion), Needs you, Queued, Paused or Offline; an amber dot on the mark means something is waiting for you while other work runs.
 
-It opens a panel listing Waiting for you, Model calls, Agent tasks and Queued, each row with its elapsed time and a stop button (a task row opens the task); Stop everything and Pause are at its foot, and Esc closes it. Pause stops new jobs and cancels current model/command work; Stop everything also clears the queue. A remote request already accepted can finish.
+It opens a panel listing Waiting for you, Model calls, Agent tasks and Queued, each row with its elapsed time and a stop button (a task row opens the task); one **Stop everything** button is at its foot, and Esc closes it. Stop everything stops current model and command work and starts nothing new (`POST /api/agent/pause`); queued work keeps its place, the pill reads Paused, and the same button reads **Resume**. There is no other pause control beside the pill. `POST /api/agent/stop-all`, which also clears the queue, stays for the API and the assistant. A remote request already accepted can finish.
 
 Cancelling does not undo an external write or guarantee a billing refund. Saved work and retry: [05 §6](05_MODULE_TASK_ORCHESTRATOR.md#6-stop-interruption-and-retry).
 
@@ -629,7 +629,7 @@ The email links to the Hub's `/verify`, or to Ensemble Node's `/welcome` for a s
 
 ### Inbound support email
 
-`EMAIL_FROM` stays the no-reply sender for account verification, password reset and passkey codes. The optional Resend forwarding route uses `EMAIL_FROM_SUPPORT`, a sender on the separately verified receiving domain; `EMAIL_FORWARD_TO`, a single inbox on another domain; `EMAIL_INBOUND_WEBHOOK_SECRET`, the webhook's signing secret; and `EMAIL_INBOUND_API_KEY`, a separate Resend full-access key for reading and sending mail. Set these only on the API server. Missing configuration leaves the route disabled without changing account mail.
+`EMAIL_FROM` stays the no-reply sender for account verification and password reset. The optional Resend forwarding route uses `EMAIL_FROM_SUPPORT`, a sender on the separately verified receiving domain; `EMAIL_FORWARD_TO`, a single inbox on another domain; `EMAIL_INBOUND_WEBHOOK_SECRET`, the webhook's signing secret; and `EMAIL_INBOUND_API_KEY`, a separate Resend full-access key for reading and sending mail. Set these only on the API server. Missing configuration leaves the route disabled without changing account mail.
 
 The route forwards mail for the support sender's domain, including future aliases, except the configured no-reply address. It ignores messages from the forwarding inbox. The forwarded message shows the original sender and receiving alias, preserves Reply-To (falling back to the original sender) and includes the original body and attachments. In Gmail, use the matching **Send mail as** address in the reply's **From** field. Incoming mail, forwards and replies all count toward the same Resend sending and receiving quota as account mail.
 
