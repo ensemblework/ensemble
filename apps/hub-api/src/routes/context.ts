@@ -1179,7 +1179,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     for (const row of projectPeople) link(row.personId, row.projectId, "member", row.role);
     for (const row of projectRepos) link(row.projectId, row.repoId, "repo");
     for (const task of tasks) {
-      const waiting = task.labels.includes("waiting-on");
+      // A board may spell the label its own way.
+      const waiting = task.labels.some((label) => label.toLowerCase() === "waiting-on");
       link(task.projectId, task.id, "project");
       link(task.repoId, task.id, "repo");
       link(task.id, task.deliverableId, "deliverable");

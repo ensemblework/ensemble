@@ -28,6 +28,7 @@ import {
 } from "./text.js";
 import { visibleArtifacts } from "../sharing/context.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
+import { labelSpellings } from "../labels/board-labels.js";
 
 type Db = PrismaClient;
 
@@ -511,7 +512,7 @@ export async function todayBriefing(db: Db, userId: string) {
       select: taskSelect,
     }),
     db.task.findMany({
-      where: { userId, deletedAt: null, ...ON_BOARD, status: { in: [...OPEN_STATUSES] }, labels: { has: "waiting-on" } },
+      where: { userId, deletedAt: null, ...ON_BOARD, status: { in: [...OPEN_STATUSES] }, labels: { hasSome: await labelSpellings(db, userId, "waiting-on") } },
       orderBy: { updatedAt: "desc" },
       take: 10,
       select: taskSelect,
