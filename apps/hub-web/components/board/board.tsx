@@ -37,7 +37,7 @@ import { CreateTaskDialog } from "./create-task-dialog";
 import { BoardImport } from "../app-items/board-import";
 import { useSpaceAccess } from "@/lib/access";
 import type { LayoutPayload } from "@/lib/server-layout";
-import { usePersistentState } from "@/lib/prefs";
+import { useStoredChoice } from "@/lib/prefs";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { PRIORITY, PRIORITY_ORDER, PRIORITY_RANK } from "@/lib/format";
 import { CustomBoards } from "./custom-boards";
@@ -169,20 +169,14 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const [owner, setOwner] = useState<Owner | "all">("all");
   const [priority, setPriority] = useState<Priority | "all">("all");
   // Most urgent first by default; "manual" keeps the order cards were dragged into.
-  const [order, setOrder] = usePersistentState<"priority" | "manual">("ensemble.board.order", "priority");
+  const [order, setOrder] = useStoredChoice<"priority" | "manual">("ensemble.board.order", "priority", ["priority", "manual"]);
   const people = useSpacePeople();
   // Filtering by nodes and crews is offered once the board has a task with one.
   const withNodes = owner === "node" || (tasks.data?.tasks ?? []).some((task) => task.owner === "node");
-  const [columns, setColumns] = useState<Record<ColumnId, string[]>>({
-    proposed: [],
-    todo: [],
-    in_progress: [],
-    done: [],
-  });
   const [dragId, setDragId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [layoutEdit, setLayoutEdit] = useState(false);
-  const [collapsed, setCollapsed] = usePersistentState("ensemble.board.collapsed", false);
+  const [collapsed, setCollapsed] = useStoredChoice<boolean>("ensemble.board.collapsed", false);
   const [focus, setFocus] = useState<BoardFocus | null>(null);
   const [ideaOpen, setIdeaOpen] = useState(false);
   const access = useSpaceAccess();
@@ -220,6 +214,8 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       .sort((a, b) => (order === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) : 0) || a.boardOrder - b.boardOrder);
   }, [tasks.data, search, owner, priority, order, people.me, people.ownerId]);
   const visible = useMemo(() => baseVisible.filter((task) => matchesFocus(task, focus, people, insightNow)), [baseVisible, focus, people.me, people.ownerId, insightNow]);
+  // From the data the first render has (cached on a return to the board), so the columns are never drawn empty first.
+  const [columns, setColumns] = useState<Record<ColumnId, string[]>>(() => columnsFromTasks(visible, completedVisible));
   useAssistantSurface("/board", { kind: "board", filters: { search, owner, priority, order, focus: focus ? JSON.stringify(focus) : null, totalVisible: visible.length }, selectedIds: picked.slice(0, 100), visibleIds: visible.slice(0, 100).map(task => task.id) });
 
   const draggingRef = useRef(false);
@@ -253,7 +249,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     boardRef,
     dragId !== null,
     currentShare() ? `share:${currentShare()}` : shell.data?.space?.id ?? shell.data?.user.id ?? null,
-    visible.map((task) => ({ id: task.id, column: columnOf(task.status) })),
+    visible.map((task) => ({ id: task.id, column: columnOf(task.status), key: `${task.status}:${task.boardOrder}:${task.priority}` })),
   );
   const [overColumn, setOverColumn] = useState<ColumnId | null>(null);
   const [overlayWidth, setOverlayWidth] = useState(248);
@@ -484,7 +480,6 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       <div className="px-4 pt-6 sm:px-6">
         <PageHeader
           title={shell.data?.labels?.board || "Task board"}
-          description="Proposed through done. Drag a card to move it."
           actions={
             <span className="flex items-center gap-2">
               {shell.data?.space ? <PagePeople kind="board" id={shell.data.space.id} /> : null}

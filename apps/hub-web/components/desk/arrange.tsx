@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { usePreferenceWrite } from "@/lib/preference-write";
 import { useToast } from "@/components/toast";
 import { MenuItem, Popover } from "@/components/ui";
+import { TileResize } from "@/components/tile-resize";
 import { GRID_COLUMNS, hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileLimits, type TileSize } from "./layout";
 import { useSpaceAccess } from "@/lib/access";
 import { measureBoxes, motionReduced, perFrame, playFlip, type Box } from "@/lib/motion/drag";
@@ -164,6 +165,7 @@ export function useTileControls<S extends Arrangeable>({
   mobile,
   restoreHint,
   heights = true,
+  resizable = true,
 }: {
   shown: S[];
   hidden: string[];
@@ -174,6 +176,8 @@ export function useTileControls<S extends Arrangeable>({
   restoreHint: string;
   /** False where tiles take the height of their content (the weekly recap): only the width changes. */
   heights?: boolean;
+  /** False where the grid places tiles by itself (the board overview on a tablet): they move and come off, but keep their size. */
+  resizable?: boolean;
 }) {
   const toast = useToast();
   // A space shared with you keeps its owner's arrangement: no grips, no resizing, no hiding.
@@ -411,11 +415,10 @@ export function useTileControls<S extends Arrangeable>({
         <GripVertical size={12} />
       </button>
     ),
-    corner: fixed ? undefined : (
-      <button
-        type="button"
+    corner: fixed || !resizable ? undefined : (
+      <TileResize
         className="tresize"
-        aria-label={heights ? `Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.` : `Resize ${spec.title}, ${sizeOf(spec).c} of 12 columns wide. Use the left and right arrow keys.`}
+        label={heights ? `Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.` : `Resize ${spec.title}, ${sizeOf(spec).c} of 12 columns wide. Use the left and right arrow keys.`}
         title={heights ? "Drag to resize" : "Drag to change the width"}
         onPointerDown={(event) => startResize(event, spec)}
         onKeyDown={(event) => resizeByKey(event, spec)}
@@ -427,7 +430,7 @@ export function useTileControls<S extends Arrangeable>({
         size={sizeOf(spec)}
         limits={tileLimits(spec)}
         heights={heights}
-        onResize={fixed ? undefined : (size) => {
+        onResize={fixed || !resizable ? undefined : (size) => {
           const next = resizeTile(arranged, spec.key, size);
           const saved = next.tiles.find((tile) => tile.key === spec.key);
           if (saved) announce(`${spec.title} is ${saved.c} columns by ${saved.r} rows.`);

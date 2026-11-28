@@ -613,23 +613,15 @@
   background: rgb(var(--accent-rgb) / 0.14);
   color: var(--ink);
 }
+/* The same corner as a Today tile (components/tile-resize.tsx). */
 .pl-resize {
   position: absolute;
   right: 2px;
   bottom: 2px;
   z-index: 3;
-  touch-action: none;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border-radius: 5px;
-  color: var(--faint);
+  width: 16px;
+  height: 16px;
   cursor: nwse-resize;
-}
-.pl-resize:hover {
-  background: var(--hover);
-  color: var(--ink);
 }
 
 /* The first step on an empty canvas. */

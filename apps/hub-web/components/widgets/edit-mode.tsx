@@ -45,6 +45,7 @@ import { useToast } from "@/components/toast";
 import { confirmAction } from "@/components/ask-dialog";
 import { FramedPointerSensor, FramedTouchSensor } from "@/lib/motion/dnd-sensors";
 import { measureBoxes, playFlip, type Box } from "@/lib/motion/drag";
+import { TileResize } from "@/components/tile-resize";
 
 const XL_LIMIT = "Only one extra-large tile fits on this page. Shrink the other one first.";
 
@@ -410,10 +411,9 @@ function EditTile({
       </div>
       {settings ? <TileSettings cell={cell} onChange={onConfig} /> : null}
       <div className="widget-body px-3 pb-2">{body}</div>
-      <button
-        type="button"
-        aria-label={`Resize ${spec.label}, ${sizeName(cell.size)}`}
-        className="widget-resize absolute bottom-1 right-1 cursor-nwse-resize rounded-md border border-line bg-panel/90"
+      <TileResize
+        label={`Resize ${spec.label}, ${sizeName(cell.size)}`}
+        className="widget-resize absolute bottom-1 right-1 cursor-nwse-resize rounded-md"
         onPointerDown={(event) => {
           event.stopPropagation();
           const startX = event.clientX;

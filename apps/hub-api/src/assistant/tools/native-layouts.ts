@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { WORKSPACE_TILES } from "@ensemble/shared-types/workspace-tiles";
-import { arrange, readLayout, tileLimits, clampSize, type DeskLayout } from "@ensemble/shared-types/desk-layout";
+import { arrange, readLayout, tileLimits, clampSize, insightSize, type DeskLayout, type TileSize } from "@ensemble/shared-types/desk-layout";
 import { DESK_MARKET_ID, templateCard } from "@ensemble/shared-types/manifest";
 import { sanitizeLayout } from "@ensemble/shared-types/widgets";
 import { recordUndoInTransaction } from "../../lib/undo.js";
@@ -8,7 +8,7 @@ import { isGuestIn } from "../../sharing/context.js";
 import type { ToolContext } from "../types.js";
 
 type Tile = { key: string; title: string; c: number; r: number; hero?: boolean; description?: string };
-type Board = { v: 1; tiles: string[]; collapsed: boolean; wipCap?: number };
+type Board = { v: 1; tiles: string[]; collapsed: boolean; wipCap?: number; sizes?: Record<string, TileSize> };
 export type NativeLayout = { key: string; kind: "board" | "desk" | "context"; version: string; value: unknown; shown: Tile[]; available: Tile[]; hidden: string[]; raw: DeskLayout | Board; extras: string[] };
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
@@ -29,17 +29,20 @@ export async function nativeLayout(ctx: ToolContext, surface: string, view?: "wi
   const version = hash({ key, value: pref?.value ?? null, template: user?.activeTemplateId, onboarding: user?.onboardingTemplateId });
   const snapshot = onSurface ? ctx.page?.surface?.tiles : undefined;
   if (surface === "board") {
-    const available = catalog.board.available.map(row => ({ ...row, c: 4, r: 3 }));
-    const valid = new Set(available.map(row => row.key));
     const value = pref?.value as Partial<Board> | undefined;
+    const saved = value?.sizes && typeof value.sizes === "object" && !Array.isArray(value.sizes) ? value.sizes : undefined;
+    const available = catalog.board.available.map(row => ({ ...row, ...insightSize(saved, row.key, Math.min(catalog.board.max, (Array.isArray(value?.tiles) ? value.tiles.length : 3) || 1)) }));
+    const valid = new Set(available.map(row => row.key));
     let fallback = catalog.board.defaults[role] ?? catalog.board.defaults.engineer!;
     if (!pref) {
       const legacy = await db.widgetLayout.findUnique({ where: { userId_surface: { userId: ctx.userId, surface: "board" } } });
       if (legacy) { const aliases: Record<string, string> = { "column-summary": "flow", wip: "capacity", blocked: "attention", "week-done": "done" }; fallback = sanitizeLayout("board", legacy.document).document.placements.flatMap(tile => aliases[tile.type] ? [aliases[tile.type]!] : []); }
     }
     if (!pref && snapshot) fallback = snapshot.map(row => row.key).filter(id => valid.has(id));
-    const raw: Board = { v: 1, tiles: value?.v === 1 && Array.isArray(value.tiles) ? [...new Set(value.tiles)].filter(id => valid.has(id)).slice(0, catalog.board.max) : fallback.slice(0, catalog.board.max), collapsed: value?.collapsed === true, ...(typeof value?.wipCap === "number" ? { wipCap: value.wipCap } : {}) };
-    return { key, kind: "board", version, value: pref?.value ?? null, raw, shown: raw.tiles.map(id => available.find(row => row.key === id)!), available, hidden: [], extras: [] };
+    const tiles = value?.v === 1 && Array.isArray(value.tiles) ? [...new Set(value.tiles)].filter(id => valid.has(id)).slice(0, catalog.board.max) : fallback.slice(0, catalog.board.max);
+    const sizes = saved ? Object.fromEntries([...valid].filter(id => saved[id]).map(id => [id, insightSize(saved, id, 1)])) : undefined;
+    const raw: Board = { v: 1, tiles, collapsed: value?.collapsed === true, ...(typeof value?.wipCap === "number" ? { wipCap: value.wipCap } : {}), ...(sizes ? { sizes } : {}) };
+    return { key, kind: "board", version, value: pref?.value ?? null, raw, shown: raw.tiles.map(id => ({ ...available.find(row => row.key === id)!, ...insightSize(sizes, id, raw.tiles.length) })), available, hidden: [], extras: [] };
   }
   const definition = catalog.desks[desk!]!;
   const extraPref = await db.preference.findFirst({ where: { userId: ctx.userId, key: "desk.extras", deletedAt: null }, select: { value: true } });
@@ -60,6 +63,8 @@ export async function editNativeLayout(ctx: ToolContext, layout: NativeLayout, i
   if (isGuestIn(ctx.userId)) throw new Error("Only the space owner can change its layout.");
   if (layout.version !== input.version) throw new Error("The tiles changed. Read the layout again.");
   const shown = structuredClone(layout.shown);
+  // Board tiles the assistant resized; the rest keep their saved size, or share the row as before.
+  const resized: Record<string, TileSize> = {};
   for (const edit of input.edits) {
     const spec = layout.available.find(row => row.key === edit.type);
     if (!spec) throw new Error("Choose a type from this layout's available tiles.");
@@ -68,12 +73,12 @@ export async function editNativeLayout(ctx: ToolContext, layout: NativeLayout, i
     if (edit.action === "add") { if (at >= 0) throw new Error("That tile is already here."); shown.splice(edit.index ?? shown.length, 0, { ...spec }); }
     else { if (at < 0) throw new Error("That tile is not here."); if (edit.action === "remove") shown.splice(at, 1); if (edit.action === "move") { const [row] = shown.splice(at, 1); shown.splice(edit.index ?? shown.length, 0, row!); } }
     if (edit.size || edit.c || edit.r) {
-      if (layout.kind === "board") throw new Error("Board overview tiles have a fixed size. They can be added, removed and reordered.");
-      const tile = shown.find(row => row.key === edit.type); if (tile) { const size = ({ s: [3, 2], m: [6, 3], l: [8, 4], xl: [12, 6] } as Record<string, number[]>)[edit.size ?? ""] ?? [tile.c, tile.r]; Object.assign(tile, clampSize({ c: edit.c ?? size[0]!, r: edit.r ?? size[1]! }, tileLimits(tile))); }
+      const tile = shown.find(row => row.key === edit.type); if (tile) { const size = ({ s: [3, 2], m: [6, 3], l: [8, 4], xl: [12, 6] } as Record<string, number[]>)[edit.size ?? ""] ?? [tile.c, tile.r]; Object.assign(tile, clampSize({ c: edit.c ?? size[0]!, r: edit.r ?? size[1]! }, tileLimits(tile))); resized[tile.key] = { c: tile.c, r: tile.r }; }
     }
   }
   if (layout.kind === "board" && shown.length > 4) throw new Error("The Board overview holds four tiles. Choose one to remove first.");
-  const value = layout.kind === "board" ? { ...layout.raw, tiles: shown.map(row => row.key), ...(input.collapsed !== undefined ? { collapsed: input.collapsed } : {}), ...(input.wipCap !== undefined ? { wipCap: input.wipCap } : {}) } : { v: 1, tiles: shown.map(({ key, c, r }) => ({ key, c, r })), hidden: [...new Set([...layout.hidden, ...layout.shown.filter(tile => !shown.some(row => row.key === tile.key)).map(row => row.key)])].filter(id => !shown.some(row => row.key === id)) };
+  const boardSizes = layout.kind === "board" && ((layout.raw as Board).sizes || Object.keys(resized).length) ? { sizes: { ...(layout.raw as Board).sizes, ...resized } } : {};
+  const value = layout.kind === "board" ? { ...layout.raw, ...boardSizes, tiles: shown.map(row => row.key), ...(input.collapsed !== undefined ? { collapsed: input.collapsed } : {}), ...(input.wipCap !== undefined ? { wipCap: input.wipCap } : {}) } : { v: 1, tiles: shown.map(({ key, c, r }) => ({ key, c, r })), hidden: [...new Set([...layout.hidden, ...layout.shown.filter(tile => !shown.some(row => row.key === tile.key)).map(row => row.key)])].filter(id => !shown.some(row => row.key === id)) };
   if (preview) return { key: layout.key, value };
   const db = ctx.tx!;
   const before = await db.preference.findFirst({ where: { userId: ctx.userId, key: layout.key }, select: { id: true, value: true, updatedAt: true } });

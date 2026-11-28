@@ -1,11 +1,13 @@
 import type { TaskRecord } from "@/lib/api";
 import type { Role } from "../onboarding/roles";
+import { insightSize, type TileSize } from "@ensemble/shared-types/desk-layout";
 
 export const INSIGHT_IDS = ["flow", "ideas", "ownership", "agent", "my-work", "attention", "stale", "deadlines", "done", "capacity"] as const;
 export type InsightId = (typeof INSIGHT_IDS)[number];
 export const INSIGHTS_KEY = "desk.board.insights";
 export const MAX_INSIGHTS = 4;
-export type InsightLayout = { v: 1; tiles: InsightId[]; collapsed: boolean; wipCap?: number };
+/** `sizes`: the tiles the person resized, or every tile once one was (`insightSize` gives the rest). */
+export type InsightLayout = { v: 1; tiles: InsightId[]; collapsed: boolean; wipCap?: number; sizes?: Partial<Record<InsightId, TileSize>> };
 export type OwnerContext = { me: string | null; ownerId: string | null };
 export type OwnerBucket = "me" | "agent" | "team" | "unassigned";
 export type BoardFocus = { kind: "status"; value: string } | { kind: "owner"; value: OwnerBucket } | { kind: "ideas" | "attention" | "stale" | "deadlines" | "done" };
@@ -55,7 +57,10 @@ export const DEFAULT_INSIGHTS: Record<Role, InsightId[]> = {
 export function readInsightLayout(value: unknown, fallback: InsightId[]): InsightLayout {
   const raw = value as Partial<InsightLayout> | null;
   if (!raw || raw.v !== 1 || !Array.isArray(raw.tiles)) return { v: 1, tiles: fallback.slice(0, MAX_INSIGHTS), collapsed: false };
-  return { v: 1, tiles: [...new Set(raw.tiles)].filter((id): id is InsightId => (INSIGHT_IDS as readonly unknown[]).includes(id)).slice(0, MAX_INSIGHTS), collapsed: raw.collapsed === true, ...(typeof raw.wipCap === "number" && Number.isFinite(raw.wipCap) ? { wipCap: Math.max(1, Math.min(50, Math.round(raw.wipCap))) } : {}) };
+  const sizes = raw.sizes && typeof raw.sizes === "object" && !Array.isArray(raw.sizes)
+    ? Object.fromEntries(INSIGHT_IDS.filter((id) => raw.sizes![id] && typeof raw.sizes![id] === "object").map((id) => [id, insightSize(raw.sizes, id, 1)]))
+    : null;
+  return { v: 1, tiles: [...new Set(raw.tiles)].filter((id): id is InsightId => (INSIGHT_IDS as readonly unknown[]).includes(id)).slice(0, MAX_INSIGHTS), collapsed: raw.collapsed === true, ...(typeof raw.wipCap === "number" && Number.isFinite(raw.wipCap) ? { wipCap: Math.max(1, Math.min(50, Math.round(raw.wipCap))) } : {}), ...(sizes ? { sizes } : {}) };
 }
 
 export function completedDays(tasks: TaskRecord[], now: number) {
