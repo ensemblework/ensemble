@@ -8,7 +8,7 @@ Build the disk image on the Mac, from the repo root:
 pnpm desktop:dmg
 ```
 
-Open the unsigned `.dmg` at the path printed by the script. Use the Apple silicon installer on M-series Macs and the Intel installer on Intel Macs. The app and its Node/Prisma sidecar are built for the Mac’s chip.
+Open the `.dmg` at the path printed by the script. Use the Apple silicon installer on M-series Macs and the Intel installer on Intel Macs. The app and its Node/Prisma sidecar are built for the Mac’s chip.
 
 ## Install and run
 
@@ -81,4 +81,6 @@ Desktop control works from the app's own runtime and from a runner the `ensemble
 - [ ] The installer matches the Mac's chip.
 - [ ] About can check for updates; an active task blocks installing one. Installs older than 0.4.0 need the current installer once.
 - [ ] An Intel image opens with the app and an Applications link, and the bundle's version matches the release.
+- [ ] **Downloaded copy.** Download each release `.dmg` in a browser, so it is quarantined, and copy Ensemble to Applications. `codesign --verify --deep --strict --verbose=2 /Applications/Ensemble.app` reports `valid on disk`. Opening it gives the warning for an unidentified developer, never "damaged"; Privacy & Security › **Open Anyway** opens it ([DESKTOP §7](../DESKTOP.md#7-releases-and-updates)).
+- [ ] **Update from an older build.** An app from an older release updates in-app to this one, restarts and opens, and `codesign --verify --deep --strict` passes on the updated app.
 - [ ] Brand: `pnpm brand:check` and `node scripts/check-icons.mjs` pass. Check the startup mark, Finder and Dock icons, light and dark Hub, the minimized assistant while it works, and OS reduced motion.

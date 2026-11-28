@@ -133,7 +133,13 @@ test("unattended works anywhere in the workspace and the person's folders, sandb
     assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(workspace, ".askpass", "git-askpass.sh") } })).decision, "deny");
   }
   // The person's own No access beyond the workspace holds when nobody can be asked.
-  assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: beyond } })).decision, "deny");
+  const refused = await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: beyond } });
+  assert.equal(refused.decision, "deny");
+  assert.ok(refused.message?.includes(`Work in this run's folder, ${root}.`), `the agent is told where it can work, not only what it cannot: ${refused.message}`);
+  // Listing the run folder's parent and the work area is no question and no refusal, with No access too.
+  const listing = ctx({ workspace, outsideAccess: "none" });
+  assert.equal((await judgeEngineCall(listing, { tool: "Bash", input: { command: "ls .." } })).decision, "allow");
+  assert.equal((await judgeEngineCall(listing, { tool: "Bash", input: { command: `ls ${workspace}` } })).decision, "allow");
   assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: other } })).decision, "allow");
 });
 
@@ -242,6 +248,7 @@ test("Claude Code gets the hook on every tool, a strict sandbox, and the run's i
   assert.deepEqual(settings.sandbox.filesystem.allowWrite, ["/w"]);
   assert.deepEqual(settings.sandbox.network, { allowedDomains: [], strictAllowlist: true });
   assert.ok(settings.permissions.deny?.includes("WebFetch"));
+  assert.deepEqual((settings as { env?: unknown }).env, { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" }, "agent teams stay off over the person's own settings.json");
   const online = claudeSettings({ hookCommand: "x", sandboxed: false, network: true, filesystem: { allowWrite: [], denyRead: [] } }) as { sandbox: { enabled: boolean }; permissions: { allow?: string[] } };
   assert.equal(online.sandbox.enabled, false);
   assert.ok(online.permissions.allow?.includes("WebFetch(domain:*)"));

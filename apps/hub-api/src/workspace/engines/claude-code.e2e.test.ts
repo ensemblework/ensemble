@@ -54,6 +54,7 @@ seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume")
 seen.push("brief:" + (/^# Engine run\\n/.test(prompt) ? "title-first" : "other") + ":" + (prompt.includes("Weekly digest") ? "unpicked-skill" : "no-unpicked-skill") + ":" + (/You are working for|Internet: on/.test(prompt) ? "noise" : "lean"));
 const host = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_HOST_AUTH_ENV_VAR", "CLAUDE_CODE_MESSAGING_TOKEN", "ANTHROPIC_BASE_URL"].filter((name) => process.env[name] !== undefined);
 seen.push("host:" + (host.join(",") || "none"), "own:" + (process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? "none"));
+seen.push("subagents:depth=" + (process.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH ?? "unset") + ",teams=" + (process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS ?? "unset"));
 // A background sub-agent (Agent tool), as Claude Code 2.1.325 runs one under -p: its messages name the call that
 // started it, and the run answers twice, the first time only to say it is waiting. Costs: the session's so far.
 say({ type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: { description: "Reply with PLUM", prompt: "Reply with PLUM." } }] } });
@@ -82,7 +83,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret",
     ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
   };
-  const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, ...hostSession, CLAUDE_CODE_ATTRIBUTION_HEADER: "0" });
+  const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, ...hostSession, CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" });
   try {
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Engine run" } });
     assert.equal(task.status, 201, JSON.stringify(task.body));
@@ -113,6 +114,9 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.match(summary, /resume:none insession:false/, "a new task starts a new session");
     assert.match(summary, /brief:title-first:no-unpicked-skill:lean/, "the brief opens with the task, carries only picked skills, and no noise");
     assert.match(summary, /host:none own:0/, "Claude Code signs in with the person's own settings, not the app session's");
+    assert.match(summary, /subagents:depth=3,teams=0/, "sub-agents nest at most 3 deep and agent teams stay off, though the runtime's environment turned them on");
+    const children = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events.filter((event) => event.kind === "sub_agent");
+    assert.deepEqual(children.map((event) => [event.data.engine, event.data.id, event.data.kind, event.data.title]), [["claude-code", "a1", "inside", "Reply with PLUM"]], "the Agent tool's sub-agent is recorded as a child inside the session");
     // A background sub-agent: the last answer is the summary, both stretches count (this run's cost, not the
     // session's so far), and the sub-agent's tool call is in the trace, marked, while its words are not the run's.
     assert.doesNotMatch(summary, /still running|PLUM/);

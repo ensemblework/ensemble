@@ -53,7 +53,7 @@ jobs:
           pnpm --filter @ensemble/prompts test
           pnpm --filter @ensemble/block-diagrams test
           pnpm --filter @ensemble/ide-theme test
-          node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs scripts/desktop-targets.test.mjs
+          node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs scripts/desktop-targets.test.mjs scripts/verify-mac-signature.test.mjs
 
       # The plots preview test renders the same figure with the agent runtime's matplotlib.
       - uses: actions/setup-python@v6
@@ -304,5 +304,5 @@ jobs:
           DATABASE_URL: postgresql://localhost/ensemble_unused
         run: pnpm exec tsx --test src/workspace/sandbox/escape.test.ts src/workspace/trust.test.ts src/workspace/planted.test.ts src/workspace/git-gate.test.ts
 
-      - name: Verify the Mac installer packager
-        run: node --test scripts/package-mac-dmg.test.mjs
+      - name: Verify the Mac installer packager and signature checks
+        run: node --test scripts/package-mac-dmg.test.mjs scripts/verify-mac-signature.test.mjs

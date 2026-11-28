@@ -84,6 +84,23 @@ test("on this computer the Welcome offers two ways to start, then the change to 
   }
 });
 
+test("the status bar's text size scales the Welcome and the threads, as in a repository's window", async () => {
+  const fake = server({ "/api/shell": { hostCode: true }, "/api/code/reviews": { reviews: [], ttlDays: 14 }, "/api/code/repos": { repos: [], roots: [] } });
+  const view = await mount();
+  try {
+    const scaled = () => view.host.querySelector<HTMLElement>('[data-testid="code-welcome"]')?.closest<HTMLElement>('[style*="--code-zoom"]')?.style.getPropertyValue("--code-zoom");
+    assert.equal(scaled(), "1");
+    for (let i = 0; i < 2; i += 1) {
+      await act(async () => view.host.querySelector<HTMLButtonElement>('button[aria-label="Bigger text"]')!.click());
+    }
+    assert.match(view.host.querySelector('[role="group"][aria-label="Text size"]')?.textContent ?? "", /15px/);
+    assert.equal(scaled(), "1.15");
+  } finally {
+    await view.done();
+    fake.restore();
+  }
+});
+
 test("on Ensemble on the web with no paired computer the Welcome says so in one line and offers to pair one, asking nothing of this server's folders", async () => {
   const fake = server({ "/api/shell": { hostCode: false }, "/api/devices": { serverRunner: false, devices: [] } });
   const view = await mount({ hostCode: false });

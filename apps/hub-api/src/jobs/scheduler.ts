@@ -125,6 +125,7 @@ async function tick(app: FastifyInstance): Promise<void> {
         deletedDays: settings.retentionDays,
         completedDays: settings.completedRetentionDays,
         historyDays: settings.historyRetentionDays,
+        cleanSessions: settings.orchestration.cleanSessions !== false,
       })
         .catch((error: unknown) => app.log.error({ err: error, userId }, "retention failed"))
         .finally(() => retaining.delete(userId));

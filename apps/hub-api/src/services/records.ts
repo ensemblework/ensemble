@@ -7,6 +7,7 @@ import type { Actor, Prisma, PrismaClient } from "@prisma/client";
 import { isHmTime, isIsoDate, nextNotificationAt, parseDue } from "../lib/clock.js";
 import { recordUndoBatch, recordUndoInTransaction } from "../lib/undo.js";
 import { syncFileText } from "../files/visibility.js";
+import { notOutOfBin } from "../workspace/thread-bin.js";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -401,7 +402,8 @@ export async function restoreOne(db: Db, userId: string, kind: TrashKind, id: st
     return;
   }
   const delegate = db[kind] as unknown as { updateMany: (args: unknown) => Promise<{ count: number }> };
-  const result = await delegate.updateMany({ where: { id, userId, deletedAt: { not: null } }, data: { deletedAt: null } });
+  // A Code thread comes back only while it is in the Code tab's Bin (workspace/thread-bin.ts).
+  const result = await delegate.updateMany({ where: { id, userId, deletedAt: { not: null }, ...(kind === "task" ? notOutOfBin() : {}) }, data: { deletedAt: null } });
   if (result.count === 0) throw notFound(`That ${kind} was not found.`);
   if (kind === "document") await syncFileText(db, id);
 }

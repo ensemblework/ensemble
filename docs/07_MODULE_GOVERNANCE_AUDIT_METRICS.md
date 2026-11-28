@@ -46,7 +46,7 @@ Keep an item by pinning or reopening it before its retention window expires. The
 
 Pinning, reopening, active jobs, a learning pass waiting for its model or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
 
-`/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
+`/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. A thread of the Code tab's agent is in Trash only while it is in the Code tab's Bin, and keeps the Bin's own timing: Trash's purge leaves it, and emptying Trash deletes it for good as the Bin does, after its agent session ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up)). Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
 
 The Skills page deletes through `DELETE /api/skills/:id`, which permanently removes the skill and its versions and feedback immediately, outside the Trash window ([04 §1](04_MODULE_SKILL_FORGE.md#1-storage-and-editing)).
 

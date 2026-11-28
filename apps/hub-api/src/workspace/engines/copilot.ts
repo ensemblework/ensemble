@@ -27,10 +27,10 @@ import { copilotSessionName, nameCopilotSession, titledPrompt } from "./app-sess
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { ENSEMBLE_OWN_TOOLS, judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
-import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { RpcConnection } from "./rpc.js";
-import { copilotUpdateAgent, SUB_AGENT } from "./sub-agents.js";
+import { copilotUpdateAgent, SUB_AGENT, SubAgentLog } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 
 type ToolCall = { toolCallId?: string; title?: string; kind?: string; locations?: Array<{ path?: string }>; rawInput?: unknown };
@@ -241,6 +241,7 @@ export async function runCopilot(
     ...(options.context === "long_context" ? ["--context", "long_context"] : []),
   ];
   const child: ChildProcessWithoutNullStreams = spawn(copilot, args, { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   child.stdin.on("error", () => undefined);
   const rpc = new RpcConnection(
     (line) => {
@@ -260,6 +261,7 @@ export async function runCopilot(
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
+  const children = new SubAgentLog((kind, data) => ctx.event(kind, data), "copilot-cli");
   let replaying = false;
   // The context window as Copilot last reported it (tokens in use, window size).
   const usage: { window: { used: number; size: number } | null } = { window: null };
@@ -302,7 +304,9 @@ export async function runCopilot(
     if (replaying) return;
     const single = Array.isArray(update.content) ? undefined : update.content;
     // A sub-agent's (Copilot's task tool) words come on this session too, marked with its id: they are not the reply.
-    const sub = copilotUpdateAgent(update) !== null;
+    const agent = copilotUpdateAgent(update);
+    const sub = agent !== null;
+    if (agent) void children.note(sessionId, { id: agent, kind: "inside" });
     if (update.sessionUpdate === "tool_call" && update.toolCallId && update.title) announced.set(update.toolCallId, update.title);
     if (update.sessionUpdate === "usage_update" && typeof update.used === "number" && typeof update.size === "number") usage.window = { used: update.used, size: update.size };
     void (async () => {

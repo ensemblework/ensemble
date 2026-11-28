@@ -27,6 +27,19 @@ test("only prompts count in Claude Code's transcript: not tool results, command 
   assert.equal(claudeProjectName("/Users/mira/Library/Application Support/ensemble/assistant/chat-1"), "-Users-mira-Library-Application-Support-ensemble-assistant-chat-1");
 });
 
+test("a sub-agent's task and a background sub-agent's wake-up are not the person's prompts", () => {
+  // Claude Code: a background sub-agent's result wakes the session as a user line nobody typed.
+  const wake = { type: "user", origin: { kind: "task-notification", producer: "session-task" }, message: { role: "user", content: "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>" } };
+  assert.equal(claudePrompt(JSON.stringify(wake)), false);
+  assert.equal(claudePrompt(JSON.stringify({ ...wake, origin: undefined })), false, "older Claude Code without origin: the tag says it");
+  assert.equal(claudePrompt(JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "<task-notification><task-id>a1</task-id></task-notification>" }] } })), false);
+  assert.equal(claudePrompt(JSON.stringify({ type: "user", origin: { kind: "human" }, message: { role: "user", content: "Start one sub-agent" } })), true);
+  // GitHub Copilot: the person's prompt names the session's task too (`parentAgentTaskId`); a sub-agent's names its agent.
+  assert.equal(copilotPrompt(JSON.stringify({ type: "user.message", data: { content: "Start one sub-agent", parentAgentTaskId: "task-root", delivery: "idle" } })), true);
+  assert.equal(copilotPrompt(JSON.stringify({ type: "user.message", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { content: "Reply PLUM", source: "agent-1fad2886", parentAgentTaskId: "task-child" } })), false);
+  assert.equal(copilotPrompt("not json \"type\":\"user.message\""), false);
+});
+
 test("prompts are read from Claude Code's and Copilot's own transcripts; other agents are unknown", async () => {
   const home = await mkdtemp(join(tmpdir(), "ensemble-touch-"));
   const saved = { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
@@ -39,6 +52,8 @@ test("prompts are read from Claude Code's and Copilot's own transcripts; other a
     await mkdir(claudeDir, { recursive: true });
     await writeFile(join(claudeDir, `${claudeId}.jsonl`), line({ type: "user", message: { content: "One" } }) + line({ type: "assistant", message: { content: [] } }) + line({ type: "user", message: { content: [{ type: "tool_result" }] } }));
     assert.equal(await sessionPrompts("claude-code", claudeId, folder), 1);
+    await appendFile(join(claudeDir, `${claudeId}.jsonl`), line({ type: "user", origin: { kind: "task-notification" }, message: { content: "<task-notification>done</task-notification>" } }));
+    assert.equal(await sessionPrompts("claude-code", claudeId, folder), 1, "a sub-agent waking the session is not a prompt");
     // A transcript under another spelling of the folder is still found by the session's id.
     const moved = randomUUID();
     await mkdir(join(home, ".claude", "projects", "-private-elsewhere"), { recursive: true });
@@ -52,6 +67,8 @@ test("prompts are read from Claude Code's and Copilot's own transcripts; other a
     assert.equal(await sessionPrompts("copilot-cli", copilotId, folder), 1);
     await appendFile(events, line({ type: "session.resume" }) + line({ type: "user.message" }));
     assert.equal(await sessionPrompts("copilot-cli", copilotId, folder), 2);
+    await appendFile(events, line({ type: "subagent.started", agentId: "child-1", data: { toolCallId: "call-1" } }) + line({ type: "user.message", agentId: "child-1", data: { content: "Reply PLUM", parentAgentTaskId: "task-2" } }));
+    assert.equal(await sessionPrompts("copilot-cli", copilotId, folder), 2, "a sub-agent's task is not a prompt");
 
     assert.equal(await sessionPrompts("codex", randomUUID(), folder), null);
     assert.equal(await sessionPrompts("copilot-cli", randomUUID(), folder), null, "no transcript: unknown, never a reason to start over");

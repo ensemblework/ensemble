@@ -72,8 +72,12 @@ export interface RunResult {
 }
 
 const live = new Map<string, Set<ChildProcess>>();
-/** The sessions each group started (a child's pid is its session id), kept until the group is killed. */
-const sessions = new Map<string, Set<number>>();
+/**
+ * The sessions each group started (a child's pid is its session id), kept until the group is killed: `null` while its
+ * leader runs, then the processes seen in it when the leader ended. A session left empty is dropped then, as its id is
+ * free for any new process to take.
+ */
+const sessions = new Map<string, Map<number, Set<number> | null>>();
 /** How long output may still arrive after the command's own process exits. */
 export const DRAIN_MS = 2_000;
 const found = new Map<string, string>();
@@ -216,11 +220,59 @@ function killTree(child: ChildProcess): void {
   }
 }
 
+/**
+ * Counts a session another part of the run started (a coding agent's own program, which starts in a session of its
+ * own: its pid is the session's id) as one of the group's once that program ends with processes left in it, so
+ * `killGroup` at the run's end also stops them. A process that starts a session of its own is not reached.
+ */
+export function adoptSession(group: string, child: Pick<ChildProcess, "pid" | "once">): void {
+  const id = child.pid;
+  if (!id || process.platform === "win32") return;
+  // Counted only once it ends: a Stop while it works leaves its own program to the engine's own stop.
+  child.once("exit", () => {
+    const left = sessionMembers([id]).filter((pid) => pid !== id);
+    if (left.length) track(group, id, new Set(left));
+  });
+}
+
+function track(group: string, id: number, seen: Set<number> | null): void {
+  const known = sessions.get(group) ?? new Map<number, Set<number> | null>();
+  known.set(id, seen);
+  sessions.set(group, known);
+}
+
+/** A session's leader ended: what is still in it is kept to recognise it by, and a session with nothing left is dropped. */
+function leaderEnded(group: string, id: number): void {
+  const known = sessions.get(group);
+  if (!known?.has(id)) return;
+  const left = sessionMembers([id]).filter((pid) => pid !== id);
+  if (left.length) known.set(id, new Set(left));
+  else known.delete(id);
+}
+
+/**
+ * The group's sessions that are still its own: one whose leader still runs, or one that still holds a process seen in
+ * it when its leader ended (while any process is in a session, its id is not given to another). A session whose
+ * processes all ended is not killed, since its id may be someone else's by now.
+ */
+export function ownSessions(group: string): number[] {
+  const out: number[] = [];
+  for (const [id, seen] of sessions.get(group) ?? []) {
+    if (!seen) {
+      out.push(id);
+      continue;
+    }
+    const now = new Set(sessionMembers([id]));
+    if ([...seen].some((pid) => now.has(pid))) out.push(id);
+  }
+  return out;
+}
+
 /** Kills every process started for this group, including ones its commands left running. Returns how many commands were running. */
 export function killGroup(group: string): number {
   const set = live.get(group);
   for (const child of set ?? []) killTree(child);
-  if (process.platform !== "win32") killSessions([...(sessions.get(group) ?? [])]);
+  if (process.platform !== "win32") killSessions(ownSessions(group));
   sessions.delete(group);
   const count = set?.size ?? 0;
   live.delete(group);
@@ -273,11 +325,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
       const set = live.get(group) ?? new Set();
       set.add(child);
       live.set(group, set);
-      if (child.pid && process.platform !== "win32") {
-        const started = sessions.get(group) ?? new Set();
-        started.add(child.pid);
-        sessions.set(group, started);
-      }
+      if (child.pid && process.platform !== "win32") track(group, child.pid, null);
     }
     let output = "";
     let truncated = false;
@@ -344,6 +392,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
     // The command's own process ended: its output is read for a moment more, then it is over, even
     // when a process it left running (a server, a stuck test worker) still holds the pipes open.
     child.on("exit", (code, signal) => {
+      if (group && child.pid && process.platform !== "win32") leaderEnded(group, child.pid);
       drain = setTimeout(() => {
         child.stdout?.destroy();
         child.stderr?.destroy();

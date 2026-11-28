@@ -379,6 +379,66 @@ test("on its owner's plan, an agent that did the work and wrote nothing is asked
   assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
 });
 
+test("on its owner's plan, a crew step whose worker did the work and wrote nothing is never blocked as \"could not do its step\": its report counts, else it ends unverified", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const owner = await person("Ines");
+  const computer = await pairComputer(owner, "Ines's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer"]) ids.push((await createNode(owner, template)).node.id);
+  await h.prisma.nodeAgent.update({ where: { id: ids[1]! }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
+  const made = await owner.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Home team", nodeIds: ids, leadNodeId: ids[0] } });
+  assert.equal(made.statusCode, 201, made.body);
+  const crew = json(made).room as { id: string };
+  script = (turn) => {
+    if (turn.slug === "manager" && /pay the rent|water the plants/.test(turn.transcript) && !turn.transcript.includes("nothing left to run")) {
+      const title = turn.transcript.includes("pay the rent") ? "Pay the rent" : "Water the plants";
+      return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: `Add a task “${title}” to the owner's board.` } }], then: "Plan: @builder adds it." };
+    }
+    return { text: "Done." };
+  };
+  const stepOf = async (title: string) => {
+    const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: owner.id, steps: { some: { brief: { contains: title } } } }, include: { steps: true } });
+    return mission.steps[0]!;
+  };
+
+  // It reports with node_step_report and writes nothing, also when asked again: the report is the result.
+  let agent = agentOn(computer, (spec) =>
+    spec.prompt === REPLY_PROMPT ? { text: "" } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Pay the rent" }] } }, { name: "node_step_report", input: { outcome: "done", summary: "Added “Pay the rent” to the board." } }], text: "", resumed: false },
+  );
+  try {
+    await say(owner, crew.id, "@manager please pay the rent: get it on my board");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.ok(agent.specs.length >= 1, "the worker's step ran on the owner's computer");
+  let step = await stepOf("Pay the rent");
+  assert.deepEqual([step.status, step.result], ["done", "Added “Pay the rent” to the board."]);
+  assert.ok(await h.prisma.task.findFirst({ where: { userId: owner.id, title: "Pay the rent" } }), "the work is done");
+
+  // It does the work and never reports, and writes nothing each time: the step ends unverified, not blocked as a failure.
+  let calls = 0;
+  agent = agentOn(computer, (spec) => {
+    if (spec.prompt === REPLY_PROMPT) return { text: "" };
+    calls += 1;
+    return calls === 1 ? { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Water the plants" }] } }], text: "", resumed: false } : { tools: [{ name: "hub_list_tasks", input: { query: "Water the plants" } }], text: "" };
+  });
+  try {
+    await say(owner, crew.id, "@manager and water the plants: on my board too");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  step = await stepOf("Water the plants");
+  assert.doesNotMatch(step.result ?? "", /could not do its step/);
+  assert.equal(agent.specs.filter((spec) => spec.prompt === REPLY_PROMPT).length, 2, "the step's turn and its one nudge, each asked once more for a reply");
+  assert.deepEqual([step.status, step.outcome], ["blocked", "unverified"], "not verified: it never reported");
+  assert.match(step.result ?? "", /^Not reported \(prose only\): Looked at: /, "what its tools did stands in for the words it never wrote");
+  assert.ok(await h.prisma.task.findFirst({ where: { userId: owner.id, title: "Water the plants" } }), "the work is done");
+  const rows = await read(owner, crew.id);
+  assert.ok(!rows.some((row) => row.kind === "error"), "no error in the crew's room");
+});
+
 test("on its owner's plan, a tool the turn called through hub_use_tool is listed in the message that goes on in its session", async () => {
   const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
   const plan = await onPlan("Ama");
@@ -459,6 +519,49 @@ test("on its owner's plan, a reply that says a screenshot is attached when none 
   assert.deepEqual([report.outcome, report.falseClaims, report.artifacts], ["partial", 1, []]);
   assert.equal(turn.trace!.verification, null, "no checklist model in this test: the answer check is skipped on the owner's plan");
   assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
+});
+
+test("on its owner's plan, a reply in Spanish that says a screenshot is attached when none reached the chat goes back once; still false, the claim goes and a note in Spanish says so", async () => {
+  const plan = await onPlan("Lucía");
+  const agent = agentOn(plan, (spec, index) => (index === 0 ? { text: "Aquí está la captura de pantalla de la página de estado." } : { text: spec.prompt.startsWith("You said the screenshot is attached") ? "Te he adjuntado la captura." : "?" }));
+  try {
+    await say(plan.owner, plan.room.id, "envíame una captura de pantalla de la página de estado");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 2, "one round to attach it or correct the reply");
+  assert.equal(agent.specs[1]!.prompt, "You said the screenshot is attached, but nothing reached the chat. Attach it with the right tool, or correct your reply.");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, "No se adjuntó ninguna captura de pantalla.");
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  const report = turn.trace!.report as Record<string, unknown>;
+  assert.deepEqual([report.outcome, report.falseClaims], ["partial", 1]);
+  assert.deepEqual((turn.trace!.loop as { followUps?: string[] }).followUps, ["claims"]);
+});
+
+test("on its owner's plan, a Spanish claim that a link to the saved file backs stands, with no second message", async () => {
+  const plan = await onPlan("Mateo");
+  const upload = await plan.owner.inject({
+    method: "POST",
+    url: "/api/documents",
+    payload: { filename: "informe.md", mediaType: "text/markdown", dataBase64: Buffer.from("# Ventas de marzo\n\nCrecieron un 12 %.").toString("base64"), summarize: false },
+  });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const text = `He adjuntado el informe: [informe.md](ensemble://file/${json(upload).file.id as string}).`;
+  const agent = agentOn(plan, () => ({ text }));
+  try {
+    await say(plan.owner, plan.room.id, "prepárame el informe de ventas de marzo");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.equal(agent.specs.length, 1, "nothing sent back");
+  const reply = (await read(plan.owner, plan.room.id)).filter((row) => row.authorNodeId === plan.node.id && row.kind === "text").at(-1)!;
+  assert.equal(reply.body, text);
+  const turn = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: plan.node.id }, include: { trace: true } });
+  assert.equal((turn.trace!.report as { falseClaims?: number }).falseClaims, undefined);
+  assert.equal((turn.trace!.loop as { followUps?: string[] }).followUps, undefined);
 });
 
 test("on its owner's plan, the answer check runs after the turn when a checklist model is there: what is missing goes back to the same session, and its rounds are in the trace", async () => {
