@@ -26,8 +26,8 @@ import Link from "next/link";
 import { NestedPages, useLinkedPages } from "@/components/pages/nested-pages";
 import { PageCrumbs } from "@/components/pages/page-crumbs";
 import { useSearchParams, useRouter } from "next/navigation";
-import { createContext, useContext, useId, useCallback, useEffect, useRef, useState } from "react";
-import type { PageDocument, PageMention } from "@ensemble/shared-types";
+import { createContext, useContext, useId, useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { markdownParagraphsDocument, type PageDocument, type PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime } from "@/lib/format";
@@ -195,6 +195,10 @@ export function TaskPage({
   const { flush } = sync;
   // The editor opens on the live document; everyone's changes arrive in it as they are typed.
   const initialDoc = sync.joined?.doc ?? null;
+  // A view-only copy of a body saved as Markdown in plain paragraphs (before the editor read
+  // Markdown) shows as blocks, without saving or live changes; someone who may edit it rewrites it
+  // when they open it (hub-api routes/collab.ts).
+  const shownDoc = useMemo(() => (!canEdit && initialDoc ? markdownParagraphsDocument(initialDoc) : null), [canEdit, initialDoc]);
 
   const update = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patchTask(taskId, data),
@@ -799,14 +803,14 @@ export function TaskPage({
           <p className="mt-4 text-[13px] text-muted">This page could not be opened for editing. Reload to try again.</p>
         ) : initialDoc && Editor ? (
           <Editor
-            key={taskId}
-            initial={initialDoc}
+            key={shownDoc ? `${taskId}:shown` : taskId}
+            initial={shownDoc ?? initialDoc}
             entities={entities.get}
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "task", id: taskId }}
             editable={!leaving && canEdit}
-            collab={sync.binding}
+            collab={shownDoc ? null : sync.binding}
           />
         ) : sync.stalled ? (
           <div className="mt-4 text-[13px] text-muted" role="status">

@@ -121,6 +121,12 @@ export class CollabHub {
     return this.entries.size;
   }
 
+  /** Whether a page is open live (or opening) here. */
+  isOpen(key: DocKey): boolean {
+    const name = nameOf(key);
+    return this.entries.has(name) || this.loading.has(name);
+  }
+
   private docOf(row: StoredDoc): Node {
     return pageDoc(row.content ?? row.fallback, pageSchema);
   }

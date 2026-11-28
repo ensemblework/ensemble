@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import type { PageDocument, PageMention } from "@ensemble/shared-types";
+import { markdownParagraphsDocument, type PageDocument, type PageMention } from "@ensemble/shared-types";
 import { api, type ProjectDetail } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
@@ -43,12 +43,15 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
     return () => { live = false; };
   }, [Editor]);
   const id = project.id;
-  const [initial] = useState<PageDocument>(() => drafts.get(id) ?? project.content ?? textToDoc(project.notes));
+  // A body saved as Markdown in plain paragraphs (before the editor read Markdown) opens as real
+  // blocks; an editable page saves that once.
+  const [repaired] = useState(() => (drafts.has(id) ? null : markdownParagraphsDocument(project.content)));
+  const [initial] = useState<PageDocument>(() => drafts.get(id) ?? repaired ?? project.content ?? textToDoc(project.notes));
   const known = useRef(JSON.stringify(project.content ?? null));
   const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
   const latest = useRef(initial);
   const base = useRef(bases.get(id) ?? { content: project.content ?? null });
-  const pending = useRef(drafts.has(id));
+  const pending = useRef(drafts.has(id) || Boolean(repaired && editable));
   const saving = useRef<Promise<boolean> | null>(null);
   const mounted = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
