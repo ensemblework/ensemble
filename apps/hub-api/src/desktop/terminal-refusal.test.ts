@@ -14,11 +14,6 @@ const hub = fileURLToPath(new URL("../..", import.meta.url));
 
 // Every terminal route that runs humanOnly(). None of them may open for the desktop token.
 const GUARDED: Array<[string, string, unknown]> = [
-  ["POST", "/api/terminal/passkeys/options", { password: "a-guess" }],
-  ["POST", "/api/terminal/passkeys/verify", { response: {}, label: "x" }],
-  ["DELETE", "/api/terminal/passkeys/some-key", undefined],
-  ["POST", "/api/terminal/unlock/options", {}],
-  ["POST", "/api/terminal/unlock/verify", { response: { id: "x" } }],
   ["POST", "/api/terminal/kill", {}],
   ["POST", "/api/terminal/cd", { cwd: "/", path: "" }],
   ["POST", "/api/terminal/run", { cwd: "/", line: "ls" }],
@@ -66,29 +61,15 @@ test("the desktop sidecar refuses the desktop token on every terminal route", { 
       }
     }
 
-    // No Origin at all (a script or agent holding the token): the old refusal.
-    for (const [method, path, body] of GUARDED) {
-      const response = await call(port, method, path, auth, body);
-      assert.equal(response.status, 403, `${method} ${path}: ${response.body}`);
-      assert.equal(error(response.body), "The terminal only accepts requests from the Ensemble page itself.", `${method} ${path}`);
+    // No Origin at all (a script or agent holding the token), or a faked localhost Origin: the desktop
+    // token is not a person's browser session, so every route refuses it before anything runs.
+    for (const headers of [auth, { ...auth, origin: "http://localhost:3000" }]) {
+      for (const [method, path, body] of GUARDED) {
+        const response = await call(port, method, path, headers, body);
+        assert.equal(response.status, 403, `${method} ${path}: ${response.body}`);
+        assert.equal(error(response.body), "The terminal only opens from a signed-in browser. Tokens and agents are refused.", `${method} ${path}`);
+      }
     }
-
-    // A faked localhost Origin with the desktop token gets past humanOnly, exactly as before this change.
-    // The passkey is what stops it: no password is known, no passkey is registered, nothing is unlocked.
-    const faked = { ...auth, origin: "http://localhost:3000" };
-    const enrol = await call(port, "POST", "/api/terminal/passkeys/options", faked, { password: "a-guess" });
-    assert.equal(enrol.status, 403, enrol.body);
-    assert.equal(error(enrol.body), "That password is not right.");
-    const unlock = await call(port, "POST", "/api/terminal/unlock/options", faked, {});
-    assert.equal(unlock.status, 403, unlock.body);
-    assert.equal(error(unlock.body), "Set up Touch ID for the terminal first.");
-    const verify = await call(port, "POST", "/api/terminal/unlock/verify", faked, { response: { id: "x" } });
-    assert.equal(verify.status, 403, verify.body);
-    const run = await call(port, "POST", "/api/terminal/run", faked, { cwd: "/", line: "ls" });
-    assert.equal(run.status, 423, run.body);
-    const cd = await call(port, "POST", "/api/terminal/cd", faked, { cwd: "/", path: "" });
-    assert.equal(cd.status, 423, cd.body);
-    assert.equal(error(cd.body), "The terminal is locked.");
   } catch (failure) {
     throw new Error(`${(failure as Error).message}\n--- sidecar log ---\n${logs.slice(-4000)}`, { cause: failure });
   } finally {

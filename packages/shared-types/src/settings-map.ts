@@ -202,7 +202,6 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "terminal.enabled", label: "Terminal on", keywords: "terminal shell on off code tab", about: "The guarded terminal in the Code tab.", href: at("agents", "jump-terminal-terminal-on"), ownerOnly: true },
     { id: "code.folders", label: "Folders Code can use", keywords: "code folders repositories roots local repos add folder", about: "The folders the Code tab may list and review.", href: at("agents", "jump-terminal-folders-code-can-use"), ownerOnly: true },
     { id: "terminal.folders", label: "Terminal folder", keywords: "terminal folder roots", about: "Folders the terminal may open.", href: at("agents", "jump-terminal-terminal-folder"), ownerOnly: true },
-    { id: "terminal.passkeys", label: "Passkeys", keywords: "passkey touch id fingerprint unlock terminal", about: "The passkeys that unlock the terminal.", href: at("agents", "jump-terminal-passkeys"), ownerOnly: true },
     { id: "terminal.branch-prefix", label: "Branch prefix for agent work", keywords: "branch prefix git agent", about: "The prefix of branches agents create.", href: at("agents", "jump-terminal-branch-prefix-for-agent-work"), ownerOnly: true },
     { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("agents", "jump-terminal-sign-commits"), ownerOnly: true },
   ]),

@@ -50,8 +50,8 @@ export interface RemoteSettings {
    */
   webEdit: boolean;
   /**
-   * Ensemble on the web may open the terminal here, after a passkey unlock on the web (30 minutes
-   * idle, 8 hours at most), with the same allow-list as the terminal on this computer. On by default.
+   * Ensemble on the web may open the terminal here, for the person signed in to it in their browser,
+   * with the same allow-list as the terminal on this computer. On by default.
    */
   webTerminal: boolean;
   /**

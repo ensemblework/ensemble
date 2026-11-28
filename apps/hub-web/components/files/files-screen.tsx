@@ -355,7 +355,7 @@ function YourFiles() {
     <>
       <PageHeader
         title="Files"
-        description="PDFs, Word and Excel files, slides, pictures and more. Preview them here, edit spreadsheets, turn documents into pages, and attach files to any page."
+        description="Preview, edit and attach your documents, slides and pictures."
         actions={
           <>
             <button type="button" className="btn" onClick={() => setImporting(true)}>
