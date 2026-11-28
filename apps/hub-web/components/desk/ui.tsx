@@ -1,7 +1,7 @@
 "use client";
 
 import { Children, createContext, useContext, useId, type CSSProperties, type ReactNode } from "react";
-import { ArrowRight, ArrowUpRight, EyeOff, Plus, type LucideIcon } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Plus, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { personInitials } from "@/lib/initials";
 
@@ -37,8 +37,8 @@ export function Tile(props: {
   title: string; icon: LucideIcon; meta?: ReactNode; right?: ReactNode; c?: number; r?: number;
   hero?: boolean; hover?: boolean; add?: boolean; openHref?: string; onAdd?: () => void; children: ReactNode; style?: CSSProperties; className?: string; pad?: string; skel?: boolean; mark?: string;
   ghost?: { label: string; sub?: string; action?: string; kind?: string; onAction?: () => void } | false;
-  /** Layout controls from LiveBoard: a move grip before the title, hide in the actions, a resize corner. */
-  deskKey?: string; grip?: ReactNode; onHide?: () => void; corner?: ReactNode; attrs?: Record<string, string | undefined>;
+  /** Layout controls from `useTileControls`: a move grip before the title, the ⋯ options menu in the actions, a resize corner. */
+  deskKey?: string; grip?: ReactNode; options?: ReactNode; corner?: ReactNode; attrs?: Record<string, string | undefined>;
 }) {
   const { title, icon: Icon, c = 4, r = 3, hero, hover, style, className, pad, skel, ghost, mark } = props;
   const preview = useContext(DeskPreviewContext);
@@ -63,7 +63,7 @@ export function Tile(props: {
         <span className="tt">{title}</span>
         {meta != null && <span className="tm">{meta}</span>}
         {right != null && <span className="tright">{right}</span>}
-        {props.onAdd || props.openHref || (props.onHide && !preview) ? (
+        {props.onAdd || props.openHref || (props.options && !preview) ? (
           <span className="tacts">
             {props.onAdd ? (
               preview ? (
@@ -87,11 +87,7 @@ export function Tile(props: {
                 </Link>
               )
             ) : null}
-            {props.onHide && !preview ? (
-              <button type="button" title="Hide tile" aria-label={`Hide ${title}`} onClick={props.onHide}>
-                <EyeOff size={12} />
-              </button>
-            ) : null}
+            {props.options && !preview ? props.options : null}
           </span>
         ) : null}
       </header>

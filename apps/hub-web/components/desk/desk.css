@@ -247,7 +247,7 @@
 .desk .tile:hover .th .tgrip,
 .desk .th .tgrip:focus-visible { opacity: 1; }
 .desk .th .tgrip:hover { color: var(--ink); background: var(--hover); }
-.desk .th .tacts:focus-within { opacity: 1; }
+.desk .th .tacts:focus-within, .desk .th .tacts:has([aria-expanded="true"]) { opacity: 1; }
 .desk .tresize { position: absolute; z-index: 3; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; opacity: 0; touch-action: none; transition: opacity var(--dur-fast) var(--ease); }
 .desk .tresize::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); border-bottom-right-radius: 2px; }
 .desk .tile:hover .tresize,

@@ -23,6 +23,7 @@ import {
   Scale,
   Target,
   Users,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
@@ -39,6 +40,8 @@ import { deskRole, tileFitsRole } from "./tile-catalog";
 import { liveHero } from "./live-heroes";
 import { DeskPreviewProvider, Tile } from "./ui";
 import { useLayoutPreference, useTileControls } from "./arrange";
+import { DiagramStrip, useDiagramCount } from "./diagrams-tile";
+import { useModuleOn } from "@/lib/use-module";
 import { DeskAddForm } from "./add-form";
 import { parseClock, type DeskField } from "./form-check";
 import { byUrgency, dayLabel, isLate } from "./tile-data";
@@ -451,7 +454,7 @@ export function extraGates(deskId: DeskId, extras: ReadonlySet<DeskExtraId>) {
   return { extras: on, blocked };
 }
 
-const DERIVED_ICON: Record<string, LucideIcon> = { calendar: CalendarClock, agenda: CalendarClock, "focus-now": Crosshair, agents: AgentIcon, "your-week": ChartColumn };
+const DERIVED_ICON: Record<string, LucideIcon> = { calendar: CalendarClock, agenda: CalendarClock, "focus-now": Crosshair, agents: AgentIcon, "your-week": ChartColumn, diagrams: Workflow };
 
 let POOL: Map<string, Spec> | null = null;
 /** Every live tile any desk can draw, first desk wins on a shared key. A layout may borrow from here. */
@@ -470,6 +473,7 @@ export function specPool(): ReadonlyMap<string, Spec> {
     ["focus-now", "Focus now", "Your next three tasks, by date and priority", 4, 3],
     ["agents", "Agents at work", "Agent runs working now and next in line", 4, 3],
     ["your-week", "Your week", "What you finished each day, and your streak", 4, 3],
+    ["diagrams", "Diagrams", "Your newest block diagrams", 12, 3],
   ] as const) pool.set(key, { key, title, ghost, c, r, icon: DERIVED_ICON[key] ?? LineChart, kind: "task", action: "Open your board", derived: true, fields: [], rows: () => [], stat: () => ({ v: "0" }) });
   POOL = pool;
   return pool;
@@ -672,6 +676,7 @@ export function tileFilled(spec: Pick<Spec, "rows" | "stat">, live: DeskLive): b
 
 /** A tile's content. `footer` is its quiet action; list tiles put it beside "View all", other tiles below the picture. */
 export function TileBody({ spec, live, preview = false, interactivePreview = false, footer }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean; footer?: ReactNode }) {
+  if (spec.key === "diagrams") return <div className="visual-body"><DiagramStrip c={spec.c} preview={preview} /></div>;
   const rows = spec.rows(live);
   const stat = spec.stat?.(live) ?? null;
   const hero = spec.hero ? liveHero({ specKey: spec.key, live, rows, stat }) : null;
@@ -717,11 +722,16 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
   const layout = useDeskLayout(deskId);
   const [form, setForm] = useState<Spec | null>(null);
   const consumed = useRef<string | null>(null);
-  const specs = [...layout.shown];
+  const diagramsOn = useModuleOn("diagrams");
+  const diagramCount = useDiagramCount();
+  // The Diagrams tile joins the end of the desk once there is a diagram, until the person removes it.
+  const specs = layout.shown.filter((spec) => spec.key !== "diagrams" || diagramsOn);
   const proposals = specPool().get("proposed");
   if (proposals && live.tasks.some((task) => task.status === "proposed") && !specs.some((spec) => spec.key === "proposed") && (!layout.customized || !layout.hidden.includes("proposed"))) {
     specs.splice(Math.min(1, specs.length), 0, proposals);
   }
+  const diagramSpec = specPool().get("diagrams");
+  if (diagramSpec && diagramCount && !specs.some((spec) => spec.key === "diagrams") && !layout.hidden.includes("diagrams")) specs.push(diagramSpec);
   const tiles = useTileControls({ shown: specs, hidden: layout.hidden, save: layout.save, customized: layout.customized, mobile, restoreHint: "Add it back from Add a tile." });
   useAssistantSurface("/today", { kind: "desk", tiles: specs.map(spec => ({ key: spec.key, title: spec.title, c: spec.c, r: spec.r })) });
 
@@ -769,6 +779,13 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
         const filled = tileFilled(spec, live);
         const size = tiles.sizeOf(spec);
         const control = tiles.controls(spec);
+        if (spec.key === "diagrams") {
+          return (
+            <Tile key={spec.key} deskKey={control.deskKey} title={spec.title} icon={spec.icon} c={mobile ? 4 : size.c} r={size.r} attrs={control.attrs} grip={control.grip} options={control.options} corner={control.corner} meta={diagramCount ? String(diagramCount) : undefined} openHref="/diagrams">
+              <DiagramStrip c={mobile ? 4 : size.c} />
+            </Tile>
+          );
+        }
         const footer = spec.key === "agenda" || OWN_FOOTER.has(spec.key) ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : (
           <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => setForm(spec)}>
             {quietAdd(spec)}
@@ -785,7 +802,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
             hero={spec.hero}
             attrs={control.attrs}
             grip={control.grip}
-            onHide={control.onHide}
+            options={control.options}
             corner={control.corner}
             meta={OWN_FOOTER.has(spec.key) ? undefined : spec.derived ? "Live" : filled ? String(spec.count?.(live) ?? (rows.length || 1)) : "Nothing yet"}
             onAdd={filled && !spec.derived ? () => setForm(spec) : undefined}

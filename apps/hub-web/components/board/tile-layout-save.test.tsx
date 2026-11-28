@@ -13,6 +13,8 @@ import { useLayoutPreference, useTileControls } from "../desk/arrange";
 import { layoutKey } from "../desk/layout";
 
 (globalThis as { React?: typeof React }).React = React;
+// jsdom has no CSS.escape; the tile keys here are plain words.
+(globalThis as { CSS?: { escape: (value: string) => string } }).CSS ??= { escape: (value) => value.replace(/["\\]/g, "\\$&") };
 
 // Assertions here compare strings, numbers and booleans only: a failing assert on a React-rendered
 // element formats its whole fiber tree into the message, which can take gigabytes.
@@ -26,7 +28,7 @@ function fakeHub(initial: Record<string, unknown>) {
   let calls = 0;
   let held: Array<() => void> | null = null;
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-  const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetch: typeof globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     // A save that retries by itself would show up here, not as a test that never ends.
     if (++calls > MAX_CALLS) return json({ error: "Too many requests in one test." }, 500);
     const url = new URL(String(input), "http://hub.test");
@@ -53,7 +55,7 @@ function fakeHub(initial: Record<string, unknown>) {
     store.set(key, value);
     puts.push({ value, base, status: 200 });
     return json({ preference: { id: key, key, value, source: "me", confidence: 1, evidence: [] } });
-  }) as typeof fetch;
+  };
   const release = () => { const waiting = held ?? []; held = null; waiting.forEach((go) => go()); };
   return { store, puts, fetch, calls: () => calls, hold() { held = []; }, release };
 }
@@ -123,7 +125,7 @@ function ResizableDesk({ storageKey, defaults }: { storageKey: string; defaults:
   const { layout, save } = useLayoutPreference(storageKey);
   const shown = layout ? layout.tiles.map((tile) => ({ ...defaults.find((spec) => spec.key === tile.key)!, c: tile.c, r: tile.r })) : defaults;
   const tiles = useTileControls({ shown, hidden: layout?.hidden ?? [], save, customized: Boolean(layout), restoreHint: "" });
-  return <div className="bento">{shown.map((spec) => <section key={spec.key} data-desk-key={spec.key} data-size={`${spec.c}x${spec.r}`}>{tiles.controls(spec).corner}</section>)}</div>;
+  return <div className="bento">{shown.map((spec) => <section key={spec.key} data-desk-key={spec.key} data-size={`${spec.c}x${spec.r}`}>{tiles.controls(spec).options}{tiles.controls(spec).corner}</section>)}</div>;
 }
 
 test("resizing desk tiles twice in a row saves both sizes without a save conflict", async () => {
@@ -182,4 +184,27 @@ test("a list read that started before a save cannot make the next save conflict"
     assert.deepEqual(hub.puts.map((put) => put.status), [200, 200, 200]);
     assert.deepEqual(hub.puts[2]!.base, { value: layout(5) });
   } finally { releaseRead(); stop(); globalThis.fetch = realFetch; }
+});
+
+test("the tile menu edits width and height within the tile's limits and removes the tile", async () => {
+  const key = layoutKey("branch");
+  const start = [{ key: "deploys", c: 3, r: 3 }, { key: "progress", c: 4, r: 3 }];
+  const hub = fakeHub({ [key]: { v: 1, tiles: start, hidden: [] } });
+  const view = await mount(<ResizableDesk storageKey={key} defaults={start.map((tile) => ({ ...tile, title: tile.key }))} />, hub);
+  const sizes = () => [...view.host.querySelectorAll("[data-desk-key]")].map((node) => `${node.getAttribute("data-desk-key")}:${node.getAttribute("data-size")}`).join(" ");
+  try {
+    await press("Options for deploys");
+    assert.equal(document.querySelector<HTMLButtonElement>('[aria-label="Narrower: deploys"]')?.disabled, true, "3 columns is the narrowest");
+    await press("Wider: deploys");
+    await press("Taller: deploys");
+    await wait(20);
+    assert.equal(sizes(), "deploys:4x4 progress:4x3");
+    const remove = [...document.querySelectorAll("button")].find((node) => node.textContent?.trim() === "Remove tile");
+    assert.equal(Boolean(remove), true);
+    await act(async () => remove!.click());
+    await wait(20);
+    assert.equal(sizes(), "progress:4x3");
+    assert.equal(view.conflicts(), 0);
+    assert.deepEqual(hub.store.get(key), { v: 1, tiles: [{ key: "progress", c: 4, r: 3 }], hidden: ["deploys"] });
+  } finally { await view.done(); }
 });

@@ -1,12 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { GripVertical } from "lucide-react";
+import { Ellipsis, GripVertical, Minus, Plus, X } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { usePreferenceWrite } from "@/lib/preference-write";
 import { useToast } from "@/components/toast";
-import { hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
+import { MenuItem, Popover } from "@/components/ui";
+import { GRID_COLUMNS, hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileLimits, type TileSize } from "./layout";
 import { useSpaceAccess } from "@/lib/access";
 import { measureBoxes, motionReduced, perFrame, playFlip, type Box } from "@/lib/motion/drag";
 
@@ -59,8 +60,58 @@ export type TileControls = {
   attrs: Record<string, string | undefined>;
   grip?: ReactNode;
   corner?: ReactNode;
-  onHide?: () => void;
+  /** The ⋯ menu in the tile's header: its width and height, and Remove tile. */
+  options?: ReactNode;
 };
+
+function SizeStep({ label, value, unit, min, max, onChange, title }: { label: "Width" | "Height"; value: number; unit: string; min: number; max: number; onChange: (next: number) => void; title: string }) {
+  const [less, more] = label === "Width" ? ["Narrower", "Wider"] : ["Shorter", "Taller"];
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 py-1 text-[13px]">
+      <span>{label}</span>
+      <span className="flex items-center gap-1">
+        <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink disabled:opacity-30" aria-label={`${less}: ${title}`} disabled={value <= min} onClick={() => onChange(value - 1)}>
+          <Minus size={13} />
+        </button>
+        <span className="w-[74px] text-center tabular-nums text-muted">{value} {unit}</span>
+        <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink disabled:opacity-30" aria-label={`${more}: ${title}`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+          <Plus size={13} />
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/** A tile's ⋯ menu. Size steps are left out where tiles cannot be resized (a phone). */
+function TileOptions({ title, size, limits, onResize, onRemove }: { title: string; size: TileSize; limits: TileLimits; onResize?: (size: TileSize) => void; onRemove: () => void }) {
+  return (
+    <Popover
+      align="right"
+      width={236}
+      trigger={(open, toggle) => (
+        <button type="button" title="Tile options" aria-label={`Options for ${title}`} aria-haspopup="true" aria-expanded={open} onClick={toggle}>
+          <Ellipsis size={13} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div role="group" aria-label={`${title} options`}>
+          {onResize ? (
+            <>
+              <SizeStep label="Width" title={title} value={size.c} unit={`of ${GRID_COLUMNS}`} min={limits.minC} max={limits.maxC} onChange={(c) => onResize({ c, r: size.r })} />
+              <SizeStep label="Height" title={title} value={size.r} unit={size.r === 1 ? "row" : "rows"} min={limits.minR} max={limits.maxR} onChange={(r) => onResize({ c: size.c, r })} />
+              <div className="my-1 border-t border-[var(--line)]" />
+            </>
+          ) : null}
+          <MenuItem onClick={() => { close(); onRemove(); }}>
+            <X size={14} aria-hidden />
+            Remove tile
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
 
 /** The tiles of the grid `section` sits in, with their keys. */
 function gridTiles(grid: Element | null | undefined): HTMLElement[] {
@@ -333,7 +384,7 @@ export function useTileControls<S extends Arrangeable>({
     const before = customized ? { v: 1 as const, tiles: shown.map((item) => ({ key: item.key, c: item.c, r: item.r })), hidden } : null;
     remember(document.querySelector(`[data-desk-key="${CSS.escape(spec.key)}"]`)?.parentElement);
     void save(hideTile(arranged, spec.key));
-    toast(`Hid ${spec.title}. ${restoreHint}`, {
+    toast(`Removed ${spec.title}. ${restoreHint}`, {
       action: { label: "Undo", run: () => void save(before ?? showTile({ shown: shown.filter((item) => item.key !== spec.key), hidden }, spec)) },
     });
   }
@@ -367,7 +418,21 @@ export function useTileControls<S extends Arrangeable>({
         onKeyDown={(event) => resizeByKey(event, spec)}
       />
     ),
-    onHide: fixed && !mobile ? undefined : () => hide(spec),
+    options: fixed && !mobile ? undefined : (
+      <TileOptions
+        title={spec.title}
+        size={sizeOf(spec)}
+        limits={tileLimits(spec)}
+        onResize={fixed ? undefined : (size) => {
+          const next = resizeTile(arranged, spec.key, size);
+          const saved = next.tiles.find((tile) => tile.key === spec.key);
+          if (saved) announce(`${spec.title} is ${saved.c} columns by ${saved.r} rows.`);
+          remember(document.querySelector(`[data-desk-key="${CSS.escape(spec.key)}"]`)?.parentElement);
+          void save(next);
+        }}
+        onRemove={() => hide(spec)}
+      />
+    ),
   });
 
   return { sizeOf, controls };
