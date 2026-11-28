@@ -150,8 +150,8 @@ test("preserves sender, Reply-To and inline attachments, retries failures, then 
   });
 });
 
-test("account verification, password reset and passkey codes use the no-reply sender and key", async (t) => {
-  const { sendAccountEmail, sendPasskeyCode } = await import("../lib/auth-email.js");
+test("account verification and password reset use the no-reply sender and key", async (t) => {
+  const { sendAccountEmail } = await import("../lib/auth-email.js");
   const user = await harness.asUser();
   const sent: Array<{ from: string; to: string[]; subject: string }> = [];
   t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
@@ -162,13 +162,11 @@ test("account verification, password reset and passkey codes use the no-reply se
   });
   await sendAccountEmail(harness.prisma, user, "verify");
   await sendAccountEmail(harness.prisma, user, "reset");
-  await sendPasskeyCode(user, "TEST12");
-  assert.equal(sent.length, 3);
+  assert.equal(sent.length, 2);
   for (const message of sent) {
     assert.equal(message.from, noReply);
     assert.deepEqual(message.to, [user.email]);
   }
   assert.match(sent[0]!.subject, /^Your Ensemble code: /);
   assert.equal(sent[1]!.subject, "Reset your Ensemble password");
-  assert.equal(sent[2]!.subject, "Your Ensemble code to add a passkey: TEST12");
 });

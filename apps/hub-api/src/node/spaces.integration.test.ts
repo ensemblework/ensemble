@@ -549,7 +549,7 @@ test("the delegated identity carries the owner's current access through routes, 
     { method: "POST", url: "/api/devices/pair" },
     { method: "POST", url: "/api/connect/token", payload: { name: "node key" } },
     { method: "POST", url: "/api/cli/auth/approve", payload: { code: "ABCD-EFGH" } },
-    { method: "POST", url: "/api/web-terminal/passkeys/options" },
+    { method: "POST", url: "/api/devices/some-computer/terminal", payload: { op: "status" } },
     { method: "POST", url: "/api/terminal/run", payload: { cwd: "/", line: "ls" } },
   ];
   for (const gate of gates) {

@@ -8,7 +8,7 @@ import { mirrorSettings } from "../spaces/store.js";
 import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
 import { registerEditorTheme } from "../node/editor-theme.js";
 import { accountIdOf, settingsUserOf } from "../lib/auth.js";
-import { requireWebPerson } from "../devices/web-unlock.js";
+import { requireWebPerson } from "../devices/web-person.js";
 import { isHosted } from "../lib/hosted-access.js";
 import { isVisitor } from "../sharing/context.js";
 import { saveBase } from "../lib/save-conflict.js";

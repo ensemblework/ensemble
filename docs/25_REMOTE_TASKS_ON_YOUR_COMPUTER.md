@@ -94,7 +94,7 @@ The local switches `browseFiles`, `webEdit` and `webTerminal` are on by default 
 
 Ensemble Node's file workspace uses the same Code relay with `codeApi: 3` (CLI/desktop 0.6.4+), through its own browser-only `/api/node/files/open` route. The inner `GET/PUT /api/code/node-file` resolves an original from a local opaque source ID or a held run's exact changed path, including non-Git folders.
 
-Saves require the current byte hash and preserve encoding and permissions; stale versions conflict rather than overwrite. Safe downloads use bounded chunks from a short-lived computer-side snapshot. `node-file-sources.json` stores paths and pending metadata only. The Node origin does not unlock the Hub's terminal or passkey endpoints.
+Saves require the current byte hash and preserve encoding and permissions; stale versions conflict rather than overwrite. Safe downloads use bounded chunks from a short-lived computer-side snapshot. `node-file-sources.json` stores paths and pending metadata only. The Node origin does not open the Hub's terminal endpoints.
 
 Full contract: [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace).
 
@@ -104,7 +104,7 @@ File reads also report modification time so an open binary preview refreshes aft
 
 Runtime 0.6.6 applies file-scoped protection to provenance-backed original reads and saves. A parent folder too broad or sensitive to grant as a whole execution root does not block a safe generated file in it. The exact file's secret, runtime, symlink/hardlink and write-floor checks still apply; node tools retain their existing folder execution guards.
 
-The web terminal needs a **passkey unlock** with user verification for the web's origin, ending after **30 minutes idle** or **8 hours** (`devices/web-unlock.ts`). *Lock now* ends the session and stops its commands. Commands follow `workspace/terminal-exec.ts`: allowed programs, arguments and folders, hardened Git, confirmation for destructive actions, OS confinement, time and output limits.
+The web terminal opens for the person signed in to Ensemble on the web in their browser, on Ensemble's own page; API keys, bridge and device tokens, agents and the assistant are refused (`requireWebPerson` in `devices/web-person.ts`). Ctrl+C stops a command. Commands follow `workspace/terminal-exec.ts`: allowed programs and arguments, any folder *Open a folder* accepts, hardened Git, confirmation for destructive actions, OS confinement, time and output limits.
 
 It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-terminal-for-you-only).
 
@@ -470,7 +470,7 @@ A task from the web is limited in git only by the person's own choices: its Git 
 
 Pushes and `gh` use the computer's own sign-in; Ensemble puts no branch, push or merge rule of its own on it. Merging a pull request Ensemble opened waits for the person's Allow on Needs me unless the task said to merge when checks pass ([24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
 
-A web confirmation is an authenticated session action, not a device-verified WebAuthn signature over each decision; the terminal passkey protects only the terminal.
+A web confirmation is an authenticated session action, not a device-verified signature over each decision.
 
 ### 5.2 Rate limits
 
@@ -1068,7 +1068,7 @@ Desktop control works on Linux, macOS and Windows. On macOS and Windows it sees 
 
 ### 9. Tests and limits
 
-API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation; `src/devices/runtime-instances.integration.test.ts` and `src/remote/runtime-claims.test.ts` cover two runtimes with one pairing (turns, claims, streams). Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
+API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation; `src/devices/runtime-instances.integration.test.ts` and `src/remote/runtime-claims.test.ts` cover two runtimes with one pairing (turns, claims, streams). Sleep/wake, provider subscriptions and installed releases need their own environment.
 
 Captures: `src/evidence/captures.test.ts` (tool results as evidence: kept, held, variants, a file with a saved secret deleted, one outside the work's folder refused), `src/evidence/capture-run.integration.test.ts` (a run's browser and capture tools through its MCP server) and `src/node/capture.integration.test.ts` (a node's, through `node.tool.request` against a simulated computer running the real tool layer; upload ids; held captures previewed, released and discarded through `evidence.request`; the live view).
 

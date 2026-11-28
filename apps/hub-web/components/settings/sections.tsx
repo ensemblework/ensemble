@@ -397,70 +397,7 @@ export function RemindersSection({ settings, patch }: Props) {
   );
 }
 
-/**
- * On Ensemble on the web: the passkeys that unlock the terminal on your paired computers (Code tab).
- * Removing one needs the terminal unlocked, like on the computer.
- */
-function WebPasskeys() {
-  const client = useQueryClient();
-  const status = useQuery({ queryKey: ["terminal-status", "web"], queryFn: api.webTerminalStatus });
-  const [error, setError] = useState<string | null>(null);
-  const remove = useMutation({
-    mutationFn: api.webTerminalRemovePasskey,
-    onSuccess: () => client.invalidateQueries({ queryKey: ["terminal-status"] }),
-    onError: (failure) => setError((failure as Error).message),
-  });
-  const unlock = useMutation({
-    mutationFn: async () => {
-      const { startAuthentication } = await import("@simplewebauthn/browser");
-      const options = await api.webTerminalUnlockOptions();
-      const response = await startAuthentication({ optionsJSON: options as never });
-      await api.webTerminalUnlockVerify(response);
-    },
-    onSuccess: () => { setError(null); void client.invalidateQueries({ queryKey: ["terminal-status"] }); },
-    onError: (failure) => setError((failure as Error).message),
-  });
-  const keys = status.data?.passkeys ?? [];
-  return (
-    <div className="mb-3 rounded-md border border-line bg-panel px-3 py-2 text-[12.5px]" data-testid="web-terminal-passkeys">
-      <div className="flex items-center gap-1.5 font-medium">
-        Terminal passkeys
-        <InfoTip text="Unlock the terminal on a paired computer from the Code tab with Touch ID, Windows Hello, your phone or a security key. It locks after 30 minutes idle, 8 hours at most. Each computer decides whether the web may open it. Every passkey added is in the audit log; remove any you do not recognise." />
-      </div>
-      <div className="mt-1.5 space-y-1">
-        {status.isLoading ? null : keys.length === 0 ? (
-          <div className="text-muted">None yet. You add one the first time you open a terminal in the Code tab.</div>
-        ) : (
-          keys.map((key) => (
-            <div key={key.id} className="group flex items-center gap-2">
-              <span>{key.label || "Passkey"}</span>
-              <span className="text-faint">added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt ? ` · last used ${new Date(key.lastUsedAt).toLocaleString()}` : ""}</span>
-              <button
-                type="button"
-                className="icon-btn h-6 w-6 shrink-0"
-                aria-label={`Remove ${key.label || "passkey"}`}
-                title={status.data?.unlocked ? "Remove" : "Unlock below to remove a passkey"}
-                disabled={!status.data?.unlocked || remove.isPending}
-                onClick={() => remove.mutate(key.id)}
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-      {keys.length > 0 && !status.data?.unlocked ? (
-        <button type="button" className="btn mt-2" disabled={unlock.isPending} onClick={() => unlock.mutate()}>
-          {unlock.isPending ? "Unlocking…" : "Unlock to manage passkeys"}
-        </button>
-      ) : null}
-      {error ? <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p> : null}
-    </div>
-  );
-}
-
 export function TerminalSection({ settings, patch }: Props) {
-  const client = useQueryClient();
   const codeOn = useModuleOn("code");
   const [folder, setFolder] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
@@ -472,12 +409,6 @@ export function TerminalSection({ settings, patch }: Props) {
   const usable = access?.ok === true;
   const hostCode = useHostCode();
   const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: codeOn && hostCode === true });
-  const status = useQuery({ queryKey: ["terminal-status"], queryFn: api.terminalStatus, enabled: codeOn && usable });
-  const removeKey = useMutation({
-    mutationFn: api.terminalRemovePasskey,
-    onSuccess: () => client.invalidateQueries({ queryKey: ["terminal-status"] }),
-    onError: (error) => setFolderError((error as Error).message),
-  });
   const addFolder = async () => {
     setFolderError(null);
     try {
@@ -490,15 +421,13 @@ export function TerminalSection({ settings, patch }: Props) {
   };
   if (!codeOn) return null;
   return (
-    <SectionCard title="Terminal and commits" description="The folders Code uses, its terminal, and how agents commit." info="The terminal in the Code tab is for you only: it opens with Touch ID, runs an allow-list of commands one at a time, and every command runs in the macOS sandbox, confined to the folder it is in.">
+    <SectionCard title="Terminal and commits" description="The folders Code uses, its terminal, and how agents commit." info="The terminal in the Code tab is for you only: it opens in your signed-in browser, never for a key, agent or the assistant. It runs an allow-list of commands one at a time, each in the sandbox, confined to the folder it is in.">
       {desktop ? (
         <div role="note" data-testid="terminal-desktop-note" className="mb-3 rounded-md border border-warn/50 bg-panel px-3 py-2 text-[12.5px]">
           <div className="font-medium">{TERMINAL_DESKTOP_TITLE}</div>
           <div className="mt-0.5 text-muted">{TERMINAL_DESKTOP_BODY}</div>
         </div>
-      ) : access && !access.ok && access.reason === "named-host" ? (
-        <WebPasskeys />
-      ) : access && !access.ok ? (
+      ) : access && !access.ok && access.reason !== "named-host" ? (
         <div role="note" data-testid="terminal-address-note" data-reason={access.reason} className="mb-3 rounded-md border border-warn/50 bg-panel px-3 py-2 text-[12.5px] text-muted">
           {access.message}
         </div>
@@ -513,7 +442,7 @@ export function TerminalSection({ settings, patch }: Props) {
         <>
           <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
             Folders the terminal can use
-            <InfoTip text="Everything inside a folder is reachable; nothing above it. System folders, your home folder itself, ~/Library, key folders and Ensemble's own code are always refused." />
+            <InfoTip text="The terminal also opens any folder Open a folder accepts. A folder here is one scope: a command anywhere inside it may change all of it. System and account folders, your home folder or a folder holding it, ~/Library, key folders and Ensemble's own code are always refused." />
           </div>
           <div className="mt-1.5 space-y-1 font-mono text-[12px]">
             <div>
@@ -535,32 +464,6 @@ export function TerminalSection({ settings, patch }: Props) {
             </button>
           </div>
           {folderError ? <p className="mt-1 text-[12px] text-danger">{folderError}</p> : null}
-          <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
-            Touch ID passkeys
-            <InfoTip text="Every passkey added is in the audit log. Remove any you do not recognise." />
-          </div>
-          <div className="mt-1.5 space-y-1 text-[12.5px]">
-            {(status.data?.passkeys ?? []).length === 0 ? (
-              <div className="text-muted">None yet. Open the terminal in the Code tab to set one up.</div>
-            ) : (
-              status.data!.passkeys.map((key) => (
-                <div key={key.id} className="group flex items-center gap-2">
-                  <span>{key.label || "Passkey"}</span>
-                  <span className="text-faint">added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt ? ` · last used ${new Date(key.lastUsedAt).toLocaleString()}` : ""}</span>
-                  <button
-                    type="button"
-                    className="icon-btn h-6 w-6 shrink-0"
-                    aria-label={`Remove ${key.label || "passkey"}`}
-                title={status.data?.unlocked ? "Remove" : "Unlock below to remove a passkey"}
-                    disabled={!status.data?.unlocked}
-                    onClick={() => removeKey.mutate(key.id)}
-                  >
-                    <X size={11} />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
         </>
       ) : null}
       <div className="mt-3 divide-y divide-[var(--line)]">

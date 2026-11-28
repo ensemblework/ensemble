@@ -6,8 +6,8 @@
  * Redis for at most an hour.
  *
  * Only the person whose computer it is, signed in in a browser (no API key, agent, MCP client or the
- * assistant), and only the calls in `CODE_CALLS`; the computer checks them again with its own switches.
- * The terminal also needs the passkey unlock (`devices/web-unlock.ts`).
+ * assistant: `requireWebPerson` in `devices/web-person.ts`), and only the calls in `CODE_CALLS`; the
+ * computer checks them again with its own switches.
  */
 import { randomUUID } from "node:crypto";
 import type { Device } from "@prisma/client";
@@ -21,7 +21,7 @@ import { askDeviceFor, claimRequest, storeAnswer } from "./file-relay.js";
 import { fileAnswers, publishFileAnswer } from "./revoke-notify.js";
 import { ownDevice } from "./routes.js";
 import { currentDevice } from "./successor.js";
-import { rememberRun, requireUnlocked, requireWebPerson, webUnlockRoutes } from "./web-unlock.js";
+import { requireWebPerson } from "./web-person.js";
 import { markAccepted } from "../workspace/completion.js";
 
 const ASK_MS = 20_000;
@@ -66,7 +66,6 @@ async function readRun(redis: Redisish, runId: string): Promise<RunState | null>
 export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
   const redis = app.redis as unknown as Redisish;
-  await webUnlockRoutes(app);
 
   /** The person's own computer, paired, online and new enough; or why not. A computer paired again answers for its earlier pairing. */
   async function computer(request: FastifyRequest, want: "code" | "terminal"): Promise<Device> {
@@ -128,9 +127,8 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
     return result.send();
   });
 
-  // The terminal on that computer: status, cd, run (output follows), kill. Unlocked with a passkey first.
+  // The terminal on that computer: status, cd, run (output follows), kill.
   app.post("/api/devices/:id/terminal", async (request, reply) => {
-    const unlocked = await requireUnlocked(app.redis as never, request);
     const device = await computer(request, "terminal");
     const body = z
       .object({ op: z.enum(["status", "cd", "run", "kill"]), cwd: z.string().max(4096).optional(), path: z.string().max(4096).optional(), line: z.string().min(1).max(4000).optional(), confirmed: z.boolean().default(false), runId: z.string().max(100).optional() })
@@ -150,7 +148,6 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
     const result = await relay(reply, device, "terminal.request", { op: body.op, cwd: body.cwd, path: body.path, line: body.line, confirmed: body.confirmed, runId: body.runId }, ASK_MS, runId);
     if (runId) {
       if (result.answered && result.answer.status === 202) {
-        await rememberRun(app.redis as never, unlocked, { deviceId: device.id, runId });
         await appendLedger({ userId, actor: "me", action: "terminal.web.run", payload: { deviceId: device.id, program: (body.line ?? "").trim().split(/\s+/)[0]?.slice(0, 40) ?? "" } });
       } else {
         await redis.del(runKey(runId));
@@ -161,7 +158,7 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
 
   // A command's output after `after` (a sequence number), waiting up to 20 s for more.
   app.get("/api/devices/:id/terminal/output", async (request, reply) => {
-    await requireUnlocked(app.redis as never, request);
+    requireWebPerson(request);
     const { id } = request.params as { id: string };
     const query = z.object({ run: z.string().min(1).max(100), after: z.coerce.number().int().min(-1).default(-1) }).parse(request.query);
     const userId = accountIdOf(request);

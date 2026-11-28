@@ -155,8 +155,8 @@ function RemoteMacSettings() {
       </SettingRow>
       <SettingRow
         title="Terminal from the web"
-        description="Opens from the web's Code tab after a passkey."
-        info="The terminal here may open from the web's Code tab, after you unlock it there with your passkey (it locks after 30 minutes idle, 8 hours at most). The same allow-list as the terminal on this computer: no shells, no network tools, no running repository code."
+        description="Opens from the web's Code tab, for you only."
+        info="The terminal here may open from the web's Code tab when you are signed in there in your browser; keys, agents and the assistant are refused. The same allow-list as the terminal on this computer: no shells, no network tools, no running repository code."
       >
         <Toggle
           checked={mac?.webTerminal !== false}

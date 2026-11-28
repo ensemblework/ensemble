@@ -92,7 +92,15 @@ const SYSTEM_ROOTS = [
   "/private/var",
   "/dev",
   "/Network",
+  // Linux: the kernel's and the boot's folders.
+  "/proc",
+  "/sys",
+  "/boot",
+  "/run",
 ];
+
+/** Folders that hold every account's or every disk's folders: too broad, though a project inside them is fine. */
+const SHARED_TOO_BROAD = ["/home", "/mnt", "/srv", "/media"];
 
 /** Folders the engineer can never hand to an agent or open in the terminal. */
 const HOME_BLOCKED = [
@@ -125,14 +133,16 @@ export function blockedReason(real: string): string | null {
     for (const root of windowsSystemRoots()) {
       if (within(root, real)) return `${root} holds the operating system or installed apps.`;
     }
-    if (dirname(HOME) !== HOME && real === dirname(HOME)) return "The folder of all accounts is too broad.";
   }
+  if (dirname(HOME) !== HOME && real === dirname(HOME)) return "The folder of all accounts is too broad.";
   for (const root of SYSTEM_ROOTS) {
     if (within(root, real)) return `${root} holds the operating system or installed apps.`;
   }
-  if (/^\/Volumes\/[^/]+$/.test(real)) return "A whole disk is too broad. Pick a project folder on it.";
+  if (/^\/(Volumes|mnt|media)\/[^/]+$/.test(real)) return "A whole disk is too broad. Pick a project folder on it.";
+  if (SHARED_TOO_BROAD.includes(real)) return `${real} is too broad. Pick a project folder inside it.`;
   if (real === HOME) return "Your home folder is too broad. Pick a project folder inside it.";
-  if (dirname(real) === "/Users") return "Another account's home folder is off limits.";
+  if (dirname(real) === "/Users" || dirname(real) === "/home") return "Another account's home folder is off limits.";
+  if (within("/root", real) && !within("/root", HOME)) return "Another account's home folder is off limits.";
   for (const name of HOME_BLOCKED) {
     if (within(join(HOME, name), real)) return `~/${name} holds settings, keys or app data.`;
   }
@@ -281,6 +291,19 @@ export function holdsProtected(real: string, home = HOME): boolean {
     ...SECRET_PATHS.map((name) => join(home, name)),
   ];
   return protectedPaths.some((path) => within(real, path));
+}
+
+/**
+ * Why a folder `blockedReason` lets through is still too wide to work in as one scope (a terminal
+ * scope, a Code folder): it holds the home folder, or Ensemble's data, its askpass helper, its own code
+ * or the home folder's keys (`holdsProtected`). The workspace itself is fine: commands there are
+ * denied its `.askpass` on their own.
+ */
+export function holdsReason(real: string, home = HOME): string | null {
+  if (within(real, home, false)) return "This folder holds your home folder. Pick a project folder.";
+  const workspace = real === knownWorkspace() || real === configuredWorkspace();
+  if (!workspace && holdsProtected(real, home)) return "This folder holds Ensemble's data or your keys. Pick a project folder.";
+  return null;
 }
 
 function windowsSystemRoots(): string[] {

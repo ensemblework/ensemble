@@ -1,7 +1,7 @@
 /**
- * This computer's side of the web terminal (protocol 4, docs/16 §5, docs/25 §4.8). The person unlocks
- * it on Ensemble on the web with a passkey; the server sends `terminal.request` only for an unlocked
- * session. Here it is the same terminal as on this computer's own page (`workspace/terminal-exec.ts`):
+ * This computer's side of the web terminal (protocol 4, docs/16 §5, docs/25 §4.8). The server sends
+ * `terminal.request` only for the person signed in to Ensemble on the web in their browser
+ * (`devices/web-person.ts`). Here it is the same terminal as on this computer's own page (`workspace/terminal-exec.ts`):
  * the folders it may use, one allow-listed command at a time, git hardened, destructive commands
  * confirmed, under the OS sandbox. "Terminal from the web" (`webTerminal`) and Settings → Terminal on
  * this computer can each turn it off. The ledger here records each command (never its output).

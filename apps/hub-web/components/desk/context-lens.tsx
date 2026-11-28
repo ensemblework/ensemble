@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import { api, type DeskLive } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { resolveExtras } from "@/lib/desk-extras";
-import { lensSections, TileBody } from "./live-board";
+import { lensSections, TileBody, tileHref } from "./live-board";
 import {
   ArrowRight,
   Briefcase,
@@ -42,10 +42,10 @@ import type { LucideIcon } from "lucide-react";
 import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
-import { selectedContextTabs, CONTEXT_DESCRIPTIONS, tabKey } from "./context-tabs";
+import { selectedContextTabs, CONTEXT_DESCRIPTIONS, PROFILE_CONTEXT, tabKey } from "./context-tabs";
 import { deskRole } from "./tile-catalog";
 import { CustomizeContext, MockServices, mockServices, AssignmentsPanel } from "./context-customize";
-import { useLensTab } from "./lens-tab";
+import { contextTabHref, useLensTab } from "./lens-tab";
 import { ARTIFACT_KIND_LABEL, artifactLine } from "./artifact-label";
 import { LoadError } from "@/components/load-error";
 import { filesHref } from "@/lib/files/links";
@@ -225,7 +225,10 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
   const router = useRouter();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const role = deskRole(deskId, shell.data?.onboardingTemplateId);
-  const tabs = selectedContextTabs(role, prefs.data?.preferences.find(row => row.key === `context.tabs.${role}`)?.value);
+  const pinned = selectedContextTabs(role, prefs.data?.preferences.find(row => row.key === `context.tabs.${role}`)?.value);
+  // A link to one of the profile's tabs (a tile's View all) opens it while it is open, pinned or not.
+  const linked = PROFILE_CONTEXT[role].optional.find(label => tabKey(label) === initialTab && !pinned.includes(label));
+  const tabs = linked ? [...pinned.slice(0, -1), linked, pinned.at(-1)!] : pinned;
   const mocks = mockServices(prefs.data?.preferences.find(row => row.key === "context.mock-services")?.value);
   const [active, choose] = useLensTab(tabs, initialTab);
   // On a phone the tab strip scrolls sideways: keep the open tab in view (a link can open the last one).
@@ -555,7 +558,7 @@ function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTa
         const count = live && section.filled ? (section.spec.count?.(live) ?? section.rows.length) : 0;
         return (
           <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={count ? String(count) : undefined} ghost={!ready || section.filled ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, ...(guest ? {} : { action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }) }}>
-            {!ready ? <TileLoading /> : section.filled && live ? <TileBody spec={{ ...section.spec, c: size.c, r: size.r, hero: false }} live={live} /> : null}
+            {!ready ? <TileLoading /> : section.filled && live ? <TileBody spec={{ ...section.spec, c: size.c, r: size.r, hero: false }} live={live} href={tileHref(section.spec.key) === contextTabHref(tab) ? null : undefined} /> : null}
           </Tile>
         );
       })}

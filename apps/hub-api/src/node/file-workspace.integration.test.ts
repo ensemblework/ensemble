@@ -71,7 +71,7 @@ test("changed files coalesce into one private card; inventory and opening are ow
   const token = await h.asToken(owner, "full");
   assert.equal((await token.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source, action: "read" } })).statusCode, 403);
   assert.equal((await owner.inject({ method: "POST", url: `/api/devices/${device.id}/code`, headers, payload: { method: "GET", path: "/api/code/reviews" } })).statusCode, 403, "Node's origin does not gain access to the Hub Code bridge");
-  assert.equal((await owner.inject({ method: "POST", url: "/api/web-terminal/unlock/options", headers, payload: {} })).statusCode, 403, "Node's origin cannot unlock a terminal");
+  assert.equal((await owner.inject({ method: "POST", url: `/api/devices/${device.id}/terminal`, headers, payload: { op: "status" } })).statusCode, 403, "Node's origin cannot open a terminal");
   incomplete = true;
   try { assert.equal((await open("read")).statusCode, 502, "an incomplete answer never becomes a fake empty editor"); }
   finally { incomplete = false; }

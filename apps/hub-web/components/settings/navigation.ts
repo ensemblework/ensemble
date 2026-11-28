@@ -29,7 +29,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["agents", "orchestration", "Task limits", [["Task limits", "orchestration run limits queue"], ["Tasks that run at once", "parallel concurrency job limit"], ["Model turns per task", "turn limit agent"], ["Minutes per task", "timeout duration time limit"]]],
   ["agents", "orchestration", "Sandbox and access", [["Sandbox and access", "isolation security permissions"], ["Sandbox by default", "execution native isolation beta"], ["Internet for agent commands", "network sandbox internet"], ["Outside the Ensemble workspace", "outside access folders read write"]]],
   ["agents", "orchestration", "Agent sessions", [["Agent sessions", "sessions conversations"], ["One folder per project", "project folder agents claude codex cursor"], ["Continue a fitting agent session", "session reuse continue"], ["Clean up agent sessions", "delete sessions conversations"]]],
-  ["agents", "terminal", "Terminal and commits", [["Terminal and commits", "terminal commits git code tab folders"], ["Folders Code can use", "local repositories roots folders workspace"], "Terminal on", "Terminal folder", ["Passkeys", "touch id fingerprint unlock terminal"], "Branch prefix for agent work", "Sign commits"]],
+  ["agents", "terminal", "Terminal and commits", [["Terminal and commits", "terminal commits git code tab folders"], ["Folders Code can use", "local repositories roots folders workspace"], "Terminal on", "Terminal folder", "Branch prefix for agent work", "Sign commits"]],
   ["connections", "connections", "Connections", [["Connections", "connectors integrations apps connected apps"]]],
   ["connections", "calendars", "Calendars on Today", [["Calendars on Today", "calendar union merged duplicates ics ical webcal icloud proton fastmail notion holidays subscription feed"], ["Add calendar by URL (ICS)", "ics ical webcal subscribe calendar link url feed"], ["Sync calendars", "refresh calendar events"]]],
   ["connections", "editors", "Editors & agents", [["Editors & agents", "connect editor vscode cursor claude codex mcp"], "Connect an editor or AI app", ["Personal token", "api token hooks credentials"]]],
@@ -61,6 +61,7 @@ for (const label of ["Code", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "
 export const SETTINGS_DESTINATION_BY_ID = new Map(SETTINGS_DESTINATIONS.map((row) => [row.id, row]));
 /** Ids that links already carry, for controls that were renamed or moved: each still lands. */
 const ALIASES: Record<string, string> = {
+  "jump-terminal-passkeys": "jump-terminal-terminal-and-commits",
   "jump-feature-workspace": "jump-feature-runs",
   "jump-feature-agent-queue": "jump-feature-runs",
   "jump-account-delete-account": "jump-danger-delete-account",

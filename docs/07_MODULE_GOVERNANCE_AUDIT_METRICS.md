@@ -104,7 +104,7 @@ Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §
 | Connected MCP writes | Server/tool enablement, schema validation and confirmation; read-only annotations affect classification but grant nothing |
 | Assigned research/code jobs | Saved run profile, tools, folder trust, Ask / Review only / Unattended mode, sandbox, network and Git permissions, budgets |
 | Publishing | The exact saved approval and payload, with continuation checks |
-| Human terminal | Passkey unlock and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal-for-you-only)) |
+| Human terminal | The person's signed-in browser session only, and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal-for-you-only)) |
 | Context Bridge | Read/write/app grants, owned-space scope, static bearer or OAuth access keys, bounded retrieval; named catalog and legacy profiles use the same API checks |
 
 `assistant/apply.ts` validates approved proposals; an edited proposal is revalidated. Tools routed through `assistant/request.ts` reuse API authentication, quotas and resource checks. A guest never gains the owner's connections through a workflow.
@@ -117,7 +117,7 @@ Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider
 
 The model and purpose tiles show the top five by call count, each with an independent Show all / Show fewer toggle. Zero-call purposes are omitted; the list's expansion does not change totals or filters.
 
-Credits on Metrics are Ensemble's own included credits only. A call on the person's AI plan (Claude Code, Codex, GitHub Copilot, Cursor) shows *Your AI plan*, never credits or dollars, and the daily chart offers its Credits measure only when Ensemble credits are in use. An opened recent call shows its purpose and time; how calls are counted is said once, in **About usage**.
+Credits on Metrics are Ensemble's own included credits only. A call on the person's AI plan (Claude Code, Codex, GitHub Copilot, Cursor) shows *Your AI plan*, never credits or dollars, and the daily chart offers its Credits measure only when Ensemble credits are in use. Each recent call shows its purpose, time, provider and model on its second line, with no expander; how calls are counted is said once, in **About usage**.
 
 `lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 
