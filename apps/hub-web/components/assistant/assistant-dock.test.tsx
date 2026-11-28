@@ -25,7 +25,7 @@ const settings = {
   },
 };
 
-test("streaming reconciles the saved user message by id, keeps real repeats, and Stop cancels the turn", async () => {
+test("streaming reconciles the saved user message by id, keeps real repeats, and Stop ends the turn with one saved Stopped reply", async () => {
   if (typeof Element !== "undefined" && typeof Element.prototype.scrollTo !== "function") {
     Element.prototype.scrollTo = () => undefined;
   }
@@ -46,7 +46,7 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
   window.localStorage.setItem("ensemble.assistant.open", "true");
   window.localStorage.removeItem("ensemble.assistant.conversation");
 
-  const seen: { turnSignal: AbortSignal | null } = { turnSignal: null };
+  const seen: { turnSignal: AbortSignal | null; endTurn: (() => void) | null; ended: boolean } = { turnSignal: null, endTurn: null, ended: false };
   const stops: string[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -73,12 +73,23 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
           };
           if (init?.signal?.aborted) abort();
           else init?.signal?.addEventListener("abort", abort, { once: true });
+          // The server ends a stopped turn itself: a status line, then done with the saved reply.
+          seen.endTurn = () => {
+            const frames = [
+              `event: status\ndata: ${JSON.stringify({ text: "Stopped." })}\n\n`,
+              `event: done\ndata: ${JSON.stringify({ conversationId: CONVERSATION, messageId: "saved-stop", content: "Stopped before finishing.", interrupted: true })}\n\n`,
+            ];
+            seen.ended = true;
+            for (const frame of frames) controller.enqueue(new TextEncoder().encode(frame));
+            controller.close();
+          };
         },
       });
       return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
     }
     if (url.includes("/stop")) {
       stops.push(url);
+      setTimeout(() => seen.endTurn?.(), 150);
       return new Response(null, { status: 204 });
     }
     if (url.includes("/messages")) {
@@ -87,14 +98,9 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
           messages: [
             { id: "earlier-user", role: "user", content: "Hello from a new chat", toolCalls: [], model: null, createdAt: "2026-10-04T20:29:00.000Z" },
             { id: "saved-user", role: "user", content: "Hello from a new chat", toolCalls: [], model: null, createdAt: "2026-10-04T20:30:00.000Z" },
-            {
-              id: "saved-stop",
-              role: "assistant",
-              content: "Stopped before finishing.",
-              toolCalls: [],
-              model: null,
-              createdAt: "2026-10-04T20:30:00.000Z",
-            },
+            ...(seen.ended
+              ? [{ id: "saved-stop", role: "assistant", content: "Stopped before finishing.", toolCalls: [], model: null, createdAt: "2026-10-04T20:30:00.000Z" }]
+              : []),
           ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -157,12 +163,17 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
     assert.ok(reopenedStop);
     await act(async () => {
       reopenedStop.click();
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      reopenedStop.click();
+      await new Promise((resolve) => setTimeout(resolve, 5));
     });
+    assert.equal(document.body.querySelector('button[aria-label="Stopping"]')?.hasAttribute("disabled"), true, "Stop waits for the server");
+    assert.doesNotMatch(document.body.textContent ?? "", /Stopped/, "nothing says stopped before the server confirms");
+    for (let i = 0; i < 40 && !document.body.querySelector('button[aria-label="Send"]'); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
+    for (let i = 0; i < 40 && !/Stopped/.test(document.body.textContent ?? ""); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
     assert.equal(stops.length, 1);
     assert.equal(stops[0]?.includes(`/api/assistant/conversations/${CONVERSATION}/stop`), true);
-    assert.equal(seen.turnSignal?.aborted, true);
-    assert.match(document.body.textContent ?? "", /Stopped/);
+    assert.equal(seen.turnSignal?.aborted, false, "the server ended the turn, so the request was not cut");
+    assert.equal((document.body.textContent?.match(/Stopped/g) ?? []).length, 1, "Stopped shows once");
     assert.equal((document.body.textContent ?? "").includes("What needs me today"), false);
   } finally {
     await act(async () => root.unmount());

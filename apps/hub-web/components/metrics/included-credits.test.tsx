@@ -123,7 +123,7 @@ const SUMMARY = {
   governance: { ledgerEntries: 0 },
 };
 
-async function mountPage(credits: IncludedUsage, summaryFor: (url: URL) => typeof SUMMARY = () => SUMMARY) {
+async function mountPage(credits: IncludedUsage, summaryFor: (url: URL) => object = () => SUMMARY) {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const path = String(input);
@@ -204,6 +204,34 @@ test("the Metrics page shows nothing about credits when included models are not 
   try {
     assert.match(view.host.textContent ?? "", /Most recent calls/);
     assert.equal(view.host.querySelector('[data-testid="ensemble-credits"]'), null);
+  } finally {
+    await view.done();
+  }
+});
+
+test("AI plan calls never show credits, and calls carry no repeated explanation", async () => {
+  const PLAN = {
+    ...SUMMARY,
+    days: SUMMARY.days.map((day) => ({ ...day, estimatedUsd: null, credits: null })),
+    byModel: [{ model: "claude-sonnet-5-5", provider: "claude-code", calls: 2, tokensIn: 2000, tokensOut: 200, estimatedUsd: null, credits: null }],
+    byPurpose: [{ purpose: "Hub chat", calls: 2, tokensIn: 2000, tokensOut: 200, estimatedUsd: null, credits: null }],
+    recent: [
+      { title: "Plan my day", purpose: "Hub chat", provider: "claude-code", model: "claude-sonnet-5-5", tokensIn: 1000, tokensOut: 100, estimatedUsd: null, credits: null, at: "2026-10-17T09:00:00.000Z" },
+      { title: "Draft the launch note", purpose: "Hub chat", provider: "codex", model: "gpt-6", tokensIn: 1000, tokensOut: 100, estimatedUsd: null, credits: null, at: "2026-10-16T09:00:00.000Z" },
+    ],
+    providers: ["claude-code", "codex"],
+  };
+  const view = await mountPage({ ...USAGE, available: false }, () => PLAN);
+  try {
+    const text = view.host.textContent ?? "";
+    assert.doesNotMatch(text, /credit/i, "no credits anywhere without Ensemble credits");
+    assert.match(view.host.querySelector('[data-model-row="claude-code:claude-sonnet-5-5"]')?.textContent ?? "", /2 calls · Your AI plan/);
+    const calls = Array.from(view.host.querySelectorAll("[data-call-provider]"));
+    assert.equal(calls.length, 2);
+    for (const call of calls) assert.match(call.querySelector("summary")?.textContent ?? "", /Your AI plan$/);
+    assert.doesNotMatch(text, /Input is the context|This call used|Plan balance/);
+    const measures = Array.from(view.host.querySelectorAll('[aria-label="Chart measure"] button')).map((node) => node.textContent);
+    assert.deepEqual(measures, ["Calls", "Input tokens", "Output tokens"]);
   } finally {
     await view.done();
   }

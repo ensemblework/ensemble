@@ -36,6 +36,8 @@ A model turn receives the conversation's newest messages, as written, without th
 
 What you and the agent said in that session in the agent's own app comes into the chat before your next message there. It's marked "In the Claude app" (or wherever it was said) with its time, and the agent's answers show without Ensemble's name. In the history a model receives, those messages read "(Said in the Claude app, outside Ensemble) …" (`assistant/outside.ts`).
 
+Stop in the dock asks hub-api to stop the turn (`POST /api/assistant/conversations/:id/stop`) and waits, as *Stopping*, for the turn to end with the reply hub-api saves for it, so the chat says it stopped once. The request is cut only when there is no chat yet, the stop is refused, or the turn has not ended 20 seconds later.
+
 Open recent chats in the dock to return to a conversation. Use its delete button, Delete or Backspace and confirm once to remove it. Deleting the open chat starts a fresh chat. **Settings → Assistant → Prompts** shows every prompt Ensemble sends.
 
 ## 6. Apply, Undo and dependent actions

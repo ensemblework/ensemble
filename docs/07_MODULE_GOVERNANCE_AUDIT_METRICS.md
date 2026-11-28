@@ -117,6 +117,8 @@ Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider
 
 The model and purpose tiles show the top five by call count, each with an independent Show all / Show fewer toggle. Zero-call purposes are omitted; the list's expansion does not change totals or filters.
 
+Credits on Metrics are Ensemble's own included credits only. A call on the person's AI plan (Claude Code, Codex, GitHub Copilot, Cursor) shows *Your AI plan*, never credits or dollars, and the daily chart offers its Credits measure only when Ensemble credits are in use. An opened recent call shows its purpose and time; how calls are counted is said once, in **About usage**.
+
 `lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 
 Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
