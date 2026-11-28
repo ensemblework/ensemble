@@ -25,7 +25,7 @@ import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
-import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
 import { RpcConnection } from "./rpc.js";
 import { SubAgentLog } from "./sub-agents.js";
@@ -140,6 +140,7 @@ export async function runCursor(
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const args = ["--sandbox", ctx.sandboxed ? "enabled" : "disabled", "--workspace", ctx.root, ...(options.model && options.model !== "default" ? ["--model", options.model] : []), "acp"];
   const child: ChildProcessWithoutNullStreams = spawn(agent, args, { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   child.stdin.on("error", () => undefined);
   const rpc = new RpcConnection(
     (line) => {

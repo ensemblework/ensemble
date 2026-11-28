@@ -133,7 +133,13 @@ test("unattended works anywhere in the workspace and the person's folders, sandb
     assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(workspace, ".askpass", "git-askpass.sh") } })).decision, "deny");
   }
   // The person's own No access beyond the workspace holds when nobody can be asked.
-  assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: beyond } })).decision, "deny");
+  const refused = await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: beyond } });
+  assert.equal(refused.decision, "deny");
+  assert.ok(refused.message?.includes(`Work in this run's folder, ${root}.`), `the agent is told where it can work, not only what it cannot: ${refused.message}`);
+  // Listing the run folder's parent and the work area is no question and no refusal, with No access too.
+  const listing = ctx({ workspace, outsideAccess: "none" });
+  assert.equal((await judgeEngineCall(listing, { tool: "Bash", input: { command: "ls .." } })).decision, "allow");
+  assert.equal((await judgeEngineCall(listing, { tool: "Bash", input: { command: `ls ${workspace}` } })).decision, "allow");
   assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: other } })).decision, "allow");
 });
 

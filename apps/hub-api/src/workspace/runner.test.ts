@@ -1,10 +1,12 @@
 import "../runtime/test-env.js";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { killGroup, runCommand, sessionOf, sessionTree } from "./runner.js";
+import { spawn } from "node:child_process";
+import { engineStarted } from "./engines/registry.js";
+import { killGroup, ownSessions, runCommand, sessionOf, sessionTree } from "./runner.js";
 
 const alive = (pid: number): boolean => {
   try {
@@ -65,6 +67,77 @@ test("a command is over when its own process exits, even if a process it started
     killGroup("runner-left");
     await settle();
     assert.ok(!alive(left), "the run's end stops what its commands left running");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a coding agent's own program joins a task run's or plan step's commands once it ends: what it left running stops when the run ends", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-runner-engine-"));
+  // A stand-in agent, started as the engines start theirs (a session of its own): it runs `script` and ends.
+  const agent = (job: { id: string; context: unknown }, script: string) => {
+    const child = spawn("sh", ["-c", script], { cwd: root, detached: true, stdio: "ignore" });
+    engineStarted({ job } as never, child);
+    return { child, ended: new Promise((resolve) => child.once("exit", resolve)) };
+  };
+  const leaves = async (job: { id: string; context: unknown }, pidFile: string): Promise<number> => {
+    const { ended } = agent(job, `sleep 60 & echo $! > ${pidFile}`);
+    await ended;
+    for (let tries = 0; !existsSync(join(root, pidFile)) && tries < 50; tries += 1) await settle();
+    return Number(readFileSync(join(root, pidFile), "utf8"));
+  };
+  const kept: number[] = [];
+  try {
+    for (const [id, context] of [["engine-task", {}], ["engine-step", { node: { nodeId: "n1" }, mission: { id: "m1", step: "s1" } }]] as const) {
+      const left = await leaves({ id, context }, `${id}.pid`);
+      assert.ok(alive(left), "it outlives the agent's own program");
+      killGroup(id);
+      await settle();
+      assert.ok(!alive(left), `${id}: the run's end stops it`);
+    }
+    // A chat turn's, a node's session run outside a plan, and one a paired computer was told to keep: the person may want it.
+    for (const [id, context] of [["engine-chat", { chat: true }], ["engine-session", { node: { nodeId: "n1" } }], ["engine-relayed", { keepsProcesses: true }]] as const) {
+      const left = await leaves({ id, context }, `${id}.pid`);
+      kept.push(left);
+      killGroup(id);
+      await settle();
+      assert.ok(alive(left), `${id}: it stays`);
+    }
+  } finally {
+    for (const pid of kept) process.kill(pid, "SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("only a session still the run's is killed: Stop leaves a working agent's own program to its engine, an empty session is dropped, and one whose processes all ended is never killed", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-runner-own-"));
+  const start = (id: string, script: string) => {
+    const child = spawn("sh", ["-c", script], { cwd: root, detached: true, stdio: "ignore" });
+    engineStarted({ job: { id, context: {} } } as never, child);
+    return { child, ended: new Promise((resolve) => child.once("exit", resolve)) };
+  };
+  try {
+    // Stop while the agent works: its program is the engine's to stop, never killed outright.
+    const working = start("own-stop", "sleep 30");
+    killGroup("own-stop");
+    await settle();
+    assert.ok(alive(working.child.pid!), "the working agent is left to its engine's own stop");
+    working.child.kill("SIGKILL");
+    await working.ended;
+    // An agent that leaves nothing: nothing is kept, so its id, free again, is never killed.
+    const tidy = start("own-tidy", "true");
+    await tidy.ended;
+    await settle();
+    assert.deepEqual(ownSessions("own-tidy"), []);
+    await runCommand({ argv: ["true"], cwd: root, root, sandboxed: false, network: false, useCredentials: false, who: "agent", timeoutMs: 10_000, group: "own-command" });
+    assert.deepEqual(ownSessions("own-command"), [], "the same for a command of the run that left nothing");
+    // One that leaves a short job: kept while the job runs, not once it ended.
+    const brief = start("own-brief", "sleep 1 &");
+    await brief.ended;
+    assert.deepEqual(ownSessions("own-brief"), [brief.child.pid], "its session holds what it left");
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    assert.deepEqual(ownSessions("own-brief"), [], "everything it left ended: the id may be someone else's now");
+    killGroup("own-brief");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
