@@ -19,10 +19,14 @@ export function featureCopy(id: OptionalModule) {
  */
 export async function setFeature(client: QueryClient, id: OptionalModule, on: boolean): Promise<string> {
   await client.cancelQueries({ queryKey: ["shell"] });
-  let result = await api.setModules(id, on);
-  if (id === "runs") result = await api.setModules("workspace", on);
-  client.setQueryData<ShellCache>(["shell"], (current) => (current ? { ...current, modules: result.modules } : current));
-  void client.invalidateQueries({ queryKey: ["shell"] });
-  if (id === "plots") void client.invalidateQueries({ queryKey: ["plot-workspace"] });
-  return result.modules;
+  try {
+    let result = await api.setModules(id, on);
+    if (id === "runs") result = await api.setModules("workspace", on);
+    client.setQueryData<ShellCache>(["shell"], (current) => (current ? { ...current, modules: result.modules } : current));
+    if (id === "plots") void client.invalidateQueries({ queryKey: ["plot-workspace"] });
+    return result.modules;
+  } finally {
+    // Also after a failed second write: the first one may have changed the modules.
+    void client.invalidateQueries({ queryKey: ["shell"] });
+  }
 }

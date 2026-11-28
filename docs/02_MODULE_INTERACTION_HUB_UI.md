@@ -93,7 +93,7 @@ Row actions float over page titles instead of taking their width, so titles stay
 
 ### Find the views available to your profile
 
-Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Settings › Account › Features has one Runs switch that turns both on or off (`setFeature` in `lib/features.ts`); both signup desks for builders (`mkt.branch-desk`, `mkt.bench`) start with the agent queue on.
+Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Settings › Account › Features has one Runs switch that turns both on or off (`setFeature` in `lib/features.ts`); both signup desks for builders (`mkt.branch-desk`, `mkt.bench`) start with both on.
 
 Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 

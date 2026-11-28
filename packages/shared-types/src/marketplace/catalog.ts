@@ -275,8 +275,8 @@ export const MARKETPLACE: readonly MarketTemplate[] = [
     accent: "sky",
     actAs: "maker",
     highlights: [...MAKER],
-    // Vibe coders sign up to this desk: the agent queue is on for them, like for every builder.
-    modules: [...DESK, "workspace"],
+    // Vibe coders sign up to this desk: Runs (the agent queue and its history) is on, like for every builder.
+    modules: [...DESK, "runs", "workspace"],
     labels: { deliverable: "Spec", task: "Change", board: "Build" },
     lens: { groupBy: "project", kinds: ["artifacts", "projects"] },
     layouts: {
