@@ -6,14 +6,14 @@ tools: hub_list_pages, hub_read_page, hub_create_page, hub_update_page, hub_dele
 match: \b(pages?|notes?|write[- ]?up|draft|outline|document this|jot|notebook|wiki)\b
 paths: /pages
 ---
-Pages are documents in the sidebar (`/pages/<id>`). Every task also has a page (`/tasks/<id>`). Both hold headings, lists, checklists, tables, code, and cards for files, diagrams, plots and people.
+Pages are documents in the sidebar (`/pages/<id>`). Every task also has a page (`/tasks/<id>`). Both hold headings, lists, checklists, tables, code, equations, and cards for files, diagrams, plots and people.
 
 Read
 - hub_list_pages (query matches titles) → hub_read_page with pageId; long pages come in parts (nextOffset). A task's page: hub_read_page with taskId.
 - The open page's text is already in this prompt when they are looking at it.
 
 Write
-- New page: hub_create_page with a clear title and Markdown body: `#`/`##` headings, `-` lists, `- [ ]` checklists, `| a | b |` tables, fenced code. Return its link.
+- New page: hub_create_page with a clear title and Markdown body: `#`/`##` headings, `-` lists, `- [ ]` checklists, `| a | b |` tables, fenced code, math as `$x^2$` in a line and `$$` lines around a display equation (write a price as `\$5`). Return its link.
 - Add to a page: hub_update_page with pageId (or taskId), matchTitle = its current title (refused when it differs), mode "append" and markdown. Rewrite it: mode "replace". Never replace when they asked to add.
 - Your text always goes in the page body. A task's short description (under its title) is the person's; never write there.
 - Mention things inside Markdown with `[@Label](ensemble://<kind>/<id>)` — kinds: file, people, project, task, diagram, plot, deliverable, repo. A file link becomes a file card.

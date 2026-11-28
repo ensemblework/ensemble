@@ -7,8 +7,10 @@ const paragraph = (content: PageNode[] = []): PageNode => ({ type: "paragraph", 
 
 /** Read Notion rich text directly: Markdown cannot express all combinations of these marks. */
 export function notionInline(value: unknown): PageNode[] {
-  return list(value).flatMap((part) => {
-    const text = String(part.plain_text ?? (part.text as Json | undefined)?.content ?? (part.equation as Json | undefined)?.expression ?? "");
+  return list(value).flatMap((part): PageNode[] => {
+    const expression = (part.equation as Json | undefined)?.expression;
+    if (part.type === "equation" && typeof expression === "string" && expression.trim()) return [{ type: "inlineMath", attrs: { latex: expression.trim() } }];
+    const text = String(part.plain_text ?? (part.text as Json | undefined)?.content ?? expression ?? "");
     if (!text) return [];
     const annotations = (part.annotations ?? {}) as Json;
     const marks: NonNullable<PageNode["marks"]> = [];
@@ -66,7 +68,7 @@ export function notionNodes(blocks: NotionBlock[]): PageNode[] {
         else out.push(paragraph([{ type: "text", text: String(data.title ?? "Table") }]));
         break;
       case "column_list": case "column": case "synced_block": case "template": out.push(...children); break;
-      case "equation": out.push(paragraph([{ type: "text", text: String(data.expression ?? ""), marks: [{ type: "code" }] }])); break;
+      case "equation": if (String(data.expression ?? "").trim()) out.push({ type: "blockMath", attrs: { latex: String(data.expression).trim() } }); break;
       case "image": case "file": case "pdf": case "video": case "audio": case "bookmark": case "embed": case "link_preview": {
         const file = (data[String(data.type)] ?? {}) as Json;
         const url = String(file.url ?? data.url ?? "");
