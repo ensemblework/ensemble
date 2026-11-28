@@ -39,6 +39,7 @@ import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writ
 import { useToast } from "@/components/toast";
 import { useSpaceAccess } from "@/lib/access";
 import { ShareButton } from "@/components/sharing/share-dialog";
+import { TileResize } from "@/components/tile-resize";
 
 const CodePane = dynamic(() => import("./code-pane").then((mod) => mod.PlotCodePane), { ssr: false });
 const ChartView = dynamic(() => import("./chart-view").then((mod) => mod.ChartView), { ssr: false });
@@ -911,9 +912,7 @@ function Tile({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <TileChart tile={tile} datasets={datasets} links={links} onOpen={onOpen} />
       </div>
-      <button type="button" aria-label="Resize tile" data-tile-resize className="tile-tools pl-resize" onPointerDown={(event) => { event.stopPropagation(); onGesture(tile.id, "resize", event); }}>
-        <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden><path d="M9 3 3 9M9 6.5 6.5 9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
-      </button>
+      <TileResize label="Resize tile" data-tile-resize className="tile-tools pl-resize" onPointerDown={(event) => { event.stopPropagation(); onGesture(tile.id, "resize", event); }} />
     </article>
   );
 }

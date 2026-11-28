@@ -252,3 +252,58 @@ test("when the newer of two quick saves fails, the layout goes back to what the 
     }
   } finally { api.putPreference = oldPut; }
 });
+
+test("board overview tiles resize like Today tiles and save each size in turn without a conflict", async () => {
+  const hub = fakeHub({ [INSIGHTS_KEY]: { v: 1, tiles: ["flow", "done", "agent"], collapsed: false } });
+  const view = await mount(<BoardInsights tasks={[]} editing={false} onEditingChange={() => {}} who={{ me: "me", ownerId: "me" }} onOpen={() => {}} focus={null} onFocus={() => {}} />, hub);
+  const spans = () => [...view.host.querySelectorAll<HTMLElement>("[data-board-insight]")].map((node) => `${node.dataset.boardInsight}:${node.style.gridColumn.replace("span ", "")}x${node.style.gridRow.replace("span ", "")}`).join(" ");
+  const resize = async (tile: string, arrow: string) => {
+    const corner = view.host.querySelector<HTMLElement>(`[data-board-insight="${tile}"] .tresize`);
+    assert.equal(Boolean(corner), true, `no resize corner on ${tile}`);
+    await act(async () => { corner!.dispatchEvent(new KeyboardEvent("keydown", { key: arrow, bubbles: true })); });
+    await wait(1);
+  };
+  try {
+    // Three tiles without a saved size share the row.
+    assert.equal(spans(), "flow:4x2 done:4x2 agent:4x2");
+    hub.hold();
+    await resize("flow", "ArrowRight");
+    await resize("flow", "ArrowDown");
+    assert.equal(spans(), "flow:5x3 done:4x2 agent:4x2", "drawn before the saves return");
+    hub.release();
+    await wait(20);
+    assert.equal(view.conflicts(), 0);
+    assert.deepEqual(hub.puts.map((put) => put.status), [200, 200]);
+    assert.deepEqual((hub.store.get(INSIGHTS_KEY) as { sizes: unknown }).sizes, { flow: { c: 5, r: 3 }, done: { c: 4, r: 2 }, agent: { c: 4, r: 2 } });
+    assert.deepEqual((hub.store.get(INSIGHTS_KEY) as { tiles: string[] }).tiles, ["flow", "done", "agent"]);
+  } finally { await view.done(); }
+});
+
+test("moving or removing board overview tiles leaves them sharing the row until one is resized", async () => {
+  const hub = fakeHub({ [INSIGHTS_KEY]: { v: 1, tiles: ["flow", "done", "agent"], collapsed: false } });
+  const view = await mount(<BoardInsights tasks={[]} editing={false} onEditingChange={() => {}} who={{ me: "me", ownerId: "me" }} onOpen={() => {}} focus={null} onFocus={() => {}} />, hub);
+  const spans = () => [...view.host.querySelectorAll<HTMLElement>("[data-board-insight]")].map((node) => `${node.dataset.boardInsight}:${node.style.gridColumn.replace("span ", "")}`).join(" ");
+  const key = async (tile: string, selector: string, arrow: string) => {
+    const handle = view.host.querySelector<HTMLElement>(`[data-board-insight="${tile}"] ${selector}`);
+    assert.equal(Boolean(handle), true, `no ${selector} on ${tile}`);
+    await act(async () => { handle!.dispatchEvent(new KeyboardEvent("keydown", { key: arrow, bubbles: true })); });
+    await wait(10);
+  };
+  const saved = () => hub.store.get(INSIGHTS_KEY) as { tiles: string[]; sizes?: unknown };
+  try {
+    await key("flow", ".tgrip", "ArrowRight");
+    assert.equal(saved().tiles.join(","), "done,flow,agent");
+    assert.equal("sizes" in saved(), false, "a move does not fix the sizes");
+    await press("Options for A week of progress");
+    const remove = [...document.querySelectorAll("button")].find((node) => node.textContent?.trim() === "Remove tile");
+    assert.equal(Boolean(remove), true);
+    await act(async () => remove!.click());
+    await wait(20);
+    assert.equal(saved().tiles.join(","), "flow,agent");
+    assert.equal("sizes" in saved(), false, "a removal does not fix the sizes");
+    assert.equal(spans(), "flow:6 agent:6", "the two left share the row");
+    await key("agent", ".tresize", "ArrowLeft");
+    assert.deepEqual(saved().sizes, { flow: { c: 6, r: 2 }, agent: { c: 5, r: 2 } }, "a resize saves every tile's size");
+    assert.equal(view.conflicts(), 0);
+  } finally { await view.done(); }
+});

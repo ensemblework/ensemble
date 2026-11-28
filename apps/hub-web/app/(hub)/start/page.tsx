@@ -79,7 +79,7 @@ export default function StartPage() {
       <div className="onboard-done">
         <div className="onboard-brand">Ensemble</div>
         <h1 className="display text-[34px] leading-tight">You're set up</h1>
-        <p className="mt-2 max-w-[44ch] text-[14px] leading-6 text-muted">Today is your desk. Context holds the people and projects your work ties to. Tiles can be moved, resized, or hidden whenever you like.</p>
+        <p className="mt-2 max-w-[44ch] text-[14px] leading-6 text-muted">Today is your desk. Context holds the people and projects your work ties to. Tiles can be moved, resized or removed whenever you like.</p>
         <div className="mt-6 flex flex-wrap gap-2">
           <Link href="/today" className="btn-primary">Go to Today</Link>
           <Link href="/context" className="btn">Open Context</Link>

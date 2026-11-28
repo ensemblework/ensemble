@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AppDoodle, type AppearanceSettings, type MotionTheme } from "@ensemble/shared-types";
 import { colorTheme, colorThemeSurfaces } from "./color-themes";
 import { accentChoice, resolveAccent } from "@/lib/accent";
@@ -63,6 +63,43 @@ export function usePersistentState<T>(key: string, fallback: T): [T, (value: T |
   );
 
   return [value, update, ready];
+}
+
+/** Choices set in this tab when storage refuses them (private windows, full storage). */
+const unsaved = new Map<string, unknown>();
+
+/**
+ * A stored choice that decides what is drawn first, such as a list's sort order. Unlike
+ * `usePersistentState`, the first render after an in-app navigation already has the stored value, so
+ * nothing is drawn in the default order and then moved. A page rendered on the server starts from
+ * `fallback`, which React replaces right after hydration. `allowed` keeps an unexpected stored value out.
+ */
+export function useStoredChoice<T extends string | number | boolean>(key: string, fallback: T, allowed?: readonly T[]): [T, (value: T) => void] {
+  const subscribe = useCallback((changed: () => void) => {
+    const onStorage = (event: StorageEvent) => { if (event.key === key) changed(); };
+    const onLocal = (event: Event) => { if ((event as CustomEvent<string>).detail === key) changed(); };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(EVENT, onLocal);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(EVENT, onLocal);
+    };
+  }, [key]);
+  const snapshot = () => {
+    const value = unsaved.has(key) ? unsaved.get(key) : read<unknown>(key, fallback);
+    return typeof value === typeof fallback && (!allowed || allowed.includes(value as T)) ? (value as T) : fallback;
+  };
+  const value = useSyncExternalStore(subscribe, snapshot, () => fallback);
+  const update = useCallback((next: T) => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(next));
+      unsaved.delete(key);
+    } catch {
+      unsaved.set(key, next);
+    }
+    window.dispatchEvent(new CustomEvent(EVENT, { detail: key }));
+  }, [key]);
+  return [value, update];
 }
 
 /** Shared appearance store for the Hub, native shell and fallback pages. */

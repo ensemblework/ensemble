@@ -63,3 +63,41 @@ test("system animation leaves React's column counts alone and ignores work queue
     assert.equal(document.querySelector(".bdg-system-layer"), null);
   } finally { engine.destroy(); host.remove(); }
 });
+
+test("cards drawn again in another order do not glide; a reorder after a card moved does", async () => {
+  const flip = BD.flipFrom;
+  let flips = 0;
+  BD.flipFrom = () => { flips++; return null; };
+  const scope = `board-motion-${++serial}`;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  type Row = { id: string; order: number };
+  function Column({ drawn, rows }: { drawn: string[]; rows: Row[] }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useBoardMoveMotion(ref, false, scope, rows.map((row) => ({ id: row.id, column: "proposed", key: `proposed:${row.order}` })));
+    return <div ref={ref}><div data-column="proposed">{drawn.map((id, index) => <div key={id} data-bdg-card="" data-id={id} ref={(node) => { if (node) node.getBoundingClientRect = () => new window.DOMRect(0, index * 90, 200, 80); }} />)}</div></div>;
+  }
+  const rows = [{ id: "a", order: 1 }, { id: "b", order: 2 }, { id: "c", order: 3 }];
+  try {
+    // Mounted in one order, then sorted by a choice loaded after mount: nothing moved, so nothing glides.
+    await act(async () => root.render(<Column drawn={["c", "b", "a"]} rows={rows} />));
+    await act(async () => root.render(<Column drawn={["a", "b", "c"]} rows={rows} />));
+    assert.equal(flips, 0, "a re-sort on mount is not a move");
+    // A refetch with the same cards and keys, drawn in the same order: nothing to glide either.
+    await act(async () => root.render(<Column drawn={["a", "b", "c"]} rows={rows.map((row) => ({ ...row }))} />));
+    assert.equal(flips, 0);
+    // Someone moves c to the top: its key changes, and the columns follow one render later.
+    const moved = [{ id: "c", order: 0 }, { id: "a", order: 1 }, { id: "b", order: 2 }];
+    await act(async () => root.render(<Column drawn={["a", "b", "c"]} rows={moved} />));
+    await act(async () => root.render(<Column drawn={["c", "a", "b"]} rows={moved} />));
+    assert.equal(flips, 3, "every card that shifted glides after a real move");
+    // The move is spent: a later re-sort without a move does not glide.
+    await act(async () => root.render(<Column drawn={["a", "b", "c"]} rows={moved} />));
+    assert.equal(flips, 3);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    BD.flipFrom = flip;
+  }
+});

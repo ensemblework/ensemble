@@ -249,11 +249,9 @@
 .desk .th .tgrip:hover { color: var(--ink); background: var(--hover); }
 .desk .th .tacts:focus-within, .desk .th .tacts:has([aria-expanded="true"]) { opacity: 1; }
 .desk .tresize { position: absolute; z-index: 3; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; opacity: 0; touch-action: none; transition: opacity var(--dur-fast) var(--ease); }
-.desk .tresize::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); border-bottom-right-radius: 2px; }
 .desk .tile:hover .tresize,
 .desk .tresize:focus-visible,
 .desk .tile[data-resizing="1"] .tresize { opacity: 1; }
-.desk .tresize:hover::before { border-color: var(--ink); }
 .desk .tgrip:focus-visible,
 .desk .tresize:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
 .desk .tile[data-resizing="1"] { border-color: var(--line-strong); box-shadow: 0 0 0 1px var(--line-strong); transition: none; }

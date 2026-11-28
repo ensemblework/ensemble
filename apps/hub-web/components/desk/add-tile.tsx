@@ -122,7 +122,7 @@ export function AddTileDialog({ deskId, onClose }: { deskId: DeskId; plots?: boo
           </> : <div className="tile-gallery-empty"><p>Choose a tile to see how it fits your day.</p></div>}
         </section>
       </div>
-      <div className="tile-gallery-bottom"><span role="status">{notice || `${onDesk.size} tiles on Today · All tiles can be moved, resized, or hidden.`}</span>{layout.customized && <button type="button" className="btn" disabled={pending || !ready} onClick={() => void layout.reset()}><RotateCcw size={12} />Reset layout</button>}</div>
+      <div className="tile-gallery-bottom"><span role="status">{notice || `${onDesk.size} tiles on Today · All tiles can be moved, resized or removed.`}</span>{layout.customized && <button type="button" className="btn" disabled={pending || !ready} onClick={() => void layout.reset()}><RotateCcw size={12} />Reset layout</button>}</div>
       {error && <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p>}
     </div>
   </Dialog>;

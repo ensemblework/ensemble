@@ -68,6 +68,8 @@ test("layouts are bounded and every role has useful defaults", () => {
   assert.deepEqual(readInsightLayout({ v: 1, tiles: [] }, ["flow"]).tiles, []);
   assert.equal(readInsightLayout({ v: 1, tiles: [], wipCap: -10 }, []).wipCap, 1);
   assert.equal(readInsightLayout({ v: 1, tiles: [], wipCap: 999 }, []).wipCap, 50);
+  // Saved sizes stay within a Today tile's limits; unknown tiles are dropped.
+  assert.deepEqual(readInsightLayout({ v: 1, tiles: ["flow"], sizes: { flow: { c: 40, r: 1 }, bad: { c: 6, r: 3 }, done: { c: 6, r: 3 } } }, []).sizes, { flow: { c: 12, r: 2 }, done: { c: 6, r: 3 } });
 });
 
 async function mount(node: React.ReactNode) {
