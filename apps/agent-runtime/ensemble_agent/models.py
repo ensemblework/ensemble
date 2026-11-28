@@ -1975,7 +1975,7 @@ def _public_failure(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, ConnectionDropped):
         return {"message": CONNECTION_DROPPED_NOTICE, "kind": "other", "status": 503}
     if isinstance(exc, ProviderError):
-        payload: dict[str, Any] = {"message": exc.message, "kind": exc.kind, "status": exc.status}
+        payload: dict[str, Any] = {"message": exc.message.strip() or PROVIDER_FAILED_NOTICE, "kind": exc.kind, "status": exc.status}
         if exc.quota_id:
             payload["quotaId"] = exc.quota_id
         if exc.retry_after_seconds is not None:
@@ -1984,10 +1984,22 @@ def _public_failure(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, (ModelAuthError, credentials.DecryptError)):
         status = 409 if isinstance(exc, credentials.DecryptError) else 503
         return {"message": str(exc), "kind": "auth", "status": status}
-    text = str(exc)
+    text = str(exc).strip()
     if "http://" in text or "https://" in text:
         text = "The model provider could not be reached."
-    return {"message": truncate_text(text, 800), "kind": "other", "status": 502}
+    return {"message": truncate_text(text or _failure_words(exc), 800), "kind": "other", "status": 502}
+
+
+PROVIDER_FAILED_NOTICE = "The model provider returned an error."
+
+
+def _failure_words(exc: BaseException) -> str:
+    """A failure that came with no text of its own (a bare timeout, a connection closed mid-reply), named by what happened."""
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return "The model provider did not answer in time."
+    if is_transport_drop(exc):
+        return "The model provider closed the connection before it answered."
+    return "The model call failed, and the provider gave no reason."
 
 
 async def _chat_frames(body: dict[str, Any]):
