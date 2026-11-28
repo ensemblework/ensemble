@@ -4,7 +4,7 @@
  * Completed work is revealed immediately; no artificial minimum hold.
  */
 export const MOTION_SHOW_DELAY_MS = 250;
-export const AI_SHOW_DELAY_MS = 350;
+export { AGENT_SHOW_DELAY_MS as AI_SHOW_DELAY_MS } from "@ensemble/brand/web-activity";
 export const MOTION_MIN_VISIBLE_MS = 0;
 
 export type DelayPhase = "idle" | "waiting" | "visible" | "holding";

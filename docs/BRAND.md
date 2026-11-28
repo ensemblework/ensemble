@@ -31,29 +31,23 @@ Native launcher icons are static; macOS uses the inset tile in the ICNS. The Qui
 
 ## Motion
 
-One Expressive system; geometry and cadence come from `packages/brand/geometry.js`:
+Web agent requests use three treatments from `packages/brand/web-activity/`. They start and end at the Woven Chorus mark.
 
-| Role | Timing | Used for |
+| Treatment | Where it appears | Working motion |
 |---|---|---|
-| Unfurl | 720 ms once | Explicit home navigation and completion gestures |
-| Infinity | 850 ms opening, 7.4 s phrase | Focused assistant waiting for its first useful output; native first connection |
-| Relay | 850 ms opening, 7.8 s phrase | Focused agent task and run activity |
-| Threadline | 850 ms opening, 6.8 s phrase | Inline Ask Ensemble, meeting preparation and other compact model waits |
-| Beacon | 700 ms opening, 8.6 s phrase, 5.95 s fully still between gestures | Top-bar activity and minimized assistant |
+| Open infinity | Code thread sidebar (20 × 18 px), activity pill (24 px), minimized assistant (32 px) | One moving opening covers 28% of the figure-eight's path, including the space reclaimed by the rounded ends. A lap takes about 1.9 s. |
+| Loop exchange | Waiting for the first reply in the Hub, inline Ask, comments and docs helper; a Code turn thinking before output | Two loops exchange places inside a 38 × 23 px slot. |
+| Open weave | A live assistant reply or tools, focused assigned-task and run detail, meeting reads and preparation | The two strands open into a traveling wave beside the text, in the same 38 × 23 px slot. |
 
-Both infinity strands share an arc-length alignment. The mark transforms continuously, with a gentler held deformation, a 650 ms return, and still intervals. Beacon uses the compact infinity gesture. `motion.js` uses the same evaluator for playback and seeking and settles from the current pose in 340 ms. The resting artwork is unchanged.
-
-One scheduler runs visible moving marks at up to 30 fps, sleeps until the next gesture during a rest, and suspends in hidden documents or offscreen. Teardown clears timers, observers and completion promises.
-
-Choose the mark’s size by purpose: 64 px for focused activity, 32 px inline, 28 px for a run, and 24 px for peripheral activity. The minimized assistant also uses 32 px. `BrandMorph` provides these sizes. Threadline has a taller wave envelope, and marks at 32 px and below use a 1.5 px optical stroke at 32 px. Existing identity slots remain visible before motion begins.
+`AgentActivityMark` (`apps/hub-web/components/motion/agent-activity-mark.tsx`) takes the current kind or no activity. A short wait can finish without drawing a loader. A sustained request stays in its working shape until the underlying state changes, without periodic returns to idle. Finishing or stopping folds the current pose back into the logo. Restarting during that return preserves the current position and velocity. Labels, replies, errors and controls do not wait for the return. Visible moving marks share a frame clock capped at 30 fps; idle marks need no clock.
 
 AI-only loading marks wait 350 ms before appearing. Ordinary controls use `LocalSpinner` (minimum 14 px) and a 250 ms delay. Structural skeletons and IDE loading strips also wait 250 ms. Results are never held to finish an animation. Route feedback follows Suspense loading boundaries, including the general Hub fallback, rather than a click-triggered global logo.
 
-Queued, starting, stopping, paused, cancelled, failed, offline and needs-human states stay still. Running lists keep static status cues; a focused run can animate. The assistant avatar becomes still once tools or streamed text provide progress. Status text carries meaning; elapsed seconds and graphic frames are not live announcements. Only measured bytes or items have percentages.
+Queued, starting, stopping, paused, cancelled, failed, offline and needs-human states stay still. Run queues and dashboard lists keep static status cues. Code gives the visible running thread row the motion; when the selected row is out of view, its turn header takes over. Saved replies are still. Status text carries meaning; elapsed seconds and graphic frames are not live announcements. Only measured bytes or items have percentages.
 
 Choose **Settings → Appearance → Reduce motion** to keep marks still. This setting is independent of the OS preference. Either the OS preference or `data-reduce-motion` suppresses frame scheduling. There is no motion-style picker; the settings schema maps old `minimal-quiet` and `minimal-dot` values to `expressive`. The native startup screen follows the OS preference only.
 
-The landing hero arrives once (CSS, off under reduced motion); clicking it plays Infinity and settles. The sample board's agent rows use Relay. Empty states show a still mark.
+`packages/brand/geometry.js` and `motion.js` own the separate navigation, celebration, showcase and native startup gestures. The landing hero arrives once (CSS, off under reduced motion); clicking it plays Infinity and settles. The sample board's agent rows use Relay. Empty states show a still mark.
 
 ## Profile avatars
 
@@ -87,4 +81,4 @@ Tests cover palette contrast, motion normalization, unique SVG IDs, reduced moti
 
 Installed apps get a new identity only through a release.
 
-The docs helper shares launcher and resize geometry through `packages/brand/assistant.js`; the Hub component entry points re-export those functions. Its build copies the Hub assistant styles and uses the same 32px Beacon launcher and 64px Infinity wait, with reduced-motion behavior from the shared engine.
+The docs helper shares launcher and resize geometry through `packages/brand/assistant.js`; the Hub component entry points re-export those functions. Its build copies the Hub assistant styles and uses the shared web activity player for its launcher and non-streaming reply wait.

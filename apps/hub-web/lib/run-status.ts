@@ -21,6 +21,7 @@ export function runPresentation({ outcome, endedAt, jobStatus, verified }: { out
   if (jobStatus === "waiting_approval") return { label: "Waiting for you", tone: "yellow", active: false };
   if (jobStatus === "stopping") return { label: "Stopping", tone: "gray", active: false };
   if (jobStatus === "paused") return { label: "Paused", tone: "gray", active: false };
-  if (!jobStatus || jobStatus === "running") return { label: "Running", tone: "blue", active: true };
+  if (!jobStatus) return { label: "Open", tone: "gray", active: false };
+  if (jobStatus === "running") return { label: "Running", tone: "blue", active: true };
   return { label: jobStatus === "interrupted" ? "Interrupted" : jobStatus === "failed" ? "Failed" : jobStatus === "cancelled" ? "Stopped" : "Ended", tone: jobStatus === "failed" ? "red" : "gray", active: false };
 }

@@ -12,7 +12,7 @@ import { runPullRequest, runPullRequestLabel } from "@/lib/pull-request";
 import { plural, relative } from "@/lib/format";
 import { usePeek } from "../shell/peek";
 import { useToast } from "../toast";
-import { RunMark } from "@/components/motion/slot";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { PriorityTag, Tag, cx } from "../ui";
@@ -41,6 +41,7 @@ const RETRYABLE = new Set<AgentJob["status"]>(["interrupted", "failed", "cancell
 
 export function jobTone(job: Pick<AgentJob, "status" | "deviceId" | "deviceName" | "deviceOnline" | "deviceRevoked">): { label: string; tone: "green" | "red" | "yellow" | "gray" | "blue" | "orange" } {
   const name = job.deviceName || "your computer";
+  if (job.status === "running" && job.deviceId && (job.deviceOnline === false || job.deviceRevoked)) return { label: `Waiting for ${name}`, tone: "gray" };
   if (job.status === "claimed") return { label: `Starting on ${name}`, tone: "blue" };
   if (job.status === "interrupted" && job.deviceId) return { label: interruptedLabel(job.deviceName, job.deviceRevoked), tone: "orange" };
   if (job.status === "queued" && job.deviceId && job.deviceOnline === false) return { label: `Waiting for ${name}`, tone: "gray" };
@@ -193,7 +194,6 @@ export function JobCard({ job }: { job: AgentJob }) {
       </div>
       {showProgress && job.progress ? (
         <div className="flex items-center gap-1.5 text-muted">
-          {job.status === "running" || job.status === "queued" ? <RunMark animate={false} state={job.status === "queued" ? "queued" : "running"} /> : null}
           <span className="min-w-0 flex-1 truncate">{job.progress}</span>
         </div>
       ) : null}
@@ -237,6 +237,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
   return (
     <div className={cx("mt-4 rounded-lg border px-3 py-2.5 text-[12.5px]", live ? "border-[rgb(var(--accent-rgb)/0.45)] bg-[var(--accent-soft)]" : "border-line bg-raised")}>
       <div className="flex flex-wrap items-center gap-2">
+        <AgentActivityMark key={job.id} kind={job.status === "running" && !job.finishedAt && job.deviceOnline !== false && !job.deviceRevoked ? "weave" : null} />
         <Tag tone={state.tone}>{state.label}</Tag>
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
         {job.resume ? <span title={`Carried on by itself: ${job.resume.reason}`}><Tag tone="orange">{`resumed ${job.resume.attempt}/${job.resume.of}`}</Tag></span> : null}
@@ -260,7 +261,6 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
       </div>
       {showProgress && job.progress ? (
         <div className="mt-1.5 flex items-center gap-1.5 text-muted">
-          {job.status === "running" || job.status === "queued" ? <RunMark state={job.status === "queued" ? "queued" : "running"} /> : null}
           {job.status === "waiting_approval" ? (
             <Link href="/needs-me" className="text-accent hover:underline">
               {job.progress} →

@@ -20,23 +20,15 @@ export const MORPH_ONCE_MS = morphApi().BASE.once * 1000;
 export const MORPH_LOOP_MS = morphApi().BASE.loop * 1000;
 export const MORPH_SETTLE_MS = morphApi().BASE.settle * 1000;
 
-export const AI_MARK = {
-  focused: { size: 64, kind: "infinity" },
-  inline: { size: 32, kind: "threadline" },
-  peripheral: { size: 24, kind: "beacon" },
-  run: { size: 28, kind: "relay" },
-} as const;
-
 export function BrandMorph({
-  size: requestedSize = 20,
+  size = 20,
   state = "idle",
   loader = false,
   label,
   style,
   className,
   motionStyle,
-  kind: requestedKind = "infinity",
-  purpose,
+  kind = "infinity",
   flat = false,
   onIdle,
 }: {
@@ -48,12 +40,9 @@ export function BrandMorph({
   className?: string;
   motionStyle?: MorphStyle;
   kind?: MorphKind;
-  purpose?: keyof typeof AI_MARK;
   flat?: boolean;
   onIdle?: () => void;
 }) {
-  const size = purpose ? AI_MARK[purpose].size : requestedSize;
-  const kind = purpose ? AI_MARK[purpose].kind : requestedKind;
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
   const ctl = useRef<MorphController | null>(null);

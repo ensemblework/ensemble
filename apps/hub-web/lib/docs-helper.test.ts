@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import test, { before } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
-let html = '';
+let html = '', source = '';
 before(async () => {
+  const docs = createRequire(resolve(__dirname, '../../docs/package.json'));
+  const { buildSync } = docs('esbuild');
+  source = buildSync({ entryPoints: [docs.resolve('./src/helper.js')], bundle: true, format: 'iife', write: false }).outputFiles[0].text;
   const renderer = await import(pathToFileURL(resolve(__dirname, '../../docs/src/render.mjs')).href);
   const page = { title: 'Guide', file: 'README.md', path: '/', toc: [], html: '<h1>Guide</h1>' };
   html = renderer.pageHtml(page, [page], 'testing');
 });
-const source = (readFileSync(resolve(__dirname, '../../docs/src/helper.js'), 'utf8')).replace(/^import .*;\n/gm, '');
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 const accountA = { id: 'account-a', name: 'Mira' }, accountB = { id: 'account-b', name: 'Ben' };
 const turnA = { id: 'turn-a', question: 'Private A question', answer: 'Private A answer', sources: [] };
@@ -29,7 +31,7 @@ function setup() {
   w.fetch = ((url: string, options: RequestInit) => new Promise<Response>((resolve, reject) => {
     requests.push({ path: new URL(url).pathname + new URL(url).search, method: options.method ?? 'GET', options, resolve, reject });
   })) as typeof w.fetch;
-  w.eval(`const mount = () => ({loop(){}, idle(){}}); const staticSVG = () => '<svg></svg>'; const helperLayout = (launcher, panel, open) => {launcher.addEventListener('click',open);return ()=>{}};\n${source}`);
+  w.eval(source);
   const element = <T extends Element = HTMLElement>(selector: string) => w.document.querySelector<T>(selector)!;
   const click = (selector: string) => element<HTMLElement>(selector).click();
   click('#docs-launcher');

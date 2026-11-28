@@ -1,6 +1,6 @@
 "use client";
 import { ModelLogo } from "../connectors/provider-logo";
-import { BrandMorph } from "@/components/motion/brand-morph";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -130,6 +130,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
       <div className="flex shrink-0 flex-wrap items-start gap-3 border-b border-line px-3 pb-3 pt-4 sm:px-5">
         <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
+            <AgentActivityMark kind={outcome.active ? "weave" : null} />
             <Tag tone={outcome.tone}>{outcome.label}</Tag>
             {job ? <span className="font-medium text-ink">{job.engineName}</span> : <span>{run.worker === "workspace" ? "Agent" : "Delegated run"}</span>}
             <span>·</span>
@@ -272,7 +273,6 @@ function Trace({ entries, live, active, label }: { entries: TraceEntry[]; live: 
   if (!entries.length) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted" role="status">
-        {active ? <BrandMorph purpose="run" state="loop" loader /> : null}
         {live ? active ? "Nothing recorded yet. Steps show up here as the agent works." : `${label}. Nothing recorded yet.` : "No steps were recorded for this run. Runs on a paired computer with Ensemble older than 0.3.5 report only the result."}
       </div>
     );
@@ -335,7 +335,7 @@ function Trace({ entries, live, active, label }: { entries: TraceEntry[]; live: 
         ))}
         {live ? (
           <li className="flex items-center gap-2 px-2 py-1.5 text-[12.5px] text-muted">
-            {active ? <BrandMorph purpose="run" state="loop" loader /> : <CircleDashed size={16} aria-hidden />} {active ? "Working…" : label}
+            {active ? "Working…" : label}
           </li>
         ) : null}
       </ol>

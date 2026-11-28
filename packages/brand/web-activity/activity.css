@@ -1,0 +1,13 @@
+.agent-activity-mark { position: relative; display: inline-grid; place-items: center; flex: none; vertical-align: middle; line-height: 0; }
+.agent-activity-mark [data-live] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+.agent-activity-mark [data-live] path { stroke: #edcc8f; }
+.agent-activity-mark [data-live] path:first-child { stroke: #b99864; }
+[data-theme="light"] .agent-activity-mark [data-live] path { stroke: #51412b; }
+[data-theme="light"] .agent-activity-mark [data-live] path:first-child { stroke: #81643c; }
+@media (forced-colors: active) { .agent-activity-mark [data-live] path { stroke: CanvasText !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .agent-activity-mark [data-live] { visibility: hidden; }
+  .agent-activity-mark [data-rest] { opacity: 1 !important; }
+}
+[data-reduce-motion="true"] .agent-activity-mark [data-live] { visibility: hidden; }
+[data-reduce-motion="true"] .agent-activity-mark [data-rest] { opacity: 1 !important; }

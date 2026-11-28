@@ -469,7 +469,7 @@ function RunningStep({ status }: { status: string }) {
     <li className="tool-row tool-running" data-tool-state="running">
       <div className="tool-line">
         <span className="tool-main">
-          <span className="tool-mark" data-state="running" aria-hidden><span className="tool-spinner" /></span>
+          <span className="tool-mark" data-state="running" aria-hidden><Layers size={13} /></span>
           <span className="tool-title" role="status">{status}</span>
           {seconds >= 3 ? <span className="tool-meta tabular-nums" aria-hidden>{seconds}s</span> : null}
         </span>

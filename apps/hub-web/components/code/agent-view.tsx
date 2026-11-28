@@ -55,6 +55,7 @@ import {
 import Link from "next/link";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon, EnsembleIcon } from "@/components/agent-icon";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { AgentPicker, TuningPicker, agentOptions, modelOf, type AgentChoice } from "@/components/agent/agent-picker";
 import { ToolsPicker } from "@/components/agent/tools-picker";
 import { ChatText } from "@/components/chat-text";
@@ -166,6 +167,7 @@ const inSentence = (place: string) => (/^This /.test(place) ? place.toLowerCase(
 const samePlace = (a: ThreadPlace, b: ThreadPlace) => (a.deviceId ?? null) === (b.deviceId ?? null) && (a.folder ?? null) === (b.folder ?? null);
 
 export type AgentViewProps = {
+  sidebarOwnsMotion?: boolean;
   /** The thread shown, or null for a new one. */
   threadId: string | null;
   onThread: (id: string | null) => void;
@@ -187,7 +189,7 @@ export type AgentViewProps = {
   onEditing?: (paths: string[]) => void;
 };
 
-export function AgentView({ threadId, onThread, draft, onDraft, places, folders, placesLoading = false, viewOnly, onOpenFile, visible = true, onEditing }: AgentViewProps) {
+export function AgentView({ threadId, onThread, draft, onDraft, places, folders, placesLoading = false, viewOnly, onOpenFile, visible = true, sidebarOwnsMotion = false, onEditing }: AgentViewProps) {
   const client = useQueryClient();
   const toast = useToast();
   const navigate = useLinkNavigate();
@@ -327,6 +329,7 @@ export function AgentView({ threadId, onThread, draft, onDraft, places, folders,
             <Turn
               key={turn.id}
               turn={turn}
+              showMotion={visible && !sidebarOwnsMotion}
               threadId={threadId!}
               title={title}
               place={place}
@@ -422,6 +425,7 @@ const UserMessage = memo(function UserMessage({ text, mentions, pending = false,
 
 function Turn({
   turn,
+  showMotion,
   threadId,
   title,
   place,
@@ -442,6 +446,7 @@ function Turn({
   onFork,
 }: {
   turn: CodeTurn;
+  showMotion: boolean;
   threadId: string;
   title: string;
   place: ThreadPlace;
@@ -546,7 +551,8 @@ function Turn({
         <div className="flex items-center gap-1">
           <button type="button" className="agent-work-toggle" aria-expanded={expanded} onClick={() => setOpen(!expanded)}>
             <ChevronRight size={13} className={cx("shrink-0 transition-transform", expanded && "rotate-90")} aria-hidden />
-            <span className={cx("min-w-0 truncate", live && !offline && "agent-shimmer")}>{status}</span>
+            <AgentActivityMark kind={!showMotion || turn.status !== "running" || !computerOnline || asks.length ? null : thinking && !reply ? "exchange" : "weave"} />
+            <span className="min-w-0 truncate">{status}</span>
             {live && turn.status !== "queued" ? <span className="shrink-0 tabular-nums text-faint">· {took}</span> : null}
           </button>
           {expanded && (turn.runId || turn.deviceId) ? (
@@ -579,11 +585,11 @@ function Turn({
           <div className="agent-work" data-testid="agent-work">
             {run.isLoading && turn.runId ? <div className="py-1 pl-6"><Spinner size={12} /></div> : null}
             {!rows.length && !run.isLoading && !live ? <p className="pl-6 text-[12px] text-faint">No tool calls.</p> : null}
-            {rows.map((row) => <WorkLine key={row.id} row={row} active={live && row === lastRow} onOpenFile={onOpenFile} />)}
+            {rows.map((row) => <WorkLine key={row.id} row={row} onOpenFile={onOpenFile} />)}
             {thinking && lastRow?.type !== "thinking" && turn.status === "running" ? (
               <div className="agent-work-row">
-                <span className="agent-work-gutter"><span className="agent-dot agent-dot-live" /></span>
-                <span className="agent-shimmer">{reply ? "Writing" : "Thinking"}</span>
+                <span className="agent-work-gutter" aria-hidden />
+                <span>{reply ? "Writing" : "Thinking"}</span>
               </div>
             ) : null}
           </div>
@@ -642,12 +648,11 @@ function TurnLog({ turn, live }: { turn: CodeTurn; live: boolean }) {
   );
 }
 
-const DOT_KINDS = new Set(["read", "search", "web", "plan", "agent", "ask", "other", "think"]);
 
 /** One row of a turn's work: a thought, something the agent said on the way, or a tool call. */
-function WorkLine({ row, active, onOpenFile }: { row: WorkRow; active: boolean; onOpenFile: (path: string) => void }) {
+function WorkLine({ row, onOpenFile }: { row: WorkRow; onOpenFile: (path: string) => void }) {
   const [open, setOpen] = useState(false);
-  if (row.type === "thinking") return <ThoughtRow text={row.text} live={active} />;
+  if (row.type === "thinking") return <ThoughtRow text={row.text} />;
   if (row.type === "message") {
     return (
       <div className="agent-work-row items-start">
@@ -667,10 +672,10 @@ function WorkLine({ row, active, onOpenFile }: { row: WorkRow; active: boolean; 
     <div className="flex flex-col" data-kind={line.ensemble ? "ensemble" : command ? "command" : row.kind}>
       <div className={cx("agent-work-row", failed && "text-danger")}>
         <span className="agent-work-gutter">
-          {Icon ? <Icon size={13} className={cx(failed ? "text-danger" : line.ensemble ? "text-accent" : "text-faint")} aria-hidden /> : <span className={cx("agent-dot", DOT_KINDS.has(row.kind) && "agent-dot-quiet", row.running && "agent-dot-live")} aria-hidden />}
+          {Icon ? <Icon size={13} className={cx(failed ? "text-danger" : line.ensemble ? "text-accent" : "text-faint")} aria-hidden /> : null}
         </span>
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => canOpen && setOpen(!open)} aria-expanded={canOpen ? open : undefined} title={command?.command ?? line.label}>
-          <span className={cx("shrink-0", row.running && "agent-shimmer")}>{line.label}</span>
+          <span className="shrink-0">{line.label}</span>
           {command ? <code className="agent-cmd min-w-0 truncate">{command.command}</code> : null}
           {detail ? <span className="min-w-0 truncate text-faint">{detail}</span> : null}
         </button>
@@ -680,23 +685,23 @@ function WorkLine({ row, active, onOpenFile }: { row: WorkRow; active: boolean; 
           </button>
         ) : null}
         {out.exitCode !== null && out.exitCode !== 0 ? <span className="agent-exit">exit {out.exitCode}</span> : null}
-        {row.running ? <Spinner size={11} /> : row.ms != null ? <span className="shrink-0 tabular-nums text-faint">{elapsed(row.ms)}</span> : null}
+        {row.ms != null ? <span className="shrink-0 tabular-nums text-faint">{elapsed(row.ms)}</span> : null}
       </div>
       {open ? <ToolDetail row={row} command={command?.command ?? null} output={out} /> : null}
     </div>
   );
 }
 
-/** A thought as its title; the rest opens under it. Only a thought being written moves. */
-function ThoughtRow({ text, live }: { text: string; live: boolean }) {
+/** A thought as its title; the rest opens under it. */
+function ThoughtRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const { title, body } = thought(text);
   return (
     <div className="flex flex-col">
       <div className="agent-work-row">
-        <span className="agent-work-gutter"><span className={cx("agent-dot agent-dot-quiet", live && "agent-dot-live")} aria-hidden /></span>
+        <span className="agent-work-gutter" aria-hidden />
         <button type="button" className="min-w-0 flex-1 truncate text-left text-faint" onClick={() => body && setOpen(!open)} aria-expanded={body ? open : undefined}>
-          <span className={cx(live && "agent-shimmer")}>{title || "Thinking"}</span>
+          <span>{title || "Thinking"}</span>
         </button>
       </div>
       {open && body ? (

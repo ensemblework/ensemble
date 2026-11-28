@@ -7,6 +7,11 @@ import { DOCS_HOME } from "./search.js";
 export const escapeHtml = (text) => text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 export const pagePath = (file) => file === "README.md" ? "/" : `/${file.replace(/\.md$/, "").toLowerCase()}/`;
 
+function activityMark(width, height, id, hidden = false) {
+  const knot = staticSVG(height, { id, tone: 'auto' }).replace('viewBox="0 0 320 320"', 'data-rest viewBox="20 20 280 280"');
+  return `<span class="agent-activity-mark" style="width:${width}px;height:${height}px" aria-hidden="true"${hidden ? ' hidden' : ''}>${knot}<svg data-live viewBox="0 0 ${width} ${height}" fill="none" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path/><path/></svg></span>`;
+}
+
 function inlineText(token) {
   return (token.children ?? []).map((child) => {
     if (child.type === "softbreak" || child.type === "hardbreak") return " ";
@@ -165,7 +170,7 @@ ${(page.aliases ?? []).map((alias) => `<div id="${e(alias.id)}" class="legacy-to
 <aside class="on-page"><nav aria-label="On this page"><strong>${siblings.length ? "In this guide" : "On this page"}</strong>${siblings.length ? topicNavigation : toc}</nav></aside>
 </div>
 <dialog id="docs-search" aria-label="Search documentation"><form id="search-form" role="search"><label for="query">Search docs</label><div class="search-field">${uiIcon("search")}<input id="query" name="q" type="search" maxlength="200" placeholder="Search the documentation…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="search-results" aria-autocomplete="list"><button id="search-close" type="button" aria-label="Close search">${uiIcon("close")}</button></div></form><p id="search-status" role="status"></p><div id="search-results" role="listbox" aria-label="Search results"></div><footer><span>↑ ↓ Navigate</span><span>Enter Open</span><span>Esc Close</span></footer></dialog>
-<button id="docs-launcher" class="ask-launcher" type="button" aria-label="Ask the docs" aria-expanded="false" aria-controls="docs-helper" hidden><span class="u-morph">${staticSVG(32, { id: "docs-launcher-mark", tone: "auto" })}</span></button>
+<button id="docs-launcher" class="ask-launcher" type="button" aria-label="Ask the docs" aria-expanded="false" aria-controls="docs-helper" hidden>${activityMark(32, 32, 'docs-launcher-mark')}</button>
 <section id="docs-helper" class="assistant-window pop-in" role="dialog" aria-labelledby="helper-title" data-endpoint="${e(endpoint)}" hidden>
 ${["left", "top", "corner"].map((edge) => `<div class="assistant-resize" data-edge="${edge}" ${edge === "corner" ? 'aria-hidden="true"' : `role="separator" tabindex="0" aria-label="Resize the assistant's ${edge === "left" ? "width" : "height"}" aria-orientation="${edge === "left" ? "vertical" : "horizontal"}"`} title="Drag to resize. Double-click to reset."></div>`).join("")}
 <header class="assistant-window-header helper-header">
@@ -184,7 +189,7 @@ ${staticSVG(24, { id: "docs-panel-mark", tone: "auto" })}
 <button id="helper-earlier" type="button" hidden>Load earlier messages</button>
 <div id="helper-welcome" class="assistant-welcome"><div class="assistant-welcome-head"><div class="assistant-welcome-mark">${staticSVG(38, { id: "docs-welcome-mark", tone: "auto" })}</div><div><h3 class="assistant-welcome-title display">How can I help?</h3><p class="assistant-welcome-sub">Ask about using Ensemble. Answers link to the docs.</p></div></div><div class="assistant-starters"><button class="assistant-starter" type="button" data-docs-question="How do I connect an app?">Connect an app</button><button class="assistant-starter" type="button" data-docs-question="How do I share a page?">Share a page</button><button class="assistant-starter" type="button" data-docs-question="How do I run a task on my computer?">Run a task</button></div></div>
 <div id="helper-turns"></div>
-<div id="helper-waiting" role="status" hidden><span class="u-morph" data-loader aria-hidden="true"></span><span>Looking in the docs…</span><span id="helper-elapsed" aria-hidden="true"></span></div>
+<div id="helper-waiting" role="status" hidden>${activityMark(38, 23, 'docs-wait-mark', true)}<span id="helper-wait-label">Looking in the docs…</span><span id="helper-elapsed" aria-hidden="true"></span></div>
 </div>
 <div class="assistant-composer-area">
 <p id="helper-notice" role="alert" hidden></p><div id="helper-auth-recovery" hidden><button id="helper-retry-session" type="button">Retry sign-in check</button><button id="helper-guest" type="button">Continue as guest</button></div>

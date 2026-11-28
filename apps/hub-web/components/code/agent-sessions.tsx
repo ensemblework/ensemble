@@ -9,15 +9,16 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isCodeEngine } from "@ensemble/shared-types";
-import { ChevronRight, Copy, FolderGit2, FolderOpen, House, Pin, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { ChevronRight, CircleAlert, Clock, Copy, FolderGit2, FolderOpen, Hand, House, Mail, Pin, Plus, RotateCcw, Search, Square, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AgentActivityMark } from "../motion/agent-activity-mark";
 import { copyText } from "@/components/context-menu/builders";
 import { openContextMenu } from "@/components/context-menu/menu-store";
 import { ProviderLogo } from "@/components/connectors/provider-logo";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, cx } from "@/components/ui";
 import { api, type CodeThread } from "@/lib/api";
-import { groupThreads, shortAgo, type ThreadGroup } from "@/lib/code-agent";
+import { groupThreads, isLive, shortAgo, type ThreadGroup } from "@/lib/code-agent";
 import { usePersistentState } from "@/lib/prefs";
 import { PanelHeader } from "./ide-chrome";
 import { refreshThreads, threadMenu, threadState, useCodeThreads, useDeleteThread, useRenameThread, useSeenThreads } from "./agent-actions";
@@ -28,6 +29,7 @@ const SHOWN = 8;
 
 export function AgentSessions({
   selected,
+  onVisibleSelected,
   current = null,
   machine = null,
   onSelect,
@@ -36,10 +38,11 @@ export function AgentSessions({
   viewOnly,
 }: {
   selected: string | null;
+  onVisibleSelected?: (id: string | null) => void;
   /** The IDE's own folder: its group comes first. */
   current?: ThreadPlace | null;
   /** Only the threads on this machine (Code shows one at a time); null lists every thread. */
-  machine?: { deviceId: string | null } | null;
+  machine?: { deviceId: string | null; online?: boolean } | null;
   onSelect: (thread: CodeThread) => void;
   onNew: (place: ThreadPlace | null) => void;
   onOpenFolder: (place: { deviceId: string | null; folder: string }) => void;
@@ -166,8 +169,9 @@ export function AgentSessions({
                       ) : (
                         <SessionRow
                           thread={thread}
-                          state={threadState(thread, seen)}
+                          state={threadState(thread, seen, machine?.online)}
                           selected={thread.id === selected}
+                          onVisible={thread.id === selected ? onVisibleSelected : undefined}
                           onOpen={() => onSelect(thread)}
                           onRename={viewOnly ? null : () => setRenaming(thread.id)}
                           onDelete={viewOnly ? null : () => remove.mutate(thread.id)}
@@ -249,15 +253,25 @@ export function daysLeft(purgeAt: string, now = Date.now()): string {
   return days <= 1 ? "today" : `${days}d left`;
 }
 
-const STATE_LABEL = { running: "Working", new: "Finished, not read yet", failed: "Stopped on an error, not read yet", read: "Read" } as const;
+const STATE_LABEL = { running: "Running", offline: "Offline", queued: "Queued", claimed: "Starting", stopping: "Stopping", waiting_approval: "Needs you", new: "Unread", failed: "Failed", read: "Read" } as const;
+const STATE_ICON = { offline: Clock, queued: Clock, claimed: Clock, stopping: Square, waiting_approval: Hand, new: Mail, failed: CircleAlert };
 
-function SessionRow({ thread, state, selected, onOpen, onRename, onDelete, onMenu }: { thread: CodeThread; state: keyof typeof STATE_LABEL; selected: boolean; onOpen: () => void; onRename: (() => void) | null; onDelete: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
+function SessionRow({ thread, state, selected, onVisible, onOpen, onRename, onDelete, onMenu }: { thread: CodeThread; state: keyof typeof STATE_LABEL; selected: boolean; onVisible?: (id: string | null) => void; onOpen: () => void; onRename: (() => void) | null; onDelete: (() => void) | null; onMenu: (event: React.MouseEvent) => void }) {
   const status = thread.last?.status;
-  const live = state === "running";
+  const live = status && isLive(status);
+  const Icon = state !== "read" && state !== "running" ? STATE_ICON[state] : null;
+  const row = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!onVisible || state !== "running" || !row.current || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => onVisible(entry.isIntersecting ? thread.id : null));
+    observer.observe(row.current);
+    return () => { observer.disconnect(); onVisible(null); };
+  }, [thread.id, state, onVisible]);
   return (
     <button
       type="button"
       className={cx("agent-session", selected && "is-selected")}
+      ref={row}
       aria-current={selected ? "true" : undefined}
       title={thread.title}
       onClick={onOpen}
@@ -274,15 +288,16 @@ function SessionRow({ thread, state, selected, onOpen, onRename, onDelete, onMen
       }}
       data-testid="agent-session"
     >
-      <span className="flex w-3 shrink-0 justify-center" title={STATE_LABEL[state]}>
-        <span className={cx("thread-dot", `is-${state}`)} data-state={state} />
+      <span className="agent-thread-mark" title={STATE_LABEL[state]}>
+        <AgentActivityMark size="micro" kind={state === "running" ? "infinity" : null} />
+        {Icon ? <Icon size={13} className={cx("agent-state-icon", state === "failed" ? "text-danger" : "text-muted")} aria-hidden /> : null}
       </span>
       <span className={cx("min-w-0 flex-1 truncate", (state === "new" || state === "failed") && "font-medium text-ink")}>
         {thread.title}
         <span className="sr-only">, {STATE_LABEL[state]}</span>
       </span>
       {thread.last?.engine && isCodeEngine(thread.last.engine) ? <ProviderLogo id={thread.last.engine} size={11} /> : null}
-      <span className="shrink-0 tabular-nums text-[11px] text-faint">{live ? (status === "waiting_approval" ? "asks" : "now") : shortAgo(thread.updatedAt)}</span>
+      <span className="shrink-0 tabular-nums text-[11px] text-faint">{live || state === "failed" ? STATE_LABEL[state] : shortAgo(thread.updatedAt)}</span>
     </button>
   );
 }
