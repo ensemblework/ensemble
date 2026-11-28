@@ -7,16 +7,21 @@ import { DESKTOP_WEBVIEW_ORIGINS } from "./desktop-guard.js";
 export const TERMINAL_DESKTOP_REFUSAL =
   "The terminal isn't available in the desktop app yet: the app signs in with the same token its agents use. Use your computer's own terminal app.";
 
+/** The assistant's own calls, made with the person's browser credentials, never open the terminal. */
+export const TERMINAL_ASSISTANT_REFUSAL = "The assistant cannot use the terminal. Open it yourself in the Code tab.";
+
 const WEBVIEW: ReadonlySet<string> = new Set(DESKTOP_WEBVIEW_ORIGINS);
 
 /**
  * Why a terminal request is refused, or `null` when it may run. Only a browser signed in with a session
  * cookie, on the Hub's own page (`webOrigins`: HUB_WEB_ORIGIN and its localhost spelling), at the
  * localhost address of the computer running Ensemble. API keys, bridge and device tokens, the desktop
- * token, agents and the assistant are refused. Only the wording depends on the origin.
+ * token, agents and the assistant (`injected`) are refused. Only the wording depends on the origin.
  */
-export function humanOnlyRefusal(input: { authVia: string | undefined; origin: string | undefined; webOrigins: readonly string[] }): string | null {
+export function humanOnlyRefusal(input: { authVia: string | undefined; origin: string | undefined; webOrigins: readonly string[]; injected?: boolean }): string | null {
   const tokens = "The terminal only opens from a signed-in browser. Tokens and agents are refused.";
+  // The assistant calls routes with the person's own cookie and Origin; its calls are marked (lib/injected.ts).
+  if (input.injected) return TERMINAL_ASSISTANT_REFUSAL;
   if (input.authVia !== "session" && input.authVia !== "desktop") return tokens;
   const origin = input.origin;
   if (origin && WEBVIEW.has(origin)) return TERMINAL_DESKTOP_REFUSAL;

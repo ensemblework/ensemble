@@ -142,7 +142,7 @@ Editor toolbars and code keep their own horizontal scrolling.
 
 *Settings → Folders Code can use* (`settings.code.roots`) is separate from the terminal's list (`settings.terminal.roots`, §5); neither reads the other (`apps/hub-api/src/lib/code-folders.ts`).
 
-- A folder is checked when added (`POST /api/code/folders/resolve`, and again when Settings saves): no `..`, no system folder, no dotfile or dot-folder in your home folder, no link leading out of home. It is stored as its real path. The desktop app's native picker goes through the Tauri dialog plugin (`lib/desktop-dialog.ts`).
+- A folder is checked when added (`POST /api/code/folders/resolve`, and again when Settings saves): no `..`, no system, account or mount folder, no folder holding your home folder or Ensemble's data, no dotfile or dot-folder in your home folder, no link leading out of home (the terminal's rule too, §5). It is stored as its real path. The desktop app's native picker goes through the Tauri dialog plugin (`lib/desktop-dialog.ts`).
 - Every saved folder is checked again on each use, so a folder later swapped for a link is skipped.
 - At startup, a settings row with no `code` section gets a copy of the terminal's folders once; removing every Code folder stores an empty list.
 - Settings are saved through `PATCH /api/settings`, which runs these checks; `PUT /api/preferences` refuses the `hub.settings` key.
@@ -240,7 +240,7 @@ A terminal panel under the editor (resizable, §1) for what would otherwise send
 
 #### Who
 
-you, in your own signed-in browser session on Ensemble's own page; it opens at once, with no other step. Every terminal route refuses anything else: API keys, bridge and device tokens, the desktop app's token, MCP clients, agents and the assistant (`humanOnlyRefusal` in `lib/terminal-human.ts` for the computer's own page, `requireWebPerson` in `devices/web-person.ts` on the web). A change must name the page as its `Origin`.
+you, in your own signed-in browser session on Ensemble's own page; it opens at once, with no other step. Every terminal route refuses anything else: API keys, bridge and device tokens, the desktop app's token, MCP clients, agents and the assistant, whose calls with your cookie are marked as its own (`lib/injected.ts`; `humanOnlyRefusal` in `lib/terminal-human.ts` for the computer's own page, `requireWebPerson` in `devices/web-person.ts` on the web). A change must name the page as its `Origin`.
 #### What
 
 one allow-listed program at a time, run by name, never through a shell: no pipes, redirects, `;`, `&&`, `$()` or backticks (`parseCommand`, `checkProgram` in `workspace/guard.ts`). `git` is hardened: hooks off, no fsmonitor, no `ext::` transports, `--force` refused in favour of `--force-with-lease`.
@@ -250,7 +250,7 @@ Developer tools (`python`, `pip`, `uv`, `node`, `npm`, `pnpm`, `pytest`, `make`,
 Destructive commands (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) need you to type `yes`. Built in: `cd`, `pwd`, `clear`, `help`, `exit` (closes the panel).
 #### Where
 
-any folder *Open a folder* accepts (`openableFolder` in `lib/code-folders.ts`): never a disk, a system folder, the home folder itself, keys or app data, a dot-folder in the home folder, a link named directly or Ensemble's own code. Ensemble's workspace, folders tasks ran in and folders added in *Settings → Terminal and commits* are each one scope; any other folder is its own (`scopeFor` in `workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable.
+any folder *Open a folder* accepts (`openableFolder` in `lib/code-folders.ts`): never a disk or a mount (`/Volumes/<disk>`, `/mnt/<disk>`), a system folder (also `/proc`, `/sys`, `/boot`, `/run`), the folder of all accounts or another account's (`/Users`, `/home`, `/root`), a shared folder itself (`/srv`, `/mnt`, `/media`), the home folder or a folder holding it, keys or app data, a folder holding Ensemble's data or keys (`holdsReason` in `workspace/guard.ts`), a dot-folder in the home folder, a link named directly or Ensemble's own code. Ensemble's workspace, folders tasks ran in and folders added in *Settings → Terminal and commits* are each one scope; any other folder is its own (`scopeFor` in `workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox ([24](24_DESKTOP_SANDBOXING.md)): files change only inside the folder; home and app data are unreadable.
 
 From the web, a computer without a working sandbox refuses commands (`ensemble sandbox setup`). 15 minutes per command; the web shows up to 1 MB of output.
 - **Record**: the computer's ledger records that a command ran (arguments, folder, exit code; `via: "web"` from the web), **never its output**. Ensemble on the web records which computer ran a command, and keeps output only while you read it (an hour at most, in Redis).

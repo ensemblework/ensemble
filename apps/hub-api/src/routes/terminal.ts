@@ -18,6 +18,7 @@ import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { declareModule } from "../lib/module-gate.js";
+import { isInjected } from "../lib/injected.js";
 import { humanOnlyRefusal } from "../lib/terminal-human.js";
 import { GuardError, workspaceRoot } from "../workspace/guard.js";
 import { killGroup, runCommand } from "../workspace/runner.js";
@@ -30,7 +31,7 @@ function origins(): string[] {
 
 /** Refuses anything that is not a person in the Hub's own browser tab. */
 function humanOnly(request: FastifyRequest): void {
-  const refusal = humanOnlyRefusal({ authVia: request.authVia, origin: request.headers.origin, webOrigins: origins() });
+  const refusal = humanOnlyRefusal({ authVia: request.authVia, origin: request.headers.origin, webOrigins: origins(), injected: isInjected(request.headers) });
   if (refusal) throw new GuardError(refusal);
 }
 

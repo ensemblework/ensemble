@@ -9,7 +9,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import { openableFolder } from "../lib/code-folders.js";
 import { loadSettings } from "../lib/settings.js";
-import { blockedReason, checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable, within, workspaceRoot } from "./guard.js";
+import { blockedReason, holdsReason, checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable, within, workspaceRoot } from "./guard.js";
 
 /** The workspace, the terminal's own folders (`settings.terminal.roots`), and the folders tasks ran in outside it. Any other folder Open a folder accepts is its own scope (`scopeFor`). */
 export async function terminalRoots(prisma: PrismaClient, userId: string): Promise<string[]> {
@@ -18,7 +18,7 @@ export async function terminalRoots(prisma: PrismaClient, userId: string): Promi
   const candidates = [...settings.terminal.roots, ...jobs.map((job) => job.externalRoot!)];
   const allowed = [await workspaceRoot()];
   for (const candidate of candidates) {
-    if (!isAbsolute(candidate) || blockedReason(candidate)) continue;
+    if (!isAbsolute(candidate) || blockedReason(candidate) || holdsReason(candidate)) continue;
     if (await stat(candidate).then((info) => info.isDirectory()).catch(() => false)) allowed.push(candidate);
   }
   return [...new Set(allowed)];
@@ -31,8 +31,9 @@ export function scopeOf(allowed: string[], path: string): string | null {
 
 /**
  * The folder a command in `path` is confined to: its deepest allowed root, or else the folder itself when
- * Open a folder accepts it (`openableFolder`: not a disk, system folder, the home folder, keys or app
- * data, Ensemble's own code, a dot-folder in the home folder or a link). Throws GuardError with the reason.
+ * Open a folder accepts it (`openableFolder`: not a disk, a system, account or mount folder, the home
+ * folder or a folder holding it, keys or app data, Ensemble's own code or data, a dot-folder in the home
+ * folder or a link). Throws GuardError with the reason.
  */
 export async function scopeFor(allowed: string[], path: string): Promise<string> {
   return scopeOf(allowed, path) ?? (await openableFolder(path));

@@ -37,7 +37,7 @@ Grok Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code, and Gemini CLI an
 
 ## 3. Work folder and outside access
 
-Choose a fresh checkout, an earlier run’s folder or a folder of your own. Every choice gets the same boundary checks: symbolic links are resolved, blocked roots are rejected and resource and checkout locks reserve the work. Broad home, system and app-data folders cannot be trusted just by naming their path.
+Choose a fresh checkout, an earlier run’s folder or a folder of your own. Every choice gets the same boundary checks: symbolic links are resolved, blocked roots are rejected and resource and checkout locks reserve the work. Broad home, system, account, mount and app-data folders cannot be trusted just by naming their path (`blockedReason` in `workspace/guard.ts`, the same rule as the Code tab's terminal, [16 §5](16_CODE_TAB.md#5-the-terminal-for-you-only)).
 
 A path outside the run's folder falls in one of three zones (`zoneOf`, `outsidePath` in `workspace/tools.ts`; `commandGate` in `workspace/trust.ts`):
 

@@ -7,9 +7,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { readRepoFile, writeRepoFile } from "../lib/git.js";
+import { blockedReason, holdsReason } from "./guard.js";
 import { prepareRun, resolveCd, scopeOf } from "./terminal-exec.js";
 
 function folder(): string {
@@ -62,6 +63,35 @@ test("cd moves within the allowed folders, and to any other folder Open a folder
   const link = join(loose, "elsewhere");
   symlinkSync(other, link);
   await assert.rejects(resolveCd([root], loose, link), /link/);
+  // The folder of all accounts (/home on Linux, /Users on a Mac) would make the whole home folder one scope.
+  await assert.rejects(resolveCd([root], root, dirname(homedir())), /too broad/);
+});
+
+test("no scope holds the home folder, another account, a mount or the kernel's folders", () => {
+  for (const [path, says] of [
+    ["/home", /too broad/],
+    ["/mnt", /too broad/],
+    ["/srv", /too broad/],
+    ["/media", /too broad/],
+    ["/mnt/c", /whole disk/],
+    ["/proc/1", /operating system/],
+    ["/sys", /operating system/],
+    ["/boot", /operating system/],
+    ["/home/someone-else", /Another account/],
+  ] as const) {
+    if (path === dirname(homedir()) || path === homedir()) continue;
+    assert.match(blockedReason(path) ?? "", says, path);
+  }
+  if (!homedir().startsWith("/root")) assert.match(blockedReason("/root/project") ?? "", /Another account/);
+  // A project inside a shared folder is fine.
+  assert.equal(blockedReason("/srv/app"), null);
+  assert.equal(blockedReason("/mnt/data/project"), null);
+  // A folder that holds the home folder is refused even where blockedReason has nothing against it.
+  assert.match(holdsReason("/data/users", "/data/users/me") ?? "", /holds your home folder/);
+  assert.match(holdsReason("/data/users/me/..", "/data/users/me") ?? "", /holds your home folder/);
+  assert.match(holdsReason("/data", "/data/users/me") ?? "", /holds your home folder/);
+  assert.equal(holdsReason("/data/users/me/project", "/data/users/me"), null);
+  assert.equal(holdsReason(folder()), null, "a plain project folder holds nothing protected");
 });
 
 test("the Code tab reads and writes inside the repository only: no links out, no git internals, no huge files", async () => {

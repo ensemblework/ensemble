@@ -1,10 +1,13 @@
 /**
  * Who may use the web terminal and the other person-only routes (docs/16 §5, docs/25 §4.8): a person
  * signed in to Ensemble's own page in a browser, with a session cookie. No API key, bridge or device
- * token, agent, MCP client, internal call or the assistant has one, so they are all refused here.
+ * token, agent, MCP client or internal call has one, and the assistant's own calls with the person's
+ * cookie are marked (`lib/injected.ts`), so they are all refused here.
  */
 import type { FastifyRequest } from "fastify";
 import { env } from "../config.js";
+import { isInjected } from "../lib/injected.js";
+import { TERMINAL_ASSISTANT_REFUSAL } from "../lib/terminal-human.js";
 
 class Refused extends Error {
   readonly expose = true;
@@ -28,6 +31,7 @@ function origins(): string[] {
  * but never with another page's.
  */
 export function requireWebPerson(request: FastifyRequest): void {
+  if (isInjected(request.headers)) throw new Refused(403, TERMINAL_ASSISTANT_REFUSAL);
   if (request.authVia !== "session") throw new Refused(403, "The terminal opens only from Ensemble in your browser, signed in. Keys, agents and the assistant are refused.");
   const origin = request.headers.origin;
   const read = request.method === "GET" || request.method === "HEAD";

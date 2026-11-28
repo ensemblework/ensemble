@@ -442,7 +442,7 @@ export function TerminalSection({ settings, patch }: Props) {
         <>
           <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
             Folders the terminal can use
-            <InfoTip text="The terminal also opens any folder Open a folder accepts. A folder here is one scope: a command anywhere inside it may change all of it. System folders, your home folder itself, ~/Library, key folders and Ensemble's own code are always refused." />
+            <InfoTip text="The terminal also opens any folder Open a folder accepts. A folder here is one scope: a command anywhere inside it may change all of it. System and account folders, your home folder or a folder holding it, ~/Library, key folders and Ensemble's own code are always refused." />
           </div>
           <div className="mt-1.5 space-y-1 font-mono text-[12px]">
             <div>

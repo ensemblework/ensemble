@@ -14,7 +14,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Settings } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { loadSettings } from "./settings.js";
-import { blockedReason, expandHome, GuardError, resolveWorkFolder, within } from "../workspace/guard.js";
+import { blockedReason, expandHome, GuardError, holdsReason, resolveWorkFolder, within } from "../workspace/guard.js";
 import { requireHostAccess } from "./hosted-access.js";
 
 /** Only `$executeRawUnsafe` is needed, so the hosted client and the desktop PGlite client both fit. */
@@ -77,8 +77,9 @@ export function dotUnderHome(path: string, homeDir = home()): string | null {
  * Everything the terminal refuses is refused here too (resolveWorkFolder:
  * relative paths, links named directly, files, `/`, system folders, the home
  * folder itself, keys and app data, Ensemble's own code). On top of that:
- * `..` segments, dotfiles and dot-folders in the home folder, and a path
- * under home that only gets somewhere else through a link.
+ * `..` segments, dotfiles and dot-folders in the home folder, a path under
+ * home that only gets somewhere else through a link, and a folder that holds
+ * the home folder or Ensemble's data (`holdsReason`).
  */
 export async function resolveCodeFolder(input: string, userId?: string): Promise<string> {
   await requireHostAccess(userId, "Code filesystem");
@@ -101,6 +102,8 @@ export async function openableFolder(input: string): Promise<string> {
   }
   const realDot = dotUnderHome(real, homeReal);
   if (realDot) throw new GuardError(`${realDot} in your home folder holds settings or app data. Pick a project folder.`);
+  const holds = holdsReason(real, homeReal);
+  if (holds) throw new GuardError(holds);
   return real;
 }
 
