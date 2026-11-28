@@ -200,3 +200,15 @@ test("a page places a file through an @ mention or an embedded file block", () =
   assert.equal(contentHasFile(doc, "file-c"), false);
   assert.equal(contentHasFile({ type: "doc", content: [{ type: "mention", attrs: { kind: "people", id: "file-a" } }] }, "file-a"), false);
 });
+
+test("a LaTeX file, or a text file that is clearly LaTeX, becomes headings, lists and equations", () => {
+  const tex = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nA \\textbf{bold} start with $x$.\n\\begin{itemize}\n\\item One\n\\end{itemize}\n\\begin{equation}\nE = mc^2\n\\end{equation}\n\\end{document}";
+  assert.equal(serverPageFormat("notes.tex"), true);
+  for (const name of ["notes.tex", "notes.txt"]) {
+    const doc = pageFromFile(name, strToU8(tex));
+    assert.deepEqual(doc.content.map((node) => node.type), ["heading", "paragraph", "bulletList", "blockMath"], name);
+  }
+  const plain = pageFromFile("plain.txt", strToU8("Use \\section{} in TeX.\nIt costs $5."));
+  assert.deepEqual(plain.content.map((node) => node.type), ["paragraph"], "ordinary text is not read as LaTeX");
+  assert.match(JSON.stringify(plain), /Use \\\\section\{\} in TeX/);
+});

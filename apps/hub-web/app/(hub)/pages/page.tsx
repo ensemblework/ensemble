@@ -19,6 +19,7 @@ import { LoadError } from "@/components/load-error";
 import { PAGE_SORTS, PAGE_STEP, isPageSort, parentTrail, searchPages, type PageSort } from "@/components/pages/pages-list";
 import { boardHref, boardPageHref, groupBoardPages } from "@/lib/page-boards";
 import type { DirectoryPage } from "@ensemble/shared-types";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const ImportDialog = dynamic(() => import("@/components/imports/import-dialog").then((mod) => mod.ImportDialog), { ssr: false });
 
@@ -89,7 +90,7 @@ export default function PagesPage() {
         <FileText size={18} className="mt-0.5 shrink-0 text-muted" aria-hidden />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{page.title || "Untitled"}</span>
-          {page.snippet ? <span className="mt-0.5 block line-clamp-2 text-[12.5px] text-muted">{page.snippet}</span> : null}
+          {page.snippet ? <span className="mt-0.5 block line-clamp-2 text-[12.5px] text-muted">{markdownPlainText(page.snippet)}</span> : null}
           <span className="mt-0.5 block truncate text-[12px] text-faint">{trail ? `In ${trail} · ` : ""}{when}</span>
         </span>
         <ArrowUpRight size={15} className="mt-0.5 shrink-0 text-faint group-hover:text-ink" aria-hidden />

@@ -12,7 +12,6 @@ import { useToast } from "@/components/toast";
 import { connectedApi, type ImportedMeetingNote } from "@/lib/api-connected";
 import { api, type CalendarEvent, type MeetingSessionRecord } from "@/lib/api";
 import { MEETING_QUERY, meetingsApi, providerForUrl, type MeetingProblem, type RemoteProvider } from "@/lib/api-meetings";
-import { LinkifiedText } from "@/components/linkified-text";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
 import { confirmAction } from "@/components/ask-dialog";
 import { meetingWhen, newMeetingTitle, newestFirst } from "@/components/meetings/meeting-time";
@@ -23,6 +22,8 @@ import { RemoteMeetingsDialog } from "@/components/meetings/remote-dialog";
 import { FetchProblem } from "@/components/meetings/fetch-problem";
 import { NoteSourceMark } from "@/components/meetings/note-source";
 import "@/components/meetings/meetings.css";
+import { markdownPlainText } from "@ensemble/shared-types";
+import { MarkdownText } from "@/components/markdown-text";
 
 type Selected = { kind: "session" | "note"; id: string };
 type ShelfItem =
@@ -37,7 +38,7 @@ const ADMIN = /AADSTS(65001|90094|90008)|admin|approv|consent/i;
 const TEN_MB = 10 * 1024 * 1024;
 
 function noteSnippet(note: ImportedMeetingNote): string {
-  if (note.summary.trim()) return note.summary.replace(/[#*_>`-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (note.summary.trim()) return markdownPlainText(note.summary).slice(0, 120);
   const speakers = note.speakers ?? [];
   if (speakers.length) return `${speakers.slice(0, 3).join(", ")}${speakers.length > 3 ? ` +${speakers.length - 3}` : ""}`;
   return note.sourceLabel;
@@ -359,7 +360,7 @@ function MeetingsBody() {
                         <>
                           <span className="meeting-card-meta"><MessageSquare size={14} aria-hidden /><time dateTime={item.at}>{meetingWhen(item.at)}</time><i data-active={item.row.status !== "ended"}>{item.row.status !== "ended" ? "In progress" : "Notes"}</i></span>
                           <strong>{item.title}</strong>
-                          <p>{item.row.notes.trim().slice(0, 110) || "A fresh page for this conversation."}</p>
+                          <p>{markdownPlainText(item.row.notes).slice(0, 110) || "A fresh page for this conversation."}</p>
                           <span className="meeting-card-footer">{item.row.recap?.trim() ? "Recap ready" : item.row.artifactId ? "Linked to the calendar" : "Written in Ensemble"}</span>
                         </>
                       ) : (
@@ -443,7 +444,7 @@ function MeetingsBody() {
               {session.recap ? (
                 <section className="meeting-recap mt-5">
                   <h3 className="text-[13px] font-semibold">Recap</h3>
-                  <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-6"><LinkifiedText text={session.recap} /></p>
+                  <MarkdownText text={session.recap} className="mt-1 space-y-2 text-[13.5px] leading-6" />
                 </section>
               ) : null}
               {detail.data?.openTasks.length ? (

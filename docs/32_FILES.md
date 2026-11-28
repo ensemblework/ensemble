@@ -144,7 +144,7 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format 
 | | csv, tsv | Grid | Cells, rows; saved as CSV/TSV | Server: a table (first 200 rows) | The text |
 | | xls, ods, numbers | Grid | After "Make an editable .xlsx copy" | None | No (agents are told to use .xlsx) |
 | Images | png, jpg, gif, webp, avif, svg, bmp, ico | Image (SVG only as an image) | None | None | No text |
-| Text | txt, md, log | Text | Assistant exact text replacements | Server: Markdown keeps its structure and equations; text as paragraphs | The text |
+| Text | txt, md, log, tex | Text | Assistant exact text replacements | Server: Markdown keeps its structure and equations; a LaTeX document (any `.tex`, or a `.txt` whose first line opens one) its headings, lists, emphasis and equations ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#paste-markdown-equations-and-latex)); other text as paragraphs | The text |
 | Code | json, yaml, toml, xml, html, css, js/ts, py, java, go, rust, sql, shell and more | Code with line numbers | Assistant exact text replacements | Server: one code block in its language | The text |
 | Audio, video | mp3, wav, m4a, ogg, flac, mp4, mov, webm | The browser's own player | None | None | No text |
 | Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else except programs and raw binaries (refused, §3) | Details, how to make it previewable, Download | None | None | No (a warning says which format to save as) |

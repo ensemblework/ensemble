@@ -2,6 +2,7 @@ import { checkpointPage, pageEditor } from "./history.js";
 import { Prisma, type Actor, type PrismaClient, type Task } from "@prisma/client";
 import {
   EMPTY_PAGE,
+  notesDocument,
   PageAnnotation,
   PageDocument,
   PageMention,
@@ -678,9 +679,12 @@ export type CollabRow = {
   marker?: { epoch: string; version: number };
 };
 
-/** A task's plain notes as paragraphs, the way its page shows them before it is first written. */
+/**
+ * A task's notes the way its page shows them before it is first written: Markdown, a LaTeX
+ * document or equations as blocks, other text one paragraph per line (`notesDocument`).
+ */
 export function notesDoc(notes: string): PageDocument {
-  return { type: "doc", content: notes.split("\n").map((line) => (line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" })) };
+  return notesDocument(notes);
 }
 
 /** Also finds pages and tasks in Trash, so typing that was not yet written back still is. */

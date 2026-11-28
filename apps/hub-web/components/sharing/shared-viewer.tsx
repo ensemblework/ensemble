@@ -13,8 +13,8 @@ import { STATUS } from "@/lib/format";
 import { Avatar, FollowBanner } from "./people";
 import { PagePeople, PresenceInHeader } from "./page-people";
 import { Tag } from "@/components/ui";
-import { LinkifiedText } from "@/components/linkified-text";
 import { useToast } from "@/components/toast";
+import { MarkdownText } from "@/components/markdown-text";
 
 const NotePage = dynamic(() => import("@/components/pages/note-page").then((mod) => mod.NotePage), { ssr: false });
 const TaskPage = dynamic(() => import("@/components/task/task-page").then((mod) => mod.TaskPage), { ssr: false });
@@ -231,7 +231,7 @@ function SharedSkill({ id, role }: { id: string; role: "view" | "edit" }) {
         </>
       ) : (
         <>
-          <pre className="mt-5 whitespace-pre-wrap rounded-lg border border-line bg-panel p-4 font-mono text-[12.5px] leading-5">{record.body}</pre>
+          <MarkdownText text={record.body} className="mt-5 space-y-2 rounded-lg border border-line bg-panel p-4 text-[13.5px] leading-6" />
           {role === "edit" ? (
             <button type="button" className="btn mt-3" onClick={() => setDraft(record.body)}>
               Edit
@@ -263,7 +263,7 @@ function SharedMeeting({ id }: { id: string }) {
     <div className="mx-auto w-full max-w-[820px] px-6 py-8">
       <h1 className="text-[28px] font-semibold tracking-tight">{data.title || "Meeting"}</h1>
       <p className="mt-1 text-[13px] text-muted">{new Date(data.when).toLocaleString()}</p>
-      {data.body ? <div className="mt-6 whitespace-pre-wrap text-[14.5px] leading-6"><LinkifiedText text={data.body} /></div> : <p className="mt-6 text-muted">No notes were written.</p>}
+      {data.body ? <MarkdownText text={data.body} className="mt-6 space-y-3 text-[14.5px] leading-6" /> : <p className="mt-6 text-muted">No notes were written.</p>}
       {data.decisions.length ? (
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-faint">Decisions</h2>

@@ -319,6 +319,11 @@ test("projects start untitled like pages, names may repeat, the page body saves 
   const detail = (await check(a, "GET", `/api/projects/${id}`, 200, "happy-path")).project;
   assert.match(detail.notes, /Ship by Friday/);
   assert.equal(detail.content.content[0].type, "paragraph");
+  // An agent's notes (hub_update_project sends only notes) replace the page the person sees too.
+  await check(a, "PATCH", `/api/projects/${id}`, 200, "happy-path", { notes: "## Plan\n- Ship by Friday\n- Review on Monday" });
+  const rewritten = (await check(a, "GET", `/api/projects/${id}`, 200, "happy-path")).project;
+  assert.equal(rewritten.notes, "## Plan\n- Ship by Friday\n- Review on Monday");
+  assert.deepEqual(rewritten.content.content.map((node: { type: string }) => node.type), ["heading", "bulletList"]);
   const meeting = (await check(a, "POST", "/api/meetings/sessions", 201, "happy-path", { title: "Kickoff", projectId: id })).session;
   assert.equal(meeting.projectId, id);
   assert.deepEqual((await check(a, "GET", `/api/projects/${id}`, 200, "happy-path")).project.meetingSessions.map((row: { id: string }) => row.id), [meeting.id]);

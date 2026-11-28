@@ -61,6 +61,8 @@ class MathView implements NodeView {
     this.dom = document.createElement(block ? "div" : "span");
     this.dom.className = block ? "page-math page-math-block" : "page-math page-math-inline";
     this.dom.dataset.type = block ? "block-math" : "inline-math";
+    // Display math in a sentence (`$$x$$` inside a line) takes a centred line of its own (globals.css).
+    if (!block && node.attrs.display) this.dom.dataset.display = "true";
     this.shown = document.createElement(block ? "div" : "span");
     this.shown.className = "page-math-shown";
     this.dom.append(this.shown);
@@ -161,7 +163,7 @@ class MathView implements NodeView {
   }
 
   update(node: ProseMirrorNode) {
-    if (node.type !== this.node.type) return false;
+    if (node.type !== this.node.type || Boolean(node.attrs.display) !== Boolean(this.node.attrs.display)) return false;
     this.node = node;
     // Someone else's change waits until this person is done typing the TeX.
     if (!this.field) this.draw();
@@ -213,6 +215,12 @@ function emptyLine(state: EditorState): { from: number; to: number } | null {
   return { from: $from.before(), to: $from.after() };
 }
 
+/** The TeX a KaTeX or MathML element keeps (its `application/x-tex` annotation, or `alttext`), as node attrs; false when it has none. */
+function texAttrs(element: HTMLElement): { latex: string } | false {
+  const tex = element.querySelector('annotation[encoding="application/x-tex"]')?.textContent?.trim() || element.getAttribute("alttext")?.trim() || element.querySelector("math")?.getAttribute("alttext")?.trim();
+  return tex ? { latex: cleanLatex(tex.replace(/^\\displaystyle\s*/, "")) } : false;
+}
+
 // `$x$` typed: inline math, made once a space or punctuation follows the closing `$` (or Enter is
 // pressed), so a price range ("$5-$10", "$5/$10", "$1k–$2k") stays text. The rules match pasted
 // Markdown (shared-types page-math.ts): no space just inside the dollars and no letter or digit
@@ -223,7 +231,8 @@ const INLINE_RULE = new RegExp(`${INLINE_TEX}([ \\t\u00a0.,;:!?)\\]}'"”’])$`
 /** `$x$` right before the caret, for Enter. */
 const INLINE_BEFORE_CARET = new RegExp(`${INLINE_TEX}$`, "u");
 // `$$x$$` typed: an equation on its own line, or display math inside a sentence.
-const DISPLAY_RULE = /(?<![\\$])\$\$(?![\s$])((?:\\.|[^$\\])+?)\$\$$/;
+// As in Markdown, `$$ x $$` with spaces inside needs TeX (a backslash, `^`, `_`, `=` or a brace).
+const DISPLAY_RULE = /(?<![\\$])\$\$(?!\$)(?:(?!\s)|(?=[^$]{0,2000}?[\\^_={}]))((?:\\.|[^$\\]){1,2000}?)\$\$$/;
 // `$$` and a space on an empty line: a new equation on its own line.
 const BLOCK_RULE = /^\$\$\s$/;
 
@@ -237,7 +246,8 @@ export const InlineMath = Node.create({
     return {
       latex: {
         default: "",
-        parseHTML: (element) => element.getAttribute("data-latex") ?? "",
+        // Null when absent, so a rule that read the TeX elsewhere (KaTeX, MathML) keeps it.
+        parseHTML: (element) => element.getAttribute("data-latex"),
         renderHTML: (attributes) => ({ "data-latex": String(attributes.latex ?? "") }),
       },
       display: {
@@ -248,7 +258,12 @@ export const InlineMath = Node.create({
     };
   },
   parseHTML() {
-    return [{ tag: 'span[data-type="inline-math"]' }];
+    return [
+      { tag: 'span[data-type="inline-math"]' },
+      // Math copied from a page KaTeX or MathML drew (chat apps, docs, Wikipedia) keeps its TeX.
+      { tag: "span.katex", priority: 60, getAttrs: (element) => texAttrs(element as HTMLElement) },
+      { tag: "math", priority: 60, getAttrs: (element) => texAttrs(element as HTMLElement) },
+    ];
   },
   renderHTML({ node, HTMLAttributes }) {
     return ["span", mergeAttributes({ "data-type": "inline-math" }, HTMLAttributes), sourceOf(node)];
@@ -316,13 +331,18 @@ export const BlockMath = Node.create({
     return {
       latex: {
         default: "",
-        parseHTML: (element) => element.getAttribute("data-latex") ?? "",
+        // Null when absent, so a rule that read the TeX elsewhere (KaTeX, MathML) keeps it.
+        parseHTML: (element) => element.getAttribute("data-latex"),
         renderHTML: (attributes) => ({ "data-latex": String(attributes.latex ?? "") }),
       },
     };
   },
   parseHTML() {
-    return [{ tag: 'div[data-type="block-math"]' }];
+    return [
+      { tag: 'div[data-type="block-math"]' },
+      { tag: ".katex-display", priority: 61, getAttrs: (element) => texAttrs(element as HTMLElement) },
+      { tag: 'math[display="block"]', priority: 61, getAttrs: (element) => texAttrs(element as HTMLElement) },
+    ];
   },
   renderHTML({ node, HTMLAttributes }) {
     return ["div", mergeAttributes({ "data-type": "block-math" }, HTMLAttributes), sourceOf(node)];

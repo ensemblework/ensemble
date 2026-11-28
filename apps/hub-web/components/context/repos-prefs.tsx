@@ -10,6 +10,7 @@ import { DiagramCard } from "../diagrams/diagram-card";
 import { useModuleOn } from "@/lib/use-module";
 import { MakeDiagramButton, repoDiagramPrompt } from "../diagrams/make-diagram";
 import { Empty, InlineEdit, Spinner, Tag, Toggle } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 export function ReposTab() {
   const client = useQueryClient();
@@ -78,7 +79,7 @@ export function ReposTab() {
                   ))}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
-                  <span className="truncate">{repo.description ?? "No description"}</span>
+                  <span className="truncate">{repo.description ? markdownPlainText(repo.description) : "No description"}</span>
                   {repo.projects.map((project) => (
                     <span key={project.id} className="chip" style={{ ["--chip" as string]: "var(--kind-project)" }}>
                       {project.name}

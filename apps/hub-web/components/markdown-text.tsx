@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, refKind, refPath, unescapeMathText, type PageMention } from "@ensemble/shared-types";
+import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, refKind, refPath, startsMathBlock, unescapeMathText, type PageMention } from "@ensemble/shared-types";
 import Link from "next/link";
 import { Fragment, createContext, useContext, useState, type ReactNode } from "react";
 import { ADDRESS_SOURCE, addressLink } from "@/lib/linkify";
@@ -256,6 +256,13 @@ function BlockView({ block, depth }: { block: MdBlock; depth: number }) {
   }
 }
 
+/** Whether a list item's lines hold a display equation (`$$` lines under the item). */
+function holdsEquation(text: string): boolean {
+  if (!text.includes("$$") && !text.includes("\\[")) return false;
+  const lines = text.split("\n");
+  return lines.some((_, index) => startsMathBlock(lines, index));
+}
+
 function List({ items }: { items: ListItem[] }) {
   const ordered = items[0]?.ordered ?? false;
   const tasks = items.every((item) => item.checked !== null);
@@ -263,7 +270,7 @@ function List({ items }: { items: ListItem[] }) {
     <li key={index} className={cx(tasks && "flex list-none items-start gap-2")}>
       {item.checked !== null ? <input type="checkbox" checked={item.checked} readOnly disabled className="mt-[5px] shrink-0" aria-label={item.checked ? "Done" : "Not done"} /> : null}
       <div className="min-w-0">
-        <span className="whitespace-pre-line">{inline(item.text)}</span>
+        {holdsEquation(item.text) ? <div className="space-y-1"><Blocks blocks={parseBlocks(item.text)} /></div> : <span className="whitespace-pre-line">{inline(item.text)}</span>}
         {item.children.length ? <List items={item.children} /> : null}
       </div>
     </li>
