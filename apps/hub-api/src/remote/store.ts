@@ -22,6 +22,8 @@ export type SharedFolder = {
   /** folder: the agent works in place. repo: the agent works in a run clone and may push its run branch back here. */
   kind: "folder" | "repo";
   access: "review" | "read-write";
+  /** "web": shared from the web's folder picker, so runs work in it only while `webEdit` is on. */
+  source?: "web";
 };
 
 export interface RemoteSettings {

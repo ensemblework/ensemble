@@ -110,9 +110,18 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
     const entry = codeCall(body.method, body.path);
     if (!entry) return reply.code(403).send({ error: "That is not a Code call the web may make." });
     if (entry.since && codeCapable(device).codeApi < entry.since) return reply.code(409).send({ error: entry.since >= 6 ? `Update Ensemble on ${device.name} to 0.8.3 or later (\`ensemble update\`) to browse its folders and branches from here.` : `Update Ensemble on ${device.name} to use the full editor from here (${entry.since >= 4 ? "the newest CLI or desktop app" : entry.since >= 3 ? "CLI or desktop 0.6.4" : "the CLI 0.3.9 or the desktop app 0.3.6"}).` });
+    const share = body.path === "/api/code/folders/trust" && (body.body as { share?: unknown } | null)?.share === true;
+    if (share && codeCapable(device).codeApi < 7) return reply.code(409).send({ error: `Update Ensemble on ${device.name} (\`ensemble update\`) to share a picked folder for runs.` });
     if (entry.write && !codeCapable(device).webEdit) return reply.code(409).send({ error: `Changing code from the web is turned off on ${device.name}. Turn it on there with \`ensemble web edit on\`.` });
     const result = await relay(reply, device, "code.request", { method: body.method, path: body.path, query: body.query, ...(body.body === undefined ? {} : { body: body.body }) }, entry.slow ? SLOW_MS : ASK_MS);
     if (entry.write && result.answered && result.answer.status < 400) {
+      if (share) {
+        const shared = z.object({ label: z.string().min(1).max(200), folders: z.array(z.object({ label: z.string().min(1).max(200).regex(/^[^/\\\0\r\n]+$/), kind: z.enum(["folder", "repo"]), access: z.enum(["review", "read-write"]) })) }).safeParse(result.answer.body);
+        if (!shared.success || !shared.data.folders.some((folder) => folder.label === shared.data.label)) throw new Refused(502, `${device.name} did not confirm that the folder was shared. Choose it again.`);
+        const current = await prisma.device.findUniqueOrThrow({ where: { id: device.id }, select: { capabilities: true } });
+        const capabilities = current.capabilities && typeof current.capabilities === "object" && !Array.isArray(current.capabilities) ? current.capabilities : {};
+        await prisma.device.update({ where: { id: device.id }, data: { capabilities: { ...capabilities, folders: shared.data.folders } } });
+      }
       await appendLedger({ userId: accountIdOf(request), actor: "me", action: "code.web", payload: { deviceId: device.id, call: `${body.method} ${body.path}` } });
       await reviewAnswered(accountIdOf(request), body.path, result.answer.body).catch((error: unknown) => request.log.warn({ err: error }, "could not record the review's answer on the run"));
     }

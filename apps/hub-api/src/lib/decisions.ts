@@ -35,18 +35,29 @@ export function closedRefusal(row: Pick<AgentDecision, "status" | "reason">): st
 }
 
 /**
- * Closes the pending requests of runs that ended, as the database trigger does: for a request found
- * pending after its run ended (one asked before the trigger existed). Returns how many closed.
+ * Closes requests whose job ended or disappeared, or whose task or run was removed.
+ * Returns how many closed, without approving or denying a tool call.
  */
 export async function closeEndedWork(db: Db, jobIds: string[]): Promise<number> {
   if (!jobIds.length) return 0;
-  const ended = await db.workspaceJob.findMany({ where: { id: { in: jobIds }, status: { in: [...JOB_ENDED] } }, select: { id: true } });
+  const live = await db.workspaceJob.findMany({
+    where: { id: { in: jobIds }, status: { notIn: [...JOB_ENDED] }, task: { deletedAt: null, status: { notIn: ["done", "dropped"] } }, OR: [{ run: null }, { run: { deletedAt: null } }] },
+    select: { id: true },
+  });
+  const liveIds = new Set(live.map(job => job.id));
+  const ended = jobIds.filter(id => !liveIds.has(id));
   if (!ended.length) return 0;
   const closed = await db.agentDecision.updateMany({
-    where: { sessionId: { in: ended.map((job) => job.id) }, source: "ensemble", status: "pending" },
+    where: { sessionId: { in: ended }, source: "ensemble", status: "pending" },
     data: { status: "expired", reason: WORK_ENDED, decidedAt: new Date() },
   });
   return closed.count;
+}
+
+export async function closeStaleRunDecisions(db: Db, userId: string): Promise<void> {
+  const pending = await db.agentDecision.findMany({ where: { userId, source: "ensemble", status: "pending", sessionId: { not: null } }, select: { sessionId: true }, take: 500 });
+  const closed = await closeEndedWork(db, pending.flatMap(row => row.sessionId ? [row.sessionId] : []));
+  if (closed) sseHub.publish(userId, { event: "decision", data: { status: "expired" } });
 }
 
 /**

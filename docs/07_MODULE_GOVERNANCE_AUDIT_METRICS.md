@@ -42,10 +42,13 @@ Keep an item by pinning or reopening it before its retention window expires. The
 | MCP OAuth credentials | Consent/code requests: 10 minutes. Access keys: one hour. Refresh tokens: 30 days, rotation by default; confidential persistent linking extends expiry on refresh ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). Daily `purgeMcpOAuth` removes expired consent, refresh/access rows 30 days past expiry and grants 30 days after revocation; account deletion removes them immediately |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; their snapshots are unpinned |
+| Runs' context packs (`context_packs`, [06 §4](06_MODULE_WORKSPACE_AND_SURFACES.md#4-evidence-and-review)) | Deleted by each retention pass once no run uses them, as when their task is purged |
 
 Pinning, reopening, active jobs, a learning pass waiting for its model or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
 
 `/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
+
+The Skills page deletes through `DELETE /api/skills/:id`, which permanently removes the skill and its versions and feedback immediately, outside the Trash window ([04 §1](04_MODULE_SKILL_FORGE.md#1-storage-and-editing)).
 
 ### 1.2 Private reminders and platform notifications
 
@@ -111,6 +114,8 @@ Retention deletes entries older than 30 days each day (`deleteOldAiActivity`, §
 ## 5. Metrics and included AI
 
 Open **Metrics** to review your AI calls over 14, 30 or 90 days. Choose provider filters to apply them to every aggregate: reported tokens, daily activity, models, purposes and recent calls. Usage belongs to you, including work in a shared space.
+
+The model and purpose tiles show the top five by call count, each with an independent Show all / Show fewer toggle. Zero-call purposes are omitted; the list's expansion does not change totals or filters.
 
 `lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` in `routes/runs.ts` serves the aggregates. Calls without token reports still count, and missing counts or prices show as missing. An Ensemble Node turn also records one `node.instructions` event with every section of its instructions, and its `model.call` events name their version and hashes ([35 §5.5](35_ENSEMBLE_NODE.md#55-instructions)).
 

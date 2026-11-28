@@ -17,6 +17,7 @@ import type { StepReport } from "../node/report.js";
 import { keepCodeTurnResult, type CodeTurnResult } from "../workspace/code-turn.js";
 import { saveCompletion, settleTask, taskStatusAfter, taskStatusAtStartOf, verifiedReason, type Completion } from "../workspace/completion.js";
 import { acceptanceChecksFor } from "../workspace/acceptance-checks.js";
+import { keepRunContext, type RunContext } from "../workspace/run-context.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -61,6 +62,10 @@ export async function finishDeviceJob(
     totals?: RunTotals;
     report?: StepReport | null;
     codeTurn?: CodeTurnResult | null;
+    /** The run's context provenance (workspace/run-context.ts), already read; kept after the run ends, best-effort. */
+    runContext?: RunContext | null;
+    /** Where a part kept best-effort that could not be kept is logged. */
+    warn?: (error: unknown, message: string) => void;
     /** Any other run's checks as its computer ran them again. */
     completion?: Completion | null;
     /** The computer runs an assigned run's checks again (`capabilities.runVerification`): its task is done only when they pass. */
@@ -164,6 +169,10 @@ export async function finishDeviceJob(
     return runId;
   });
   if (!won) return false;
+  // Provenance never undoes or fails the end of a run: kept outside its transaction, and a failure is only logged.
+  // Skill names are its only free text; hashes and sizes are kept as sent.
+  const runContext = input.runContext ? { ...input.runContext, skills: input.runContext.skills.map((skill) => ({ ...skill, name: redactText(skill.name) })) } : null;
+  if (runContext) await keepRunContext(prisma, won, runContext).catch((error: unknown) => input.warn?.(error, "could not keep the run's context provenance"));
   await announceClosedDecisions(prisma, [job.id]).catch(() => undefined);
   await appendLedger({
     userId: job.userId,

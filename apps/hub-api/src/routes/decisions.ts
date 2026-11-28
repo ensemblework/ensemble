@@ -7,7 +7,7 @@ import type { AgentDecision, Prisma, PrismaClient } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
-import { closedRefusal, closeEndedWork, decideOnce, decisionBus, ENDED_WITH_WORK, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
+import { closedRefusal, closeEndedWork, closeStaleRunDecisions, decideOnce, decisionBus, ENDED_WITH_WORK, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
@@ -294,6 +294,7 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/decisions", async (request) => {
     const { status, surface } = z.object({ status: z.enum(["pending", "recent"]).default("pending"), surface: z.enum(["hub"]).optional() }).parse(request.query);
     await expireStale(request.userId);
+    await closeStaleRunDecisions(prisma, request.userId);
     const hub = surface === "hub";
     const rows = await prisma.agentDecision.findMany({
       where: {

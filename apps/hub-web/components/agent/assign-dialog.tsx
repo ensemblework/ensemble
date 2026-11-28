@@ -7,7 +7,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ENGINE_LABELS, isCodeEngine, runLimits, type CodeEngine, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type EarlierRun, type HandoffApp } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
-import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace } from "@/lib/device-copy";
 import { computerRuns, engineAssign, engineSandboxes } from "@/lib/engine-models";
@@ -21,6 +20,7 @@ import { BetaTag, Dialog, InfoTip, Spinner, Toggle, cx } from "../ui";
 import { activeComputer } from "../settings/subscriptions";
 import { AgentPicker, TuningPicker, agentOptions, choiceLabel, modelOf, type AgentChoice } from "./agent-picker";
 import { ToolsPicker } from "./tools-picker";
+import { FolderPicker } from "../code/folder-picker";
 
 type Place = "fresh" | "continue" | "folder";
 type Mode = "ask" | "review" | "unattended";
@@ -148,6 +148,7 @@ export function ProfileBar({
   onRemove,
   onDefault,
   busy,
+  computers = [],
 }: {
   profiles: RunProfile[];
   saved: RunProfile[];
@@ -159,6 +160,7 @@ export function ProfileBar({
   onRemove: (id: string) => void;
   onDefault: (id: string) => void;
   busy: boolean;
+  computers?: Array<{ id: string; name: string }>;
 }) {
   const [editing, setEditing] = useState<{ id?: string; name: string } | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -186,7 +188,7 @@ export function ProfileBar({
                 profile.id === activeId ? "border-accent bg-[var(--accent-soft)] text-ink" : "border-line text-muted hover:text-ink",
               )}
             >
-              <button type="button" onClick={() => onPick(profile)} title={profileSummary(profile)} className={cx("flex items-center gap-1 rounded-l-full py-0.5 pl-2.5", canStar ? "pr-1" : "rounded-r-full pr-2.5")}>
+              <button type="button" onClick={() => onPick(profile)} title={profileSummary(profile, computers.find((computer) => computer.id === profile.deviceId)?.name)} className={cx("flex items-center gap-1 rounded-l-full py-0.5 pl-2.5", canStar ? "pr-1" : "rounded-r-full pr-2.5")}>
                 {!canStar && isDefault ? <Star size={11} className="fill-current text-accent" aria-label="Default" /> : null}
                 {profile.name}
                 {profile.id === activeId && modified ? <span className="text-faint">· changed</span> : null}
@@ -301,7 +303,8 @@ export function assignBlocker(form: {
   taskId: string;
   kind: "research" | "code";
   serverRunner: boolean;
-  device: { name: string; folders: number } | null;
+  device: { name: string; folders: number; online?: boolean; sharedFolders?: string[] } | null;
+  runOn?: string;
   devices: number;
   place: Place;
   continueFrom: string;
@@ -317,8 +320,16 @@ export function assignBlocker(form: {
   local?: boolean;
   /** What keeps the run's pull request from going ahead (lib/pull-request), when it ends in one. */
   pullRequest?: Blocker | null;
+  /**
+   * The run works in the profile's saved folder, unchanged: its computer must be paired, online and still share
+   * it. Anything else goes as a one-off choice, which a computer that is away queues.
+   */
+  savedPlace?: boolean;
 }): Blocker | null {
   if (!form.taskId) return { text: "Choose a task first.", field: "task" };
+  if (form.savedPlace && form.runOn && form.runOn !== "server" && !form.device) return { text: "This profile's computer is no longer paired. Choose another computer.", field: "run-on" };
+  if (form.savedPlace && form.device?.online === false) return { text: `${form.device.name} is offline. Open Ensemble there before assigning.`, field: "run-on" };
+  if (form.savedPlace && form.folderLabel && form.device?.sharedFolders && !form.device.sharedFolders.includes(form.folderLabel)) return { text: `${form.device.name} no longer shares “${form.folderLabel}”. Choose the folder again.`, field: "place" };
   if (form.engine && !form.device && !form.local) {
     return form.devices
       ? { text: `${ENGINE_LABELS[form.engine]} runs on one of your computers. Choose it under Runs on.`, field: "run-on" }
@@ -334,7 +345,7 @@ export function assignBlocker(form: {
   if (form.place === "folder" && form.device && !form.folderLabel) {
     return form.device.folders
       ? { text: `Choose a folder ${form.device.name} has shared.`, field: "place" }
-      : { text: `${form.device.name} has not shared a folder yet. Pick “Its own checkout”, or share one there first.`, field: "place" };
+      : { text: `${form.device.name} has not shared a folder yet. Choose a folder to share.`, field: "place" };
   }
   if (form.place === "folder" && !form.device && !form.folderCheck?.ok) return { text: folderProblem(form.folder, form.folderCheck), field: "place" };
   if (form.pullRequest) return form.pullRequest;
@@ -393,6 +404,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const [maxTurns, setMaxTurns] = useState<number | "">("");
   const [runOn, setRunOn] = useState("server");
   const [folderLabel, setFolderLabel] = useState("");
+  const [pickingFolder, setPickingFolder] = useState(false);
   const [profileId, setProfileId] = useState("");
 
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: open && !fixedTaskId });
@@ -426,6 +438,13 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     return signedIn?.id ?? rows.find((device) => device.online)?.id ?? rows[0]?.id ?? devices.find((device) => device.online)?.id ?? devices[0]?.id ?? null;
   };
   const serverAllowed = serverRunner || (cloud && !codeEngine);
+  // The profile's saved folder, unchanged in the dialog. Only then does Assign send it as the profile's place, which
+  // refuses an offline, unpaired or no longer shared computer; a folder picked here goes as a one-off choice.
+  const savedProfile = settings.data?.settings.runProfiles.find((row) => row.id === profileId);
+  const savedFolder = savedProfile?.place?.kind === "folder" ? savedProfile.place : undefined;
+  const usesSavedFolder = Boolean(
+    savedFolder && place === "folder" && runOn === (savedProfile?.deviceId ?? "server") && (savedProfile?.deviceId ? folderLabel === savedFolder.label : folder === (savedFolder.path ?? "")),
+  );
   // Where a run goes first: this server when it runs code, else a paired computer; Ensemble alone (research and writing) when there is none.
   const placed = useRef(false);
   useEffect(() => {
@@ -435,18 +454,18 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     }
     if (!computers.data || placed.current) return;
     placed.current = true;
-    if (runOn === "server" && !serverRunner && devices.length) setRunOn(computerFor(codeEngine) ?? "server");
+    if (runOn === "server" && !usesSavedFolder && !serverRunner && devices.length) setRunOn(computerFor(codeEngine) ?? "server");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, computers.data]);
   useEffect(() => {
-    if (!open || !computers.data) return;
+    if (!open || !computers.data || usesSavedFolder) return;
     if (runOn === "server" && !serverAllowed) setRunOn(computerFor(codeEngine) ?? "server");
     else if (runOn !== "server" && !devices.some((device) => device.id === runOn)) setRunOn(serverRunner ? "server" : computerFor(codeEngine) ?? "server");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, computers.data, runOn, serverAllowed, codeEngine]);
+  }, [open, computers.data, runOn, serverAllowed, codeEngine, usesSavedFolder]);
 
-  // A run that can work in a folder (a coding agent, a paired computer, or this server) is a code run; otherwise research and writing on the server.
-  const codeRun = Boolean(codeEngine) || selectedDevice !== null || serverRunner;
+  // A run that can work in a folder (a coding agent, a paired computer, this server, or the profile's folder) is a code run; otherwise research and writing on the server.
+  const codeRun = usesSavedFolder || Boolean(codeEngine) || selectedDevice !== null || serverRunner;
   const kind: "research" | "code" = codeRun ? "code" : "research";
 
   // Earlier runs to continue: on the chosen computer (its folders are there), or on this server.
@@ -505,10 +524,12 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const quick = useMemo(() => quickProfile(orchestration), [orchestration]);
   const profiles = profileChoices(savedProfiles, quick);
   const defaultChoice = defaultProfile(savedProfiles, settings.data?.settings.defaultRunProfileId, quick);
+  const activeProfile = profiles.find((row) => row.id === profileId);
 
   const fields: ProfileFields = {
     kind: "code",
     deviceId: runOn === "server" ? null : runOn,
+    place: place === "folder" ? { kind: "folder", label: selectedDevice || runOn !== "server" ? folderLabel : folder.split(/[\\/]/).filter(Boolean).at(-1) ?? "", ...(folder ? { path: folder } : {}) } : place === "continue" ? activeProfile?.place : { kind: "checkout" },
     ...agentFields(agent),
     branchMode: branchMode === "new" ? "new" : "as-is",
     delivery: prOn ? "commit" : delivery,
@@ -529,7 +550,17 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
 
   const applyProfile = (profile: RunProfile) => {
     setProfileId(profile.id);
-    if (profile.deviceId && devices.some((device) => device.id === profile.deviceId)) setRunOn(profile.deviceId);
+    // A saved folder keeps its computer even when that one is gone, so the blocker says so; for any other
+    // profile a computer no longer paired is replaced by another (the effect above).
+    if (profile.place?.kind === "folder") setRunOn(profile.deviceId ?? "server");
+    else if (profile.deviceId) setRunOn(profile.deviceId);
+    setPlace(profile.place?.kind === "folder" ? "folder" : "fresh");
+    setFolderLabel(profile.place?.kind === "folder" ? profile.place.label : "");
+    setFolder(profile.place?.kind === "folder" ? profile.place.path ?? "" : "");
+    setFolderCheck(null);
+    setContinueFrom("");
+    setRepo("");
+    setPickingFolder(false);
     setAgent(profileAgent(profile));
     setInApp(false);
     setBranchMode(profile.branchMode);
@@ -569,7 +600,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, settings.data]);
 
-  const activeProfile = profiles.find((row) => row.id === profileId);
   const modified = activeProfile ? differs(activeProfile, fields) : false;
 
   const saveProfiles = useMutation({
@@ -606,22 +636,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const engineUnsandboxed = Boolean(codeEngine && !engineSandboxes(codeEngine, selectedDevice?.platform ?? (typeof navigator === "undefined" ? null : navigator.platform)));
   const runSandboxed = sandbox && !engineUnsandboxed && (selectedDevice ? deviceSandbox?.osSandbox !== false : osSandbox);
 
-  const pick = useMutation({
-    mutationFn: async () => {
-      const native = await pickFolderNative("Choose the folder the agent may work in");
-      if (native === undefined) return api.pickFolder();
-      if (native === null) return undefined;
-      const resolved = await api.resolveFolder(native);
-      return { path: resolved.path, git: resolved.git };
-    },
-    onSuccess: (result) => {
-      if (!result) return;
-      setFolder(result.path);
-      setFolderCheck({ ok: true, git: result.git, text: result.git ? "Git repository" : "Not a git repository, changes will not be reviewable in Code" });
-    },
-    onError: (error) => setFolderCheck({ ok: false, text: (error as Error).message }),
-  });
-
   const checkFolder = async (value: string) => {
     if (!value.trim()) return setFolderCheck(null);
     try {
@@ -633,23 +647,26 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     }
   };
   // A typed path is checked once typing pauses, so Assign does not wait for the field to lose focus.
-  const typedFolder = useRef("");
   useEffect(() => {
-    if (!open || place !== "folder" || selectedDevice || !folder.trim() || folderCheck || typedFolder.current !== folder) return;
+    if (!open || place !== "folder" || runOn !== "server" || !folder.trim() || folderCheck) return;
     const timer = window.setTimeout(() => void checkFolder(folder), 500);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, place, selectedDevice, folder, folderCheck]);
+  }, [open, place, runOn, folder, folderCheck]);
 
   const ahead = (board.data?.queued.length ?? 0) + (board.data?.running.length ?? 0);
   const slots = board.data?.maxConcurrent ?? settings.data?.settings.orchestration.maxConcurrentJobs ?? 3;
   const startsNow = (board.data?.running.length ?? 0) < slots && !board.data?.paused;
   const outsideAccess = outside ?? orchestration?.outsideAccess ?? "read";
-  const blocker = assignBlocker({
+  const blocker: Blocker | null = settings.isError || computers.isError
+    ? { text: (settings.error ?? computers.error)!.message, field: "run-on" }
+    : !settings.data || !computers.data ? { text: "Loading run profiles and computers…", field: "run-on" } : assignBlocker({
     taskId,
     kind,
     serverRunner,
-    device: selectedDevice ? { name: computerName(selectedDevice.name), folders: selectedDevice.folders.length } : null,
+    device: selectedDevice ? { name: computerName(selectedDevice.name), folders: selectedDevice.folders.length, online: selectedDevice.online, sharedFolders: selectedDevice.folders } : null,
+    runOn: computers.data ? runOn : undefined,
+    savedPlace: usesSavedFolder,
     devices: devices.length,
     place,
     continueFrom,
@@ -670,6 +687,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
 
   const assign = useMutation({
     mutationFn: () => {
+      if (blocker) throw new Error(blocker.text);
       // Auto: nothing is named, so the server uses the task's tier (its agent, model and thinking level).
       const named = agent;
       const engineRun = named && isCodeEngine(named.provider);
@@ -706,7 +724,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           ...(outside ? { outsideAccess: outside } : {}),
         });
         if (selectedDevice) {
-          Object.assign(input, { useCredentials: false, ...(place === "folder" ? { folderLabel } : {}), ...(profileSecrets.length ? { secrets: profileSecrets } : {}) });
+          // Only the profile's saved folder, unchanged, goes as its place; a folder picked here is a one-off choice, as it always was.
+          Object.assign(input, { useCredentials: false, ...(place === "folder" ? (usesSavedFolder && savedFolder ? { place: savedFolder } : { folderLabel }) : {}), ...(profileSecrets.length ? { secrets: profileSecrets } : {}) });
         } else {
           Object.assign(input, { useCredentials: credentials, ...(place === "folder" ? { folder } : {}) });
         }
@@ -845,6 +864,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           defaultId={defaultChoice.id}
           modified={modified}
           busy={saveProfiles.isPending}
+          computers={devices}
           onPick={applyProfile}
           onSave={saveProfile}
           onRemove={(id) => {
@@ -894,7 +914,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           ) : null}
         </div>
 
-        {runOnOptions.length > 1 || !serverRunner ? (
+        {runOnOptions.length > 1 || !serverRunner || (runOn !== "server" && !selectedDevice) ? (
           <div {...attentionProps("run-on")}>
             <Label tip="A run for a computer waits until Ensemble is running there. Ensemble alone researches and writes, without a folder.">Runs on</Label>
             <div className="flex flex-wrap gap-1.5">
@@ -905,6 +925,9 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                   onClick={() => {
                     setRunOn(option.id);
                     setFolderLabel("");
+                    setFolder("");
+                    setFolderCheck(null);
+                    setPickingFolder(false);
                   }}
                   title={option.detail}
                   className={cx(
@@ -933,12 +956,15 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
             <Label tip="Its own checkout: a new folder in your Ensemble workspace; the agent clones or creates what the task needs. Continue an earlier task: that folder, and the same agent picks up its own conversation from it.">Where it works</Label>
             <Segmented
               value={place}
-              onChange={setPlace}
+              onChange={(next) => {
+                setPlace(next);
+                if (next === "folder") setPickingFolder(true);
+              }}
               label="Where it works"
               options={[
                 { id: "fresh", label: "Its own checkout" },
                 { id: "continue", label: "Continue an earlier task" },
-                { id: "folder", label: folderPlace(selectedDevice?.name) },
+                { id: "folder", label: folderPlace(selectedDevice?.name ?? (runOn !== "server" ? "a computer no longer paired" : undefined)) },
               ]}
             />
             {place === "continue" ? (
@@ -965,13 +991,16 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
               <div className="mt-2">
                 {selectedDevice ? (
                   <>
-                    <select aria-label="Shared folder" value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
-                      <option value="">{selectedDevice.folders.length ? `Choose a folder ${computerName(selectedDevice?.name)} has shared…` : `${computerName(selectedDevice?.name)} has not shared a folder yet`}</option>
-                      {selectedDevice.folders.map((label) => (
-                        <option key={label} value={label}>{label}{folderKinds[label] === "repo" ? " · repository" : ""}</option>
-                      ))}
-                    </select>
-                    {!selectedDevice.folders.length ? <p className="mt-1 text-[12px] text-muted">Share a folder with <code>ensemble folders add &lt;path&gt;</code>, or let it work in its own checkout.</p> : null}
+                    <div className="flex gap-2">
+                      <select aria-label="Shared folder" value={folderLabel} onChange={(event) => { setFolderLabel(event.target.value); setFolder(""); }} className="field min-w-0 flex-1" disabled={!selectedDevice.folders.length}>
+                        <option value="">{selectedDevice.folders.length ? `Choose a folder ${computerName(selectedDevice?.name)} has shared…` : `${computerName(selectedDevice?.name)} has not shared a folder yet`}</option>
+                        {folderLabel && !selectedDevice.folders.includes(folderLabel) ? <option value={folderLabel}>{folderLabel} (not shared)</option> : null}
+                        {selectedDevice.folders.map((label) => (
+                          <option key={label} value={label}>{label}{folderKinds[label] === "repo" ? " · repository" : ""}</option>
+                        ))}
+                      </select>
+                      <button type="button" className="btn shrink-0" onClick={() => setPickingFolder(true)} disabled={!selectedDevice.online}><FolderOpen size={13} /> Choose…</button>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -980,7 +1009,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                         aria-label="Folder"
                         value={folder}
                         onChange={(event) => {
-                          typedFolder.current = event.target.value;
                           setFolder(event.target.value);
                           setFolderCheck(null);
                         }}
@@ -988,8 +1016,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                         placeholder="/Users/you/projects/my-app"
                         className="field min-w-0 flex-1 font-mono text-[12.5px]"
                       />
-                      <button type="button" className="btn" onClick={() => pick.mutate()} disabled={pick.isPending}>
-                        {pick.isPending ? <Spinner size={12} /> : <FolderOpen size={13} />} Choose…
+                      <button type="button" className="btn" onClick={() => setPickingFolder(true)} disabled={runOn !== "server" || !hostCode}>
+                        <FolderOpen size={13} /> Choose…
                       </button>
                     </div>
                     {folderCheck ? (
@@ -999,6 +1027,21 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                     ) : null}
                   </>
                 )}
+                <FolderPicker
+                  open={pickingFolder && Boolean(selectedDevice?.online || (runOn === "server" && hostCode))}
+                  onClose={() => setPickingFolder(false)}
+                  target={selectedDevice ? { kind: "device", deviceId: selectedDevice.id } : { kind: "local" }}
+                  computerName={selectedDevice?.name ?? "this computer"}
+                  title="Choose where it works"
+                  action="Choose"
+                  share={selectedDevice !== null}
+                  onPick={(picked) => {
+                    setFolder(picked.path);
+                    setFolderLabel(picked.label ?? picked.name);
+                    setFolderCheck(null);
+                    setPickingFolder(false);
+                  }}
+                />
               </div>
             ) : null}
           </div>
@@ -1287,8 +1330,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           ) : null}
         </div>
 
-        <div className="flex items-center gap-3 border-t border-line pt-3">
-          <div className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-3 sm:flex-nowrap">
+          <div className="min-w-0 flex-1 text-[12px] leading-4 text-muted max-sm:basis-full">
             {(appMode ? handoffBlocker : blocker) ? (
               <div className="mt-0.5 flex items-start gap-1 text-warn" role="status" data-assign-blocker>
                 <AlertTriangle size={12} className="mt-[2px] shrink-0" aria-hidden />

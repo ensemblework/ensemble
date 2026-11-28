@@ -102,13 +102,15 @@ Then a thinking level from that model's levels (or Default), then Standard or Lo
 
 Without a `/model` choice, `/run` uses the run profile's model, thinking level and context when the profile names the same agent. Before a message or `/run`, a Copilot that was missing or signed out is checked again (`POST /api/subscriptions/check`); still so, nothing is created and the fix is shown ("run copilot login", "npm install -g @github/copilot").
 
+`/profile` also selects where `/run` works: a saved folder and computer take precedence over the CLI's launch folder. Profiles without a saved folder keep using the launch folder (or its clone for a pull request). An unavailable saved computer or share is reported rather than replaced. Chat explicitly stays in its opened folder and continued session, regardless of the profile's place.
+
 Esc stops the turn; `/new` starts a new chat. With Ensemble's agent chosen and no model key here or on the account, the app switches to the first installed agent (Claude Code, Codex, Cursor, GitHub Copilot) and says so. A missing key names the provider and the fix ("No key for Google Gemini. Add one in Settings → Models (in the Ensemble CLI: /keys google), …").
 
 #### Ask Ensemble Code
 
 **Ensemble Code.** With Ensemble's agent chosen, messages go to `POST /api/assistant/turn` with a `code` session: the folder (`/folder`), the agent (`/agent`), the run profile (`/profile`: up to three profiles saved in the Assign dialog, or Quick; [02](02_MODULE_INTERACTION_HUB_UI.md)) and the chat model (`/model`, sent with its provider, so a Copilot model is called on Copilot only; the first row, *Chat default*, is the account's default tier model).
 
-It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, under the profile (in the OS sandbox only when the profile turns that beta on).
+It has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint as text; start an agent on a new task (`ensemble_start_agent`, which uses the profile's saved place unless a folder or repository is named, and can clone a repository by URL); check a run (`ensemble_job_status`). It never edits files or runs commands itself; the agent it starts does, under the profile (in the OS sandbox only when the profile turns that beta on).
 
 Replies name records by title, as on the web ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). Changes wait for Apply per the assistant's write policy (Settings → Assistant): 1 applies, 2 discards. Esc and `/new` work as above. It runs only against a runtime on this computer (`ENSEMBLE_DESKTOP=1`); the hosted API refuses it with 409.
 

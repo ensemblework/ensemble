@@ -18,6 +18,7 @@ import { continuesSessionOf, handoffReasonOf, sessionOperation, type SessionOper
 import { isCodeAgentTurn, steerOf } from "./trust.js";
 import { acceptanceOf, buildPacket, packetRecordOf, packetSource, packetSummary, PacketSummarySchema, parsePacketSource, type Criterion, type Delivered, type PacketRecord, type PacketSource } from "./turn-packet.js";
 import type { JobContext } from "./tools.js";
+import { contextPart, keepRunContext, runContextOf, type RunSkill } from "./run-context.js";
 
 /** The owner's run profile instructions for Code tab turns, as the composer sent them (`context.profileInstructions`). */
 export function profileInstructionsOf(context: unknown): string | null {
@@ -154,15 +155,29 @@ export async function prepareCodeTurn(ctx: Pick<JobContext, "prisma" | "job" | "
   return { prompt: steer && resumed ? steerPrompt(built.prompt) : built.prompt, record: { ...built.record, operation }, operation, handoff, skills };
 }
 
-/** Keeps what the turn sent on its run: the packet, its version, and the skills it gave the agent. */
+/**
+ * The turn's provenance on its run (`workspace/run-context.ts`): its version, the skills it gave the agent and
+ * its prompt's fingerprint, kept before the agent gets the turn. Never the packet: `lastDelivered` takes a kept
+ * packet for one the session has, so a turn that fails before the agent gets it must not leave one.
+ */
+export async function keepCodeTurnContext(db: Db, runId: string, turn: CodeTurn): Promise<void> {
+  let skills: RunSkill[] = turn.skills?.skills.map(({ id, name, source, sha256 }) => ({ id, name, source, sha256 })) ?? [];
+  if (!turn.skills && turn.operation === "resume" && turn.record.skills.length) {
+    const job = await db.workspaceJob.findUnique({ where: { runId }, select: { continueFromJobId: true } });
+    const parent = job?.continueFromJobId ? await db.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { runId: true } }) : null;
+    const previous = await runContextOf(db, parent?.runId ?? null);
+    if (previous) skills = previous.skills;
+  }
+  await keepRunContext(db, runId, { schema: "ensemble.run-context/1", promptVersion: turn.record.version, skills, parts: [contextPart("prompt", turn.prompt)] });
+}
+
+/** Keeps what the turn sent on its run once the agent has it: the packet and its version. */
 export async function keepCodeTurn(db: Db, runId: string, turn: CodeTurn): Promise<void> {
-  const owned = turn.skills?.skills.filter((skill) => skill.source === "owner" && skill.id).map((skill) => skill.id!) ?? [];
   await db.run.update({
     where: { id: runId },
     data: {
       packet: turn.record as unknown as Prisma.InputJsonValue,
       promptVersion: turn.record.version,
-      ...(turn.skills ? { skillIds: owned, skillSignatures: turn.skills.skills.map((skill) => ({ name: skill.name, source: skill.source, sha256: skill.sha256 })) as Prisma.InputJsonValue } : {}),
     },
   });
 }

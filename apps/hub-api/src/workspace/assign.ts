@@ -7,9 +7,10 @@ import { hasAttached, withMentionedContent } from "./mentioned.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, mergeToolsOff, PullRequestPlan, pullRequestHeadRefusal, runLimits, RunPlace, runPlaceProblem, ToolsOff, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
-import { serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
+import { deviceOnline, serverRunnerEnabled, serverRunsOwnCode } from "../devices/constants.js";
+import { folderLabels } from "../devices/labels.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
 import { appendLedger } from "../lib/ledger.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -67,6 +68,8 @@ export const Assign = z.object({
   maxTurns: z.number().int().min(3).max(200).optional(),
   deviceId: z.string().uuid().optional(),
   folderLabel: z.string().max(200).optional(),
+  /** A profile's place. Explicit folder, repository or continuation fields win over it. */
+  place: RunPlace.optional(),
   /**
    * Who does the work: Ensemble's own agent (a model API with your key), or the person's own
    * Claude Code, Codex, Cursor agent or GitHub Copilot on their computer with their own sign-in.
@@ -194,6 +197,17 @@ export function withPullRequest<T extends AssignInput>(body: T): T {
 }
 export type AssignInput = z.infer<typeof Assign>;
 
+/** Resolve a saved place before choosing sessions or creating a job, never on a different computer. */
+export async function withRunPlace(prisma: PrismaClient, userId: string, input: AssignInput): Promise<AssignInput> {
+  if (input.place?.kind !== "folder") return input;
+  if (input.folder?.trim() || input.folderLabel?.trim() || input.repoUrl?.trim() || input.continueFromJobId || input.session) return { ...input, place: undefined };
+  const place = input.place;
+  const device = input.deviceId ? await prisma.device.findFirst({ where: { id: input.deviceId, userId: actorFor(userId) ?? userId, revokedAt: null } }) : null;
+  const problem = runPlaceProblem(place, input.deviceId ?? null, device ? { name: device.name, online: deviceOnline(device.lastSeenAt), folders: folderLabels(device.capabilities) } : null);
+  if (problem) throw new GuardError(problem);
+  return { ...input, ...(input.deviceId ? { folderLabel: place.label } : { folder: place.path! }) };
+}
+
 /**
  * How a run in an agent session takes one of its settings: keep the session's (`inherit`), the
  * agent's own default (`provider_default`), or a value named for this run (`explicit`). Kept apart so
@@ -284,9 +298,9 @@ export type ResolvedAssign = AssignInput & { kind: "research" | "code"; sandbox:
  * folder, or on a server that runs code happens in a folder (`code`: the agent can research too);
  * otherwise Ensemble's agent researches and writes on the server.
  */
-export function autoKind(body: Pick<AssignInput, "kind" | "engine" | "deviceId" | "folder" | "folderLabel" | "repoUrl" | "continueFromJobId" | "pullRequest" | "chat">, serverRunsCode: boolean): "research" | "code" {
+export function autoKind(body: Pick<AssignInput, "kind" | "engine" | "deviceId" | "folder" | "folderLabel" | "place" | "repoUrl" | "continueFromJobId" | "pullRequest" | "chat">, serverRunsCode: boolean): "research" | "code" {
   if (body.kind) return body.kind;
-  const somewhere = Boolean(body.deviceId || body.folder?.trim() || body.folderLabel?.trim() || body.repoUrl?.trim() || body.continueFromJobId || body.pullRequest || body.chat);
+  const somewhere = Boolean(body.deviceId || body.folder?.trim() || body.folderLabel?.trim() || body.place?.kind === "folder" || body.repoUrl?.trim() || body.continueFromJobId || body.pullRequest || body.chat);
   return body.engine !== "ensemble" || somewhere || serverRunsCode ? "code" : "research";
 }
 
@@ -567,6 +581,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const task = await prisma.task.findFirst({ where: { id: input.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
+  input = await withRunPlace(prisma, userId, input);
   const tier = settings.models[task.complexity];
   const choice = await chooseFor(prisma, userId, task, input, tier, options, settings.orchestration.linkedSessions !== false);
   let requested: AssignInput = input;

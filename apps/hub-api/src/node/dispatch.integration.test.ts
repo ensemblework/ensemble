@@ -160,6 +160,41 @@ test("work in files goes straight from its packet to the agent; reports end the 
   assert.deepEqual(seen.map((turn) => turn.slug), ["manager", "manager"]);
 });
 
+test("a crew's file step with no folder or repository uses its worker's run profile place", async () => {
+  const mira = await person("Mira");
+  const laptop = await laptopFor(mira);
+  await saveSettings(h.prisma, mira.id, { runProfiles: [RunProfile.parse({ id: "live", name: "Live", engine: "codex", deviceId: laptop.id, place: { kind: "folder", label: "live-test" } })], defaultRunProfileId: "live" });
+  const { room } = await crew(mira);
+  script = (turn) => turn.slug === "manager" && turn.transcript.includes("fix the tables")
+    ? { calls: [{ name: "node_plan", arguments: { ...PLAN, constraints: { agent: "codex" } } }], then: "Building and checking it." }
+    : { text: "(no reply)" };
+  await post(mira, room.id, "Please fix the tables bug.");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+  const build = await runOf(mission.id, "build");
+  assert.deepEqual([build.job.folderLabel, build.job.deviceId, build.job.repoUrl], ["live-test", laptop.id, null]);
+});
+
+test("a repair whose session cannot go on starts a new session in the worker's run profile folder", async () => {
+  const mira = await person("Mira");
+  const laptop = await laptopFor(mira);
+  await saveSettings(h.prisma, mira.id, { runProfiles: [RunProfile.parse({ id: "live", name: "Live", engine: "codex", deviceId: laptop.id, place: { kind: "folder", label: "live-test" } })], defaultRunProfileId: "live" });
+  const { room } = await crew(mira);
+  script = (turn) => turn.slug === "manager" && turn.transcript.includes("fix the tables")
+    ? { calls: [{ name: "node_plan", arguments: { ...PLAN, constraints: { agent: "codex" } } }], then: "Building and checking it." }
+    : { text: "(no reply)" };
+  await post(mira, room.id, "Please fix the tables bug.");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+  const build = await runOf(mission.id, "build");
+  await finish(build.job.id, { outcome: "done", summary: "Escaped pipes.", subject: { commit: "abc1234" } });
+  const check = await runOf(mission.id, "verify");
+  // The laptop can no longer carry on a session, so the repair cannot continue the builder's.
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { appVersion: "0.1.0" } });
+  await finish(check.job.id, { outcome: "fail", summary: "Links break.", checks: [{ id: "A1", name: "pipe title in one cell", verdict: "fail", detail: "the link after it breaks" }], subject: { commit: "abc1234" } });
+  const repair = await runOf(mission.id, "build", 1);
+  assert.notEqual(repair.run.sessionId, build.run.sessionId, "a new session");
+  assert.deepEqual([repair.job.folderLabel, repair.job.deviceId, repair.job.repoUrl], ["live-test", laptop.id, null]);
+});
+
 test("a failed check repairs the build in the builder's own session, then retests in the checker's", async () => {
   const mira = await person("Mira");
   await laptopFor(mira);

@@ -75,13 +75,13 @@ function PersonCard({ person, focused = false }: { person: PersonRecord; focused
         {person.openTasks ? `${person.openTasks} open` : "No open tasks"}
         {person.recentTitle ? ` · ${person.recentTitle}` : ""}
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="mt-3 min-w-0 space-y-1.5">
         {person.projects.length ? (
           person.projects.map((project) => (
-            <span key={project.id} className="chip" style={{ ["--chip" as string]: "var(--kind-project)" }} title={project.role ? `${project.role} on ${project.name}` : project.name}>
-              {project.name}
-              {project.role ? <span className="text-faint"> · {project.role}</span> : null}
-            </span>
+            <div key={project.id} className="min-w-0 rounded-md border border-line px-2.5 py-1.5" data-person-project={project.id}>
+              <span className="block break-words text-[12.5px] font-medium">{project.name}</span>
+              {project.role ? <span className="mt-0.5 block break-words text-[12px] text-muted">{project.role}</span> : null}
+            </div>
           ))
         ) : (
           <span className="text-[12px] text-faint">No project yet</span>

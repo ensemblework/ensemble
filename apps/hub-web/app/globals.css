@@ -947,6 +947,31 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
   color: inherit;
   padding: 0;
 }
+.page-code-block { position: relative; }
+.ProseMirror .page-code-block pre { margin: 0; padding-top: 42px; }
+.page-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--raised);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.page-code-block:hover .page-code-copy, .page-code-block:focus-within .page-code-copy,
+.page-code-copy[data-copied="true"] { opacity: 1; }
+.page-code-copy:hover { color: var(--ink); background: var(--hover); }
+.page-code-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.page-code-copy[data-copied="true"] { color: var(--tag-green-fg); }
+@media (hover: none) { .page-code-copy { opacity: 1; width: 44px; height: 44px; } .ProseMirror .page-code-block pre { padding-top: 58px; } }
+@media (prefers-reduced-motion: reduce) { .page-code-copy { transition: none; } }
+@media print { .page-code-copy { display: none; } .ProseMirror .page-code-block pre { padding-top: 0.9em; } }
 .ProseMirror blockquote {
   border-left: 2px solid var(--line-strong, var(--line));
   padding-left: 0.9em;
