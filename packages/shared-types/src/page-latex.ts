@@ -2,8 +2,8 @@
  * A LaTeX document's common structure as page Markdown, by hand and without a TeX engine:
  * `\section` and its smaller kin become headings, `\textbf`/`\textit`/`\emph`/`\underline` become
  * bold, italics and underline, `itemize`/`enumerate` become lists, `equation`, `align` and `\[…\]`
- * become display equations, and `$…$` stays inline math. The preamble, `%` comments and
- * `\label` are dropped; `\\` breaks a line. Commands it does not know stay as text.
+ * become display equations, and `$…$` stays inline math. A preamble of commands, `%` comments
+ * and `\label` are dropped; `\\` breaks a line. Commands it does not know stay as text.
  *
  * Only text that is clearly LaTeX (`looksLikeLatex`) is converted, and every step is a single
  * bounded pass, so ordinary text never changes and large input stays fast.
@@ -14,13 +14,24 @@ export const MAX_LATEX = 400_000;
 /** The longest argument read for one command (`\textbf{…}`). */
 const MAX_ARGUMENT = 1000;
 
+/** The marker a LaTeX document opens with. */
+const LATEX_START = /^\\(?:documentclass\b|begin\{document\}|(?:sub){0,2}section\*?\{|chapter\*?\{)/;
+/** Markdown block syntax: with it, the text is Markdown even when it shows LaTeX (a fenced example). */
+const MARKDOWN_BLOCKS = /^[ \t]*(?:```|~~~|#{1,6}[ \t]|[-*+][ \t]|\d{1,9}[.)][ \t]|>)/m;
+
 /**
- * Whether text is a LaTeX document: it has `\documentclass` or `\begin{document}`, or a line
- * that starts with `\section{`, `\subsection{`, `\subsubsection{` or `\chapter{`.
+ * Whether text is a LaTeX document: its first line that is not blank or a `%` comment starts with
+ * `\documentclass`, `\begin{document}`, `\section{`, `\subsection{`, `\subsubsection{` or
+ * `\chapter{`, and it has no Markdown headings, lists, quotes or fences.
  */
 export function looksLikeLatex(text: string): boolean {
-  if (text.length > MAX_LATEX) return false;
-  return /^[ \t]*\\(?:documentclass\b|begin\{document\}|(?:sub){0,2}section\*?\{|chapter\*?\{)/m.test(text);
+  if (text.length > MAX_LATEX || MARKDOWN_BLOCKS.test(text)) return false;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("%")) continue;
+    return LATEX_START.test(trimmed);
+  }
+  return false;
 }
 
 /** The argument in braces starting at `open` (a `{`), with the index after its `}`; null when it does not close in time. */
@@ -128,8 +139,12 @@ function inlineLatex(text: string): string {
   return out;
 }
 
-/** A line without its `%` comment (`\%` is a percent sign). */
-const uncomment = (line: string) => line.replace(/(?<!\\)%.*$/, "");
+/**
+ * A line without its `%` comment. A line that starts with `%` is a comment; in a real document
+ * (`\documentclass`, `\begin{document}`) so is a `%` after a space. Otherwise `%` is text, so
+ * "grew 20% this quarter" keeps its words; `\%` is always a percent sign.
+ */
+const uncomment = (line: string, real: boolean) => (/^\s*%/.test(line) ? "" : real ? line.replace(/(?<=\s)%.*$/, "") : line);
 
 const MATH_ENVIRONMENTS = new Set(["equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*", "displaymath", "eqnarray", "eqnarray*", "math"]);
 const ALIGNED = new Set(["align", "align*", "eqnarray", "eqnarray*"]);
@@ -148,7 +163,7 @@ function displayTex(body: string, environment: string | null): string {
  * `close`, at most 400 lines on; `last` is the line holding `close`. Null when it does not close
  * before another `open`.
  */
-function until(lines: readonly string[], from: number, first: string, open: string, close: string, code: boolean): { body: string[]; last: number } | null {
+function until(lines: readonly string[], from: number, first: string, open: string, close: string, code: boolean, real: boolean): { body: string[]; last: number } | null {
   const body: string[] = [];
   let line = first;
   for (let j = from; ; ) {
@@ -160,7 +175,7 @@ function until(lines: readonly string[], from: number, first: string, open: stri
     body.push(line);
     j += 1;
     if (j >= lines.length || j - from > 400) return null;
-    line = code ? lines[j]! : uncomment(lines[j]!);
+    line = code ? lines[j]! : uncomment(lines[j]!, real);
     // Another opening before this one closed: this one never closes.
     if (line.includes(open)) return null;
   }
@@ -172,14 +187,19 @@ function until(lines: readonly string[], from: number, first: string, open: stri
  */
 export function latexToMarkdown(source: string): string {
   let text = source.replace(/\r\n?/g, "\n");
-  const title = /\\title\{([^{}]{1,500})\}/.exec(text.slice(0, Math.max(0, text.indexOf("\\begin{document}")) || text.length))?.[1];
-  const begin = text.indexOf("\\begin{document}");
-  if (begin >= 0) text = text.slice(begin + "\\begin{document}".length);
-  const end = text.indexOf("\\end{document}");
-  if (end >= 0) text = text.slice(0, end);
-  const lines = text.split("\n");
+  const real = /\\documentclass\b|\\begin\{document\}/.test(text);
   const out: string[] = [];
-  if (title && begin >= 0) out.push(`# ${inlineLatex(title.trim())}`, "");
+  // The preamble goes only when it is all commands and comments; anything else in it is kept as text.
+  const begin = text.search(/^[ \t]*\\begin\{document\}/m);
+  if (begin > 0) {
+    const preamble = text.slice(0, begin);
+    if (preamble.split("\n").every((line) => !line.trim() || /^\s*[\\%]/.test(line))) {
+      const title = /\\title\{([^{}]{1,500})\}/.exec(preamble)?.[1];
+      if (title?.trim()) out.push(`# ${inlineLatex(title.trim())}`, "");
+      text = text.slice(begin);
+    }
+  }
+  const lines = text.split("\n");
   let paragraph: string[] = [];
   const lists: Array<"-" | "1."> = [];
   let quote = false;
@@ -197,13 +217,13 @@ export function latexToMarkdown(source: string): string {
     item = null;
   };
   for (let i = 0; i < lines.length; i += 1) {
-    const line = uncomment(lines[i]!);
+    const line = uncomment(lines[i]!, real);
     const trimmed = line.trim();
     const env = /^\\(begin|end)\{([A-Za-z*]+)\}/.exec(trimmed);
     if (env && env[1] === "begin" && (MATH_ENVIRONMENTS.has(env[2]!) || CODE_ENVIRONMENTS.has(env[2]!))) {
       const name = env[2]!;
       const code = CODE_ENVIRONMENTS.has(name);
-      const block = until(lines, i, trimmed.slice(env[0].length), `\\begin{${name}}`, `\\end{${name}}`, code);
+      const block = until(lines, i, trimmed.slice(env[0].length), `\\begin{${name}}`, `\\end{${name}}`, code, real);
       if (block) {
         flush();
         flushItem();
@@ -217,7 +237,7 @@ export function latexToMarkdown(source: string): string {
       }
     }
     if (trimmed.startsWith("\\[")) {
-      const block = until(lines, i, trimmed.slice(2), "\\[", "\\]", false);
+      const block = until(lines, i, trimmed.slice(2), "\\[", "\\]", false, real);
       if (block) {
         flush();
         flushItem();

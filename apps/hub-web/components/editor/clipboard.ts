@@ -122,6 +122,22 @@ export function pastedTextFragment(schema: Schema, text: string): Fragment | nul
   return nodes ? fitted(schema, nodes) : null;
 }
 
+/** VS Code languages whose text is read as page text; other code pastes as a code block. */
+const TEXT_MODES = new Set(["markdown", "latex", "tex", "plaintext"]);
+/** VS Code language ids as code block languages, where they differ. */
+const CODE_LANGUAGE: Record<string, string> = { typescriptreact: "tsx", javascriptreact: "jsx", shellscript: "bash", "jsonc": "json" };
+
+/** The language VS Code says copied text is in (`vscode-editor-data`), or null when it did not say. */
+export function vscodeMode(data: Pick<DataTransfer, "getData" | "types">): string | null {
+  if (!Array.from(data.types ?? []).includes("vscode-editor-data")) return null;
+  try {
+    const mode = (JSON.parse(data.getData("vscode-editor-data")) as { mode?: unknown }).mode;
+    return typeof mode === "string" && mode ? mode : "plaintext";
+  } catch {
+    return "plaintext";
+  }
+}
+
 /** One pasted paragraph joins the line at the caret; several blocks land as blocks. */
 export function pastedSlice(fragment: Fragment): Slice {
   const single = fragment.childCount === 1 && fragment.firstChild!.type.name === "paragraph";
@@ -129,11 +145,12 @@ export function pastedSlice(fragment: Fragment): Slice {
 }
 
 /** Elements that make pasted HTML formatted content rather than text wrapped in styled boxes. */
-const FORMATTED = "p,h1,h2,h3,h4,h5,h6,ul,ol,li,table,img,a[href],strong,b,em,i,u,s,del,strike,blockquote,hr,code,math,.katex,figure,video,iframe,[data-pm-slice]";
+const FORMATTED = "p,pre,h1,h2,h3,h4,h5,h6,ul,ol,li,table,img,a[href],strong,b,em,i,u,s,del,strike,blockquote,hr,code,math,.katex,figure,video,iframe,[data-pm-slice]";
 
 /**
- * Whether pasted HTML is only plain text in boxes, as code editors (VS Code), terminals and raw
- * text pages put it on the clipboard: then its plain text is read for Markdown and equations.
+ * Whether pasted HTML is only plain text in `div`/`span` boxes, as some editors and terminals put
+ * it on the clipboard: then its plain text is read for Markdown and equations. A `pre` is code
+ * and pastes as a code block.
  */
 export function plainTextHtml(html: string): boolean {
   if (typeof DOMParser === "undefined") return false;
@@ -236,6 +253,8 @@ export const PageClipboard = Extension.create({
   priority: 1000,
   addProseMirrorPlugins() {
     const origin = () => (typeof window === "undefined" ? "" : window.location.origin);
+    /** Set while ProseMirror reads HTML copied from a page in this app, for `transformPasted`. */
+    let fromThisApp = false;
     return [
       new Plugin({
         key: new PluginKey("pageClipboard"),
@@ -247,23 +266,49 @@ export const PageClipboard = Extension.create({
             const fragment = pastedTextFragment(view.state.schema, text);
             return (fragment ? pastedSlice(fragment) : null) as Slice;
           },
-          // Text copied from a code editor or terminal comes as HTML that only wraps the text: read
-          // its plain text instead, so Markdown and equations in it become blocks here too.
+          // Text copied from a code editor or terminal comes as HTML that only wraps the text, so its
+          // plain text is read here (Markdown and equations become blocks, code a code block).
           handlePaste: (view, event) => {
             const data = (event as ClipboardEvent).clipboardData;
             if (!data || !view.editable || view.state.selection.$from.parent.type.spec.code || data.files?.length) return false;
-            const html = data.getData("text/html");
             const text = data.getData("text/plain");
-            // VS Code marks the text it puts on the clipboard; other code editors wrap it in plain boxes.
-            const fromEditor = Array.from(data.types ?? []).includes("vscode-editor-data");
-            if (!html || !text.trim() || !(fromEditor || plainTextHtml(html))) return false;
+            const html = data.getData("text/html");
+            // Cmd/Ctrl+Shift+V keeps the text as typed.
+            const shift = Boolean((view as unknown as { input?: { shiftKey?: boolean } }).input?.shiftKey);
+            const mode = vscodeMode(data);
+            if (mode && text) {
+              // VS Code says which language it copied. TipTap's code block would take every such paste
+              // as code, so this decides: Markdown, LaTeX and plain text are page text, a line of code
+              // joins the line, and more than a line of code is a code block.
+              if (shift) return view.pasteText(text);
+              if (!TEXT_MODES.has(mode)) {
+                const code = view.state.schema.nodes.codeBlock;
+                if (!text.includes("\n") || !code) view.dispatch(view.state.tr.insertText(text).scrollIntoView().setMeta("uiEvent", "paste"));
+                else view.dispatch(view.state.tr.replaceSelectionWith(code.create({ language: CODE_LANGUAGE[mode] ?? mode }, view.state.schema.text(text.replace(/\r\n?/g, "\n")))).scrollIntoView().setMeta("uiEvent", "paste"));
+                return true;
+              }
+              const fragment = pastedTextFragment(view.state.schema, text);
+              if (!fragment) return view.pasteText(text);
+              view.dispatch(view.state.tr.replaceSelection(pastedSlice(fragment)).scrollIntoView().setMeta("uiEvent", "paste"));
+              return true;
+            }
+            // Other editors and terminals wrap copied text in plain boxes: read its plain text.
+            if (shift || !html || !text.trim() || !plainTextHtml(html)) return false;
             const fragment = pastedTextFragment(view.state.schema, text);
             if (!fragment) return false;
             view.dispatch(view.state.tr.replaceSelection(pastedSlice(fragment)).scrollIntoView().setMeta("uiEvent", "paste"));
             return true;
           },
-          transformPastedHTML: (html) => pastedPageHtml(html, origin()),
-          transformPasted: (slice, view) => {
+          transformPastedHTML: (html) => {
+            fromThisApp = html.includes("data-pm-slice");
+            return pastedPageHtml(html, origin());
+          },
+          // TeX in pasted formatted text becomes equations; never in a plain paste, a copy from a
+          // page here (its blocks are already what they were) or a dragged block.
+          transformPasted: (slice, view, plain) => {
+            const internal = fromThisApp;
+            fromThisApp = false;
+            if (plain || internal || view.dragging) return slice;
             const content = withPastedMath(slice.content, view.state.schema);
             return content === slice.content ? slice : new Slice(content, slice.openStart, slice.openEnd);
           },

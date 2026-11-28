@@ -137,3 +137,51 @@ test("LaTeX comments do not split a paragraph, and quote becomes a quote", () =>
   assert.deepEqual(types(nodes), ["heading", "paragraph", "blockquote"]);
   assert.equal(nodes[1]!.content![0]!.text, "One line same paragraph.");
 });
+
+test("LaTeX is detected only from the first line, never inside Markdown or a fence, and keeps what people wrote", () => {
+  const readme = "# Intro\nHello\n\n```latex\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n```";
+  assert.equal(looksLikeLatex(readme), false);
+  assert.deepEqual(types(textToPageNodes(readme)), ["heading", "paragraph", "codeBlock"]);
+  assert.match(JSON.stringify(textToPageNodes(readme)), /documentclass/, "the fenced example is kept");
+  assert.equal(looksLikeLatex("Notes for Friday\n\\section{Results}"), false, "the marker must open the text");
+  assert.equal(looksLikeLatex("% draft\n\n\\section{Results}\nText"), true, "comment lines before it are fine");
+  assert.equal(looksLikeLatex("\\section{Results}\nSee below.\n\n```\ncode\n```"), false, "a Markdown fence means Markdown");
+  assert.deepEqual(textToPageNodes("\\section{Results}\nRevenue grew 20% this quarter."), [
+    { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "Results" }] },
+    { type: "paragraph", content: [{ type: "text", text: "Revenue grew 20% this quarter." }] },
+  ]);
+});
+
+test("% starts a comment only at a line start or after a space in a real document; \\% is a percent sign", () => {
+  const doc = "\\documentclass{article}\n\\begin{document}\nText here % a comment\n50% stays and \\% too\n\\end{document}";
+  assert.deepEqual(textToPageNodes(doc), [{ type: "paragraph", content: [{ type: "text", text: "Text here 50% stays and % too" }] }]);
+  assert.deepEqual(textToPageNodes("\\section{A}\nKeep 30 % of it"), [
+    { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "A" }] },
+    { type: "paragraph", content: [{ type: "text", text: "Keep 30 % of it" }] },
+  ], "without \\documentclass a % after a space is kept");
+});
+
+test("a preamble is dropped only when it is all commands and comments", () => {
+  const plain = "\\documentclass{article}\n\\usepackage{amsmath} % maths\n\\title{T}\n\\begin{document}\nBody\n\\end{document}";
+  assert.deepEqual(textToPageNodes(plain), [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "T" }] }, { type: "paragraph", content: [{ type: "text", text: "Body" }] }]);
+  const mixed = "\\documentclass{article}\nA sentence someone wrote here.\n\\begin{document}\nBody\n\\end{document}";
+  assert.match(JSON.stringify(textToPageNodes(mixed)), /A sentence someone wrote here\..*Body/);
+  assert.match(JSON.stringify(textToPageNodes("\\section{A}\nBody\n\\end{document}\nAfter the end.")), /After the end\./);
+});
+
+test("notes opened as a page never convert LaTeX", () => {
+  const notes = "\\section{Results}\nRevenue grew 20% this quarter.";
+  assert.deepEqual(notesDocument(notes), {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "\\section{Results}" }] }, { type: "paragraph", content: [{ type: "text", text: "Revenue grew 20% this quarter." }] }],
+  });
+});
+
+test("markdownPlainText stays linear on very long lines", () => {
+  for (const line of [`${" ".repeat(40_000)}-x`, `${" ".repeat(20_000)}|${" ".repeat(20_000)}x`, "| ".repeat(20_000), "-".repeat(40_000), `|${" -".repeat(20_000)}`, "**a ".repeat(10_000), `${"a ".repeat(20_000)}`.replace(/^/, "- ")]) {
+    const start = performance.now();
+    markdownPlainText(line);
+    const took = performance.now() - start;
+    assert.ok(took < 100, `${JSON.stringify(line.slice(0, 12))}…: ${Math.round(took)} ms`);
+  }
+});

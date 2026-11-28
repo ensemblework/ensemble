@@ -309,14 +309,23 @@ export function mathTextNodes(text: string): PageNode[] | null {
 
 /**
  * Pasted or imported plain text as page blocks, the way Notion reads it: a LaTeX document by its
- * structure (page-latex.ts), Markdown (each line kept), or plain text with its equations. Null for
- * ordinary text, which stays as typed.
+ * structure (page-latex.ts; `latex: false` skips it), Markdown (each line kept), or plain text with
+ * its equations. Null for ordinary text, which stays as typed.
  */
-export function textToPageNodes(text: string): PageNode[] | null {
-  if (looksLikeLatex(text)) return markdownToNodes(latexToMarkdown(text), { lineBreaks: true });
+export function textToPageNodes(text: string, options: { latex?: boolean } = {}): PageNode[] | null {
+  if (options.latex !== false && looksLikeLatex(text)) return markdownToNodes(latexToMarkdown(text), { lineBreaks: true });
   if (looksLikeMarkdown(text)) return markdownToNodes(text, { lineBreaks: true });
   return mathTextNodes(text);
 }
+
+/** How much of a text a preview reads. */
+const PREVIEW_CHARS = 4000;
+/**
+ * Lines a preview leaves out, tested trimmed: fences, rules, a table's header rule, and the
+ * `$$` / `\[` lines around a display equation. Each part has one way to match, so long lines
+ * stay linear.
+ */
+const SKIPPED_LINE = /^(?:```|~~~|-{3,}$|\*{3,}$|_{3,}$|(?:\|\s*)?:?-+:?(?:\s*\|\s*:?-+:?)*\s*\|?$|\$\$$|\\[[\]]$)/;
 
 /**
  * Markdown as one line of plain text, for previews that show a line or two (cards, snippets,
@@ -324,21 +333,24 @@ export function textToPageNodes(text: string): PageNode[] | null {
  * images, rules, table pipes and `<details>` tags go; the words, link text and TeX stay.
  */
 export function markdownPlainText(text: string): string {
-  if (!/[#*_~`[\]<>|$-]|^\s*\d+[.)]\s/m.test(text)) return text.replace(/\s+/g, " ").trim();
-  return text
+  // Previews show a line or two: the first few thousand characters are plenty.
+  const head = text.length > PREVIEW_CHARS ? text.slice(0, PREVIEW_CHARS) : text;
+  if (!/[#*_~`[\]<>|$-]|^\s*\d+[.)]\s/m.test(head)) return head.replace(/\s+/g, " ").trim();
+  return head
     .replace(/\r\n?/g, "\n")
     .split("\n")
-    .filter((line) => !/^\s*(```|~~~|(-{3,}|\*{3,}|_{3,})\s*$|\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$|\$\$\s*$|\\[[\]]\s*$)/.test(line))
+    .map((line) => line.trim())
+    .filter((line) => !SKIPPED_LINE.test(line))
     .map((line) =>
       line
-        .replace(/^\s{0,3}#{1,6}\s+/, "")
-        .replace(/^\s*>\s?/, "")
-        .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+        .replace(/^#{1,6}\s+/, "")
+        .replace(/^>\s?/, "")
+        .replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
         .replace(/<\/?(?:details|summary|u)(?:\s[^<>]{0,200})?>/gi, "")
         .replace(/!\[([^\[\]]*)\]\([^()\s]*\)/g, "$1")
         .replace(/\[([^\[\]]+)\]\([^()\s]*\)/g, "$1")
-        .replace(/(\*\*|__|~~)(?=\S)([^*_~]{1,2000}?)(?<=\S)\1/g, "$2")
-        .replace(/(?<![\p{L}\p{N}*_])([*_])(?=[^\s*_])([^*_\n]{1,2000}?)(?<=[^\s*_])\1(?![\p{L}\p{N}*_])/gu, "$2")
+        .replace(/(\*\*|__|~~)(?=\S)([^*_~]{1,500}?)(?<=\S)\1/g, "$2")
+        .replace(/(?<![\p{L}\p{N}*_])([*_])(?=[^\s*_])([^*_\n]{1,500}?)(?<=[^\s*_])\1(?![\p{L}\p{N}*_])/gu, "$2")
         .replace(/`([^`]+)`/g, "$1")
         .replace(/\s*\|\s*/g, " · ")
         .replace(/^ · | · $/g, ""),

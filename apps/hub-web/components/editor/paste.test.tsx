@@ -119,3 +119,51 @@ test("TeX in the text of formatted HTML (a web page showing $x$) becomes equatio
   assert.deepEqual(content[3], { type: "text", text: "$x$", marks: [{ type: "code" }] });
   done(editor);
 });
+
+const vscode = (mode: string) => JSON.stringify({ version: 1, isFromEmptySelection: false, multicursorText: null, mode });
+
+test("Cmd/Ctrl+Shift+V, a copy from this editor and a block drag keep the text as typed", () => {
+  const editor = make();
+  editor.commands.focus("end");
+  const input = (editor.view as unknown as { input: { shiftKey: boolean } }).input;
+  input.shiftKey = true;
+  paste(editor, { "text/plain": "the $x$ value", "text/html": editorHtml("the $x$ value"), "vscode-editor-data": vscode("markdown") });
+  input.shiftKey = false;
+  assert.deepEqual(json(editor), [p("the $x$ value")]);
+  editor.commands.setContent({ type: "doc", content: [p()] });
+  editor.commands.focus("end");
+  paste(editor, { "text/plain": "copied $y$ here", "text/html": '<p data-pm-slice="1 1 []">copied $y$ here</p>' });
+  assert.deepEqual(json(editor), [p("copied $y$ here")]);
+  const slice = editor.state.doc.slice(1, editor.state.doc.content.size - 1);
+  (editor.view as unknown as { dragging: unknown }).dragging = { slice, move: true };
+  const dragged = editor.view.someProp("transformPasted", (transform) => transform(slice, editor.view, false));
+  (editor.view as unknown as { dragging: unknown }).dragging = null;
+  assert.equal(dragged, slice, "a dragged block is not changed");
+  done(editor);
+});
+
+test("code copied from VS Code pastes as a code block; its Markdown and plain text are read as text", () => {
+  const code = "# Load data\nrows = load(*args, **kwargs)";
+  const editor = make();
+  editor.commands.focus("end");
+  paste(editor, { "text/plain": code, "text/html": editorHtml(code), "vscode-editor-data": vscode("python") });
+  assert.deepEqual(json(editor).find((node) => node.type === "codeBlock"), { type: "codeBlock", attrs: { language: "python" }, content: [{ type: "text", text: code }] });
+  editor.commands.setContent({ type: "doc", content: [p("Use  here")] });
+  editor.commands.setTextSelection(5);
+  paste(editor, { "text/plain": "load_rows", "text/html": editorHtml("load_rows"), "vscode-editor-data": vscode("python") });
+  assert.deepEqual(json(editor), [p("Use load_rows here")], "one line of code joins the sentence");
+  editor.commands.setContent({ type: "doc", content: [p()] });
+  editor.commands.focus("end");
+  paste(editor, { "text/plain": "## Plan\n- one", "text/html": editorHtml("## Plan\n- one"), "vscode-editor-data": vscode("markdown") });
+  assert.deepEqual(types(editor).slice(0, 2), ["heading", "bulletList"]);
+  done(editor);
+});
+
+test("HTML that is only a <pre> pastes as a code block", () => {
+  assert.equal(plainTextHtml("<pre># Load data\nf(**kwargs)</pre>"), false);
+  const editor = make();
+  editor.commands.focus("end");
+  paste(editor, { "text/plain": "# Load data\nf(**kwargs)", "text/html": "<pre># Load data\nf(**kwargs)</pre>" });
+  assert.ok(json(editor).some((node) => node.type === "codeBlock"), JSON.stringify(json(editor)));
+  done(editor);
+});
