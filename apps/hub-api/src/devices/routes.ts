@@ -58,6 +58,7 @@ import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
 import { storeDeviceActivity } from "../lib/ai-activity.js";
 import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, runtimeInstanceOf, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { stopsLeftovers } from "../workspace/engines/registry.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks, forkOf } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -599,6 +600,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(secretScopeOf(next.context) !== "all" ? { secrets: secretScopeOf(next.context) } : {}),
         // An Ensemble Node plan step's place: its worktree of the folder, its port (B13). Older computers ignore it.
         ...(missionOf(next.context) ? { mission: missionOf(next.context) } : {}),
+        // A node's session run outside a plan keeps what its agent left running (engines/registry.ts `stopsLeftovers`).
+        ...(stopsLeftovers(next.context) ? {} : { keepsProcesses: true }),
         // Older computers ignore it and work in a new folder, as before.
         ...(project ? { project } : {}),
         // Older computers ignore these and start a new session, as before.

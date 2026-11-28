@@ -73,6 +73,56 @@ test("GitHub Copilot: one exchange per user.message, with its last answer and to
   }
 });
 
+test("a sub-agent's task and a background sub-agent's wake-up are not exchanges of the person's", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-outside-sub-"));
+  try {
+    // Claude Code (2.1.3xx, `claude -p`): the Agent tool starts a background sub-agent; its result wakes the session, which answers again.
+    const claude = join(root, "claude.jsonl");
+    writeFileSync(
+      claude,
+      jsonl([
+        prompt("Start one sub-agent that replies PLUM, then reply DONE.", "sdk-cli", "2026-11-15T07:00:00.000Z"),
+        answer([{ type: "tool_use", id: "toolu_1", name: "Agent", input: { description: "Reply PLUM", prompt: "Reply PLUM" } }]),
+        { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "Async agent launched" }] } },
+        answer([{ type: "text", text: "The subagent is still running. I'll reply with DONE once it returns." }]),
+        { type: "user", origin: { kind: "task-notification", producer: "session-task" }, message: { role: "user", content: "<task-notification>\n<status>completed</status>\n<result>PLUM</result>\n</task-notification>" } },
+        answer([{ type: "text", text: "DONE" }]),
+        prompt("And PEAR", "claude-desktop-3p", "2026-11-15T07:06:00.000Z"),
+        answer([{ type: "text", text: "PEAR too." }]),
+      ]),
+    );
+    const read = await claudeTurns(claude);
+    assert.deepEqual(read.turns.map((turn) => [turn.prompt, turn.answer]), [["Start one sub-agent that replies PLUM, then reply DONE.", "DONE"], ["And PEAR", "PEAR too."]]);
+    assert.deepEqual(outsideOf(read.app, read.turns, 1)?.turns.map((turn) => turn.prompt), ["And PEAR"], "Ensemble's one prompt, then the person's");
+
+    // GitHub Copilot 1.0.109: the task tool's sub-agent writes its own prompt and answer into the session's events, marked with its agent id.
+    const copilot = join(root, "events.jsonl");
+    writeFileSync(
+      copilot,
+      jsonl([
+        { type: "user.message", timestamp: "2026-11-15T07:00:00.000Z", data: { content: "Start one sub-agent that replies PLUM, then reply DONE.", parentAgentTaskId: "task-root" } },
+        { type: "assistant.message", data: { content: "", toolRequests: [{ toolCallId: "call_1", name: "task" }] } },
+        { type: "tool.execution_start", data: { toolCallId: "call_1", toolName: "task", arguments: { prompt: "Reply PLUM" } } },
+        { type: "subagent.started", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { toolCallId: "call_1", agentName: "general-purpose" } },
+        { type: "user.message", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { content: "Reply PLUM", source: "agent-1fad2886", parentAgentTaskId: "task-child" } },
+        { type: "tool.execution_start", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { toolCallId: "call_2", toolName: "bash", arguments: { command: "echo PLUM" } } },
+        { type: "assistant.message", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { content: "PLUM", parentToolCallId: "call_1" } },
+        { type: "subagent.completed", agentId: "f4a61520-b6fd-4f47-b531-484965e0fa6d", data: { toolCallId: "call_1", totalTokens: 120 } },
+        { type: "assistant.message", data: { content: "DONE" } },
+        { type: "user.message", timestamp: "2026-11-15T07:05:00.000Z", data: { content: "Also MANGO", parentAgentTaskId: "task-root" } },
+        { type: "assistant.message", data: { content: "Noted MANGO." } },
+      ]),
+    );
+    const turns = await copilotTurns(copilot);
+    assert.deepEqual(turns, [
+      { prompt: "Start one sub-agent that replies PLUM, then reply DONE.", answer: "DONE", tools: "Ran 1 command, used 1 other tool", at: "2026-11-15T07:00:00.000Z" },
+      { prompt: "Also MANGO", answer: "Noted MANGO.", at: "2026-11-15T07:05:00.000Z" },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Codex: one exchange per turn of the thread, its final answer, commands and files", () => {
   const turns = codexTurns({
     turns: [

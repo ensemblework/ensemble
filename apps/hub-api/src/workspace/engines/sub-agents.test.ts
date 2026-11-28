@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addClaudeResult, claudeFromSubAgent, copilotEventFromSubAgent, copilotUpdateAgent, otherCodexThread } from "./sub-agents.js";
+import { addClaudeResult, claudeFromSubAgent, copilotEventFromSubAgent, copilotUpdateAgent, otherCodexThread, sessionToDelete, SubAgentLog, withClaudeSubAgentLimits } from "./sub-agents.js";
 
 test("a Codex notification about another thread is a sub-agent's", () => {
   assert.equal(otherCodexThread({ threadId: "child" }, "parent"), true);
@@ -64,4 +64,50 @@ test("an older Claude Code without the per-stretch field: each result's own usag
   const both = addClaudeResult(first, { total_cost_usd: 0.012, usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 70 } });
   assert.deepEqual(both, { tokensIn: 200, tokensOut: 25, costUsd: 0.012, perResult: false });
   assert.deepEqual(addClaudeResult(null, { usage: {} }), { tokensIn: 0, tokensOut: 0, costUsd: null, perResult: false });
+});
+
+test("a Claude Code run Ensemble starts nests sub-agents at most 3 deep, unless the person chose a depth, and has no agent teams", () => {
+  const env = withClaudeSubAgentLimits({ PATH: "/usr/bin", CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" });
+  assert.equal(env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "3");
+  assert.equal(env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "0", "a teammate would be a session of its own, outside Ensemble's");
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(withClaudeSubAgentLimits({ CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: " 1 " }).CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "1", "the person's own depth stays");
+  assert.equal(withClaudeSubAgentLimits({ CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "deep" }).CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "3");
+});
+
+test("a run notes each child its agent started once, again only when its task arrives later, and never fails for it", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const log = new SubAgentLog(async (event, data) => void events.push({ event, ...data }), "codex");
+  await log.note("thread-root", { id: "thread-euclid", kind: "thread" });
+  await log.note("thread-root", { id: "thread-euclid", kind: "thread" });
+  await log.note("thread-root", { id: "thread-euclid", kind: "thread", parent: "thread-root", title: "  Reply\n PLUM ", model: "gpt-6-luna" });
+  await log.note("thread-root", { id: "thread-euclid", kind: "thread", title: "Another task" });
+  await log.note("thread-root", { id: "thread-james", kind: "thread", parent: "thread-euclid" });
+  await log.note("thread-root", { id: "thread-root", kind: "thread" });
+  await log.note("thread-root", { id: "", kind: "thread" });
+  assert.deepEqual(events, [
+    { event: "sub_agent", engine: "codex", session: "thread-root", id: "thread-euclid", kind: "thread" },
+    { event: "sub_agent", engine: "codex", session: "thread-root", id: "thread-euclid", kind: "thread", title: "Reply PLUM", model: "gpt-6-luna" },
+    { event: "sub_agent", engine: "codex", session: "thread-root", id: "thread-james", kind: "thread", parent: "thread-euclid" },
+  ], "the parent is named only when it is not the session itself");
+  // An id the session's deletion could not use is not recorded: a Cursor chat's is a UUID, a Codex thread's a session id.
+  const refused: unknown[] = [];
+  const strict = (engine: string) => new SubAgentLog(async (event, data) => void refused.push({ event, ...data }), engine);
+  await strict("codex").note("thread-root", { id: "not/a/thread", kind: "thread" });
+  await strict("codex").note("thread-root", { id: "x".repeat(201), kind: "thread" });
+  await strict("cursor-agent").note("chat-root", { id: "agent-7", kind: "chat" });
+  assert.deepEqual(refused, []);
+  const failing = new SubAgentLog(async () => { throw new Error("database gone"); }, "cursor-agent");
+  await failing.note("chat-1", { id: "chat-2", kind: "chat" });
+});
+
+test("a session's deletion takes its own session and the sessions of their own its agent started, not the sub-agents inside it", () => {
+  assert.equal(sessionToDelete({ kind: "engine", data: { engine: "codex", session: "thread-root" } }, "codex"), "thread-root");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "codex", id: "thread-euclid", kind: "thread" } }, "codex"), "thread-euclid");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "cursor-agent", id: "9b0a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d", kind: "chat" } }, "cursor-agent"), "9b0a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "claude-code", id: "toolu_1", kind: "inside" } }, "claude-code"), null, "part of the session's own files");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "codex", id: "thread-euclid", kind: "thread" } }, "cursor-agent"), null, "another agent's child");
+  assert.equal(sessionToDelete({ kind: "tool", data: { session: "x" } }, "codex"), null);
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "cursor-agent", id: "agent-7", kind: "chat" } }, "cursor-agent"), null, "an id deletion would refuse is skipped, so it never blocks the session's deletion");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "codex", id: "../thread", kind: "thread" } }, "codex"), null);
 });

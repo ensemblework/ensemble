@@ -25,9 +25,10 @@ import { titledPrompt } from "./app-sessions.js";
 import type { EngineResult } from "./claude-code.js";
 import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
-import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
 import { RpcConnection } from "./rpc.js";
+import { SubAgentLog } from "./sub-agents.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Cursor sign-in. */
 const KEY_VARIABLES = ["CURSOR_API_KEY"];
@@ -139,6 +140,7 @@ export async function runCursor(
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const args = ["--sandbox", ctx.sandboxed ? "enabled" : "disabled", "--workspace", ctx.root, ...(options.model && options.model !== "default" ? ["--model", options.model] : []), "acp"];
   const child: ChildProcessWithoutNullStreams = spawn(agent, args, { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   child.stdin.on("error", () => undefined);
   const rpc = new RpcConnection(
     (line) => {
@@ -173,8 +175,17 @@ export async function runCursor(
   let sent = 0;
   // How many prompts the session holds: the replayed ones and this run's. Not counted when the history was not read.
   const held = () => (history || !options.resume ? acpPrompts(history ?? [], sent) : null);
-  rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
+  // Cursor tells its client of each sub-agent its task tool ran (`cursor/task`, its reply unread): a chat of its own (cursor-chats.ts).
+  const children = new SubAgentLog((kind, data) => ctx.event(kind, data), "cursor-agent");
+  const cursorTask = (params: Record<string, unknown>) => {
+    if (typeof params.agentId === "string") void children.note(sessionId, { id: params.agentId, kind: "chat", title: typeof params.description === "string" ? params.description : null, model: typeof params.model === "string" ? params.model : null });
+  };
+  rpc.onRequest = (method, params) => {
+    if (method === "cursor/task") cursorTask(params);
+    return answerCursor(ctx, method, params);
+  };
   rpc.onNotification = (method, params) => {
+    if (method === "cursor/task") return cursorTask(params);
     if (method !== "session/update") return;
     if (replaying) {
       if (replayed.length < MAX_REPLAYED) replayed.push(params);

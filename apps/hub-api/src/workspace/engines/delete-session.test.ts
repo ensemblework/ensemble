@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, writeFile, readFile, lstat, rm, symlink } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { deleteNativeSession } from "./delete-session.js";
+import { DatabaseSync } from "node:sqlite";
+import { cursorChatParent, cursorSubAgents } from "./cursor-chats.js";
+import { deleteNativeChildren, deleteNativeSession } from "./delete-session.js";
 
 test("native Claude, Cursor and pinned Antigravity deletion removes only exact recorded history", async () => {
   const home = await mkdtemp(join(tmpdir(), "ensemble-session-delete-"));
@@ -108,6 +110,78 @@ test("Cursor's agent deletion removes its ACP session from Cursor's config folde
       await assert.rejects(deleteNativeSession("cursor-agent", linked, home), /Linked native session history/);
       assert.equal(await readFile(join(home, "project", "notes.md"), "utf8"), "project sentinel");
     }
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+/** A chat as cursor-agent 2026.11 saves it: `store.db` with its metadata as hex-encoded JSON in `meta` row "0". */
+function cursorStore(path: string, id: string, subagentInfo?: { parentAgentId: string; rootParentAgentId: string }) {
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS blobs (id TEXT PRIMARY KEY, data BLOB); CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);");
+  const meta = { agentId: id, latestRootBlobId: "ab", name: "New Agent", mode: "default", isRunEverything: false, createdAt: 1794587071492, ...(subagentInfo ? { subagentInfo: { ...subagentInfo, toolCallId: "toolu_1", typeName: "generalPurpose" } } : {}) };
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run("0", Buffer.from(JSON.stringify(meta), "utf8").toString("hex"));
+  db.close();
+}
+
+test("Cursor's sub-agent chats are read from the parent their metadata names", () => {
+  const hex = (value: unknown) => Buffer.from(JSON.stringify(value), "utf8").toString("hex");
+  assert.deepEqual(cursorChatParent(hex({ agentId: "c", subagentInfo: { parentAgentId: "p", rootParentAgentId: "r", toolCallId: "t", typeName: "explore" } })), { parent: "p", root: "r" });
+  assert.equal(cursorChatParent(hex({ agentId: "c", name: "New Agent" })), null, "a chat the person started");
+  assert.equal(cursorChatParent("not hex"), null);
+  assert.equal(cursorChatParent(hex("[")), null);
+});
+
+test("deleting a Cursor session deletes the sub-agent chats it started, at any depth, and their transcripts", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ensemble-cursor-tree-"));
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CURSOR_CONFIG_DIR: process.env.CURSOR_CONFIG_DIR, CURSOR_DATA_DIR: process.env.CURSOR_DATA_DIR, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  process.env.HOME = home; process.env.USERPROFILE = home;
+  for (const key of ["CURSOR_CONFIG_DIR", "CURSOR_DATA_DIR", "XDG_CONFIG_HOME"]) delete process.env[key];
+  const gone = (path: string) => assert.rejects(lstat(path), { code: "ENOENT" });
+  try {
+    const cursor = join(home, ".cursor");
+    const [root, child, other, grandchild, outsider, unrelated, plain, broken, named] = Array.from({ length: 9 }, () => randomUUID());
+    const chat = async (workspace: string, id: string, info?: { parentAgentId: string; rootParentAgentId: string }) => {
+      await mkdir(join(cursor, "chats", workspace, id), { recursive: true });
+      cursorStore(join(cursor, "chats", workspace, id, "store.db"), id, info);
+    };
+    // Ensemble's session over ACP; its two sub-agents (one in another workspace's folder); a sub-agent of a sub-agent.
+    await mkdir(join(cursor, "acp-sessions", root), { recursive: true });
+    await writeFile(join(cursor, "acp-sessions", root, "store.db"), "session");
+    await chat("ws-a", child, { parentAgentId: root, rootParentAgentId: root });
+    await chat("ws-b", other, { parentAgentId: root, rootParentAgentId: root });
+    await chat("ws-a", grandchild, { parentAgentId: child, rootParentAgentId: root });
+    // Someone else's tree, a chat the person started, and a store that cannot be read: all kept.
+    await chat("ws-a", outsider, { parentAgentId: unrelated, rootParentAgentId: unrelated });
+    await chat("ws-a", unrelated);
+    await chat("ws-a", plain);
+    await mkdir(join(cursor, "chats", "ws-a", broken), { recursive: true });
+    await writeFile(join(cursor, "chats", "ws-a", broken, "store.db"), "keep");
+    // Transcripts: the session's, with its sub-agents' (one only named there), and another session's.
+    const transcripts = join(cursor, "projects", "home-mira-fieldnote", "agent-transcripts");
+    await mkdir(join(transcripts, root, "subagents"), { recursive: true });
+    await writeFile(join(transcripts, root, `${root}.jsonl`), "session transcript");
+    await writeFile(join(transcripts, root, "subagents", `${child}.jsonl`), "child transcript");
+    await writeFile(join(transcripts, root, "subagents", `${named}.jsonl`), "named only here");
+    await mkdir(join(transcripts, named), { recursive: true });
+    await writeFile(join(transcripts, named, `${named}.jsonl`), "its own folder");
+    // Its chat's store cannot be read here (no meta), so only the transcript names it.
+    await mkdir(join(cursor, "chats", "ws-b", named), { recursive: true });
+    await writeFile(join(cursor, "chats", "ws-b", named, "store.db"), "unreadable");
+    await mkdir(join(transcripts, unrelated, "subagents"), { recursive: true });
+    await writeFile(join(transcripts, unrelated, "subagents", `${outsider}.jsonl`), "keep");
+
+    assert.deepEqual(new Set((await cursorSubAgents(root)).map(found => found.id)), new Set([child, other, grandchild, named]));
+    assert.deepEqual((await cursorSubAgents(child)).map(found => found.id), [grandchild], "a sub-agent's own tree");
+
+    await deleteNativeSession("cursor-agent", root, home);
+    for (const path of [join(cursor, "acp-sessions", root), join(cursor, "chats", "ws-a", child), join(cursor, "chats", "ws-b", other), join(cursor, "chats", "ws-a", grandchild), join(transcripts, root), join(transcripts, named), join(cursor, "chats", "ws-b", named)]) await gone(path);
+    for (const id of [outsider, unrelated, plain]) await lstat(join(cursor, "chats", "ws-a", id, "store.db"));
+    assert.equal(await readFile(join(cursor, "chats", "ws-a", broken, "store.db"), "utf8"), "keep");
+    assert.equal(await readFile(join(transcripts, unrelated, "subagents", `${outsider}.jsonl`), "utf8"), "keep");
+    // Already gone counts as deleted.
+    await deleteNativeSession("cursor-agent", root, home);
   } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(home, { recursive: true, force: true });
@@ -237,6 +311,38 @@ lines.on("line", (line) => {
   process.env.PATH = `${bin}:${saved ?? ""}`;
   try {
     await deleteNativeSession("codex", "0199a0b2-1111-7222-8333-444455556666", bin);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});
+
+test("a session's recorded Codex sub-agent threads are deleted in one app-server, ones the parent's deletion removed counting as deleted", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-codex-children-"));
+  const saved = process.env.PATH;
+  const log = join(bin, "calls.log");
+  // One start per app-server; the first thread is still there, the second went with its parent.
+  await writeFile(
+    join(bin, "codex"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(log)}, "start\\n");
+const lines = require("node:readline").createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: "codex/0.163.0" } }) + "\\n");
+  if (message.method !== "thread/delete") return;
+  fs.appendFileSync(${JSON.stringify(log)}, "delete " + message.params.threadId + "\\n");
+  process.stdout.write(JSON.stringify(message.params.threadId.endsWith("1") ? { id: message.id, result: {} } : { id: message.id, error: { code: -32600, message: "no rollout found for thread id " + message.params.threadId } }) + "\\n");
+});
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeChildren("codex", ["0199a0b2-1111-7222-8333-444455556661", "0199a0b2-1111-7222-8333-444455556662"]);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), ["start", "delete 0199a0b2-1111-7222-8333-444455556661", "delete 0199a0b2-1111-7222-8333-444455556662"]);
+    await assert.rejects(deleteNativeChildren("cursor-agent", ["agent-7"]), /invalid/);
   } finally {
     process.env.PATH = saved;
     await rm(bin, { recursive: true, force: true });

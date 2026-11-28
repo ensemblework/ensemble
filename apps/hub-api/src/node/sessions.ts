@@ -31,7 +31,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { computerAgents } from "../subscriptions/turn.js";
 import { createJob, inSession, sessionChoices, type AssignInput as JobRequest } from "../workspace/assign.js";
-import { dropFromQueue, LIVE_RUN, listSessions, liveOrder, placeInQueue, reorderQueue, resolveSession, runsOfSession, summaryLine, type AgentSession, type SessionRun } from "../workspace/sessions.js";
+import { childrenLine, childSessionsOf, dropFromQueue, LIVE_RUN, listSessions, liveOrder, placeInQueue, reorderQueue, resolveSession, runsOfSession, summaryLine, type AgentSession, type SessionRun } from "../workspace/sessions.js";
 import { steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
@@ -1231,7 +1231,8 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
       risk: "high",
       async run(ctx, input) {
         const session = await usableSession(scope.prisma, scope.node, input.session);
-        return holdForOwner(env(ctx), { action: "delete", input }, {}, `Delete “${session.title}” · ${session.agentName} in ${session.folder}${session.computer ? ` on ${session.computer}` : ""}?\n\nStop its work, cancel queued messages and permanently delete the agent's saved session history. Project files stay. This cannot be undone.`);
+        const more = (await childSessionsOf(scope.prisma, (await runsOfSession(scope.prisma, scopeOf(scope.node), session.id)).map(run => run.id))).length;
+        return holdForOwner(env(ctx), { action: "delete", input }, {}, `Delete “${session.title}” · ${session.agentName} in ${session.folder}${session.computer ? ` on ${session.computer}` : ""}?\n\nStop its work, cancel queued messages and permanently delete the agent's saved session history. ${childrenLine(more)}Project files stay. This cannot be undone.`);
       },
     }),
     defineTool({
