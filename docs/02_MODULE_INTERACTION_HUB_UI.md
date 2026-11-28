@@ -57,7 +57,7 @@ When an input sits inside a box (an icon, chips or a hidden label beside it: `.c
 
 The assistant's bubble sits only along the bottom or the right edge of the work area, never over the sidebar, the top bar or a bar pinned to the work area's foot (an element marked `data-launcher-floor`, such as Code's status bar, which also sends `ensemble:launcher-floor` as it appears and goes): a drag lands on the nearer edge (`snapLauncher` in `components/assistant/ask-launcher.tsx`).
 
-Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters fit the screen it is opened on (`starterPrompts`).
+Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters share one row height, so they are the same size however they wrap. Starters fit the screen it is opened on (`starterPrompts`).
 
 #### Format an assistant message
 
@@ -93,7 +93,7 @@ Row actions float over page titles instead of taking their width, so titles stay
 
 ### Find the views available to your profile
 
-Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission.
+Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Settings › Account › Features has one Runs switch that turns both on or off (`setFeature` in `lib/features.ts`); both signup desks for builders (`mkt.branch-desk`, `mkt.bench`) start with both on.
 
 Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 

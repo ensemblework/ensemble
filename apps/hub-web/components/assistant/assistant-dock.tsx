@@ -423,6 +423,9 @@ export function AssistantDock() {
   const [turnRefs, setTurnRefs] = useState<AssistantRef[]>([]);
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Set once Stop is pressed: the turn ends with the server's own saved reply, so nothing else says "Stopped".
+  const stoppingRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
   const [draft, setDraft] = useState("");
   const [turnError, setTurnError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<AssistantMessageRecord[]>([]);
@@ -575,6 +578,8 @@ export function AssistantDock() {
     const chatId = extra?.fresh ? null : conversationId;
     const controller = new AbortController();
     abortRef.current = controller;
+    stoppingRef.current = false;
+    setStopping(false);
     setPending(true);
     setDraft("");
     setTurnError(null);
@@ -649,7 +654,7 @@ export function AssistantDock() {
         };
         if (event === "status") {
           if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
-          if (frame.text) {
+          if (frame.text && !stoppingRef.current) {
             setWorking(frame.text);
             setLiveStep(frame.text);
           }
@@ -726,23 +731,17 @@ export function AssistantDock() {
       setTurnRefs([]);
     } catch (error) {
       if (isSilentCancellation(error, controller.signal)) {
+        // The server saves its own reply for a stopped turn; it shows once it is saved.
         setTurnError(null);
+        setStreaming("");
+        setLiveTools([]);
+        setLiveStep(null);
         if (sent) attachments.release(sent.files);
         if (nextId) {
-          setConversationId(nextId);
-          setOptimistic([
-            {
-              id: `stopped-${nextId}`,
-              role: "assistant",
-              content: "Stopped.",
-              toolCalls: [],
-              model: null,
-              createdAt: new Date().toISOString(),
-            },
-          ]);
-          window.setTimeout(() => {
-            void client.invalidateQueries({ queryKey: ["assistant-messages", nextId] });
-          }, 600);
+          const chat = nextId;
+          setConversationId(chat);
+          setOptimistic((rows) => rows.filter((row) => row.role === "user" && !row.id.startsWith("local-")));
+          for (const wait of [600, 3000]) window.setTimeout(() => void client.invalidateQueries({ queryKey: ["assistant-messages", chat] }), wait);
         } else {
           setOptimistic([]);
         }
@@ -757,13 +756,30 @@ export function AssistantDock() {
       setPending(false);
       setWorking(null);
       abortRef.current = null;
+      stoppingRef.current = false;
+      setStopping(false);
     }
   };
 
+  /**
+   * Asks the server to stop the turn and waits for it to end the stream with its saved reply. The request
+   * is cut only when there is no chat to stop yet, the stop is refused, or the turn does not end soon.
+   */
   const stop = () => {
-    abortRef.current?.abort();
+    const controller = abortRef.current;
+    if (!controller || stoppingRef.current) return;
+    stoppingRef.current = true;
+    setStopping(true);
+    setWorking("Stopping…");
     const id = conversationRef.current;
-    if (id) void api.stopAssistant(id);
+    if (!id) {
+      controller.abort();
+      return;
+    }
+    api.stopAssistant(id).then(
+      () => window.setTimeout(() => { if (abortRef.current === controller) controller.abort(); }, 20_000),
+      () => controller.abort(),
+    );
   };
 
   const saved = messages.data?.messages ?? [];
@@ -1009,9 +1025,9 @@ export function AssistantDock() {
               type="button"
               className="assistant-send icon-btn"
               onClick={pending ? stop : submit}
-              disabled={!pending && (attachments.uploading > 0 || (!draft.trim() && !attachments.ready.length))}
-              aria-label={pending ? "Stop" : "Send"}
-              title={pending ? "Stop" : attachments.uploading ? "Send is available when the files finish uploading" : "Send"}
+              disabled={pending ? stopping : attachments.uploading > 0 || (!draft.trim() && !attachments.ready.length)}
+              aria-label={pending ? (stopping ? "Stopping" : "Stop") : "Send"}
+              title={pending ? (stopping ? "Stopping" : "Stop") : attachments.uploading ? "Send is available when the files finish uploading" : "Send"}
               aria-describedby={!pending && attachments.uploading ? uploadHint : undefined}
             >
               {pending ? <span className="text-[11px] font-semibold">Stop</span> : <ArrowUp size={15} />}

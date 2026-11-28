@@ -57,11 +57,12 @@ SETTINGS_DESTINATIONS.push(
 for (const tier of ["Low model", "Medium model", "High model", "Max model"]) {
   for (const control of ["provider", "model", "thinking"]) SETTINGS_DESTINATIONS.push({ id:`jump-${slug(tier)}-${control}`, tab:"assistant", section:"models", heading:"Models", label:control === "model" ? tier : `${tier} ${control}`, target:`${tier} ${control}`, keywords:`model tier preset reasoning thinking effort ${tier} ${control}` });
 }
-for (const label of ["Code", "Agent queue", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}`, ownerOnly:true });
+for (const label of ["Code", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}${label === "Runs" ? " agent queue workspace" : ""}`, ownerOnly:true });
 export const SETTINGS_DESTINATION_BY_ID = new Map(SETTINGS_DESTINATIONS.map((row) => [row.id, row]));
 /** Ids that links already carry, for controls that were renamed or moved: each still lands. */
 const ALIASES: Record<string, string> = {
-  "jump-feature-workspace": "jump-feature-agent-queue",
+  "jump-feature-workspace": "jump-feature-runs",
+  "jump-feature-agent-queue": "jump-feature-runs",
   "jump-account-delete-account": "jump-danger-delete-account",
   "jump-you-scheduling-and-confirmations": "jump-you-time-zone-and-email",
   "jump-appearance-appearance": "jump-appearance-theme",

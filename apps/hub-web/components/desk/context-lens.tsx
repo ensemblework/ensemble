@@ -449,15 +449,12 @@ type Section = ReturnType<typeof lensSections>[number];
 type Starter = { key: string; icon: LucideIcon; label: string; run?: () => void };
 
 /** Overview lanes with nothing in them, as one row of first steps instead of a wall of empty tiles. */
-function GetStarted({ items, alone }: { items: Starter[]; alone: boolean }) {
+function GetStarted({ items }: { items: Starter[] }) {
   return (
     <section className="lens-start" data-lens-start aria-label="Get started">
       <div className="lens-start-head">
         <span className="lens-start-icon" aria-hidden="true"><Compass size={14} /></span>
-        <div>
-          <h2>Get started</h2>
-          <p>{alone ? "Your context fills in as you work. Start with one of these." : "Empty sections wait here until they have something in them."}</p>
-        </div>
+        <h2>Get started</h2>
       </div>
       <div className="lens-start-chips">
         {items.map((item) => {
@@ -562,7 +559,7 @@ function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTa
           </Tile>
         );
       })}
-      {starters.length ? <GetStarted items={starters} alone={!drawn.length} /> : null}
+      {starters.length ? <GetStarted items={starters} /> : null}
       {hidden.length || customized ? (
         <div className="lens-hidden" style={{ gridColumn: "1 / -1" }} data-lens-hidden>
           {hidden.length ? <span>Hidden:</span> : null}

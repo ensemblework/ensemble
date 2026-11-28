@@ -747,7 +747,6 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .lens-start-head { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 260px; }
 .desk .lens-start-icon { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; background: rgb(var(--accent-rgb) / 0.12); color: var(--accent); }
 .desk .lens-start-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.desk .lens-start-head p { margin: 1px 0 0; font-size: 12.5px; color: var(--muted); }
 .desk .lens-start-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .desk .lens-start-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink-2); font: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
 .desk .lens-start-chip svg { color: var(--muted); }

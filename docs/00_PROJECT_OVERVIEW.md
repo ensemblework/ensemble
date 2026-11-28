@@ -127,7 +127,7 @@ Client/plugin distribution assets are in `ensemblework/ensemble-integrations`; v
 | Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
-| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Agent queue, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
+| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Runs (the agent queue and run history, one switch) and Skills, and start with Runs on; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
 | Appearance | Brand assets, light/dark/system, fonts, text scale, reduced motion, circular pixel avatars shared by every profile, backgrounds; contextual AI motion, structural loading and static waiting-for-you states | [BRAND](BRAND.md) |
 
 ## 5. Assistant
