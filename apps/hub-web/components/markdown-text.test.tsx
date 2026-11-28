@@ -214,3 +214,14 @@ test("TeX in model output draws as math; prices and code stay text", async () =>
   assert.match(mounted.host.textContent ?? "", /It costs \$5 and \$10\. Run echo \$x\$ or pay \$3\./);
   await unmount(mounted);
 });
+
+test("agent replies draw spaced $$ … $$ and equations under list items; shell text stays", async () => {
+  const { loadKatex } = await import("@/lib/math");
+  await loadKatex();
+  const mounted = await render("The vector $$ x_0 \\in \\mathbb{R}^{d} $$ here.\n\n1. Flatten the image:\n   $$\n   d = H \\times W\n   $$\n2. Run `echo $$` and kill $$ later.");
+  const shown = [...mounted.host.querySelectorAll(".page-math-shown")].map((node) => node.getAttribute("data-math"));
+  assert.deepEqual(shown, ["ok", "ok"]);
+  assert.ok(mounted.host.querySelector("li .md-math-block .katex-display"), "the equation under the list item is drawn");
+  assert.match(mounted.host.textContent ?? "", /Run echo \$\$ and kill \$\$ later\./);
+  await unmount(mounted);
+});

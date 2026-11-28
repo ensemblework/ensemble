@@ -412,7 +412,7 @@ function TraceRow({ entry, defaultOpen, active }: { entry: TraceEntry; defaultOp
         <div className="space-y-2.5 border-t border-line px-3 py-2.5">
           {entry.reasoning ? (
             <Section label="Thinking" icon={<Brain size={12} />}>
-              <div className="whitespace-pre-wrap text-[12.5px] italic leading-5 text-muted [overflow-wrap:anywhere]"><LinkifiedText text={entry.reasoning} /></div>
+              <MarkdownText text={entry.reasoning} className="space-y-1.5 text-[12.5px] italic leading-5 text-muted [overflow-wrap:anywhere]" />
             </Section>
           ) : null}
           {entry.calls.map((call) => (

@@ -71,3 +71,10 @@ test("an equation saved with blank lines in its TeX stays one equation", () => {
   const doc: PageDocument = { type: "doc", content: [{ type: "blockMath", attrs: { latex: "a = b\n\nc = d" } }] };
   assert.deepEqual(markdownToNodes(pageMarkdown(doc, "")), [{ type: "blockMath", attrs: { latex: "a = b\nc = d" } }]);
 });
+
+test("a task's Markdown notes open as blocks on its page before it is first written; plain notes keep their lines", async () => {
+  const { notesDoc } = await import("./store.js");
+  assert.deepEqual(notesDoc("## What it is\nA recap tool.\n\n- one\n- two").content.map((node) => node.type), ["heading", "paragraph", "bulletList"]);
+  assert.deepEqual(notesDoc("Call Mira\nThen book").content.map((node) => node.content?.[0]?.text), ["Call Mira", "Then book"]);
+  pageSchema.nodeFromJSON(notesDoc("Steps\n$$\nx^2\n$$\nDone, it costs $5.")).check();
+});

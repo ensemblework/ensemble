@@ -20,6 +20,7 @@ import { SearchQuery } from "@/components/motion/search-query";
 import { HighlightMatch, searchHitHref } from "./search-match";
 import { GROUP_TITLE, PALETTE_GROUPS, actionIcon, destinationIcon, hitKind, readRecents, rememberRecent, shortcutKeys, type PaletteGroup, type PaletteRecent } from "./palette-items";
 import { cx } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const ACTIONS: Array<{ id: string; label: string; hint: string; run: () => void }> = [
   { id: "act-capture", label: "Quick capture", hint: "New reminder", run: () => window.dispatchEvent(new CustomEvent("ensemble:capture")) },
@@ -276,7 +277,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                               <span className="cmdk-title"><HighlightMatch text={item.label} query={trimmed} /></span>
                               {item.hint ? <span className="cmdk-hint">{item.hint}</span> : null}
                             </span>
-                            {item.excerpt ? <span className="cmdk-excerpt"><HighlightMatch text={item.excerpt} query={trimmed} /></span> : null}
+                            {item.excerpt ? <span className="cmdk-excerpt"><HighlightMatch text={markdownPlainText(item.excerpt)} query={trimmed} /></span> : null}
                           </span>
                           {item.meta ? <span className="cmdk-meta">{item.meta}</span> : null}
                           {item.keys?.length ? (

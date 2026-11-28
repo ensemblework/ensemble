@@ -19,6 +19,7 @@ import { Meter, PersonPicker, ShareDialog } from "../sharing/share-dialog";
 import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "../toast";
 import { Dialog, QueryError, SectionCard, SettingRow, SkeletonRows } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 export const KIND_NAMES: Record<ShareKind, string> = {
   page: "Page",
@@ -352,7 +353,7 @@ export function SharingTab() {
                 <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 text-[13px]">
                   <span className="block truncate font-medium">{item.title}</span>
-                  {item.excerpt && <span className="mt-1 line-clamp-2 block text-[12px] text-muted">{item.excerpt}</span>}
+                  {item.excerpt && <span className="mt-1 line-clamp-2 block text-[12px] text-muted">{markdownPlainText(item.excerpt)}</span>}
                   <span className="mt-1 block text-[11px] text-faint">{item.spaceName} · Shared {friendlyDateTime(item.since)}</span>
                   {!item.openedAt ? <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] text-ink">New</span> : null}
                 </span>

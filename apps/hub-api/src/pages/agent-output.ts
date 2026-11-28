@@ -5,7 +5,7 @@
  * folder and computer, the run), so the page keeps the link to the work that wrote it. Keeping the same
  * run again replaces its block in place; the person's own blocks are never touched.
  */
-import { markdownToNodes, type PageNode } from "@ensemble/shared-types";
+import { markdownToNodes, notesDocument, type PageNode } from "@ensemble/shared-types";
 import type { PrismaClient } from "@prisma/client";
 import { meetingContent, meetingNotesFields, saveMeetingNotes } from "../cowork/service.js";
 import { lockSave } from "../lib/save-conflict.js";
@@ -57,7 +57,8 @@ export async function keepAgentOutput(prisma: PrismaClient, userId: string, targ
       userId,
       target,
       (current) => {
-        const base = current.content?.content ?? (current.notes.trim() ? markdownToNodes(current.notes) : []);
+        // The notes as the task page showed them before it was first written (`notesDocument`).
+        const base = current.content?.content ?? (current.notes.trim() ? notesDocument(current.notes).content : []);
         return { content: { type: "doc", content: withBlock(base, block, meta.jobId) } };
       },
       "agent",

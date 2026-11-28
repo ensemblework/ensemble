@@ -9,6 +9,7 @@ import { switchSpace } from "@/lib/spaces";
 import { Avatar } from "@/components/sharing/people";
 import { SpaceIcon } from "@/components/shell/space-switcher";
 import { PageHeader, SkeletonRows } from "@/components/ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const ICON: Record<ShareKind, typeof FileText> = {
   page: FileText,
@@ -104,7 +105,7 @@ export default function SharedWithYouPage() {
                     {!item.openedAt ? <span className="ml-auto rounded bg-accent-soft px-1.5 text-[10px] font-medium text-ink">New</span> : null}
                   </span>
                   <span className="mt-2 line-clamp-2 text-[14px] font-medium leading-5">{item.title}</span>
-                  {item.excerpt ? <p className="mt-1 line-clamp-2 text-[12px] text-muted">{item.excerpt}</p> : null}
+                  {item.excerpt ? <p className="mt-1 line-clamp-2 text-[12px] text-muted">{markdownPlainText(item.excerpt)}</p> : null}
                   <span className="mt-auto flex items-center gap-1.5 pt-3 text-2xs text-muted">
                     <Avatar person={item.owner} size={16} />
                     <span className="truncate">

@@ -2,7 +2,7 @@
  * Page content from a text, Markdown, code, CSV or TSV file. PDF and Word files are
  * converted in the browser instead (they send the content to POST /api/documents/:id/page).
  */
-import { fileFormat, type PageDocument, type PageNode } from "@ensemble/shared-types";
+import { fileFormat, latexToMarkdown, looksLikeLatex, type PageDocument, type PageNode } from "@ensemble/shared-types";
 import Papa from "papaparse";
 import { markdownToNodes } from "../pages/markdown.js";
 import { decodeStart } from "./extract.js";
@@ -75,6 +75,9 @@ export function pageFromFile(filename: string, bytes: Uint8Array): PageDocument 
     nodes.push({ type: "codeBlock", attrs: { language: format.language ?? null }, content: text(body) });
   } else if (format.ext === "md" || format.ext === "markdown") {
     nodes.push(...markdownToNodes(body));
+  } else if (format.ext === "tex" || looksLikeLatex(body)) {
+    // A LaTeX document's headings, lists, emphasis and equations, without a TeX engine.
+    nodes.push(...markdownToNodes(latexToMarkdown(body), { lineBreaks: true }));
   } else {
     nodes.push(...plainParagraphs(body));
   }

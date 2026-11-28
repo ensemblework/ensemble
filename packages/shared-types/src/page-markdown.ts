@@ -5,15 +5,16 @@
  */
 import type { PageNode } from "./domain.js";
 import { pageImageAlign, pageImageSide, pageImageWidth } from "./page-images.js";
-import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, startsMathBlock, unescapeMathText } from "./page-math.js";
+import { latexToMarkdown, looksLikeLatex } from "./page-latex.js";
+import { INLINE_MATH_SOURCE, hasInlineMath, inlineMathMatch, inlineMathPattern, mathBlockAt, startsMathBlock, unescapeMathText } from "./page-math.js";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
 
-// Underscores inside a word (snake_case) are not emphasis. A link's text stops at the next `[`, so
+// Underscores inside a word (snake_case) are not emphasis; `<u>…</u>` is underline. A link's text stops at the next `[`, so
 // a run of brackets cannot make the scan quadratic. Math (page-math.ts) comes last: it only starts
 // at a dollar sign or `\(`, and starting there it wins over the emphasis inside the TeX.
 const INLINE = new RegExp(
-  String.raw`(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|\x60([^\x60]+)\x60|\[([^\[\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))|${INLINE_MATH_SOURCE}`,
+  String.raw`(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|\x60([^\x60]+)\x60|\[([^\[\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+)|<u>([^<>\n]{1,1000})<\/u>)|${INLINE_MATH_SOURCE}`,
   "gu",
 );
 
@@ -43,7 +44,7 @@ function inline(text: string): PageNode[] {
   };
   for (const match of text.matchAll(INLINE)) {
     plain(text.slice(last, match.index), undefined, last === 0);
-    const math = match[1] === undefined ? inlineMathMatch(match[11], match[12], match[13]) : null;
+    const math = match[1] === undefined ? inlineMathMatch(match[12], match[13], match[14]) : null;
     if (math) {
       out.push(mathNode(math));
       last = match.index! + match[0].length;
@@ -55,6 +56,7 @@ function inline(text: string): PageNode[] {
     else if (match[7]) push(match[7], [{ type: "code" }]);
     else if (match[8]) marked(match[8], [{ type: "link", attrs: { href: match[9] } }]);
     else if (match[10]) push(match[10], [{ type: "link", attrs: { href: match[10] } }]);
+    else if (match[11]) marked(match[11], [{ type: "underline" }]);
     else if (match[1] === undefined) push(match[0]);
     last = match.index! + match[0].length;
   }
@@ -269,4 +271,79 @@ export function looksLikeMarkdown(text: string): boolean {
   // A display equation counts; `$` math alone does not, since logs and shell lines are full of dollar signs.
   if (lines.some((line, index) => BLOCK_SYNTAX.test(line) || startsTable(lines, index) || startsMathBlock(lines, index))) return true;
   return INLINE_SYNTAX.test(text);
+}
+
+/**
+ * Plain text with equations as page blocks, and nothing else read as Markdown: each line a
+ * paragraph (as a plain paste makes them), display equations (`$$…$$`, `\[…\]` on lines of their
+ * own) as blocks and inline `$…$` as equations under the strict rules (page-math.ts). Null when the
+ * text holds no math.
+ */
+export function mathTextNodes(text: string): PageNode[] | null {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (!lines.some((line, index) => startsMathBlock(lines, index) || hasInlineMath(line))) return null;
+  const nodes: PageNode[] = [];
+  for (let i = 0; i < lines.length; ) {
+    const block = mathBlockAt(lines, i);
+    if (block) {
+      nodes.push({ type: "blockMath", attrs: { latex: block.latex } });
+      i = block.next;
+      continue;
+    }
+    const line = lines[i++]!;
+    if (!line.trim()) continue;
+    const content: PageNode[] = [];
+    let at = 0;
+    for (const found of line.matchAll(inlineMathPattern())) {
+      const math = inlineMathMatch(found[1], found[2], found[3]);
+      if (!math) continue;
+      if (found.index! > at) content.push({ type: "text", text: line.slice(at, found.index) });
+      content.push(mathNode(math));
+      at = found.index! + found[0].length;
+    }
+    if (at < line.length) content.push({ type: "text", text: line.slice(at) });
+    nodes.push({ type: "paragraph", content });
+  }
+  return nodes.length ? nodes : null;
+}
+
+/**
+ * Pasted or imported plain text as page blocks, the way Notion reads it: a LaTeX document by its
+ * structure (page-latex.ts), Markdown (each line kept), or plain text with its equations. Null for
+ * ordinary text, which stays as typed.
+ */
+export function textToPageNodes(text: string): PageNode[] | null {
+  if (looksLikeLatex(text)) return markdownToNodes(latexToMarkdown(text), { lineBreaks: true });
+  if (looksLikeMarkdown(text)) return markdownToNodes(text, { lineBreaks: true });
+  return mathTextNodes(text);
+}
+
+/**
+ * Markdown as one line of plain text, for previews that show a line or two (cards, snippets,
+ * search results, notifications): headings, list and quote markers, emphasis, code ticks, links,
+ * images, rules, table pipes and `<details>` tags go; the words, link text and TeX stay.
+ */
+export function markdownPlainText(text: string): string {
+  if (!/[#*_~`[\]<>|$-]|^\s*\d+[.)]\s/m.test(text)) return text.replace(/\s+/g, " ").trim();
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !/^\s*(```|~~~|(-{3,}|\*{3,}|_{3,})\s*$|\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$|\$\$\s*$|\\[[\]]\s*$)/.test(line))
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}#{1,6}\s+/, "")
+        .replace(/^\s*>\s?/, "")
+        .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+        .replace(/<\/?(?:details|summary|u)(?:\s[^<>]{0,200})?>/gi, "")
+        .replace(/!\[([^\[\]]*)\]\([^()\s]*\)/g, "$1")
+        .replace(/\[([^\[\]]+)\]\([^()\s]*\)/g, "$1")
+        .replace(/(\*\*|__|~~)(?=\S)([^*_~]{1,2000}?)(?<=\S)\1/g, "$2")
+        .replace(/(?<![\p{L}\p{N}*_])([*_])(?=[^\s*_])([^*_\n]{1,2000}?)(?<=[^\s*_])\1(?![\p{L}\p{N}*_])/gu, "$2")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/\s*\|\s*/g, " · ")
+        .replace(/^ · | · $/g, ""),
+    )
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

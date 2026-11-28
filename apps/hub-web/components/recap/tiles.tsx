@@ -19,6 +19,7 @@ import { AgentIcon } from "@/components/agent-icon";
 import type { WeeklyRecap } from "@/lib/api";
 import type { TileControls } from "@/components/desk/arrange";
 import { dayLabel, dayMonth, plural } from "./format";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 /** The recap's card: the desk tile look, sized by the recap grid (data-md / data-lg spans). */
 export function RecapTile({
@@ -301,7 +302,7 @@ export function Record({ data }: { data: WeeklyRecap }) {
               <li key={meeting.href} className="recap-meeting">
                 <Link href={meeting.href}>{meeting.title}</Link>
                 <small>{meeting.when}</small>
-                {meeting.summary ? <p>{meeting.summary}</p> : null}
+                {meeting.summary ? <p>{markdownPlainText(meeting.summary)}</p> : null}
               </li>
             ))}
           </ul>

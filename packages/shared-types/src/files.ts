@@ -72,6 +72,7 @@ export const FILE_FORMATS: readonly FileFormat[] = [
   f("md", "text", "text/markdown", "Markdown", { toPage: "server" }),
   f("markdown", "text", "text/markdown", "Markdown", { toPage: "server" }),
   f("log", "text", "text/plain", "Log", { toPage: "server" }),
+  f("tex", "text", "application/x-tex", "LaTeX", { toPage: "server" }),
   code("json", "json", "JSON", "application/json"),
   code("jsonl", "json", "JSON lines"),
   code("yaml", "yaml", "YAML"),
