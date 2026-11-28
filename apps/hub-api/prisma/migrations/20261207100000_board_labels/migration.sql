@@ -40,13 +40,15 @@ WITH used AS (
     WHERE name <> ''
     GROUP BY "user_id", board_key, lower(name), name
 ), chosen AS (
-    SELECT DISTINCT ON ("user_id", board_key, name_key) "user_id", board_key, name_key, name, label_first_used AS first_used
+    -- The output keeps the label's first use (for position) under its own name, so first_used in
+    -- ORDER BY is this spelling's own first use: on a tie in uses, the spelling used first wins.
+    SELECT DISTINCT ON ("user_id", board_key, name_key) "user_id", board_key, name_key, name, label_first_used
     FROM spellings
     ORDER BY "user_id", board_key, name_key, uses DESC, first_used ASC, name ASC
 )
 INSERT INTO "board_labels" ("id", "user_id", "board_key", "name", "name_key", "position", "created_at", "updated_at")
 SELECT gen_random_uuid()::text, "user_id", board_key, name, name_key,
-       (row_number() OVER (PARTITION BY "user_id", board_key ORDER BY first_used, name_key)) - 1,
+       (row_number() OVER (PARTITION BY "user_id", board_key ORDER BY label_first_used, name_key)) - 1,
        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 FROM chosen;
 

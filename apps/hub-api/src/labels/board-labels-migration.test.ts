@@ -54,6 +54,11 @@ test("existing labels become each board's list, de-duplicated without regard to 
     await db.query(`INSERT INTO task_pages (id, user_id, task_id, board_id, updated_at) VALUES ('p5', 'u1', 't5', 'b1', NOW())`);
     await task("t6", "u2", ["LAUNCH"], "2026-01-06");
     await task("t7", "u1", [], "2026-01-07");
+    // A tie in uses: the spelling used first wins, though "Bug" sorts before "bug".
+    await task("t8", "u2", ["bug"], "2026-01-01");
+    await task("t9", "u2", ["Bug"], "2026-01-02");
+    await task("t10", "u2", ["bug"], "2026-01-03");
+    await task("t11", "u2", ["Bug"], "2026-01-04");
 
     await applyMigration(db, mine!);
 
@@ -67,7 +72,8 @@ test("existing labels become each board's list, de-duplicated without regard to 
       ["u1", "", "Old", "old", null, 2],
       ["u1", "b1", "Lab", "lab", null, 0],
       ["u1", "b1", "launch", "launch", null, 1],
-      ["u2", "", "LAUNCH", "launch", null, 0],
+      ["u2", "", "bug", "bug", null, 0],
+      ["u2", "", "LAUNCH", "launch", null, 1],
     ]);
     const tasks = await db.query<{ id: string; labels: string[] }>(`SELECT id, labels FROM tasks ORDER BY id`);
     assert.deepEqual(Object.fromEntries(tasks.rows.map((row) => [row.id, row.labels])), {
@@ -78,6 +84,10 @@ test("existing labels become each board's list, de-duplicated without regard to 
       t5: ["launch", "Lab"],
       t6: ["LAUNCH"],
       t7: [],
+      t8: ["bug"],
+      t9: ["bug"],
+      t10: ["bug"],
+      t11: ["bug"],
     });
     const columns = await db.query<{ table_name: string }>(`SELECT table_name FROM information_schema.columns WHERE column_name = 'labels' AND table_name IN ('task_pages', 'deliverables') ORDER BY table_name`);
     assert.deepEqual(columns.rows.map((row) => row.table_name), ["deliverables", "task_pages"]);
