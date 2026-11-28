@@ -218,7 +218,6 @@ export async function runCodex(
     // A sub-agent's thread (Codex's `spawn_agent`) reports here too, and often finishes first. Its tool calls are
     // work in the folder, kept in the trace as a sub-agent's; its messages, tokens and turn end are not the run's.
     const child = otherCodexThread(params, threadId);
-    if (child) void children.note(threadId, { id: String(params.threadId), kind: "thread" });
     const work = (async () => {
       if (method === "item/started" || method === "item/completed") {
         const item = (params.item ?? {}) as {
@@ -239,7 +238,8 @@ export async function runCodex(
           error?: unknown;
         };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
-        // Codex's `spawn_agent` names the threads it started, with what they were asked and the model.
+        // Codex's `spawn_agent` names the threads it started, with what they were asked and the model: only those are the
+        // session's children (another thread on this connection is not proof, and deleting a thread deletes its descendants).
         if (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") {
           const spawn = item as { receiverThreadIds?: unknown; senderThreadId?: unknown; prompt?: unknown; model?: unknown };
           for (const id of Array.isArray(spawn.receiverThreadIds) ? spawn.receiverThreadIds : []) {

@@ -171,6 +171,34 @@ export async function deleteCodexProjects(ids: string[]): Promise<void> {
   });
 }
 
+/**
+ * Deletes the sessions of their own a session's agent started, by the ids its runs recorded (sub-agents.ts), after the
+ * session itself, each agent's in one go: Codex's threads in one app-server (`thread/delete`; one the parent's deletion
+ * already removed counts as deleted), Cursor's chats by their exact folders and transcripts, without reading every chat
+ * again. The other agents keep their sub-agents in the session's own files.
+ */
+export async function deleteNativeChildren(engine: CodeEngine, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  for (const id of ids) SessionId.parse(id);
+  if (engine === "codex") {
+    const done = await withCodexServer(async rpc => {
+      for (const threadId of ids) {
+        try { await rpc.request("thread/delete", { threadId }); }
+        catch (error) { if (!(error instanceof Error && absentSession(error.message, threadId))) throw error; }
+      }
+    });
+    if (!done) throw new Error("Install or update Codex on this computer to delete its saved thread.");
+  } else if (engine === "cursor-agent") {
+    if (ids.some(id => !uuid.test(id))) throw new Error("This agent's recorded session ID is invalid.");
+    const chats = join(cursorConfigDir(), "chats"), projects = join(cursorDataDir(), "projects");
+    const workspaces = await folders(chats), places = await folders(projects);
+    for (const id of ids) {
+      for (const workspace of workspaces) await removeHistory(chats, [workspace, id]);
+      for (const place of places) await removeHistory(projects, [place, "agent-transcripts", id]);
+    }
+  }
+}
+
 export async function deleteNativeSession(engine: CodeEngine, sessionId: string, cwd: string): Promise<void> {
   SessionId.parse(sessionId);
   if (engine === "claude-code" || engine === "cursor-agent") {

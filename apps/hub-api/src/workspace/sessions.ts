@@ -400,14 +400,17 @@ export type ChildSession = { runId: string; engine: string; id: string; kind: st
  */
 export async function childSessionsOf(prisma: Pick<PrismaClient, "workspaceEvent">, runIds: readonly string[]): Promise<ChildSession[]> {
   if (!runIds.length) return [];
-  const rows = await prisma.workspaceEvent.findMany({ where: { jobId: { in: [...runIds] }, kind: "sub_agent" }, select: { jobId: true, data: true }, orderBy: { sequence: "asc" }, take: 5_000 });
+  // Newest first, so the cap leaves out the oldest sessions' children, never the ones just started.
+  const rows = await prisma.workspaceEvent.findMany({ where: { jobId: { in: [...runIds] }, kind: "sub_agent" }, select: { jobId: true, data: true }, orderBy: { sequence: "desc" }, take: 5_000 });
   const found = new Map<string, ChildSession>();
   for (const row of rows) {
     const data = (row.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : {}) as Record<string, unknown>;
     if (typeof data.id !== "string" || typeof data.engine !== "string" || !OWN_SESSION_KINDS.includes(data.kind as SubAgentKind)) continue;
     const key = `${data.engine}:${data.id}`;
     const title = typeof data.title === "string" ? data.title : null;
-    found.set(key, { runId: row.jobId, engine: data.engine, id: data.id, kind: data.kind as string, title: title ?? found.get(key)?.title ?? null });
+    const known = found.get(key);
+    if (!known) found.set(key, { runId: row.jobId, engine: data.engine, id: data.id, kind: data.kind as string, title });
+    else if (!known.title && title) known.title = title;
   }
   return [...found.values()];
 }

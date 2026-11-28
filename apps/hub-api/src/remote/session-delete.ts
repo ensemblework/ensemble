@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
-import { isCodeEngine } from "@ensemble/shared-types";
+import { isCodeEngine, type CodeEngine } from "@ensemble/shared-types";
 import { env } from "../config.js";
-import { deleteNativeSession } from "../workspace/engines/delete-session.js";
+import { deleteNativeChildren, deleteNativeSession } from "../workspace/engines/delete-session.js";
 import { sessionToDelete } from "../workspace/engines/sub-agents.js";
 import { lockSession, runsOfSession, sessionOfJob, sessionDeletionOf } from "../workspace/sessions.js";
 import { stopJob } from "../workspace/worker.js";
@@ -56,17 +56,17 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
     await new Promise(done => setTimeout(done, 250));
   }
   const nativeJobs = await app.prisma.workspaceJob.findMany({ where: { userId: accountId, id: { in: [...allIds] } }, select: { id: true, provider: true, externalRoot: true, repoPath: true } });
-  // Each run's own session first, then the sessions of their own its agent started (Codex threads, Cursor chats), each by
-  // its exact id once its run has stopped, which stopped them too. A child the parent's deletion already removed counts as deleted.
-  const events = (await app.prisma.workspaceEvent.findMany({ where: { jobId: { in: [...allIds] }, kind: { in: ["engine", "sub_agent"] } }, select: { jobId: true, kind: true, data: true }, orderBy: { sequence: "asc" } }))
-    .sort((a, b) => Number(a.kind !== "engine") - Number(b.kind !== "engine"));
+  const events = await app.prisma.workspaceEvent.findMany({ where: { jobId: { in: [...allIds] }, kind: { in: ["engine", "sub_agent"] } }, select: { jobId: true, kind: true, data: true }, orderBy: { sequence: "asc" } });
   const seen = new Set<string>();
+  /** The sessions of their own each agent started (Codex threads, Cursor chats), by the ids the runs recorded. */
+  const children = new Map<CodeEngine, Set<string>>();
   for (const job of nativeJobs) {
     if (!isCodeEngine(job.provider)) continue;
     const engine = job.provider;
     for (const event of events.filter(event => event.jobId === job.id)) {
       const session = sessionToDelete(event, engine);
       if (!session) continue;
+      if (event.kind === "sub_agent") { children.set(engine, (children.get(engine) ?? new Set()).add(session)); continue; }
       const key = `${job.provider}:${session}`;
       if (seen.has(key)) continue;
       const done = await app.prisma.preference.findUnique({ where: { userId_key: { userId: accountId, key: receipt(key) } } });
@@ -95,6 +95,23 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
       const runs = await runsOfSession(tx, { space: accountId, runner: null }, root, true);
       await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${deleted}::jsonb) WHERE id IN (${Prisma.join(runs.map(run => run.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     });
+  }
+  // Then the children, once their runs stopped (which stopped them), each agent's in one go: Codex's threads in one
+  // app-server, Cursor's chats by their exact folders. One the parent's deletion already removed counts as deleted.
+  for (const [engine, ids] of children) {
+    const left = [...ids].map(id => ({ id, key: `${engine}:${id}` })).filter(({ key }) => !seen.has(key));
+    const done = new Set((await app.prisma.preference.findMany({ where: { userId: accountId, key: { in: left.map(({ key }) => receipt(key)) } }, select: { key: true } })).map(row => row.key));
+    const todo = left.filter(({ key }) => !done.has(receipt(key)));
+    if (!todo.length) continue;
+    await deleteNativeChildren(engine, todo.map(({ id }) => id));
+    for (const { key } of todo) {
+      await app.prisma.preference.upsert({
+        where: { userId_key: { userId: accountId, key: receipt(key) } },
+        create: { userId: accountId, key: receipt(key), value: { deleted: true }, source: "system" },
+        update: { value: { deleted: true }, deletedAt: null },
+      });
+      seen.add(key);
+    }
   }
 }
 

@@ -29,6 +29,11 @@ export type SubAgent = { id: string; kind: SubAgentKind; parent?: string | null;
 export const OWN_SESSION_KINDS: readonly SubAgentKind[] = ["thread", "chat"];
 
 const clip = (value: string | null | undefined, max: number) => value?.replace(/\s+/g, " ").trim().slice(0, max) || null;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+/** An id deleteNativeSession takes: a Cursor chat's is a UUID, a Codex thread's a session id. */
+const SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/;
+/** Whether a child of this kind has an id its session's deletion can use; a sub-agent inside the session is never deleted by its id. */
+export const deletableId = (kind: SubAgentKind, id: string): boolean => kind === "chat" ? UUID.test(id) : kind === "thread" ? SESSION_ID.test(id) : true;
 
 /**
  * The children a run saw start, each noted once as a `sub_agent` event of the run: the engine, the session it
@@ -40,8 +45,8 @@ export class SubAgentLog {
   constructor(private readonly event: (kind: string, data: Record<string, unknown>) => Promise<void>, private readonly engine: string) {}
 
   note(session: string | null, child: SubAgent): Promise<void> {
-    const id = clip(child.id, 200);
-    if (!id || id === session) return Promise.resolve();
+    const id = child.id.trim();
+    if (!id || id.length > 200 || id === session || !deletableId(child.kind, id)) return Promise.resolve();
     const title = clip(child.title, 200);
     const before = this.titled.get(id);
     if (before === true || (before === false && !title)) return Promise.resolve();
@@ -57,7 +62,7 @@ export function sessionToDelete(event: { kind: string; data: unknown }, engine: 
   const data = (event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data : {}) as Record<string, unknown>;
   if (event.kind === "engine") return typeof data.session === "string" && data.session ? data.session : null;
   if (event.kind !== "sub_agent" || data.engine !== engine || !OWN_SESSION_KINDS.includes(data.kind as SubAgentKind)) return null;
-  return typeof data.id === "string" && data.id ? data.id : null;
+  return typeof data.id === "string" && deletableId(data.kind as SubAgentKind, data.id) ? data.id : null;
 }
 
 /** How deep Claude Code's sub-agents may nest in a run Ensemble starts: Claude Code's documented default, which a remote flag of its own can otherwise change. */

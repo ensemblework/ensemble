@@ -90,6 +90,13 @@ test("a run notes each child its agent started once, again only when its task ar
     { event: "sub_agent", engine: "codex", session: "thread-root", id: "thread-euclid", kind: "thread", title: "Reply PLUM", model: "gpt-6-luna" },
     { event: "sub_agent", engine: "codex", session: "thread-root", id: "thread-james", kind: "thread", parent: "thread-euclid" },
   ], "the parent is named only when it is not the session itself");
+  // An id the session's deletion could not use is not recorded: a Cursor chat's is a UUID, a Codex thread's a session id.
+  const refused: unknown[] = [];
+  const strict = (engine: string) => new SubAgentLog(async (event, data) => void refused.push({ event, ...data }), engine);
+  await strict("codex").note("thread-root", { id: "not/a/thread", kind: "thread" });
+  await strict("codex").note("thread-root", { id: "x".repeat(201), kind: "thread" });
+  await strict("cursor-agent").note("chat-root", { id: "agent-7", kind: "chat" });
+  assert.deepEqual(refused, []);
   const failing = new SubAgentLog(async () => { throw new Error("database gone"); }, "cursor-agent");
   await failing.note("chat-1", { id: "chat-2", kind: "chat" });
 });
@@ -101,4 +108,6 @@ test("a session's deletion takes its own session and the sessions of their own i
   assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "claude-code", id: "toolu_1", kind: "inside" } }, "claude-code"), null, "part of the session's own files");
   assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "codex", id: "thread-euclid", kind: "thread" } }, "cursor-agent"), null, "another agent's child");
   assert.equal(sessionToDelete({ kind: "tool", data: { session: "x" } }, "codex"), null);
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "cursor-agent", id: "agent-7", kind: "chat" } }, "cursor-agent"), null, "an id deletion would refuse is skipped, so it never blocks the session's deletion");
+  assert.equal(sessionToDelete({ kind: "sub_agent", data: { engine: "codex", id: "../thread", kind: "thread" } }, "codex"), null);
 });

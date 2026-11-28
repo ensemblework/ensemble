@@ -46,7 +46,11 @@ async function work(cwd) {
   });
   seen.push("mcp:" + reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2).result.content[0].text);
   seen.push("policy:" + thread.approvalPolicy, "sandbox:" + thread.sandbox, "trust:" + thread.config.projects[cwd].trust_level, "keys:" + (process.env.OPENAI_API_KEY ? "leaked" : "none"));
-  // A sub-agent (spawn_agent) is a thread of its own that reports on this connection, and finishes first.
+  // A sub-agent (spawn_agent) is a thread of its own that reports on this connection, and finishes first. The call names it.
+  send({ method: "item/started", params: { threadId: "t1", turnId: "u1", startedAtMs: 0, item: { type: "collabAgentToolCall", id: "spawn-1", tool: "spawnAgent", status: "inProgress", senderThreadId: "t1", receiverThreadIds: [], prompt: "Reply PLUM", model: null, reasoningEffort: null, agentsStates: {} } } });
+  send({ method: "item/completed", params: { threadId: "t1", turnId: "u1", completedAtMs: 0, item: { type: "collabAgentToolCall", id: "spawn-1", tool: "spawnAgent", status: "completed", senderThreadId: "t1", receiverThreadIds: ["t2"], prompt: "Reply PLUM", model: null, reasoningEffort: null, agentsStates: {} } } });
+  // Another thread on the connection that no spawn_agent named is not the session's to delete.
+  send({ method: "thread/tokenUsage/updated", params: { threadId: "t9", turnId: "u9", tokenUsage: { total: { totalTokens: 1, inputTokens: 1, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 }, last: {}, modelContextWindow: null } } });
   send({ method: "turn/started", params: { threadId: "t2", turn: { id: "u2", status: "inProgress", items: [] } } });
   send({ method: "item/started", params: { threadId: "t2", turnId: "u2", startedAtMs: 0, item: { type: "commandExecution", id: "c-sub", command: "ls", cwd, status: "inProgress" } } });
   send({ method: "item/completed", params: { threadId: "t2", turnId: "u2", completedAtMs: 0, item: { type: "commandExecution", id: "c-sub", command: "ls", cwd, status: "completed", exitCode: 0, aggregatedOutput: "hello.txt" } } });
@@ -111,7 +115,7 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     assert.ok(steps.some((step) => step.title === "Sub-agent: Run ls"), steps.map((step) => step.title).join(" | "));
     assert.ok(!steps.some((step) => (step.output ?? "").includes("PLUM")), "the sub-agent's answer is not a step of the run");
     const events = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events;
-    assert.deepEqual(events.filter((event) => event.kind === "sub_agent").map((event) => [event.data.engine, event.data.session, event.data.id, event.data.kind]), [["codex", "t1", "t2", "thread"]], "the sub-agent's thread is recorded once, as the session's child");
+    assert.deepEqual(events.filter((event) => event.kind === "sub_agent").map((event) => [event.data.engine, event.data.session, event.data.id, event.data.kind]), [["codex", "t1", "t2", "thread"]], "the thread spawn_agent named is recorded once, as the session's child; another thread on the connection is not");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
 
     // A folder the person trusts is trusted in Codex too, so its own .codex/ runs as in their Codex.
