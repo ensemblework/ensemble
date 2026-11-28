@@ -48,6 +48,8 @@ test("repairing is idempotent and leaves anything that does not qualify exactly 
   assert.equal(markdownParagraphsDocument(repaired), null, "a repaired page does not qualify again");
   for (const doc of [
     asParagraphs("- typed with a dash\nand an ordinary line"),
+    asParagraphs("- typed with a dash at the start\n# a heading-looking line typed as text\nA plain paragraph."),
+    asParagraphs("- one\n- two\n- three"),
     asParagraphs("# one heading line\nthen prose\nmore prose"),
     asParagraphs("Plain notes\nwith two lines"),
     { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "## Bold", marks: [{ type: "bold" }] }] }, { type: "paragraph", content: [{ type: "text", text: "- item" }] }, { type: "paragraph", content: [{ type: "text", text: "- item" }] }] },
@@ -71,4 +73,19 @@ test("only Markdown, never LaTeX, and large or odd documents are left alone", ()
   const start = performance.now();
   markdownParagraphsDocument(asParagraphs(`## a\n- b\n${"| x | y |\n".repeat(5_000)}`));
   assert.ok(performance.now() - start < 1000);
+});
+
+test("notes with blank lines between table rows (paragraphs written back as Markdown) still open as tables", async () => {
+  const { notesDocument } = await import("./page-notes.js");
+  const notes = "## Layout\n\n| Path | What |\n\n| --- | --- |\n\n| `apps/hub-web` | The Hub |\n\n| `apps/hub-api` | The API |\n\n```\n| keep |\n\n| as code |\n```";
+  const doc = notesDocument(notes);
+  assert.deepEqual(types(doc), ["heading", "table", "codeBlock"]);
+  assert.equal(doc.content[1]!.content!.length, 3);
+  assert.equal(doc.content[2]!.content![0]!.text, "| keep |\n\n| as code |", "lines inside a fence are left alone");
+});
+
+test("a table with its header rule, a closed fence, or three Markdown lines of two kinds qualify", () => {
+  assert.deepEqual(types(markdownParagraphsDocument(asParagraphs("| a | b |\n| --- | --- |\n| 1 | 2 |"))), ["table"]);
+  assert.deepEqual(types(markdownParagraphsDocument(asParagraphs("Run:\n```\npnpm dev\n```"))), ["paragraph", "codeBlock"]);
+  assert.deepEqual(types(markdownParagraphsDocument(asParagraphs("## Plan\n- one\n- two"))), ["heading", "bulletList"]);
 });

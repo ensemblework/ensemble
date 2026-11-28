@@ -15,6 +15,8 @@ const FENCE = /^\s*(?:```|~~~)/;
 const HEADING = /^#{1,6}\s+\S/;
 const LIST = /^\s*(?:[-*+]|\d{1,9}[.)])\s+\S/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
+/** A table's header rule, `| --- | :-: |`. */
+const TABLE_RULE = /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/;
 
 type Kind = "fence" | "table" | "list" | "text";
 const kindOf = (line: string): Kind => (FENCE.test(line) ? "fence" : TABLE_ROW.test(line) ? "table" : LIST.test(line) ? "list" : "text");
@@ -32,8 +34,9 @@ function plainLine(node: PageNode): string | null {
 
 /**
  * The repaired document, or null when `doc` does not qualify. It qualifies when every block is a
- * plain paragraph (no marks, no other nodes) and at least two of its lines are Markdown block
- * syntax: headings, list items, table rows or fences. The lines are joined back into Markdown, one
+ * plain paragraph (no marks, no other nodes) and its lines are clearly Markdown: a table with its
+ * header rule, a closed fence, or at least three lines of headings, list items, table rows or
+ * fences, of two kinds or more. The lines are joined back into Markdown, one
  * newline within a run of table rows (empty paragraphs between rows skipped), list items or a
  * fence, a blank line elsewhere, and read with `markdownToNodes`; never as LaTeX. The result has
  * real blocks, so it never qualifies again.
@@ -57,15 +60,26 @@ export function markdownParagraphsText(doc: PageDocument | null | undefined): st
   const lines: string[] = [];
   let chars = 0;
   let markdown = 0;
+  let fences = 0;
+  let rule = false;
+  const kinds = new Set<string>();
   for (const block of blocks) {
     const line = plainLine(block);
     if (line === null) return null;
     chars += line.length + 1;
     if (chars > MAX_CHARS) return null;
-    if (HEADING.test(line) || kindOf(line) !== "text") markdown += 1;
+    const kind = HEADING.test(line) ? "heading" : kindOf(line);
+    if (kind !== "text") {
+      markdown += 1;
+      kinds.add(kind);
+    }
+    if (kind === "fence") fences += 1;
+    if (TABLE_RULE.test(line)) rule = true;
     lines.push(line);
   }
-  if (markdown < 2) return null;
+  // Clearly Markdown: a table with its header rule, a closed fence, or three Markdown lines of two
+  // kinds. A line or two typed with a leading "- " or "#" is not.
+  if (!rule && fences < 2 && (markdown < 3 || kinds.size < 2)) return null;
 
   let text = "";
   let previous: Kind | null = null;
