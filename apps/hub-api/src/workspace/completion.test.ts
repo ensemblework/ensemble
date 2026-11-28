@@ -233,6 +233,7 @@ test("a criterion's command is a check only when the criterion says it passes, s
     ["AC-4", "pytest -q", null],
     ["AC-5", "cargo test", null],
     ["AC-5", "go test ./...", null],
+    ["AC-6", "npx tsc --noEmit", null],
     ["AC-6", "tsc --noEmit -p web/tsconfig.json", null],
     ["AC-9", "git diff --exit-code", null],
     ["AC-10", "npm run lint", null],
@@ -241,6 +242,12 @@ test("a criterion's command is a check only when the criterion says it passes, s
   ], "each command once, the folder a criterion names kept");
   const files = acceptanceCommands([{ id: "AC-1", text: "`python check_output.py`, `pytest tests/test_api.py`, `pytest tests/test_async.py::test_retry` and `mocha test/unit.spec.js` pass" }]);
   assert.deepEqual(files.map((check) => check.command), ["python check_output.py", "pytest tests/test_api.py", "pytest tests/test_async.py::test_retry", "mocha test/unit.spec.js"], "a file named as a check");
+  const runners = acceptanceCommands([{ id: "AC-1", text: "`make test` and `make lint-go` pass; `pnpm exec vitest run` succeeds; `npx mocha test/unit.spec.js` and `npx eslint src` pass" }]);
+  assert.deepEqual(
+    runners.map((check) => check.command),
+    ["make test", "make lint-go", "pnpm exec vitest run", "npx mocha test/unit.spec.js", "npx eslint src"],
+    "a make target, and a package runner starting a checker held to that checker's own rules",
+  );
 });
 
 test("text that is not a check never becomes a command: no shell syntax, no unknown program or interpreter flag, no risky script, nothing outside the folder, nothing it does not say passes", () => {
@@ -265,8 +272,21 @@ test("text that is not a check never becomes a command: no shell syntax, no unkn
     "`python /tmp/x.py` exits 0",
     "`python -c print(1)` exits 0",
     "`bash check.sh` passes",
-    "`make test` passes",
-    "`npx vitest` passes",
+    "`make` passes",
+    "`make deploy` passes",
+    "`make test-deploy` passes",
+    "`make clean` passes",
+    "`make test VERBOSE=1` passes",
+    "`make -f other.mk test` passes",
+    "`make -C ../other test` passes",
+    "`npx tsc` passes",
+    "`npx --yes vitest` passes",
+    "`npx prettier --check .` passes",
+    "`npx jest -u` passes",
+    "`npx mocha scripts/publish.js` passes",
+    "`pnpm exec rimraf dist` passes",
+    "`pnpm exec eslint --fix src` passes",
+    "`bunx vitest` passes",
     "`pnpm dlx vitest` passes",
     "`git diff --output=out.txt` passes",
     "`git push origin main` passes",
@@ -523,6 +543,52 @@ test("a package manager runs a criterion's script only when the package.json whe
   assert.match(runs[5]!.reason ?? "", /"lint" is not a script/, "a folder without a package.json has no scripts");
 });
 
+test("npx and pnpm exec start a checker only from the run's own install, npx never fetching one; make runs only a target the Makefile there has", async () => {
+  const tools = folder("local-tools");
+  writeFileSync(join(tools, "package.json"), JSON.stringify({ devDependencies: { typescript: "5" } }));
+  mkdirSync(join(tools, "node_modules", "typescript", "bin"), { recursive: true });
+  writeFileSync(join(tools, "node_modules", "typescript", "bin", "tsc"), "#!/usr/bin/env node\n");
+  mkdirSync(join(tools, "node_modules", ".bin"), { recursive: true });
+  symlinkSync(join("..", "typescript", "bin", "tsc"), join(tools, "node_modules", ".bin", "tsc"));
+  // An installed program that links out of the run's folder is not the run's own.
+  const elsewhere = folder("elsewhere-bin");
+  writeFileSync(join(elsewhere, "eslint"), "");
+  symlinkSync(join(elsewhere, "eslint"), join(tools, "node_modules", ".bin", "eslint"));
+  writeFileSync(join(tools, "Makefile"), "LINT := ruff\n.PHONY: test check\ntest check: deps\n\tpytest -q\nverify:=1\n");
+  // A folder with no package of its own: npx starts the program of the package above it.
+  mkdirSync(join(tools, "src"));
+  const acceptance = [
+    { id: "AC-1", text: "`npx tsc --noEmit` passes", command: "npx tsc --noEmit", folder: null },
+    { id: "AC-2", text: "`pnpm exec vitest run` passes", command: "pnpm exec vitest run", folder: null },
+    { id: "AC-3", text: "`npx eslint src` passes", command: "npx eslint src", folder: null },
+    { id: "AC-4", text: "`make test` passes", command: "make test", folder: null },
+    { id: "AC-5", text: "`make check` passes", command: "make check", folder: null },
+    { id: "AC-6", text: "`make verify` passes", command: "make verify", folder: null },
+    { id: "AC-7", text: "`make lint` passes", command: "make lint", folder: null },
+    { id: "AC-8", text: "`npx tsc --noEmit` passes in the src folder", command: "npx tsc --noEmit", folder: "src" },
+  ];
+  const ran: string[] = [];
+  const runs = await rerunChecks(ctx({ root: tools }), null, {
+    signal,
+    judge: allow,
+    ask: allowCard,
+    acceptance,
+    run: async (options) => {
+      ran.push(`${basename(options.cwd)}: ${options.argv.at(-1)}`);
+      return result(0, "");
+    },
+  });
+  assert.deepEqual(ran, ["local-tools: npx --no-install tsc --noEmit", "local-tools: make test", "local-tools: make check", "src: npx --no-install tsc --noEmit"], "npx runs with --no-install, so it never fetches a package");
+  assert.deepEqual(runs.map((row) => [row.id, row.verdict]), [["AC-1", "pass"], ["AC-2", "not_run"], ["AC-3", "not_run"], ["AC-4", "pass"], ["AC-5", "pass"], ["AC-6", "not_run"], ["AC-7", "not_run"], ["AC-8", "pass"]]);
+  assert.match(runs[1]!.reason ?? "", /vitest is not installed where it runs/);
+  assert.match(runs[2]!.reason ?? "", /eslint where it runs links out of the run's folder/);
+  assert.match(runs[5]!.reason ?? "", /"verify" is not a target in the Makefile where it runs/, "a variable set with := is not a target");
+  assert.match(runs[6]!.reason ?? "", /"lint" is not a target/);
+  const bare = folder("no-package");
+  const none = await rerunChecks(ctx({ root: bare }), null, { signal, judge: allow, ask: allowCard, acceptance: [acceptance[0]!, acceptance[3]!], run: async () => result(0, "") });
+  assert.deepEqual(none.map((row) => row.reason), ["tsc is not installed where it runs: Ensemble runs a package runner's program only from the run's own node_modules.", '"test" is not a target in the Makefile where it runs: Ensemble runs only a Makefile\'s own targets as checks.']);
+});
+
 test("the criteria come from what the task says: never the brief's information sections, quotes or embedded sources", async () => {
   const db = { nodeRun: { findUnique: async () => null } } as never;
   const description = [
@@ -633,6 +699,27 @@ test("a check's baseline: the package script it runs and that script's files, a 
   const later = await checkBaseline(root, [{ check: { command: "node test_new.js" }, cwd: root }], "", null);
   writeFileSync(join(root, "test_new.js"), "");
   assert.equal((await checkChanges(later)).changed.size, 0);
+
+  // A make target's Makefile is hashed like a package script, with the files its recipe's checks name.
+  writeFileSync(join(root, "Makefile"), "test:\n\tnode check.js\n");
+  const made = await checkBaseline(root, [{ check: { command: "make test" }, cwd: root }], "Make `make test` pass.", null);
+  assert.deepEqual(made.entries.map((row) => row.label), ["Makefile", "check.js"]);
+  writeFileSync(join(root, "Makefile"), "test:\n\ttrue\n");
+  assert.deepEqual((await checkChanges(made)).changed.get(checkKey(root, "make test")), ["Makefile"]);
+  // What the recipe runs: the target's and its prerequisites' lines, and the makefiles it includes.
+  const recipeRoot = folder("make-recipe");
+  mkdirSync(join(recipeRoot, "tests"));
+  writeFileSync(join(recipeRoot, "tests", "test_api.py"), "def test_ok():\n    assert True\n");
+  writeFileSync(join(recipeRoot, "lint_check.py"), "");
+  writeFileSync(join(recipeRoot, "rules.mk"), "PY := python3\n");
+  writeFileSync(join(recipeRoot, "Makefile"), "-include rules.mk\n.PHONY: test lint\ntest: lint\n\t@pytest -q tests/\n\t$(PY) -m pytest tests/\nlint: ; python lint_check.py\n");
+  const recipe = await checkBaseline(recipeRoot, [{ check: { command: "make test" }, cwd: recipeRoot }], "", null);
+  assert.deepEqual(recipe.entries.map((row) => row.label), ["Makefile", "rules.mk", "tests", "lint_check.py"], "a line with a variable names nothing");
+  writeFileSync(join(recipeRoot, "tests", "test_api.py"), "def test_ok():\n    pass\n");
+  assert.deepEqual((await checkChanges(recipe)).changed.get(checkKey(recipeRoot, "make test")), ["tests"], "an edited test folder the recipe runs is a changed check");
+  writeFileSync(join(recipeRoot, "rules.mk"), "PY := true\n");
+  assert.deepEqual((await checkChanges(recipe)).changed.get(checkKey(recipeRoot, "make test")), ["rules.mk", "tests"]);
+  assert.equal(checkFilesNote([{ command: "make test" }]), "Do not edit the Makefile or reset what the check keeps between runs: `make test` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
 
   assert.equal(checkFilesNote([{ command: "node accept.js" }]), "Do not edit accept.js or reset what the check keeps between runs: `node accept.js` is this task's acceptance check, and a check the work changed does not count. Fix the work, not the check.");
   assert.equal(checkFilesNote([{ command: "git status" }]), null);

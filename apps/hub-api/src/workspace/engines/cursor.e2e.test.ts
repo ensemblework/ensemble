@@ -50,6 +50,8 @@ async function work(promptId) {
   seen.push("mcp:" + reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2).result.content[0].text);
   seen.push("auth:" + authenticated, "keys:" + (process.env.CURSOR_API_KEY ? "leaked" : "none"));
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "tool_call", toolCallId: "x", title: "Read README.md", kind: "read", status: "completed" } } });
+  // Its task tool ran a sub-agent, a chat of its own: Cursor tells the client after the call, as cursor-agent 2026.11 does.
+  send({ method: "cursor/task", params: { toolCallId: "t1", description: "Reply PLUM", prompt: "Reply PLUM.", subagentType: "generalPurpose", model: "composer-2.5", agentId: "6c18a948-6e1a-460e-af74-d8085b62851d", durationMs: 1200 } });
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: seen.join(" ") } } } });
   send({ id: promptId, result: { stopReason: "end_turn" } });
 }
@@ -98,6 +100,8 @@ test("Cursor's agent as the engine: permissions and questions are answered by th
     assert.match(summary, /question:blue/, "unattended: Cursor's recommended option");
     assert.match(summary, /mcp:The person answered: Large/, "ask_person through the session's MCP servers");
     assert.match(summary, /auth:true/, "the login the agent already has");
+    const children = (await side.api<{ events: Array<{ kind: string; data: Record<string, unknown> }> }>(`/api/agent/jobs/${assigned.body.jobId}`)).body.events.filter((event) => event.kind === "sub_agent");
+    assert.deepEqual(children.map((event) => [event.data.engine, event.data.session, event.data.id, event.data.kind, event.data.title]), [["cursor-agent", "s1", "6c18a948-6e1a-460e-af74-d8085b62851d", "chat", "Reply PLUM"]], "the sub-agent's chat is recorded as the session's child");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Cursor");
     assert.match(summary, /first:\[Cursor run\]/, "Cursor names a session from its first message: the task's title alone leads it");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");

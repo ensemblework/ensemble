@@ -608,6 +608,31 @@ test("session deletion stops work, requires native acknowledgement, retries and 
   } finally { stop(); clearInterval(finishing); }
 });
 
+test("deleting a session says how many sessions of their own its agent started, which go with it", async () => {
+  const user = await person("Tree owner");
+  const { laptop } = await laptopFor(user, "Tree computer");
+  const builder = await createNode(user, "developer");
+  const task = await h.prisma.task.create({ data: { userId: user.id, title: "Delegating session", createdBy: "me" } });
+  const root = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "codex", model: "default", executionMode: "sandbox", deviceId: laptop.id, status: "succeeded", startedAt: new Date(), claimedAt: new Date(), finishedAt: new Date() } });
+  const next = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "codex", model: "default", executionMode: "sandbox", deviceId: laptop.id, continueFromJobId: root.id, status: "succeeded", startedAt: new Date(), claimedAt: new Date(), finishedAt: new Date() } });
+  await h.prisma.nodeRun.create({ data: { userId: user.id, nodeId: builder.node.id, roomId: builder.room.id, jobId: root.id, taskId: task.id, sessionId: root.id } });
+  // What the runs' agents started, as the computer relayed it: two threads of their own (one seen twice, once with its task) and a sub-agent inside the session.
+  await h.prisma.workspaceEvent.createMany({ data: [
+    { jobId: root.id, kind: "engine", data: { engine: "codex", session: "thread-root" } },
+    { jobId: root.id, kind: "sub_agent", data: { engine: "codex", session: "thread-root", id: "thread-euclid", kind: "thread" } },
+    { jobId: root.id, kind: "sub_agent", data: { engine: "codex", session: "thread-root", id: "thread-euclid", kind: "thread", title: "Reply PLUM" } },
+    { jobId: next.id, kind: "sub_agent", data: { engine: "codex", session: "thread-root", id: "thread-james", kind: "thread", parent: "thread-euclid" } },
+    { jobId: next.id, kind: "sub_agent", data: { engine: "codex", session: "thread-root", id: "call-1", kind: "inside" } },
+  ] });
+  const listed = json(await user.inject({ method: "GET", url: "/api/node/sessions" })).sessions.find((row: { id: string }) => row.id === root.id);
+  assert.equal(listed.children, 2, "sessions of their own, each once; a sub-agent inside the session is part of it");
+  script = () => call("node_session_delete", { session: root.id });
+  await say(user, builder.room.id, "Delete the delegating session.");
+  const approval = (await read(user, builder.room.id)).find(message => message.kind === "approval" && message.data.action === "delete")!;
+  assert.ok(approval, "the owner-requested node tool raises a confirmation card");
+  assert.match(JSON.stringify(approval), /This session started 2 more sessions\. They'll be deleted too\. Project files stay\./);
+});
+
 test("local session deletion propagates to exact native history and local inventory without deleting project files", async () => {
   const user = await person("Local deletion owner");
   const home = await mkdtemp(join(tmpdir(), "ensemble-local-delete-"));
@@ -634,6 +659,36 @@ test("local session deletion propagates to exact native history and local invent
     assert.equal(await h.prisma.preference.count({ where: { userId: user.id, key: { startsWith: "session.native-deleted:" } } }), 1, "native receipt avoids duplicate deletion on retry");
   } finally {
     if (config === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = config;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("local session deletion also deletes the sessions of their own its agent started, by the ids its runs recorded", async () => {
+  const user = await person("Local tree owner");
+  const home = await mkdtemp(join(tmpdir(), "ensemble-local-tree-"));
+  const saved = { CURSOR_CONFIG_DIR: process.env.CURSOR_CONFIG_DIR, CURSOR_DATA_DIR: process.env.CURSOR_DATA_DIR };
+  process.env.CURSOR_CONFIG_DIR = join(home, "cursor");
+  process.env.CURSOR_DATA_DIR = join(home, "cursor-data");
+  const hosted = randomUUID(), native = randomUUID(), child = randomUUID(), other = randomUUID();
+  try {
+    for (const id of [native, child, other]) await mkdir(join(home, "cursor", "chats", "workspace", id), { recursive: true });
+    // The child's store cannot be read for its parent here, so only the id its run recorded finds it.
+    await writeFile(join(home, "cursor", "chats", "workspace", child, "store.db"), "unreadable");
+    await writeFile(join(home, "cursor", "chats", "workspace", other, "store.db"), "keep");
+    const task = await h.prisma.task.create({ data: { userId: user.id, title: "Delegating local session", createdBy: "me" } });
+    const job = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "cursor-agent", model: "default", executionMode: "sandbox", status: "succeeded", startedAt: new Date(), finishedAt: new Date(), context: { hostedJobId: hosted } } });
+    await h.prisma.workspaceEvent.createMany({ data: [
+      { jobId: job.id, kind: "engine", data: { engine: "cursor", session: native } },
+      { jobId: job.id, kind: "sub_agent", data: { engine: "cursor-agent", session: native, id: child, kind: "chat", title: "Reply PLUM" } },
+      { jobId: job.id, kind: "sub_agent", data: { engine: "codex", session: native, id: other, kind: "thread" } },
+    ] });
+    const { deleteLocalJobSessions } = await import("../remote/session-delete.js");
+    await deleteLocalJobSessions(h.app, [hosted], true, user.id);
+    for (const id of [native, child]) await assert.rejects(stat(join(home, "cursor", "chats", "workspace", id)), { code: "ENOENT" });
+    assert.equal(await readFile(join(home, "cursor", "chats", "workspace", other, "store.db"), "utf8"), "keep", "another agent's child is not this agent's to delete");
+    assert.equal(await h.prisma.preference.count({ where: { userId: user.id, key: { startsWith: "session.native-deleted:" } } }), 2, "the session and its child, each once");
+  } finally {
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
     await rm(home, { recursive: true, force: true });
   }
 });

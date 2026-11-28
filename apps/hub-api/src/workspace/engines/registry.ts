@@ -4,13 +4,15 @@
  * hook sends back; it only lets the hook *ask* (the answer still comes from
  * the run's rules or the person), so a command that reads it gains nothing.
  */
+import type { ChildProcess } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { JobContext } from "../tools.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
-import { isCodeAgentTurn } from "../trust.js";
+import { adoptSession } from "../runner.js";
+import { isChatTurn, isCodeAgentTurn } from "../trust.js";
 
 type Run = { ctx: JobContext; secret: string };
 
@@ -87,6 +89,27 @@ export function registerEngineRun(ctx: JobContext): string {
   const secret = randomBytes(24).toString("hex");
   runs.set(ctx.job.id, { ctx, secret });
   return `${ctx.job.id}.${secret}`;
+}
+
+/**
+ * Whether a run's end stops what its agent left running: a task's run and a plan step's run (`mission`), which nobody
+ * watches. A chat turn's and a node's session run outside a plan are kept (`keepsProcesses` on a paired computer,
+ * where the run does not say it is a node's): the person may have asked for a server to look at.
+ */
+export function stopsLeftovers(context: unknown): boolean {
+  if (isChatTurn(context)) return false;
+  const value = (typeof context === "object" && context !== null ? context : {}) as { node?: unknown; mission?: unknown; keepsProcesses?: unknown };
+  if (value.keepsProcesses === true) return false;
+  return !value.node || (typeof value.mission === "object" && value.mission !== null);
+}
+
+/**
+ * The engine's own program has started, in a session of its own. In a run that `stopsLeftovers`, that session joins
+ * the run's commands once the program ends (`adoptSession`), so the run's end stops what its agent left running there,
+ * such as a server it started and never stopped.
+ */
+export function engineStarted(ctx: Pick<JobContext, "job">, child: Pick<ChildProcess, "pid" | "once">): void {
+  if (stopsLeftovers(ctx.job.context)) adoptSession(ctx.job.id, child);
 }
 
 export function unregisterEngineRun(jobId: string): void {

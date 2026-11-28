@@ -24,6 +24,10 @@
     "category": "Productivity",
     "shortDescription": "Ensemble desktop",
     "longDescription": "Ensemble, running on this computer with a local database.",
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": false
+    },
     "linux": {
       "deb": {
         "depends": [

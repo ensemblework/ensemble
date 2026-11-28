@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEVICE_EVENT_KINDS, deviceOwnedEvents } from "./contract.js";
 
-test("a device posts prepared, tool, command, engine, sandbox, engine_retry and resumed, and not kinds the server writes", () => {
-  assert.deepEqual([...DEVICE_EVENT_KINDS], ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed"]);
+test("a device posts prepared, tool, command, engine, sandbox, engine_retry, resumed and sub_agent, and not kinds the server writes", () => {
+  assert.deepEqual([...DEVICE_EVENT_KINDS], ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed", "sub_agent"]);
   const posted = deviceOwnedEvents([
     { kind: "prepared", data: { branch: "ensemble/1" } },
     { kind: "needs_me", data: { title: "Which greeting?" } },
@@ -17,12 +17,17 @@ test("a device posts prepared, tool, command, engine, sandbox, engine_retry and 
     { kind: "sandbox", data: { name: "macOS sandbox" } },
     { kind: "engine_retry", data: { attempt: 1 } },
     { kind: "resumed", data: { attempt: 1 } },
+    { kind: "sub_agent", data: { engine: "codex", id: "thread-2", kind: "thread" } },
     { kind: "reconnected" },
   ]);
   assert.deepEqual(
     posted.map((row) => row.kind),
-    ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed"],
+    ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed", "sub_agent"],
   );
+});
+
+test("to a server before protocol 9, a device does not post the children its agent started", () => {
+  assert.deepEqual(deviceOwnedEvents([{ kind: "engine" }, { kind: "sub_agent" }, { kind: "resumed" }], 8).map((row) => row.kind), ["engine", "resumed"]);
 });
 
 test("to a server before protocol 5, a device does not post the carry-on kinds it would refuse", () => {

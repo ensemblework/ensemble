@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { releaseVersion, checkReleaseVersion } from './release-version.mjs';
+import { verifyMacApp } from './verify-mac-signature.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export async function packageMacDmg({ target, appPath, outputPath }) {
   if (process.platform !== 'darwin') throw new Error('Mac disk images must be built on macOS.');
@@ -14,6 +15,9 @@ export async function packageMacDmg({ target, appPath, outputPath }) {
   const stage = await mkdtemp(join(tmpdir(), 'ensemble-dmg-'));
   try {
     execFileSync('/usr/bin/ditto', [appPath, join(stage, 'Ensemble.app')]);
+    // Gatekeeper reports an app whose bundle is not sealed as damaged, with no way to open it.
+    try { verifyMacApp(join(stage, 'Ensemble.app')); }
+    catch (error) { throw new Error(`Ensemble.app is not signed as a whole bundle (tauri.conf.json bundle.macOS.signingIdentity signs it).\n${error instanceof Error ? error.message : error}`); }
     await symlink('/Applications',join(stage,'Applications'));
     const kb = Number(execFileSync('/usr/bin/du',['-sk',stage],{encoding:'utf8'}).trim().split(/\s+/)[0]);
     const megabytes = Math.max(256,Math.ceil(kb/1024*1.3+128));

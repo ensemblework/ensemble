@@ -33,10 +33,10 @@ import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
-import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineStarted, engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
-import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, type ClaudeSpend } from "./sub-agents.js";
+import { addClaudeResult, CLAUDE_SETTINGS_ENV, claudeFromSubAgent, SUB_AGENT, SubAgentLog, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
@@ -150,6 +150,7 @@ export function claudeSettings(input: { hookCommand: string; sandboxed: boolean;
   return {
     // The model's fast mode: faster output that uses more of the plan.
     ...(input.fast ? { fastMode: true } : {}),
+    env: { ...CLAUDE_SETTINGS_ENV },
     hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: input.hookCommand, timeout: 86_400 }] }] },
     sandbox: input.sandboxed
       ? {
@@ -260,11 +261,12 @@ export async function runClaudeCode(
     ...(name ? ["--name", name] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
-  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true, ctx.job.context), MCP_TOOL_TIMEOUT: String(86_400_000) };
+  const env: NodeJS.ProcessEnv = withClaudeSubAgentLimits({ ...withoutHostSession(process.env), ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true, ctx.job.context), MCP_TOOL_TIMEOUT: String(86_400_000) });
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child = spawn(claude, args, { cwd: ctx.root, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  engineStarted(ctx, child);
   // The caller may hold the trace, to close it if the run stops before the engine returns.
   const trace = options.trace ?? new EngineTrace(ctx, "claude-code");
   const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };
@@ -273,6 +275,7 @@ export async function runClaudeCode(
   let failure: string | null = null;
   let started = false;
   let sessionId: string | null = null;
+  const children = new SubAgentLog((kind, data) => ctx.event(kind, data), "claude-code");
   // The run's tokens and cost over every result it gives (a run with background sub-agents answers more than once).
   let spend: ClaudeSpend | null = null;
   let stderr = "";
@@ -337,6 +340,11 @@ export async function runClaudeCode(
             appendLive(ctx.job.id, `· ${summary}\n`);
             await ctx.event("tool", { name: part.name, ok: true, summary, engine: "claude-code" });
             await trace.toolStart(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {}, summary);
+            // The Agent tool (Task before Claude Code 2.1) starts a sub-agent inside the session, named by the call.
+            if ((part.name === "Agent" || part.name === "Task") && typeof part.id === "string") {
+              const input = (part.input ?? {}) as { description?: unknown; model?: unknown };
+              await children.note(sessionId, { id: part.id, kind: "inside", parent: sub ? String(message.parent_tool_use_id) : null, title: typeof input.description === "string" ? input.description : null, model: typeof input.model === "string" ? input.model : null });
+            }
           }
         }
         await options.stopCheck();

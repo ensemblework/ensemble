@@ -74,6 +74,20 @@ test("an owner's turn always gets their overdue and due-today tasks with due dat
   assert.deepEqual(theirs.items.map((item) => item.title), ["Someone else's overdue work"]);
 });
 
+test("a request that names a page by its title (\"my meeting note Product sync\") gets that page, with its id, though it is no meeting", async () => {
+  const owner = await h.asUser();
+  const page = await h.prisma.taskPage.create({ data: { userId: owner.id, title: "Product sync", searchText: "Product sync\nAction items: ship the export, draft the summary, book the venue." } });
+  await h.prisma.taskPage.create({ data: { userId: owner.id, title: "Garden plans", searchText: "Tomatoes, basil and a new fence in spring." } });
+  await h.prisma.meetingSession.create({ data: { userId: owner.id, title: "Weekly sync", notes: "Hiring plan and the offsite agenda.", startedAt: daysAgo(2), status: "ended" } });
+
+  const got = await retrieveContext(h.prisma, input(owner.id, "Turn my meeting note Product sync into tasks, one per action item, and a short summary page of the meeting."));
+  const related = got.items.filter((item) => item.group === "related");
+  assert.equal(related[0]?.id, page.id, JSON.stringify(related.map((item) => [item.title, item.score, item.why])));
+  assert.ok(got.lines.join("\n").includes(`[Product sync](ensemble://page/${page.id})`), got.lines.join("\n"));
+  assert.ok(got.refs.some((ref) => ref.id === page.id && ref.label === "Product sync"), "the reply can name it by its id");
+  assert.ok(!related.some((item) => item.title === "Garden plans"), "a page that shares no word stays out");
+});
+
 test("the workspace keeps to its budget: long items are named with a link and an excerpt, and the rest are counted", async () => {
   const owner = await h.asUser();
   const long = `${"Background on the launch. ".repeat(400)}The Zephyr launch checklist: legal review, pricing page, press kit. ${"More notes. ".repeat(400)}`;

@@ -1,18 +1,19 @@
 /**
  * What an assigned run's acceptance checks run (docs/16 §9): the files their commands name (`node
- * accept.js`, pytest's paths) and the package scripts they use (`npm test`, `npm run lint`, and the files
- * such a script names), hashed when the run starts, before its agent works. A check whose own file or
- * script the run changed proves nothing: Ensemble does not run it, and the run is not verified, with the
- * file named, unless the task's own words ask to change it. A file the check names that was not there
- * when the run started is the run's to write. A change an earlier run of the same task in the same
- * session made still counts: the next run starts from that run's baseline when nothing changed between.
+ * accept.js`, pytest's paths), the package scripts they use (`npm test`, `npm run lint`, and the files
+ * such a script names) and a make target's Makefile with what its recipe names (`make test`), hashed when
+ * the run starts, before its agent works. A check whose own file or script the run changed proves nothing:
+ * Ensemble does not run it, and the run is not verified, with the file named, unless the task's own words
+ * ask to change it. A file the check names that was not there when the run started is the run's to write.
+ * A change an earlier run of the same task in the same session made still counts: the next run starts from
+ * that run's baseline when nothing changed between.
  */
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { checkFiles, instructionText, isCheckCommand, NEGATED, type AcceptanceCheck } from "./acceptance-checks.js";
+import { checkFiles, instructionText, isCheckCommand, makefileAt, makeRecipe, makeTarget, NEGATED, type AcceptanceCheck } from "./acceptance-checks.js";
 
 /** The run's event with the baseline as it started, and the one with each entry's hash as its agent left it. */
 export const BASELINE_EVENT = "check_baseline";
@@ -102,7 +103,14 @@ async function packageScripts(path: string): Promise<Record<string, unknown> | n
 
 type Named = Pick<CheckEntry, "key" | "label" | "name">;
 
-/** What one check runs, in its folder `cwd`: the files its command names, and the package script it uses with the files that script names. */
+/** A Makefile larger than this is hashed whole, its recipe not read. */
+const MAKEFILE_MAX = 1024 * 1024;
+
+/**
+ * What one check runs, in its folder `cwd`: the files its command names, the package script it uses with the files that
+ * script names, and for a make target its Makefile, the files it includes and the files its recipe's checks name
+ * (`makeRecipe`: the target's and its prerequisites' recipe lines).
+ */
 async function entriesOf(root: string, cwd: string, command: string): Promise<Named[]> {
   const file = (path: string): Named => {
     const full = resolve(cwd, path);
@@ -115,6 +123,17 @@ async function entriesOf(root: string, cwd: string, command: string): Promise<Na
     out.push({ key: `script:${pkg}#${script}`, label: `the "${script}" script in ${relative(root, pkg) || "package.json"}`, name: script });
     const text = (await packageScripts(pkg))?.[script];
     if (typeof text === "string" && isCheckCommand(text.trim())) out.push(...checkFiles(text.trim()).map(file));
+  }
+  const target = makeTarget(command);
+  if (target) {
+    const makefile = await makefileAt(cwd);
+    out.push(file(makefile ?? "Makefile"));
+    const size = makefile ? ((await stat(makefile).catch(() => null))?.size ?? Infinity) : Infinity;
+    if (size <= MAKEFILE_MAX) {
+      const recipe = makeRecipe(await readFile(makefile!, "utf8").catch(() => ""), target);
+      for (const path of recipe.includes) out.push(file(path));
+      for (const line of recipe.commands) if (isCheckCommand(line)) out.push(...checkFiles(line).map(file));
+    }
   }
   return out;
 }
@@ -217,10 +236,12 @@ export function checkFilesNote(acceptance: readonly Pick<AcceptanceCheck, "comma
   for (const check of acceptance) {
     const files = checkFiles(check.command).map((file) => file.replace(/^\.\//, ""));
     const script = scriptOf(check.command);
-    if (!files.length && !script) continue;
+    const target = makeTarget(check.command);
+    if (!files.length && !script && !target) continue;
     commands.push(`\`${check.command}\``);
     for (const file of files) names.add(file);
     if (script) names.add(`the "${script}" script in package.json`);
+    if (target) names.add("the Makefile");
   }
   if (!names.size) return null;
   const list = [...names];
