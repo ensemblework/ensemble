@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build an unsigned Ensemble disk image on a Mac.
+# Build an Ensemble disk image on a Mac, signed ad hoc (no Apple certificate).
 #
 # From the repo root:
 #   pnpm desktop:dmg
@@ -48,7 +48,7 @@ version_at_least() {
   return 0
 }
 
-say "Checking prerequisites for an unsigned Ensemble.dmg…"
+say "Checking prerequisites for an Ensemble.dmg…"
 say ""
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -212,7 +212,7 @@ say ""
 say "Adding this Mac’s Rust target…"
 rustup target add "${mac_target}"
 
-# A key in the environment would sign the bundle. This command stays unsigned.
+# A key in the environment would make signed updater packages. This command makes none.
 unset TAURI_SIGNING_PRIVATE_KEY
 unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
@@ -242,6 +242,10 @@ if [[ ${#dmgs[@]} -eq 0 ]]; then
 fi
 
 say ""
+say "Checking the app's signature…"
+node "${root}/scripts/verify-mac-signature.mjs" --bundle "${target_dir}/${mac_target}/release/bundle"
+
+say ""
 say "Disk image:"
 for dmg in "${dmgs[@]}"; do
   say "  ${dmg}"
@@ -252,7 +256,7 @@ say "The local API inside the app is built for this Mac's chip ($(uname -m)). Bu
 
 cat <<'EOF'
 
-This build is unsigned. There is no Apple certificate, so macOS may block a normal double-click the first time.
+This build is signed ad hoc, not with an Apple certificate, so macOS may block a normal double-click the first time.
 
 To open it:
   macOS 14 and earlier: right-click the app, then Open, then Open again.

@@ -5,7 +5,17 @@ import { Mark } from "@/components/mark";
 import { OsInstallTabs } from "@/components/os-install-tabs";
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
 import { pageMetadata } from "@/lib/metadata";
-import { afterInstallCommands, DESKTOP_VERSION, editors, hasArm64Installers, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
+import {
+  afterInstallCommands,
+  DESKTOP_VERSION,
+  editors,
+  hasArm64Installers,
+  HOSTED_MCP_URL,
+  insideCommands,
+  MAC_DAMAGED_THROUGH,
+  macDamagedRepair,
+  RELEASES_URL,
+} from "@/lib/download";
 
 export const dynamic = "force-static";
 
@@ -88,11 +98,17 @@ export default function DownloadPage() {
           <div className="download-note">
             <h3>First launch</h3>
             <p>
-              The installers are not code-signed yet. On macOS, open the app once, then choose System Settings → Privacy &amp; Security →{" "}
-              <em>Open Anyway</em>. On Windows, SmartScreen shows <em>More info → Run anyway</em>. On Linux, install the <code>.deb</code>, or run{" "}
-              <code>chmod +x Ensemble_*.AppImage</code> and start it. Every build, with checksums, is on <a href={RELEASES_URL}>GitHub Releases</a> under
-              tags starting <code>desktop-v</code>.
+              The installers are not signed with an Apple or Microsoft certificate yet, so the first open asks once. On macOS 15 and later, open the app,
+              choose <em>Done</em>, then System Settings → Privacy &amp; Security → <em>Open Anyway</em>. On macOS 13 and 14, Control-click the app in
+              Applications, choose <em>Open</em>, then <em>Open</em> again. On Windows, SmartScreen shows <em>More info → Run anyway</em>. On Linux, install the{" "}
+              <code>.deb</code>, or run <code>chmod +x Ensemble_*.AppImage</code> and start it. Every build, with checksums, is on{" "}
+              <a href={RELEASES_URL}>GitHub Releases</a> under tags starting <code>desktop-v</code>.
             </p>
+            <p>
+              If macOS says Ensemble {MAC_DAMAGED_THROUGH} or older is damaged and offers only <em>Move to Trash</em>, copy the app to Applications, run
+              these two commands in Terminal, then open it as above.
+            </p>
+            <CopyCode label="Terminal" code={macDamagedRepair.join("\n")} />
           </div>
         </section>
 

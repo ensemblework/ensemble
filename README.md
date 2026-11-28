@@ -60,7 +60,7 @@ Optional Resend support forwarding is configured on the API server, separately f
 
 ```bash
 pnpm desktop:export && pnpm desktop:dev    # desktop app: static Hub + local API on PGlite (docs/DESKTOP.md)
-pnpm desktop:dmg                           # unsigned macOS disk image (docs/desktop/MAC_CHECKLIST.md)
+pnpm desktop:dmg                           # ad hoc signed macOS disk image (docs/desktop/MAC_CHECKLIST.md)
 cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml -- --check   # quick capture (docs/20_QUICK_CAPTURE.md)
 pnpm bridge:build && pnpm bridge:verify    # Context Bridge, the MCP server for editors (docs/CONTEXT_BRIDGE.md)
 pnpm cli:build                             # apps/cli/dist/ensemble.mjs (docs/26_CLI.md)
