@@ -309,9 +309,12 @@ test("Context people and projects say something useful at a glance", () => {
 
 
 test("a tile's View all and corner arrow open its full list, never an unrelated page", () => {
-  assert.equal(tileHref("repos"), "/context?view=widgets&tab=repos", "every repository, with Add");
+  assert.equal(tileHref("repos"), "/context?tab=repos", "Context's own Repos tab");
   assert.equal(tileHref("reviews"), "/context?tab=reviews");
   assert.equal(tileHref("checks"), "/context?tab=tests");
   assert.equal(tileHref("deploys"), "/context?tab=deploys");
-  for (const key of ["repos", "reviews", "checks", "deploys"]) assert.doesNotMatch(tileHref(key) ?? "", /^\/(code|runs|metrics)\b/, key);
+  for (const key of ["repos", "reviews", "checks", "deploys"]) {
+    assert.doesNotMatch(tileHref(key) ?? "", /^\/(code|runs|metrics)\b/, key);
+    assert.doesNotMatch(tileHref(key) ?? "", /view=widgets/, `${key}: never the old widgets view`);
+  }
 });

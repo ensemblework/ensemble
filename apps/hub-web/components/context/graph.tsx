@@ -26,7 +26,6 @@ import {
   type NodeShape,
 } from "@/lib/graph-readability";
 import { usePersistentState } from "@/lib/prefs";
-import { filesHref } from "@/lib/files/links";
 import { useFullscreen } from "@/lib/fullscreen";
 import { usePeek } from "../shell/peek";
 import { RelationGroups, useContextItem, useOpenCard } from "./item-relations";
@@ -305,7 +304,8 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
     else if (node.kind === "deliverable") peek.open(node.id, "deliverable");
     else if (node.kind === "diagram") router.push(`/diagrams/${node.id}`);
     else if (node.kind === "plot") router.push(`/plots/${node.id}`);
-    else if (node.kind === "artifact") router.push(filesHref("apps", node.id));
+    // An item from a connected app opens at its source in a new tab; one with no source address does nothing.
+    else if (node.kind === "artifact" && node.path) window.open(node.path, "_blank", "noopener,noreferrer");
   };
 
   const draw = () => {

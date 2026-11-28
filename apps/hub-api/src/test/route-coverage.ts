@@ -370,7 +370,7 @@ export const fileRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> 
   "GET /api/documents/:id/style": ["happy-path", "isolation", "unknown-id"],
 };
 
-/** Items from connected apps (routes/context.ts): Files → From your apps. Checked in src/routes/artifacts.integration.test.ts. */
+/** Items from connected apps (routes/context.ts). Checked in src/routes/artifacts.integration.test.ts. */
 export const artifactRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/artifacts": ["happy-path", "isolation", "invalid-input"],
   "GET /api/artifacts/:id": ["happy-path", "isolation", "unknown-id"],

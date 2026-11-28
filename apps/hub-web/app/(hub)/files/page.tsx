@@ -1,18 +1,11 @@
-"use client";
-
-import { useRouter, useSearchParams } from "next/navigation";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { FilesScreen } from "@/components/files/files-screen";
+import { desktopExport } from "@/lib/desktop-export";
+import { FilesBody } from "./screen";
 
-/** `?view=apps` opens From your apps; `&item=<id>` opens one item in the reader. */
-function FilesBody() {
-  const params = useSearchParams();
-  const router = useRouter();
-  const view = params.get("view") === "apps" ? "apps" : "files";
-  return <FilesScreen view={view} item={view === "apps" ? params.get("item") : null} navigate={(href) => router.replace(href, { scroll: false })} />;
-}
-
-export default function FilesPage() {
+export default async function FilesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  // The packaged UI is a static export, which rejects awaiting searchParams; FilesBody redirects there.
+  if (!desktopExport() && (await searchParams).view === "apps") redirect("/files");
   return (
     <Suspense fallback={null}>
       <FilesBody />

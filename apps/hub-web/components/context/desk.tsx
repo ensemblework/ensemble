@@ -388,9 +388,6 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
           <p className="mt-2 max-w-[46ch] text-[14px] text-muted">The people, {projectsWord.toLowerCase()}, and things your work is tied to.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/context?view=widgets" className="btn min-h-6">
-            Customize
-          </Link>
           <Link href="/connect" className={sourced ? "btn min-h-6" : "btn-primary min-h-6"}>
             Connect a source
           </Link>

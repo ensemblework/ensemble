@@ -9,7 +9,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FILE_KIND_LABEL, fileFormat, type FileKind, type FileRecord, type FileUsage } from "@ensemble/shared-types";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
 import { FILE_ACCEPT } from "@/lib/files/formats";
-import { type FilesView } from "@/lib/files/links";
 import { useSpaceAccess } from "@/lib/access";
 import { relative } from "@/lib/format";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
@@ -17,7 +16,6 @@ import { LoadError } from "../load-error";
 import { Dialog, Empty, PageHeader, SkeletonRows, cx } from "../ui";
 import { DeleteFileDialog } from "./delete-file";
 import { FileIcon } from "./file-icon";
-import { FromApps } from "./from-apps";
 import { ImportFromApps } from "./import-from-apps";
 import { useBlobUrl, useFileBytes } from "./use-file";
 import { useFileUploads, type Duplicate, type DuplicateChoice, type UploadItem } from "./use-uploads";
@@ -296,10 +294,10 @@ function useDropAnywhere(onFiles: (files: File[]) => void): boolean {
 }
 
 /** The library shows only files people uploaded or explicitly imported. */
-export function FilesScreen({ view = "files", item = null, navigate = () => undefined }: { view?: FilesView; item?: string | null; navigate?: (href: string) => void }) {
+export function FilesScreen() {
   return (
     <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-10" data-testid="files-screen">
-      {view === "apps" ? <><PageHeader title="Connected items" description="Items opened explicitly from a connected app or an assistant link." /><FromApps item={item} onItem={(id) => navigate(`/files?view=apps${id ? `&item=${encodeURIComponent(id)}` : ""}`)} onOpenFile={(id) => navigate(`/files/${encodeURIComponent(id)}`)} /></> : <YourFiles />}
+      <YourFiles />
     </div>
   );
 }

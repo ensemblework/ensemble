@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
@@ -9,9 +8,8 @@ import { ContextRouteSkeleton } from "@/components/motion/skeletons";
 import { ContextLens } from "@/components/desk/context-lens";
 import { contextTabs, tabKey } from "@/components/desk/context-tabs";
 import { deskIdFromTemplate } from "@/components/desk/desks";
-import { filesHref } from "@/lib/files/links";
 import { api, type BoardPayload } from "@/lib/api";
-import type { LayoutPayload } from "@/lib/server-layout";
+import { cleanContextHref } from "@/lib/context-href";
 
 const noSubscribe = () => () => undefined;
 const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -21,10 +19,7 @@ function useHydrated(): boolean {
   return useSyncExternalStore(noSubscribe, () => true, () => false);
 }
 
-const WidgetLayout = dynamic(() => import("./widgets-screen").then((mod) => mod.WidgetLayout));
-const Utility = dynamic(() => import("./widgets-screen").then((mod) => mod.Utility));
-
-export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: LayoutPayload | null; initialBoard: BoardPayload | null }) {
+export function ContextScreen({ initialBoard }: { initialBoard: BoardPayload | null }) {
   const params = useSearchParams();
   const requested = params.get("tab");
   const view = params.get("view");
@@ -32,10 +27,10 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 15_000 });
   const router = useRouter();
   const hydrated = useHydrated();
-  // Links to the artifacts tab open Files → From your apps.
-  const moved = requested === "artifacts";
+  // An old link to the widgets view or one of its tabs lands on Context itself (the server does it on the web).
+  const moved = cleanContextHref(new URLSearchParams(params.toString()));
   useEffect(() => {
-    if (moved) router.replace(filesHref("apps"));
+    if (moved) router.replace(moved, { scroll: false });
   }, [moved, router]);
   // A link to someone (`?tab=people&person=<id>`, the context graph's path for a person) opens them in the side peek.
   const person = params.get("person");
@@ -48,10 +43,8 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
     router.replace(`/context?${next.toString()}`, { scroll: false });
   }, [person, params, router]);
   if (moved) return null;
-  if (view === "widgets") return <WidgetLayout initialLayout={initialLayout} />;
   // board, grid, list, and graph force that view. desk opens the old surface and keeps the saved view.
   if (view === "board" || view === "grid" || view === "list" || view === "graph" || view === "desk") return <ContextDesk initial={initialBoard} />;
-  if (requested === "preferences" || requested === "sources") return <Utility tab={requested} />;
   // The template picks the lens or the desk, and a preference picks the lens's sample state.
   // Before they load, any choice is a guess that flashes the wrong layout on a cold load.
   // The server always renders the skeleton here. This boundary can hydrate after the shell

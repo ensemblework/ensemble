@@ -162,6 +162,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   const hits: Item[] = current ? (found.data?.results ?? []).map((hit): Item => {
     const kind = hitKind(hit.kind);
+    // An item from a connected app opens at its source in a new tab; with no source address it only shows.
+    if (hit.kind === "artifact") {
+      return { id: `work-${hit.kind}:${hit.id}`, group: "work", label: hit.label, excerpt: hit.excerpt, hint: "", meta: kind.label, icon: kind.icon, tint: kind.tint, run: () => { if (hit.path) window.open(hit.path, "_blank", "noopener,noreferrer"); } };
+    }
     return { id: `work-${hit.path}`, group: "work", label: hit.label, excerpt: hit.excerpt, hint: "", meta: kind.label, icon: kind.icon, tint: kind.tint, recent: { label: hit.label, hint: "", href: hit.path, kind: hit.kind }, run: () => router.push(searchHitHref(hit.path, query.trim())) };
   }) : [];
   const items = query.trim() ? [...hits, ...navigation] : [...recents, ...navigation];

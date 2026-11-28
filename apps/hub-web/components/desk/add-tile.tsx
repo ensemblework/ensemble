@@ -8,7 +8,6 @@ import { WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { Dialog } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
-import { filesHref } from "@/lib/files/links";
 import { readAdded, removeDeskTile } from "@/lib/desk-added";
 import type { DeskId } from "./desks";
 import { DESK_EXTRAS, resolveExtras } from "@/lib/desk-extras";
@@ -21,13 +20,13 @@ import { DeskPreviewProvider, Tile } from "./ui";
 
 const SHORTCUTS: Partial<Record<WidgetId, { href: string; action: string }>> = {
   completed: { href: "/settings#completed", action: "Open completed" },
-  repos: { href: "/context?view=widgets&tab=repos", action: "Open repositories" },
+  repos: { href: "/context?tab=repos", action: "Open repositories" },
   "review-queue": { href: "/code", action: "Open Code" },
-  deliverables: { href: "/context?view=widgets&tab=projects", action: "Open projects and deliverables" },
+  deliverables: { href: "/context?tab=projects", action: "Open projects and deliverables" },
   "assignment-countdown": { href: "/board", action: "Open coursework on the board" },
-  calendar: { href: "/context?view=widgets&tab=sources", action: "Open calendar sources" },
-  timetable: { href: "/context?view=widgets&tab=sources", action: "Open calendar sources" },
-  people: { href: "/context?view=widgets&tab=people", action: "Open people" },
+  calendar: { href: "/settings?tab=connections#calendars", action: "Open calendar sources" },
+  timetable: { href: "/settings?tab=connections#calendars", action: "Open calendar sources" },
+  people: { href: "/context?tab=people", action: "Open people" },
 };
 
 export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: DeskId; plots: boolean; startOpen?: boolean }) {
@@ -154,7 +153,7 @@ export function AddedTiles() {
           const shortcut = SHORTCUTS[id];
           const rows = id === "assignment-countdown" ? (feed.data?.tasks ?? []).filter((task) => task.taskType === "assignment" && !["done", "dropped"].includes(task.status)).map((task) => ({ id: task.id, title: task.title, href: `/tasks/${task.id}`, date: task.due }))
             : id === "deliverables" ? (feed.data?.deliverables ?? []).map((row) => ({ id: row.id, title: row.title, href: `/projects/${row.projectId}`, date: row.due }))
-            : id === "calendar" || id === "timetable" ? (feed.data?.events ?? []).map((event) => ({ id: event.id, title: event.title, href: filesHref("apps", event.id), date: event.start })) : [];
+            : id === "calendar" || id === "timetable" ? (feed.data?.events ?? []).map((event) => ({ id: event.id, title: event.title, href: null as string | null, date: event.start })) : [];
           return (
             <article key={id} className="tile" data-widget={id} style={{ flex: "1 1 220px", padding: 14, minWidth: 0 }}>
               <header className="row sb">
@@ -177,7 +176,7 @@ export function AddedTiles() {
                 </ul>
               ) : (
                 <div className="mt-2 space-y-2 text-[13px]">
-                  {rows.length ? <ul className="space-y-1">{rows.slice(0, 4).map((row) => <li key={row.id}><a href={row.href} className="break-words hover:underline">{row.title}</a>{row.date ? <span className="ml-2 text-[12px] text-muted">{new Date(row.date).toLocaleDateString()}</span> : null}</li>)}</ul>
+                  {rows.length ? <ul className="space-y-1">{rows.slice(0, 4).map((row) => <li key={row.id}>{row.href ? <a href={row.href} className="break-words hover:underline">{row.title}</a> : <span className="break-words">{row.title}</span>}{row.date ? <span className="ml-2 text-[12px] text-muted">{new Date(row.date).toLocaleDateString()}</span> : null}</li>)}</ul>
                     : <p className="text-muted">{feed.isLoading && ["calendar", "timetable", "deliverables", "assignment-countdown"].includes(id) ? "Loading…" : feed.isError && ["calendar", "timetable", "deliverables", "assignment-countdown"].includes(id) ? "Could not load this tile. Reopen Today to retry." : shortcut ? spec.empty ?? spec.blurb ?? "Open this area to get started." : "This shortcut is not available yet. Choose a live tile from Add a tile."}</p>}
                   {shortcut ? <a href={shortcut.href} className="inline-flex text-accent hover:underline">{shortcut.action}</a> : null}
                 </div>

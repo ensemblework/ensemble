@@ -659,7 +659,7 @@ const TILE_HREF: Record<string, string> = {
   "your-week": "/recap",
   // Where each tile's full list is: Context tabs open by link even when not pinned (`ContextLens`).
   reviews: "/context?tab=reviews",
-  repos: "/context?view=widgets&tab=repos",
+  repos: "/context?tab=repos",
   checks: "/context?tab=tests",
   deploys: "/context?tab=deploys",
   issues: "/board",

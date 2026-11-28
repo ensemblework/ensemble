@@ -183,7 +183,8 @@ async function savedItems(ctx: GraphCtx, where: Prisma.ArtifactWhereInput, page:
       title: row.title || row.kind,
       when: iso(row.ts),
       detail: [meta.source, meta.itemKind ?? row.kind].filter(Boolean).join(" "),
-      path: `/files?view=apps&item=${row.id}`,
+      // Its address at its source; the Hub has no page of its own for it.
+      path: row.url ?? null,
     };
   });
 }

@@ -2,35 +2,30 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { SuspenseSkeleton } from "@/components/motion/skeletons";
 import type { BoardPayload } from "@/lib/api";
+import { cleanContextHref } from "@/lib/context-href";
 import { desktopExport } from "@/lib/desktop-export";
-import { filesHref } from "@/lib/files/links";
-import { loadContextBoard, loadLayout, type LayoutPayload } from "@/lib/server-layout";
+import { loadContextBoard } from "@/lib/server-layout";
 import { ContextScreen } from "./screen";
 
 const DESK_VIEWS = new Set(["board", "grid", "list", "graph", "desk"]);
 
-export default async function ContextPage({ searchParams }: { searchParams: Promise<{ view?: string; tab?: string }> }) {
+export default async function ContextPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   // The packaged UI is a static export. Awaiting searchParams opts the route
-  // into dynamic rendering, which that export rejects.
-  if (desktopExport()) return <ContextFrame initialLayout={null} initialBoard={null} />;
+  // into dynamic rendering, which that export rejects; ContextScreen redirects there.
+  if (desktopExport()) return <ContextFrame initialBoard={null} />;
   const params = await searchParams;
-  const view = params.view ?? "";
-  const tab = params.tab ?? "";
-  // Links to the artifacts tab open Files → From your apps. The packaged UI does the same in ContextScreen.
-  if (tab === "artifacts") redirect(filesHref("apps"));
-  // The default lens uses neither payload. Layout is the widgets canvas; the board
-  // is the desk, grid, list, and graph, plus a tab that opens that desk.
-  const widgets = view === "widgets";
-  const utility = tab === "preferences" || tab === "sources";
-  const needsBoard = DESK_VIEWS.has(view) || (!widgets && !utility && tab !== "");
-  const [initialLayout, initialBoard] = await Promise.all([
-    widgets ? loadLayout("context") : Promise.resolve(null),
-    needsBoard ? loadContextBoard() : Promise.resolve(null),
-  ]);
-  return <ContextFrame initialLayout={initialLayout} initialBoard={initialBoard} />;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (typeof value === "string") query.set(key, value);
+  const clean = cleanContextHref(query);
+  if (clean) redirect(clean);
+  const view = query.get("view") ?? "";
+  const tab = query.get("tab") ?? "";
+  // The default lens uses no payload. The board is the desk, grid, list and graph, plus a tab that opens that desk.
+  const initialBoard = DESK_VIEWS.has(view) || tab !== "" ? await loadContextBoard() : null;
+  return <ContextFrame initialBoard={initialBoard} />;
 }
 
-function ContextFrame({ initialLayout, initialBoard }: { initialLayout: LayoutPayload | null; initialBoard: BoardPayload | null }) {
+function ContextFrame({ initialBoard }: { initialBoard: BoardPayload | null }) {
   return (
     <Suspense
       fallback={
@@ -39,7 +34,7 @@ function ContextFrame({ initialLayout, initialBoard }: { initialLayout: LayoutPa
         </div>
       }
     >
-      <ContextScreen initialLayout={initialLayout} initialBoard={initialBoard} />
+      <ContextScreen initialBoard={initialBoard} />
     </Suspense>
   );
 }

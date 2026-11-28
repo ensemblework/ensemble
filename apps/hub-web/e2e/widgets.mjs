@@ -228,35 +228,6 @@ async function main() {
   await phone.locator("[data-layout-editing] [data-widget=focus]").press("Escape");
   await narrow.close();
 
-  const clsContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
-  await clsContext.addInitScript(() => {
-    window.__cls = 0;
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        if (!entry.hadRecentInput) window.__cls += entry.value;
-      }
-    }).observe({ type: "layout-shift", buffered: true });
-  });
-  await clsContext.addCookies([{ name: "ensemble_session", value: session, url: WEB }]);
-  const clsPage = await clsContext.newPage();
-  await clsPage.goto(`${WEB}/context?view=widgets`, { waitUntil: "networkidle" });
-  await clsPage.locator("[data-widget=people]").waitFor();
-  await clsPage.waitForTimeout(600);
-  const cls = await clsPage.evaluate(() => window.__cls);
-  assert.ok(cls < 0.05, `context CLS ${cls}`);
-  const tabBox = await clsPage.getByRole("tab", { name: "People" }).boundingBox();
-  assert.ok(tabBox && tabBox.y < 280, `tabs should sit near the top, y=${tabBox?.y}`);
-  await clsPage.screenshot({ path: `${SHOTS}/context-landing.png` });
-  await clsPage.getByRole("tab", { name: "People" }).click();
-  await clsPage.waitForURL(/tab=people/);
-  await clsContext.close();
-
-  await page.goto(`${WEB}/context?view=widgets`, { waitUntil: "networkidle" });
-  await page.locator("[data-widget=people]").waitFor();
-  await page.getByRole("tab", { name: "People" }).click();
-  await page.waitForURL(/tab=people/);
-  assert.match(page.url(), /tab=people/);
-
   const roles = [
     ["student", "reading-pile", "student"],
     ["teacher", "check-ins", "teacher"],
@@ -346,43 +317,6 @@ async function main() {
   assert.ok(todayCls < 0.05, `today CLS ${todayCls}`);
   await nudgePage.screenshot({ path: `${SHOTS}/today-nudges-1440.png` });
   await nudgeContext.close();
-
-  const graphSession = await signup("Graph", `graph-${stamp}@ensemble.test`);
-  await authed(graphSession, "/api/onboarding", {
-    method: "POST",
-    body: JSON.stringify({ role: "student", templateId: "reading-pile" }),
-  });
-  for (let i = 0; i < 130; i += 1) {
-    await authed(graphSession, "/api/tasks", { method: "POST", body: JSON.stringify({ title: `Graph node ${i}`, status: "todo" }) });
-  }
-  const graphContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
-  await graphContext.addCookies([{ name: "ensemble_session", value: graphSession, url: WEB }]);
-  const graphPage = await graphContext.newPage();
-  await graphPage.goto(`${WEB}/context?view=widgets`, { waitUntil: "networkidle" });
-  const graphTile = graphPage.locator("[data-widget=graph]");
-  await graphTile.waitFor();
-  await graphTile.getByText(/\+\d+ more/).waitFor({ timeout: 20_000 });
-  await graphPage.waitForTimeout(400);
-  const graphFill = await graphTile.locator("canvas").evaluate((canvas) => {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return { span: 0, height: 0 };
-    const { width, height } = canvas;
-    const data = ctx.getImageData(0, 0, width, height).data;
-    let minY = height;
-    let maxY = 0;
-    for (let y = 0; y < height; y += 4) {
-      for (let x = 0; x < width; x += 8) {
-        if (data[(y * width + x) * 4 + 3] > 24) {
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    return { span: maxY - minY, height };
-  });
-  assert.ok(graphFill.height > 0 && graphFill.span / graphFill.height > 0.55, `graph uses ${graphFill.span} of ${graphFill.height}`);
-  await graphTile.screenshot({ path: `${SHOTS}/context-graph-large.png` });
-  await graphContext.close();
 
   await browser.close();
   console.log("widgets e2e ok");
