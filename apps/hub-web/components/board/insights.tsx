@@ -2,12 +2,9 @@
 import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, Search, GripVertical } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
-import { FramedPointerSensor } from "@/lib/motion/dnd-sensors";
-import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, Search } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { insightSize } from "@ensemble/shared-types/desk-layout";
 import { api, inItemView, type TaskRecord } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { usePreferenceWrite } from "@/lib/preference-write";
@@ -16,6 +13,7 @@ import { useToast } from "../toast";
 import { Dialog } from "../ui";
 import { deskIdFromTemplate } from "../desk/desks";
 import { deskRole } from "../desk/tile-catalog";
+import { useTileControls } from "../desk/arrange";
 import { sampleLive } from "../onboarding/sample";
 import { type Role } from "../onboarding/roles";
 import { DEFAULT_INSIGHTS, INSIGHTS_KEY, INSIGHT_IDS, MAX_INSIGHTS, readInsightLayout, type BoardFocus, type InsightId, type InsightLayout, type OwnerContext } from "./insight-data";
@@ -47,13 +45,23 @@ export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout,
   const fallback = !access.guest && initialLayout?.source === "saved" ? initialLayout.document.placements.map((p) => LEGACY[p.type]).filter((id): id is InsightId => Boolean(id)) : DEFAULT_INSIGHTS[role];
   const savedLayout = editable ? prefs.data?.preferences.find((p) => p.key === INSIGHTS_KEY)?.value : null;
   const layout = readInsightLayout(savedLayout, fallback);
-  useAssistantSurface("/board", { kind: "board", tiles: layout.tiles.map(key => ({ key, title: insightTitle(key, role), c: 4, r: 3 })) });
+  // The same 12-column grid and sizes as a Today tile, on 80 px rows.
+  const specs = layout.tiles.map((key) => ({ key, title: insightTitle(key, role), ...insightSize(layout.sizes, key, layout.tiles.length) }));
+  useAssistantSurface("/board", { kind: "board", tiles: specs.map(({ key, title, c, r }) => ({ key, title, c, r })) });
   const cap = layout.wipCap ?? (access.guest ? 3 : initialLayout?.document.config?.wipCap ?? 3);
   const [phone, setPhone] = useState(false);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(max-width: 767px)");
     const sync = () => setPhone(media.matches); sync(); media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+  // Up to 1100 px the overview wraps by itself (insights.css), so its tiles move and come off but keep their size.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 1100px)");
+    const sync = () => setNarrow(media.matches); sync(); media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
   }, []);
   const [localCollapsed, setLocalCollapsed] = useState<boolean | null>(null);
@@ -73,29 +81,31 @@ export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout,
     catch (e) { setError((e as Error).message); toast((e as Error).message, { tone: "error" }); }
     finally { setSaves((n) => n - 1); }
   }
-  const sensors = useSensors(useSensor(FramedPointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const change = (tiles: InsightId[]) => void save({ ...layout, tiles });
+  const tiles = useTileControls({
+    shown: specs,
+    hidden: [],
+    customized: true,
+    mobile: phone,
+    resizable: !narrow,
+    restoreHint: "Add it back from Board tiles.",
+    // A move, resize or removal saves every tile's place and size, through the same queued save as the rest.
+    save: async (next) => {
+      if (!next) return;
+      const placed = next.tiles.filter((tile): tile is typeof tile & { key: InsightId } => (INSIGHT_IDS as readonly string[]).includes(tile.key));
+      await save({ ...layout, tiles: placed.map((tile) => tile.key), sizes: Object.fromEntries(placed.map((tile) => [tile.key, { c: tile.c, r: tile.r }])) });
+    },
+  });
+  const arrangeable = editable && prefs.isSuccess;
   return <div className="board-insights desk" data-board-strip>
     <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button>{filtered && <span>Matches your filters</span>}</div>
-    {!collapsed && <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={({ active, over }) => {
-      if (over && active.id !== over.id) change(arrayMove(layout.tiles, layout.tiles.indexOf(active.id as InsightId), layout.tiles.indexOf(over.id as InsightId)));
-    }}><SortableContext items={layout.tiles} strategy={rectSortingStrategy}><div id="board-insight-tiles" className="board-insight-row" data-board-scroll>
-      {loading || !access.ready && !inItemView() ? <div className="insight-loading" role="status">Loading board overview…</div> : layout.tiles.map((id) => <SortableInsight key={id} id={id} title={insightTitle(id, role)} disabled={!editable || !prefs.isSuccess} render={(grip) => <InsightTile id={id} role={role} tasks={tasks} who={who} now={now} cap={cap} focus={focus} onFocus={onFocus} onOpen={onOpen} onIdea={onIdea} grip={grip} onRemove={editable && prefs.isSuccess ? () => change(layout.tiles.filter((key) => key !== id)) : undefined} />} />)}
+    {!collapsed && <div id="board-insight-tiles" className="board-insight-row" data-board-scroll>
+      {loading || !access.ready && !inItemView() ? <div className="insight-loading" role="status">Loading board overview…</div> : specs.map((spec) => <InsightTile key={spec.key} id={spec.key} role={role} tasks={tasks} who={who} now={now} cap={cap} focus={focus} onFocus={onFocus} onOpen={onOpen} onIdea={onIdea} size={spec} control={arrangeable ? tiles.controls(spec) : undefined} />)}
       {!layout.tiles.length && <button type="button" className="insight-empty-add" onClick={() => onEditingChange(true)}><Plus size={14} />Choose a small overview for this board</button>}
-    </div></SortableContext></DndContext>}
+    </div>}
     {editing && <InsightGallery role={role} layout={layout} cap={cap} editable={editable && prefs.isSuccess} pending={pending} error={error} onChange={change} onCapChange={(wipCap) => void save({ ...layout, wipCap })} onReset={() => void save({ v: 1, tiles: DEFAULT_INSIGHTS[role], collapsed: false })} onClose={() => onEditingChange(false)} />}
   </div>;
 });
-
-function SortableInsight({ id, title, disabled, render }: { id: InsightId; title: string; disabled: boolean; render: (grip: ReactNode) => ReactNode }) {
-  const { setNodeRef, transform, transition, attributes, listeners, isDragging } = useSortable({ id, disabled });
-  // dnd-kit renders every tile on each pointer move; the tile itself only changes with its grip.
-  const grip = useMemo(() => (disabled ? null : <button type="button" className="insight-grip" aria-label={`Move ${title}. Drag or press Space and use arrow keys.`} title="Drag to move" {...attributes} {...listeners}><GripVertical size={12} /></button>), [disabled, title, attributes, listeners]);
-  const body = useMemo(() => render(grip), [render, grip]);
-  return <div ref={setNodeRef} className="board-insight-slot" style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? .6 : 1, zIndex: isDragging ? 2 : undefined }}>
-    {body}
-  </div>;
-}
 
 export function InsightGallery({ role, layout, cap, editable, pending, error, onChange, onCapChange, onReset, onClose }: { role: Role; layout: InsightLayout; cap: number; editable: boolean; pending: boolean; error: string; onChange: (ids: InsightId[]) => void; onCapChange?: (cap: number) => void; onReset: () => void; onClose: () => void }) {
   const gallery = useRef<HTMLDivElement>(null);

@@ -169,3 +169,15 @@ export function hiddenTilesFor<S extends SpecLike>(defaults: S[], shown: SpecLik
   const on = new Set(shown.map((spec) => spec.key));
   return defaults.filter((spec) => !on.has(spec.key));
 }
+
+/**
+ * A Board overview tile's size (`sizes` in `desk.board.insights`): columns of 12 and rows of 80 px, within
+ * the same limits as a Today tile. A tile with no saved size shares the row with the others, two rows high.
+ */
+export function insightSize(sizes: unknown, key: string, count: number): TileSize {
+  const fallback = { c: Math.max(3, Math.floor(GRID_COLUMNS / Math.max(1, count))), r: 2 };
+  const saved = sizes && typeof sizes === "object" && !Array.isArray(sizes) ? (sizes as Record<string, unknown>)[key] : undefined;
+  if (!saved || typeof saved !== "object") return fallback;
+  const { c, r } = saved as Partial<TileSize>;
+  return clampSize({ c: typeof c === "number" ? c : fallback.c, r: typeof r === "number" ? r : fallback.r }, tileLimits({ key, c: fallback.c, r: fallback.r }));
+}

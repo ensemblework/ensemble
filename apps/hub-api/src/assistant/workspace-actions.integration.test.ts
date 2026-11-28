@@ -91,7 +91,10 @@ test("Today, Board and Context layout edits retain unrelated tiles, reject stale
   const available = read.available.find((row: any) => !read.document.placements.some((tile: any) => tile.type === row.type) && row.type !== "orbit"); assert.ok(available);
   const before = read.document.placements;
   const result = await run(u, "hub_edit_layout", { surface, version: read.version, edits: [{ action: "add", type: available.type, size: available.size }] });
-  const doc = (result.data as any).document; assert.deepEqual(doc.placements.slice(0, before.length), before);
+  const doc = (result.data as any).document;
+  // Board overview tiles without a saved size share the row, so a fourth tile narrows the others; their order and types stay.
+  if (surface === "board") assert.deepEqual(doc.placements.slice(0, before.length).map((tile: any) => [tile.type, tile.c, tile.r]), before.map((tile: any) => [tile.type, 3, 2]));
+  else assert.deepEqual(doc.placements.slice(0, before.length), before);
   await assert.rejects(run(u, "hub_edit_layout", { surface, version: read.version, edits: [{ action: "remove", type: available.type }] }), /changed/);
   await undoLast(h.prisma, u.id);
   const restored = (await run(u, "hub_read_layout", { surface })).data as any; assert.deepEqual(restored.document, read.document);
@@ -203,7 +206,15 @@ test("tile edits target the actual profile desk, Context panel and Board prefere
  assert.ok((strip.value as any).tiles.includes("attention"));
  const after = (await run(u, "hub_read_layout", { surface: "board" })).data as any;
  await assert.rejects(run(u, "hub_edit_layout", { surface: "board", version: after.version, edits: [{ action: "add", type: "deadlines" }] }), /four/);
- await assert.rejects(run(u, "hub_edit_layout", { surface: "board", version: after.version, edits: [{ action: "update", type: "attention", c: 6 }] }), /fixed size/);
+ await run(u, "hub_edit_layout", { surface: "board", version: after.version, edits: [{ action: "update", type: "attention", c: 6, r: 3 }] });
+ const resized = await h.prisma.preference.findUniqueOrThrow({ where: { userId_key: { userId: u.id, key: "desk.board.insights" } } });
+ assert.deepEqual((resized.value as any).sizes, { attention: { c: 6, r: 3 } });
+ // A later move keeps the size the tile was given.
+ const sized = (await run(u, "hub_read_layout", { surface: "board" })).data as any;
+ await run(u, "hub_edit_layout", { surface: "board", version: sized.version, edits: [{ action: "move", type: "attention", index: 0 }] });
+ const moved = await h.prisma.preference.findUniqueOrThrow({ where: { userId_key: { userId: u.id, key: "desk.board.insights" } } });
+ assert.equal((moved.value as any).tiles[0], "attention");
+ assert.deepEqual((moved.value as any).sizes, { attention: { c: 6, r: 3 } });
 });
 
 test("the open Board surface honors live visible and selected IDs without leaking another space", async () => {

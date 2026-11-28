@@ -48,7 +48,7 @@ async function plan(ctx: ToolContext, input: z.infer<typeof Input>) {
 }
 
 export const layoutTools = [
-  defineTool({ name: "hub_read_layout", area: "context", description: "Read the actual Today, Board or Context tiles, their order and sizes. Uses the active profile or widgets view. Board overview tiles have fixed sizes and a four-tile limit. Returns version for hub_edit_layout.", input: z.object({ surface: SurfaceName, view: z.enum(["current", "widgets"]).optional(), tab: z.string().max(40).optional() }), isWrite: false, risk: "low", async run(ctx, input) {
+  defineTool({ name: "hub_read_layout", area: "context", description: "Read the actual Today, Board or Context tiles, their order and sizes. Uses the active profile or widgets view. The Board overview holds at most four tiles. Returns version for hub_edit_layout.", input: z.object({ surface: SurfaceName, view: z.enum(["current", "widgets"]).optional(), tab: z.string().max(40).optional() }), isWrite: false, risk: "low", async run(ctx, input) {
     const native = await nativeLayout(ctx, input.surface, input.view, input.tab);
     if (native) return toolOk(`${input.surface} ${native.kind} tiles.`, { kind: native.kind, document: nativeDocument(native), version: native.version, available: native.available.map(row => ({ type: row.key, label: row.title, ...(row.description ? { about: row.description } : {}), ...(native.kind === "board" ? { fixedSize: true } : { c: row.c, r: row.r }) })), limits: native.kind === "board" ? { maxTiles: 4, fixedSize: true } : { columns: 12, maxRows: 8 } });
     const layout = await readLayout(ctx.prisma, ctx.userId, input.surface);
