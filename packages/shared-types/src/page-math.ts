@@ -17,8 +17,12 @@ const MAX_TEX = 2000;
 /** The most lines a display equation spans. */
 export const MAX_BLOCK_LINES = 200;
 
-/** `$$x$$` inside a line of text: display math in a sentence. */
-const DISPLAY = String.raw`(?<![\\$])\$\$(?![\s$])((?:\\[^\n]|[^$\\\n]){1,${MAX_TEX}}?)\$\$`;
+/**
+ * `$$x$$` inside a line of text: display math in a sentence. With a space just inside (`$$ x $$`,
+ * as TeX is often written) the TeX must hold a backslash, `^`, `_`, `=` or a brace, so shell text
+ * such as "echo $$ and kill $$" stays text.
+ */
+const DISPLAY = String.raw`(?<![\\$])\$\$(?!\$)(?:(?!\s)|(?=[^$\n]{0,${MAX_TEX}}?[\\^_={}]))((?:\\[^\n]|[^$\\\n]){1,${MAX_TEX}}?)\$\$`;
 /** `$x$`: no space just inside the dollars, no letter or digit before the first, nothing word-like after the last. */
 const DOLLAR = String.raw`(?<![\\$\p{L}\p{N}])\$(?![\s$])((?:\\[^\n]|[^$\\\n\x60]){0,${MAX_TEX}}?(?:\\[^\n]|[^\s$\\\x60]))\$(?![\p{L}\p{N}_{$])`;
 /** `\(x\)`, as many models write inline math. The TeX holds no other `\(` or `\)`. */
@@ -36,9 +40,15 @@ export function inlineMathPattern(): RegExp {
 
 /** The TeX and whether it is display math, from the three groups of `INLINE_MATH_SOURCE`. */
 export function inlineMathMatch(display: string | undefined, dollar: string | undefined, paren: string | undefined): { latex: string; display: boolean } | null {
-  if (display !== undefined) return { latex: display.trim(), display: true };
+  if (display !== undefined) return display.trim() ? { latex: display.trim(), display: true } : null;
   const latex = (dollar ?? paren)?.trim();
   return latex ? { latex, display: false } : null;
+}
+
+/** Whether a line of text holds inline math. */
+export function hasInlineMath(line: string): boolean {
+  for (const found of line.matchAll(inlineMathPattern())) if (inlineMathMatch(found[1], found[2], found[3])) return true;
+  return false;
 }
 
 const DOLLAR_AT = new RegExp(`${DISPLAY}|${DOLLAR}`, "uy");

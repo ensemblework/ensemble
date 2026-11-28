@@ -9,7 +9,7 @@
 import { checkpointPage, pageEditor } from "./history.js";
 import { nodeActingIn } from "../sharing/context.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { escapeMathBlockStarts, escapeMathText, imageMarkdown, markdownToNodes, mathMarkdown, PageDocument, type PageNode } from "@ensemble/shared-types";
+import { escapeMathBlockStarts, escapeMathText, imageMarkdown, markdownToNodes, mathMarkdown, notesDocument, PageDocument, type PageNode } from "@ensemble/shared-types";
 import { sseHub } from "../lib/sse.js";
 
 export { markdownToNodes };
@@ -80,6 +80,7 @@ function inlineMarkdown(nodes: readonly PageNode[] | undefined): string {
       if (marks.has("bold")) text = `**${text}**`;
       if (marks.has("italic")) text = `*${text}*`;
       if (marks.has("strike")) text = `~~${text}~~`;
+      if (marks.has("underline")) text = `<u>${text}</u>`;
       const href = node.marks?.find((mark) => mark.type === "link")?.attrs?.href;
       return typeof href === "string" && href ? `[${text}](${href})` : text;
     })
@@ -197,7 +198,7 @@ export async function writeAgentBlock(prisma: PrismaClient, userId: string, task
           if (!task) return;
           const page = await db.taskPage.findFirst({ where: { userId, taskId } });
           const current = page?.content ? PageDocument.parse(page.content) : null;
-          const base: PageNode[] = current?.content ?? (task.notes.trim() ? markdownToNodes(task.notes) : []);
+          const base: PageNode[] = current?.content ?? (task.notes.trim() ? notesDocument(task.notes).content : []);
           const kept = base.filter((node) => !(node.type === "paragraph" && !node.content?.length && base.length === 1));
           const index = kept.findIndex((node) => node.type === "agentBlock" && node.attrs?.jobId === meta.jobId);
           const next = index >= 0 ? kept.map((node, at) => (at === index ? block : node)) : [...kept, block];

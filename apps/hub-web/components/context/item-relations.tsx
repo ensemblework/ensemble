@@ -8,6 +8,7 @@ import { api, type ContextItemCard, type ContextItemResponse, type ContextRelati
 import { STATUS, shortDate } from "@/lib/format";
 import { usePeek, type PeekKind } from "../shell/peek";
 import { Tag, cx } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 export const contextItemKey = (ref: string) => ["context-item", ref] as const;
 
@@ -44,7 +45,7 @@ function Row({ card, onOpen }: { card: ContextItemCard; onOpen: (card: ContextIt
       <button type="button" className="linked-main !gap-2 !py-1.5 !text-[13px]" disabled={!opens} onClick={() => onOpen(card)}>
         <span className="min-w-0 flex-1">
           <span className={cx("linked-title block truncate", done && "is-done")}>{card.title}</span>
-          {card.detail && card.detail !== card.role ? <span className="block truncate text-[11.5px] text-faint">{card.detail}</span> : null}
+          {card.detail && card.detail !== card.role ? <span className="block truncate text-[11.5px] text-faint">{markdownPlainText(card.detail)}</span> : null}
         </span>
         {card.role ? <span className="max-w-[40%] shrink-0 truncate text-[12px] text-muted">{card.role}</span> : null}
         {card.due ? (

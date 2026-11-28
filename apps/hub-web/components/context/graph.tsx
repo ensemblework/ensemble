@@ -39,6 +39,7 @@ import { Held } from "@/components/motion/held";
 import { InfoTip } from "@/components/ui";
 import { GraphSkeleton } from "@/components/motion/skeletons";
 import { Empty, cx } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const KINDS: Array<{ kind: string; label: string }> = [
   { kind: "people", label: "People" },
@@ -1100,7 +1101,7 @@ function GraphSidePanel({
         <span className="kind-dot mt-1.5 shrink-0" data-shape={shapeFor(node.kind)} style={{ ["--kind" as string]: `var(--kind-${node.kind})` }} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13.5px] font-semibold" title={node.label}>{node.label}</h3>
-          <p className="truncate text-[11.5px] text-muted">{item.data?.item.summary || node.sub}</p>
+          <p className="truncate text-[11.5px] text-muted">{markdownPlainText(item.data?.item.summary ?? "") || node.sub}</p>
         </div>
         <button type="button" className="icon-btn h-6 w-6 shrink-0" aria-label="Close" onClick={onClose}>
           <X size={13} />

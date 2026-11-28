@@ -8,6 +8,7 @@ import { meetingsApi } from "@/lib/api-meetings";
 import { MarkdownText } from "@/components/markdown-text";
 import { useToast } from "../toast";
 import { ThinkingStatus } from "../motion/slot";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 function whenLabel(start: string): string {
   const date = new Date(start);
@@ -134,7 +135,7 @@ function CueCard({
                 ) : null}
               </div>
               {prepare.isPending ? <div className="mt-2"><ThinkingStatus real="Preparing your meeting brief…" active /></div> : null}
-              {previous.summary ? <p className="mt-1 text-muted">{previous.summary}</p> : null}
+              {previous.summary ? <p className="mt-1 text-muted">{markdownPlainText(previous.summary)}</p> : null}
               {previous.openTasks.length ? (
                 <ul className="mt-1 space-y-1">
                   {previous.openTasks.map((task) => (

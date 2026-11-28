@@ -9,6 +9,7 @@ import { useToast } from "../toast";
 import { Spinner, Tag } from "../ui";
 import { LoadError } from "../load-error";
 import { markNewProject, UNTITLED_PROJECT } from "../project/new-project";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 function ProjectCard({ project }: { project: ProjectRecord }) {
   const client = useQueryClient();
@@ -35,7 +36,7 @@ function ProjectCard({ project }: { project: ProjectRecord }) {
         <span className={project.name === UNTITLED_PROJECT ? "min-w-0 truncate text-muted" : "min-w-0 truncate"} data-project-name>{project.name}</span>
         {project.status === "done" ? <Tag tone="green">done</Tag> : null}
       </button>
-      {project.summary ? <p className="mt-2 line-clamp-3 text-[12.5px] leading-[18px] text-muted">{project.summary}</p> : null}
+      {project.summary ? <p className="mt-2 line-clamp-3 text-[12.5px] leading-[18px] text-muted">{markdownPlainText(project.summary)}</p> : null}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {project.people.map((person) => (
           <span key={person.id} className="chip" style={{ ["--chip" as string]: "var(--kind-people)" }}>

@@ -11,6 +11,7 @@ import { relative } from "@/lib/format";
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import { useModalFocus } from "@/lib/modal-focus";
 import { SkeletonRows } from "../ui";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const KIND: Record<string, { icon: LucideIcon; tone: string }> = {
   agent: { icon: Orbit, tone: "amber" }, decision: { icon: CircleAlert, tone: "amber" },
@@ -59,7 +60,7 @@ function NotificationRow({ row, leaving, onOpen, onDismiss }: { row: HubNotifica
     <span className="nc-icon" data-tone={row.urgent ? "amber" : kind.tone} aria-hidden><Icon size={15} /></span>
     <span className="nc-text">
       <span className="nc-line"><strong>{row.title}</strong><time dateTime={row.createdAt} title={new Date(row.createdAt).toLocaleString()}>{relative(row.createdAt)}</time></span>
-      {row.body ? <span className="nc-body">{row.body}</span> : null}
+      {row.body ? <span className="nc-body">{markdownPlainText(row.body)}</span> : null}
     </span>
   </>;
   return <li data-note-id={row.id} className="nc-row" data-leaving={leaving || undefined}>

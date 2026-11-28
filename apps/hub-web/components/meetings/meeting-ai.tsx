@@ -10,6 +10,7 @@ import { relative } from "@/lib/format";
 import { BrandMorph } from "../motion/brand-morph";
 import { InfoTip, Spinner, Tag } from "../ui";
 import { useToast } from "../toast";
+import { MarkdownText } from "../markdown-text";
 
 const KIND_LABEL: Record<string, string> = { task: "Task", deliverable: "Deliverable", follow_up: "Waiting on" };
 
@@ -130,7 +131,7 @@ export function MeetingAiPanel({ noteId, sessionId, initial }: { noteId: string 
       </div>
       {ai ? (
         <div className="flex flex-col gap-4">
-          {ai.summary ? <p className="text-[13.5px] leading-6">{ai.summary}</p> : null}
+          {ai.summary ? <MarkdownText text={ai.summary} className="space-y-2 text-[13.5px] leading-6" /> : null}
           {ai.project ? (
             <p className="text-[12.5px] text-muted">
               About {ai.project.id ? <Link className="note-link" href={`/projects/${ai.project.id}`}>{ai.project.name}</Link> : ai.project.name}

@@ -8,6 +8,8 @@ export * from "./mentions.js";
 export * from "./assistant-text.js";
 export * from "./page-markdown.js";
 export * from "./page-math.js";
+export * from "./page-latex.js";
+export * from "./page-notes.js";
 export * from "./page-images.js";
 export * from "./page-boards.js";
 export * from "./labels.js";

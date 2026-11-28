@@ -12,6 +12,7 @@ import { placeAnchoredPanel } from "@/lib/place-layer";
 import { emitToast } from "@/lib/toast-bus";
 import { useShellLabels } from "@/lib/shell-labels";
 import { usePeek } from "@/components/shell/peek";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const GraphTab = dynamic(() => import("./graph").then((mod) => mod.GraphTab), {
   ssr: false,
@@ -911,7 +912,7 @@ function Card({
           <Mark card={card} />
           <span className="min-w-0 flex-1">
             <span className="card-title">{card.title}</span>
-            {card.subtitle && card.subtitle !== card.title ? <span className="mt-0.5 block truncate text-[12.5px] text-muted">{card.subtitle}</span> : null}
+            {card.subtitle && card.subtitle !== card.title ? <span className="mt-0.5 block truncate text-[12.5px] text-muted">{markdownPlainText(card.subtitle)}</span> : null}
           </span>
         </span>
         {card.kind === "project" && card.progress ? (
@@ -1006,7 +1007,7 @@ function List({ cards, onOpen }: { cards: BoardCard[]; onOpen: (card: BoardCard)
                 </button>
               </td>
               <td className="px-2 py-1.5 text-[13px] text-muted">{kindName(card.kind, labels)}</td>
-              <td className="px-2 py-1.5 text-[13px] text-muted">{card.subtitle || card.meta}</td>
+              <td className="px-2 py-1.5 text-[13px] text-muted">{markdownPlainText(card.subtitle ?? "") || card.meta}</td>
               <td className="rounded-r-lg px-2 py-1.5 text-[13px] text-muted">{card.chips.slice(0, 2).join(", ")}</td>
             </tr>
           ))}
@@ -1179,7 +1180,7 @@ function Peek({ card, cards, onOpen, onClose, onChanged }: { card: BoardCard; ca
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-medium text-muted">{kindName(card.kind, labels)}</div>
             <h2 className="truncate text-[22px] font-semibold leading-tight">{card.title}</h2>
-            {card.subtitle ? <p className="mt-1 truncate text-[13.5px] text-muted">{card.subtitle}</p> : null}
+            {card.subtitle ? <p className="mt-1 truncate text-[13.5px] text-muted">{markdownPlainText(card.subtitle)}</p> : null}
           </div>
           <button type="button" className="btn min-h-6" onClick={onClose}>
             Close

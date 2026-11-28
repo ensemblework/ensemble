@@ -374,7 +374,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         : personIds
           ? new Map(personIds.map((personId) => [personId, undefined as string | null | undefined]))
           : null;
-      const page = content !== undefined ? meetingNotesFields({ content }) : null;
+      // The page and its Markdown move together: notes alone (an agent's hub_update_project) rebuild the page.
+      const page = content !== undefined ? meetingNotesFields({ content }) : fields.notes !== undefined ? meetingNotesFields({ notes: fields.notes }) : null;
       const data = { ...fields, ...(page ? { notes: page.notes, content: page.content } : {}) };
       for (const personId of members?.keys() ?? []) await assertOwned(tx, request.userId, "person", personId);
       for (const repoId of repoIds ?? []) await assertOwned(tx, request.userId, "repo", repoId);

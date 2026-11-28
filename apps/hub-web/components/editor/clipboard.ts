@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
-import { Slice, type Fragment, type Node as ProseMirrorNode, type Schema } from "@tiptap/pm/model";
+import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { looksLikeMarkdown, markdownToNodes, restoreMentionLinks, type PageNode } from "@ensemble/shared-types";
+import { inlineMathMatch, inlineMathPattern, markdownToNodes, restoreMentionLinks, textToPageNodes, type PageNode } from "@ensemble/shared-types";
 import { pageIdFromHref, readDraggedPage } from "@/lib/page-drag";
 
 function inlineText(node: ProseMirrorNode): string {
@@ -93,9 +93,8 @@ export function plainTextOf(slice: Slice): string {
   return blocksText(slice.content);
 }
 
-/** Markdown as page blocks for this editor, or null when it does not fit the schema. */
-export function markdownFragment(schema: Schema, markdown: string, options: { lineBreaks?: boolean } = {}): Fragment | null {
-  const nodes = markdownToNodes(markdown, options);
+/** Page nodes as blocks for this editor, or null when they do not fit the schema. */
+function fitted(schema: Schema, nodes: PageNode[]): Fragment | null {
   // A link to something this editor has no block for (an ensemble://ask link) stays a link.
   for (const content of [restoreMentionLinks({ type: "doc", content: nodes }).content, nodes] as PageNode[][]) {
     try {
@@ -107,6 +106,111 @@ export function markdownFragment(schema: Schema, markdown: string, options: { li
     }
   }
   return null;
+}
+
+/** Markdown as page blocks for this editor, or null when it does not fit the schema. */
+export function markdownFragment(schema: Schema, markdown: string, options: { lineBreaks?: boolean } = {}): Fragment | null {
+  return fitted(schema, markdownToNodes(markdown, options));
+}
+
+/**
+ * Pasted plain text as page blocks (`textToPageNodes`: Markdown, a LaTeX document, or text with
+ * equations, each line kept), or null for ordinary text, which pastes as it is.
+ */
+export function pastedTextFragment(schema: Schema, text: string): Fragment | null {
+  const nodes = textToPageNodes(text);
+  return nodes ? fitted(schema, nodes) : null;
+}
+
+/** VS Code languages whose text is read as page text; other code pastes as a code block. */
+const TEXT_MODES = new Set(["markdown", "latex", "tex", "plaintext"]);
+/** VS Code language ids as code block languages, where they differ. */
+const CODE_LANGUAGE: Record<string, string> = { typescriptreact: "tsx", javascriptreact: "jsx", shellscript: "bash", "jsonc": "json" };
+
+/** The language VS Code says copied text is in (`vscode-editor-data`), or null when it did not say. */
+export function vscodeMode(data: Pick<DataTransfer, "getData" | "types">): string | null {
+  if (!Array.from(data.types ?? []).includes("vscode-editor-data")) return null;
+  try {
+    const mode = (JSON.parse(data.getData("vscode-editor-data")) as { mode?: unknown }).mode;
+    return typeof mode === "string" && mode ? mode : "plaintext";
+  } catch {
+    return "plaintext";
+  }
+}
+
+/** One pasted paragraph joins the line at the caret; several blocks land as blocks. */
+export function pastedSlice(fragment: Fragment): Slice {
+  const single = fragment.childCount === 1 && fragment.firstChild!.type.name === "paragraph";
+  return new Slice(fragment, single ? 1 : 0, single ? 1 : 0);
+}
+
+/** Elements that make pasted HTML formatted content rather than text wrapped in styled boxes. */
+const FORMATTED = "p,pre,h1,h2,h3,h4,h5,h6,ul,ol,li,table,img,a[href],strong,b,em,i,u,s,del,strike,blockquote,hr,code,math,.katex,figure,video,iframe,[data-pm-slice]";
+
+/**
+ * Whether pasted HTML is only plain text in `div`/`span` boxes, as some editors and terminals put
+ * it on the clipboard: then its plain text is read for Markdown and equations. A `pre` is code
+ * and pastes as a code block.
+ */
+export function plainTextHtml(html: string): boolean {
+  if (typeof DOMParser === "undefined") return false;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return Boolean(doc.body.textContent?.trim()) && !doc.body.querySelector(FORMATTED);
+}
+
+/** Text runs with `$…$` and `\(…\)` as equations (page-math.ts rules); the same fragment when none. */
+function inlineWithMath(content: Fragment, schema: Schema): Fragment {
+  const type = schema.nodes.inlineMath;
+  if (!type) return content;
+  const out: ProseMirrorNode[] = [];
+  let changed = false;
+  content.forEach((child) => {
+    const text = child.isText ? child.text ?? "" : "";
+    if (!text || child.marks.some((mark) => mark.type.spec.code) || (!text.includes("$") && !text.includes("\\("))) {
+      out.push(child);
+      return;
+    }
+    const parts: ProseMirrorNode[] = [];
+    let at = 0;
+    for (const found of text.matchAll(inlineMathPattern())) {
+      const math = inlineMathMatch(found[1], found[2], found[3]);
+      if (!math) continue;
+      if (found.index! > at) parts.push(schema.text(text.slice(at, found.index), child.marks));
+      parts.push(type.create({ latex: math.latex, display: math.display }));
+      at = found.index! + found[0].length;
+    }
+    if (!parts.length) {
+      out.push(child);
+      return;
+    }
+    if (at < text.length) parts.push(schema.text(text.slice(at), child.marks));
+    out.push(...parts);
+    changed = true;
+  });
+  return changed ? Fragment.from(out) : content;
+}
+
+/**
+ * Pasted formatted content (a web page, a doc) with the TeX in its text as equations: `$x$` and
+ * `$$…$$` become math nodes where the block allows them; code and everything else stay as pasted.
+ */
+export function withPastedMath(fragment: Fragment, schema: Schema): Fragment {
+  const nodes: ProseMirrorNode[] = [];
+  let changed = false;
+  fragment.forEach((node) => {
+    let next = node;
+    if (node.type.spec.code || node.isLeaf) next = node;
+    else if (node.isTextblock) {
+      const content = inlineWithMath(node.content, schema);
+      if (content !== node.content && node.type.validContent(content)) next = node.copy(content);
+    } else {
+      const content = withPastedMath(node.content, schema);
+      if (content !== node.content) next = node.copy(content);
+    }
+    if (next !== node) changed = true;
+    nodes.push(next);
+  });
+  return changed ? Fragment.from(nodes) : fragment;
 }
 
 /**
@@ -140,27 +244,74 @@ export function pastedPageHtml(html: string, origin: string): string {
 }
 
 /**
- * Clipboard and drop handling for page bodies: Markdown pasted as plain text becomes blocks
- * (Cmd/Ctrl+Shift+V keeps it as text), copied blocks read well as plain text, and links to
- * pages in this app stay in-app links.
+ * Clipboard and drop handling for page bodies: Markdown, a LaTeX document or equations pasted as
+ * plain text become blocks (Cmd/Ctrl+Shift+V keeps it as text), copied blocks read well as plain
+ * text, and links to pages in this app stay in-app links.
  */
 export const PageClipboard = Extension.create({
   name: "pageClipboard",
   priority: 1000,
   addProseMirrorPlugins() {
     const origin = () => (typeof window === "undefined" ? "" : window.location.origin);
+    /** Set while ProseMirror reads HTML copied from a page in this app, for `transformPasted`. */
+    let fromThisApp = false;
     return [
       new Plugin({
         key: new PluginKey("pageClipboard"),
         props: {
           clipboardTextSerializer: (slice) => plainTextOf(slice),
           clipboardTextParser: (text, $context, plain, view) => {
-            if (plain || $context.parent.type.spec.code || !looksLikeMarkdown(text)) return null as unknown as Slice;
+            if (plain || $context.parent.type.spec.code) return null as unknown as Slice;
             // Pasted text keeps its line breaks (logs, commands); only block syntax starts a new block.
-            const fragment = markdownFragment(view.state.schema, text, { lineBreaks: true });
-            return (fragment ? new Slice(fragment, 0, 0) : null) as Slice;
+            const fragment = pastedTextFragment(view.state.schema, text);
+            return (fragment ? pastedSlice(fragment) : null) as Slice;
           },
-          transformPastedHTML: (html) => pastedPageHtml(html, origin()),
+          // Text copied from a code editor or terminal comes as HTML that only wraps the text, so its
+          // plain text is read here (Markdown and equations become blocks, code a code block).
+          handlePaste: (view, event) => {
+            const data = (event as ClipboardEvent).clipboardData;
+            if (!data || !view.editable || view.state.selection.$from.parent.type.spec.code || data.files?.length) return false;
+            const text = data.getData("text/plain");
+            const html = data.getData("text/html");
+            // Cmd/Ctrl+Shift+V keeps the text as typed.
+            const shift = Boolean((view as unknown as { input?: { shiftKey?: boolean } }).input?.shiftKey);
+            const mode = vscodeMode(data);
+            if (mode && text) {
+              // VS Code says which language it copied. TipTap's code block would take every such paste
+              // as code, so this decides: Markdown, LaTeX and plain text are page text, a line of code
+              // joins the line, and more than a line of code is a code block.
+              if (shift) return view.pasteText(text);
+              if (!TEXT_MODES.has(mode)) {
+                const code = view.state.schema.nodes.codeBlock;
+                if (!text.includes("\n") || !code) view.dispatch(view.state.tr.insertText(text).scrollIntoView().setMeta("uiEvent", "paste"));
+                else view.dispatch(view.state.tr.replaceSelectionWith(code.create({ language: CODE_LANGUAGE[mode] ?? mode }, view.state.schema.text(text.replace(/\r\n?/g, "\n")))).scrollIntoView().setMeta("uiEvent", "paste"));
+                return true;
+              }
+              const fragment = pastedTextFragment(view.state.schema, text);
+              if (!fragment) return view.pasteText(text);
+              view.dispatch(view.state.tr.replaceSelection(pastedSlice(fragment)).scrollIntoView().setMeta("uiEvent", "paste"));
+              return true;
+            }
+            // Other editors and terminals wrap copied text in plain boxes: read its plain text.
+            if (shift || !html || !text.trim() || !plainTextHtml(html)) return false;
+            const fragment = pastedTextFragment(view.state.schema, text);
+            if (!fragment) return false;
+            view.dispatch(view.state.tr.replaceSelection(pastedSlice(fragment)).scrollIntoView().setMeta("uiEvent", "paste"));
+            return true;
+          },
+          transformPastedHTML: (html) => {
+            fromThisApp = html.includes("data-pm-slice");
+            return pastedPageHtml(html, origin());
+          },
+          // TeX in pasted formatted text becomes equations; never in a plain paste, a copy from a
+          // page here (its blocks are already what they were) or a dragged block.
+          transformPasted: (slice, view, plain) => {
+            const internal = fromThisApp;
+            fromThisApp = false;
+            if (plain || internal || view.dragging) return slice;
+            const content = withPastedMath(slice.content, view.state.schema);
+            return content === slice.content ? slice : new Slice(content, slice.openStart, slice.openEnd);
+          },
           handleDrop: (view, event) => {
             const page = readDraggedPage((event as DragEvent).dataTransfer);
             const type = view.state.schema.nodes.pageLink;

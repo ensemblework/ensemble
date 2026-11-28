@@ -28,6 +28,7 @@ import { WIDGET_REGISTRY, type Size, type TileConfig, type WidgetId } from "@ens
 const LensTile = dynamic(() => import("@/components/widgets/lenses").then((mod) => mod.LensTile), { ssr: false });
 import { invalidateSoon } from "@/lib/invalidate";
 import { useWarmEditors, warmTask } from "@/lib/warm";
+import { markdownPlainText } from "@ensemble/shared-types";
 
 const COMPLETABLE: TaskStatus[] = ["todo", "in_progress", "waiting_approval"];
 
@@ -172,7 +173,7 @@ function ProposedCard({
       </button>
       {details ? (
         <div className="mt-1.5 space-y-1 border-l border-line pl-3 text-[12.5px] leading-5 text-muted">
-          {task.rationale ? <p>{task.rationale}</p> : null}
+          {task.rationale ? <p>{markdownPlainText(task.rationale)}</p> : null}
           {task.excerpt ? <p className="italic">“{task.excerpt}”</p> : null}
           {task.sourceUrl ? (
             <a href={task.sourceUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">
