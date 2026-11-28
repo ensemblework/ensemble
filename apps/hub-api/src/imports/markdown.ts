@@ -1,7 +1,7 @@
 /**
  * Other apps' rich text → Markdown. The Markdown then becomes page blocks via
  * pages/markdown.ts, so these only need the subset that reader understands:
- * headings, lists, task lists, code, quotes, tables, rules and links.
+ * headings, lists, task lists, code, quotes, tables, rules, links and TeX math.
  */
 
 type Json = Record<string, unknown>;
@@ -26,6 +26,8 @@ function link(text: string, href: string): string {
 export function notionRichText(parts: unknown): string {
   return asArray(parts)
     .map((part) => {
+      const expression = asString((part.equation as Json | undefined)?.expression).trim();
+      if (part.type === "equation" && expression) return `$${expression}$`;
       let text = asString(part.plain_text);
       const annotations = (part.annotations ?? {}) as Record<string, boolean>;
       if (annotations.code) text = wrap(text, "`");
@@ -125,7 +127,7 @@ export function notionBlocksToMarkdown(blocks: NotionBlock[], depth = 0): string
         out.push(`\`\`\`${asString(data.language).replace(/\s+/g, "") || ""}\n${notionPlain(data.rich_text)}\n\`\`\``);
         break;
       case "equation":
-        out.push(`\`${asString(data.expression)}\``);
+        if (asString(data.expression).trim()) out.push(`$$\n${asString(data.expression).trim()}\n$$`);
         break;
       case "divider":
         out.push("---");
