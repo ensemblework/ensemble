@@ -201,3 +201,16 @@ test("record links show their label and open the record in this tab", async () =
   assert.match(mounted.host.textContent ?? "", /Unknown Thing\./);
   await unmount(mounted);
 });
+
+test("TeX in model output draws as math; prices and code stay text", async () => {
+  const { loadKatex } = await import("@/lib/math");
+  await loadKatex();
+  const mounted = await render("A $32\\times32$ image, so\n\n$$\nx_0 \\in \\mathbb{R}^{d}\n$$\n\nIt costs $5 and $10. Run `echo $x$` or pay \\$3.");
+  const inline = mounted.host.querySelectorAll("p .page-math-shown");
+  assert.equal(inline.length, 1);
+  assert.equal(inline[0]!.getAttribute("data-math"), "ok");
+  const block = mounted.host.querySelector("div.md-math-block");
+  assert.ok(block?.querySelector(".katex-display"));
+  assert.match(mounted.host.textContent ?? "", /It costs \$5 and \$10\. Run echo \$x\$ or pay \$3\./);
+  await unmount(mounted);
+});

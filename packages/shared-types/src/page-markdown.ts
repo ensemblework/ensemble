@@ -5,12 +5,16 @@
  */
 import type { PageNode } from "./domain.js";
 import { pageImageAlign, pageImageSide, pageImageWidth } from "./page-images.js";
+import { INLINE_MATH_SOURCE, hasInlineMath, inlineMathMatch, mathBlockAt, startsMathBlock } from "./page-math.js";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
 
-// Underscores inside a word (snake_case) are not emphasis.
-const INLINE =
-  /(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|`([^`]+)`|\[([^\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))/gu;
+// Underscores inside a word (snake_case) are not emphasis. Math (page-math.ts) comes last: it only
+// starts at a dollar sign or `\(`, and starting there it wins over the emphasis inside the TeX.
+const INLINE = new RegExp(
+  String.raw`(\*\*([^*]+)\*\*|(?<![\p{L}\p{N}])__([^_]+)__(?![\p{L}\p{N}])|~~([^~]+)~~|\*([^*\s][^*]*)\*|(?<![\p{L}\p{N}])_([^_\s][^_]*)_(?![\p{L}\p{N}])|\x60([^\x60]+)\x60|\[([^\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))|${INLINE_MATH_SOURCE}`,
+  "gu",
+);
 
 function inline(text: string): PageNode[] {
   const out: PageNode[] = [];
@@ -20,17 +24,26 @@ function inline(text: string): PageNode[] {
     if (!value) return;
     out.push(marks?.length ? { type: "text", text: value, marks } : { type: "text", text: value });
   };
+  // `\$` is a dollar sign that is not math.
+  const plain = (value: string) => push(value.replace(/\\\$/g, () => "$"));
   for (const match of text.matchAll(INLINE)) {
-    push(text.slice(last, match.index));
+    plain(text.slice(last, match.index));
+    const math = match[1] === undefined ? inlineMathMatch(match[11], match[12], match[13]) : null;
+    if (math) {
+      out.push({ type: "inlineMath", attrs: math.display ? { latex: math.latex, display: true } : { latex: math.latex } });
+      last = match.index! + match[0].length;
+      continue;
+    }
     if (match[2] ?? match[3]) push((match[2] ?? match[3])!, [{ type: "bold" }]);
     else if (match[4]) push(match[4], [{ type: "strike" }]);
     else if (match[5] ?? match[6]) push((match[5] ?? match[6])!, [{ type: "italic" }]);
     else if (match[7]) push(match[7], [{ type: "code" }]);
     else if (match[8]) push(match[8], [{ type: "link", attrs: { href: match[9] } }]);
     else if (match[10]) push(match[10], [{ type: "link", attrs: { href: match[10] } }]);
+    else if (match[1] === undefined) push(match[0]);
     last = match.index! + match[0].length;
   }
-  push(text.slice(last));
+  plain(text.slice(last));
   return out;
 }
 
@@ -163,6 +176,12 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
       nodes.push({ type: "codeBlock", attrs: { language: fence[1] || null }, content: body.length ? [{ type: "text", text: body.join("\n") }] : [] });
       continue;
     }
+    const math = mathBlockAt(lines, i);
+    if (math) {
+      nodes.push({ type: "blockMath", attrs: { latex: math.latex } });
+      i = math.next;
+      continue;
+    }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       nodes.push({ type: "heading", attrs: { level: Math.min(heading[1]!.length, 3) }, content: inline(heading[2]!.trim()) });
@@ -216,7 +235,7 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
     const keep = (text: string) => (options.lineBreaks ? text.trimEnd() : text.trim());
     const body: string[] = [keep(line.trimStart())];
     i += 1;
-    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!) && !startsTable(lines, i)) body.push(keep(lines[i++]!));
+    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!) && !startsTable(lines, i) && !startsMathBlock(lines, i)) body.push(keep(lines[i++]!));
     nodes.push(options.lineBreaks ? brokenParagraph(body) : paragraph(body.join(" ")));
   }
   return nodes.length ? nodes : [{ type: "paragraph" }];
@@ -226,12 +245,12 @@ const BLOCK_SYNTAX = /^(#{1,6}\s+\S|\s*([-*+]|\d+[.)])\s+\S|>\s?|```|\|.*\|\s*$|
 const INLINE_SYNTAX = /\*\*[^*\s][^*]*\*\*|(?<![\p{L}\p{N}])__[^_\s][^_]*__|~~[^~\s][^~]*~~|`[^`\n]+`|\[[^\]\n]+\]\((?:https?:\/\/|\/pages\/)[^\s)]+\)|(?:^|\s)\*[^*\s][^*\n]*\*(?=\s|[.,;:!?]|$)/mu;
 
 /**
- * Whether plain text reads as Markdown: a heading, list, checklist, quote, fence, table or rule
- * at the start of a line, or bold, code, strikethrough or a link inside one. A lone URL or
+ * Whether plain text reads as Markdown: a heading, list, checklist, quote, fence, table, rule or
+ * display equation at the start of a line, or bold, code, strikethrough, a link or math inside one. A lone URL or
  * ordinary prose is not, so it pastes as it always did.
  */
 export function looksLikeMarkdown(text: string): boolean {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  if (lines.some((line, index) => BLOCK_SYNTAX.test(line) || startsTable(lines, index))) return true;
-  return INLINE_SYNTAX.test(text);
+  if (lines.some((line, index) => BLOCK_SYNTAX.test(line) || startsTable(lines, index) || startsMathBlock(lines, index))) return true;
+  return INLINE_SYNTAX.test(text) || lines.some(hasInlineMath);
 }

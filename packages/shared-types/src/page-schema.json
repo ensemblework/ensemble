@@ -331,6 +331,36 @@
           }
         }
       }
+    ],
+    [
+      "inlineMath",
+      {
+        "group": "inline",
+        "inline": true,
+        "atom": true,
+        "selectable": true,
+        "attrs": {
+          "latex": {
+            "default": ""
+          },
+          "display": {
+            "default": false
+          }
+        }
+      }
+    ],
+    [
+      "blockMath",
+      {
+        "group": "block",
+        "atom": true,
+        "selectable": true,
+        "attrs": {
+          "latex": {
+            "default": ""
+          }
+        }
+      }
     ]
   ],
   "marks": [

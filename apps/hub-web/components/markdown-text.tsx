@@ -2,17 +2,19 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { refKind, refPath, type PageMention } from "@ensemble/shared-types";
+import { INLINE_MATH_SOURCE, inlineMathMatch, inlineMathPattern, mathBlockAt, refKind, refPath, type PageMention } from "@ensemble/shared-types";
 import Link from "next/link";
 import { Fragment, createContext, useContext, useState, type ReactNode } from "react";
 import { ADDRESS_SOURCE, addressLink } from "@/lib/linkify";
 import { LINK_CLASS, LinkifiedText, TextLink } from "./linkified-text";
+import { MathText } from "./math-text";
 
 const Mentions = createContext<PageMention[] | null>(null);
 
 /**
  * Small safe Markdown for model output: headings, paragraphs, bold, italics, code, links, bullet,
- * numbered and task lists (nested by indent), quotes, fenced code, tables and rules. No raw HTML.
+ * numbered and task lists (nested by indent), quotes, fenced code, tables, rules and TeX math
+ * (`$…$`, `$$…$$`, shared-types page-math.ts). No raw HTML.
  * Bare addresses become links. With `mentions`, `@kind:Label` for those exact mentions shows as a chip.
  */
 export function MarkdownText({ text, className, mentions }: { text: string; className?: string; mentions?: PageMention[] | null }) {
@@ -38,6 +40,7 @@ export type MdBlock =
   | { kind: "code"; lang: string; text: string }
   | { kind: "quote"; text: string }
   | { kind: "table"; header: string[]; align: Align[]; rows: string[][] }
+  | { kind: "math"; latex: string }
   | { kind: "rule" };
 
 const FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([^`\s]*)/;
@@ -86,6 +89,13 @@ export function parseBlocks(source: string): MdBlock[] {
     if (!line.trim()) {
       flush();
       index += 1;
+      continue;
+    }
+    const math = mathBlockAt(lines, index);
+    if (math) {
+      flush();
+      blocks.push({ kind: "math", latex: math.latex });
+      index = math.next;
       continue;
     }
     const heading = HEADING.exec(line);
@@ -239,6 +249,8 @@ function BlockView({ block, depth }: { block: MdBlock; depth: number }) {
           </table>
         </div>
       );
+    case "math":
+      return <MathText latex={block.latex} display />;
     case "rule":
       return <hr className="border-line" />;
   }
@@ -318,6 +330,7 @@ const INLINE = new RegExp(
     "(~~[^~]+~~)",
     String.raw`<((?:https?:\/\/|mailto:)[^\s<>]+|[\w.%+-]+@[^\s<>@]+)>`,
     `(${ADDRESS_SOURCE})`,
+    `(?<math>${INLINE_MATH_SOURCE})`,
   ].join("|"),
   "gu",
 );
@@ -328,8 +341,17 @@ function inline(text: string): ReactNode[] {
   let last = 0;
   let match: RegExpExecArray | null;
   let key = 0;
-  const plain = (value: string) => nodes.push(<Plain key={key++} text={value} />);
+  // `\$` is a dollar sign that is not math.
+  const plain = (value: string) => nodes.push(<Plain key={key++} text={value.replace(/\\\$/g, () => "$")} />);
   while ((match = pattern.exec(text))) {
+    if (match.groups?.math) {
+      const parts = inlineMathPattern().exec(match.groups.math);
+      const math = parts ? inlineMathMatch(parts[1], parts[2], parts[3]) : null;
+      if (match.index > last) plain(text.slice(last, match.index));
+      nodes.push(math ? <MathText key={key++} latex={math.latex} display={math.display} /> : <Plain key={key++} text={match[0]} />);
+      last = match.index + match[0].length;
+      continue;
+    }
     let end = match.index + match[0].length;
     if (match[10]) {
       const link = addressLink(match[10]);

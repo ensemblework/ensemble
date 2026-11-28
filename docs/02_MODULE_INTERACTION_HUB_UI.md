@@ -451,6 +451,14 @@ Every code block in the shared editor (`components/editor/code-copy.ts`) has a t
 
 Clipboard success changes the icon to a green tick and the label to **Copied** for two seconds; copying again restarts that block's timer. A failed or unavailable clipboard shows an error notice, never a success tick or toast. Tab and Shift+Tab in the code keep their indentation shortcuts (`code-indent.ts`).
 
+#### Equations
+
+TeX math is two nodes (`components/editor/math.ts`): `inlineMath` inside a line and `blockMath` on a line of its own, each holding its TeX in `latex` (`inlineMath` also has `display` for `$$…$$` inside a sentence). KaTeX (MIT) draws them in editable, read-only, shared and public pages; it loads with the first equation shown (`lib/math.ts`, its styles and fonts in `lib/katex-style.ts`), so pages without math never fetch it. Until it loads the TeX shows as text; TeX KaTeX cannot read shows as its source in red with the reason on hover. TeX commands that link or load anything (`\href`, `\includegraphics`) are refused.
+
+- **Write one.** `/equation` adds one on its own line and `/inline equation` one in the line, with the TeX open to type. Typing `$x$` makes an inline equation; `$$x$$` alone on a line, or `$$` and a space on an empty line, makes one on its own line. A price such as "$5 and $10" stays text: a dollar sign opens math only before a character that is not a space and closes it after one, never before a digit.
+- **Edit one.** Click it, or press Enter when it is selected: the TeX opens below it and the equation redraws as you type. Enter saves, Shift+Enter adds a line, Escape puts it back, clicking away saves. An equation saved empty is removed. Read-only pages never open it.
+- **Markdown.** Pasted, imported, assistant and agent Markdown reads `$…$` and `\(…\)` inline, and `$$…$$` or `\[…\]` on lines of their own as display math (`packages/shared-types/src/page-math.ts`, used by `page-markdown.ts`). Page Markdown for agents writes them back as `$…$` and `$$` lines (`pageMarkdown` in `apps/hub-api/src/pages/markdown.ts`), escaping dollar signs in text that would otherwise read as math (`\$`). Copying writes the same source as plain text. Downloads write the TeX source; Markdown readers draw it as math.
+
 #### Embed a file, plot or diagram
 
 Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
@@ -787,7 +795,7 @@ Addresses in text are links.
 
 `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (no other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews).
 
-`MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. Clicking a link inside a clickable row or click-to-edit field opens only the link.
+`MarkdownText` (assistant replies, run output, recaps, Markdown files) draws `$…$` and `$$…$$` with the page equations' rules and KaTeX (`components/math-text.tsx`). It also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. Clicking a link inside a clickable row or click-to-edit field opens only the link.
 
 ### 9. Tests
 

@@ -34,7 +34,9 @@ export type BlockCommandId =
   | "toggle"
   | "image"
   | "file"
-  | "page";
+  | "page"
+  | "equation"
+  | "inline-equation";
 
 export interface BlockCommand {
   id: BlockCommandId;
@@ -60,6 +62,8 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "image", label: "Image", detail: `A PNG, JPEG, GIF or WebP up to ${PAGE_IMAGE_MAX_LABEL}, shown in the page`, aliases: "picture photo img png jpg jpeg gif webp screenshot", symbol: "▣" },
   { id: "file", label: "File", detail: "Upload or attach a PDF, sheet or any file as a card", aliases: "attach attachment upload pdf document", symbol: "⎘" },
   { id: "page", label: "Page", detail: "A new page inside this one", aliases: "subpage sub-page nested child new doc document note", symbol: "▤" },
+  { id: "equation", label: "Equation", detail: "TeX math on its own line", aliases: "math latex tex formula katex block display", symbol: "∑" },
+  { id: "inline-equation", label: "Inline equation", detail: "TeX math inside the line", aliases: "math latex tex formula katex", symbol: "x²" },
 ];
 
 export function matchCommands(query: string): BlockCommand[] {
@@ -161,6 +165,12 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
     case "page":
       chain.run();
       editor.commands.createNestedPage(range.from);
+      break;
+    case "equation":
+      chain.insertBlockMath().run();
+      break;
+    case "inline-equation":
+      chain.insertInlineMath().run();
       break;
     default:
       convert(chain, command);
