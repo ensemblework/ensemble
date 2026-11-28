@@ -4,6 +4,7 @@ import { CheckSquare, FileText } from "lucide-react";
 import type { BoardPage } from "@ensemble/shared-types";
 import { relative } from "@/lib/format";
 import { CardDelete, CardHandle } from "./task-card";
+import { LabelChips } from "../task/labels";
 
 /**
  * A page on a custom board, drawn as the Ensemble board's card: title, what it is and when it
@@ -20,6 +21,7 @@ export function PageCardBody({ page, onDelete }: { page: BoardPage; onDelete?: (
         <span className="inline-flex items-center gap-1"><Icon size={12} aria-hidden />{page.kind === "task" ? "Task" : "Page"}</span>
         <span aria-hidden>·</span>
         <span>Edited {relative(page.updatedAt)}</span>
+        <LabelChips labels={page.labels} />
       </div>
       {onDelete ? <CardDelete label={page.title || "page"} onDelete={() => onDelete(page)} /> : <CardHandle />}
     </div>

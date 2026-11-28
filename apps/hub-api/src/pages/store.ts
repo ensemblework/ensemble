@@ -16,6 +16,7 @@ import { assertNewPageImages } from "../files/page-image.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
 import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
+import { ENSEMBLE_KEY, resolveLabels } from "../labels/board-labels.js";
 import { currentScope, isGuestIn, nodeActingIn } from "../sharing/context.js";
 
 export class TaskPageError extends Error {
@@ -191,6 +192,8 @@ export type StandalonePageContent = {
   notesChangedExternally: false;
   updatedAt: string | null;
   sourceFile: TaskPageContent["sourceFile"];
+  /** Names from its board's labels (the Ensemble board's when it is on no board). */
+  labels: string[];
 };
 
 function standaloneDto(page: StoredPage & { title: string }): StandalonePageContent {
@@ -212,6 +215,7 @@ function standaloneDto(page: StoredPage & { title: string }): StandalonePageCont
     notesChangedExternally: false,
     updatedAt: page.updatedAt.toISOString(),
     sourceFile: sourceFileOf(page),
+    labels: page.labels,
   };
 }
 
@@ -409,6 +413,17 @@ export async function renameStandalonePage(
       select: { id: true, title: true, updatedAt: true, parentId: true },
     });
     return { id: updated.id, parentId: updated.parentId, title: updated.title, updatedAt: updated.updatedAt.toISOString() };
+  });
+}
+
+/** Sets a standalone note's labels: names from its board's list, new ones added to it. */
+export async function setStandalonePageLabels(prisma: PrismaClient, userId: string, id: string, names: string[]): Promise<{ id: string; labels: string[] }> {
+  return prisma.$transaction(async (db) => {
+    const page = await ownedStandalone(db, userId, id, true);
+    if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+    const labels = await resolveLabels(db, userId, page.boardId ?? ENSEMBLE_KEY, names);
+    await db.taskPage.update({ where: { id: page.id }, data: { labels, editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId) } });
+    return { id: page.id, labels };
   });
 }
 
@@ -633,7 +648,8 @@ export async function convertPage(
       await db.taskPage.update({
         where: { id: saved.id },
         data: {
-          taskId: null, title, revision: saved.revision + 1, notesSnapshot: notes,
+          // The note stays on the task's board, so it keeps the task's labels as they are.
+          taskId: null, title, revision: saved.revision + 1, notesSnapshot: notes, labels: task.labels,
           content: retargetReplies(content, "page", targetId) as Prisma.InputJsonValue,
           searchText: pageSearchText(title, content, notes),
         },
@@ -643,11 +659,13 @@ export async function convertPage(
       // Undoing a task creation deletes its linked page. Conversion must never journal that destructive inverse.
       const created = await createTask(db, userId, { title: title || "Untitled", notes, status: "todo" }, "me", false);
       targetId = created.id;
+      // The task stays on the note's board, whose list already has these labels.
+      if (page!.labels.length) await db.task.update({ where: { id: targetId }, data: { labels: page!.labels } });
       await db.taskPage.update({
         where: { id: page!.id },
         data: {
           // A page on a custom board stays in its column as a task page there.
-          taskId: targetId, revision: page!.revision + 1,
+          taskId: targetId, revision: page!.revision + 1, labels: [],
           content: retargetReplies(content, "task", targetId) as Prisma.InputJsonValue,
         },
       });

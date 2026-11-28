@@ -19,6 +19,7 @@ import {
 } from "./mapping.js";
 import type { ImportAs, ImportCounts, ImportItem, WritePlan } from "./types.js";
 import { linkedProject, rememberImportLink } from "../projects/links.js";
+import { ENSEMBLE_KEY, LabelBook } from "../labels/board-labels.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -342,9 +343,11 @@ async function writeTasks(tx: Tx, state: WriterState, items: ImportItem[]): Prom
   const externalSource = plan.externalSource;
   const existing = await tx.task.findMany({
     where: { userId, externalSource, externalId: { in: items.map((item) => item.externalId) } },
-    include: { page: { select: { id: true, revision: true, content: true, annotations: true } } },
+    include: { page: { select: { id: true, revision: true, content: true, annotations: true, boardId: true } } },
   });
   const byId = new Map(existing.map((row) => [row.externalId!, row]));
+  // Labels come from the task's board: new tasks land on the Ensemble board, whose list takes new names.
+  const labelBook = new LabelBook(tx, userId);
   if (state.nextOrder === null) {
     const last = await tx.task.findFirst({ where: { userId, deletedAt: null }, orderBy: { boardOrder: "desc" }, select: { boardOrder: true } });
     state.nextOrder = (last?.boardOrder ?? 0) + 1;
@@ -357,6 +360,7 @@ async function writeTasks(tx: Tx, state: WriterState, items: ImportItem[]): Prom
     const status: TaskStatus = resolveStatus(item, plan.statusMap);
     const closed = status === "done" || status === "dropped";
     const projectId = await ensureProject(tx, state, item.projectRef, item.projectName);
+    const found = byId.get(item.externalId);
     const fields = {
       title,
       description: split.description,
@@ -365,11 +369,10 @@ async function writeTasks(tx: Tx, state: WriterState, items: ImportItem[]): Prom
       due: dueToDate(item.dueDate),
       startsAt: dueToDate(item.startDate),
       people: cleanPeople(item.assignees ?? []),
-      labels: cleanLabels(item.labels ?? []),
+      labels: await labelBook.resolve(found?.page?.boardId ?? ENSEMBLE_KEY, cleanLabels(item.labels ?? [])),
       sourceUrl: item.url && /^https?:\/\//.test(item.url) ? item.url.slice(0, 2000) : null,
     };
     const completedAt = closed ? dueToDate(item.completedAt) ?? now : null;
-    const found = byId.get(item.externalId);
     if (found) {
       const revive = Boolean(found.deletedAt);
       const changed =

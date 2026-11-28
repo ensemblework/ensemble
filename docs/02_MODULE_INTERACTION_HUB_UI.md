@@ -201,6 +201,15 @@ Board settings rename/reorder columns and remove empty columns. A column with pa
 
 The board's selected overview tiles are saved on `PageBoard`: page count, a column-colored donut, column breakdown and recently edited pages (`board-widgets.tsx`). They use only that board's pages and actual column names, independent of Ensemble's task status metrics.
 
+#### Labels
+
+Each board keeps its own labels, a name and a colour each: the Ensemble board has one list and every custom board its own. Items on no board (a note off every board, deliverables) use the Ensemble board's labels. The rows are `BoardLabel` (`apps/hub-api/src/labels/board-labels.ts`); items keep the names (`Task.labels`, a note's `TaskPage.labels`, `Deliverable.labels`), so `#label` search and everything else that reads names is unchanged.
+
+- **Picking.** The Labels row of a task, the row under a note's title (`components/pages/note-labels.tsx`) and the deliverable peek open `LabelPicker` (`components/task/labels.tsx`): the board's labels with their colours and how many items have each, filtered as you type. A click or Enter adds or removes one and the list stays open; Enter on a name the board lacks creates it there in the next free colour (`nextLabelColor`), and "a, b" adds both. ↑/↓ move, Backspace in the empty field removes the last label, Esc closes. At most 20 per item, 40 characters each.
+- **Managing.** A label's ⋯ (shown on hover or focus, always on touch) renames it, picks one of eight theme colours (`LABEL_COLORS`) or deletes it, for the whole board: a rename or delete reaches every item there that has it, Trash included; delete asks first and says how many items have it. A board cannot hold two labels with one name, whatever the case.
+- **Colours everywhere.** Board cards show labels in their board's colours (`BoardLabelColors` in `components/board/boards-page.tsx`); a name its board does not have keeps the colour the name hashes to (`labelTone`), as do labels made before they had a colour.
+- **Writes by name.** Every write (the Hub, an older client, imports, the assistant and the Context Bridge) passes names: a name takes the spelling of the board's label, in any case, and a new name is added to the board (`resolveLabels`). Moving a task or note to another board adds its labels to that board's list in their colours; deleting a custom board, or copying a note (the copy is on no board), moves the labels to the Ensemble board's list.
+
 ### 3.3 Needs Me (Approval Queue)
 
 Open **Needs me** when an agent needs an answer, execution permission, publishing approval or help with an interrupted attempt.
@@ -750,6 +759,7 @@ Pages and task documents keep their live step/rebase protocol (§13); boards, di
 | Calendar | `GET /api/calendar?from=&to=&tz=` (merged events with `sources`, each source's sync), `POST /api/calendar/sync`, `GET`/`POST /api/calendar/feeds`, `PATCH`/`DELETE /api/calendar/feeds/:id`; `routes/calendar.ts`, `calendar/*`, [03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar) |
 | Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`, `/pin`, `/reopen`, `/api/deliverables`, `/api/completed`; `routes/tasks.ts`, `board.ts`, `completed.ts` |
 | Custom boards | `GET/POST /api/boards`, `GET/PATCH/DELETE /api/boards/:id`, `POST /api/boards/:id/pages` (`{ columnId, kind: "page" | "task" }`), `PUT /api/pages/:kind/:id/board`; `routes/page-boards.ts`, `pages/boards.ts`. Space viewers read; editors manage boards and membership |
+| Board labels | `GET /api/labels?board=<id or ensemble>`, or `?task=`, `?page=`, `?deliverable=` for the list that item picks from → `{ board: { id, title }, labels: [{ id, name, color, count }] }`; `POST /api/labels` (`{ board, name, color? }`: 201, or 200 with the label the board already has by that name), `PATCH /api/labels/:id` (`{ name?, color? }`, 409 for a name the board has), `DELETE /api/labels/:id`; `routes/labels.ts`, `labels/board-labels.ts`. `PATCH /api/tasks/:id`, `PATCH /api/pages/:id` and `PATCH /api/deliverables/:id` take `labels` as names. Space viewers read; editors manage |
 | Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; `routes/tasks.ts`, `collab.ts` |
 | Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/:id/collab`, `/api/pages/delete-many`, `/api/pages/:kind/:id/convert`; `routes/pages.ts` |
 | Page history, copies, templates | `/api/page-versions`, `/api/page-versions/:id/restore`, `/api/pages/:id/duplicate`, `/api/pages/:id/template`, `/api/page-templates`, `/api/page-templates/:id/create`; `pages/version-routes.ts` |

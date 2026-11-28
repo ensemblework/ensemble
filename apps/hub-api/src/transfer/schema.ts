@@ -37,6 +37,7 @@ export const TRANSFER_TABLES = [
   "task_transitions",
   "completion_records",
   "page_boards",
+  "board_labels",
   "task_pages",
   "task_page_mentions",
   "page_discussions",

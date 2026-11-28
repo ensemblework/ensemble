@@ -12,15 +12,21 @@ import {
   renameStandalonePage,
   resolvePageParent,
   saveStandalonePage,
+  setStandalonePageLabels,
   TaskPageError,
 } from "../pages/store.js";
+import { TaskLabels } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { collabHub } from "../pages/live.js";
 import { pageDirectory } from "../pages/boards.js";
 
-const RenamePage = z.object({
-  title: z.string().trim().min(1).max(200),
-});
+const PatchPage = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    /** Names from the page's board's labels; a new name is added to that list. */
+    labels: TaskLabels.optional(),
+  })
+  .refine((body) => body.title !== undefined || body.labels !== undefined, "Change the title or the labels.");
 
 export async function pageRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -88,11 +94,13 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch("/api/pages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = RenamePage.parse(request.body);
+    const body = PatchPage.parse(request.body);
     try {
-      const page = await renameStandalonePage(prisma, request.userId, id, body.title);
-      sseHub.publish(request.userId, { event: "page", data: { id, action: "rename" } });
-      return { page };
+      const page = body.title !== undefined ? await renameStandalonePage(prisma, request.userId, id, body.title) : undefined;
+      const labelled = body.labels !== undefined ? await setStandalonePageLabels(prisma, request.userId, id, body.labels) : undefined;
+      if (page) sseHub.publish(request.userId, { event: "page", data: { id, action: "rename" } });
+      if (labelled) sseHub.publish(request.userId, { event: "labels", data: { page: id } });
+      return { ...(page ? { page } : {}), ...(labelled ? { labels: labelled.labels } : {}) };
     } catch (error) {
       if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;

@@ -51,7 +51,7 @@ import { PageTitleField } from "../pages/title-field";
 import { PageLoadFailure, inTrash } from "../pages/page-load";
 import { TrashedTask } from "../pages/trashed-page";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
-import { LabelEditor } from "./labels";
+import { LabelPicker } from "./labels";
 import { NodeOwnerItems, NodeWorkNotice, useNodeAssignable, useNodeHandOff } from "./node-owner";
 import { nodeOwnerText } from "@/lib/node-owner";
 import { DueDateField } from "./due-date-field";
@@ -210,8 +210,10 @@ export function TaskPage({
       if (context?.previous) client.setQueryData(["task", taskId], context.previous);
       toast((error as Error).message, { tone: "error" });
     },
-    onSettled: () => {
+    onSettled: (_data, _error, data) => {
       propertiesBusy.current -= 1;
+      // A new name joins the board's list; counts change too.
+      if (data && "labels" in data) void client.invalidateQueries({ queryKey: ["labels"] });
       if (!propertiesBusy.current) {
         propertyWaiters.current.splice(0).forEach((resolve) => resolve());
       }
@@ -583,7 +585,7 @@ export function TaskPage({
         </PropertyRow>
 
         <PropertyRow icon={TagIcon} label="Labels">
-          <LabelEditor labels={record.labels ?? []} onChange={(labels) => update.mutate({ labels })} />
+          <LabelPicker of={{ task: taskId }} value={record.labels ?? []} disabled={!canEditProperties} onChange={(labels) => update.mutate({ labels })} />
         </PropertyRow>
 
         <PropertyRow icon={FolderKanban} label="Project">

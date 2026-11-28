@@ -10,6 +10,7 @@ export * from "./page-markdown.js";
 export * from "./page-math.js";
 export * from "./page-images.js";
 export * from "./page-boards.js";
+export * from "./labels.js";
 export * from "./cli-channel.js";
 export * from "./connectors.js";
 export * from "./connector-guides.js";

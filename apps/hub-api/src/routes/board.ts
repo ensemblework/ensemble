@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { TaskStatus } from "@ensemble/shared-types";
+import { TaskLabels, TaskStatus } from "@ensemble/shared-types";
 import { hasModule } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
@@ -12,6 +12,7 @@ import { accountIdOf } from "../lib/auth.js";
 import { answerRequestedMove } from "../services/tasks.js";
 import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 import { pendingApprovalsWhere } from "../lib/needs-me.js";
+import { ENSEMBLE_KEY, resolveLabels } from "../labels/board-labels.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -195,6 +196,8 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
         status: z.enum(["upcoming", "completed"]).optional(),
         due: DateInput.nullish(),
         notes: z.string().optional(),
+        /** Names from the Ensemble board's labels; a new name is added to that list. */
+        labels: TaskLabels.optional(),
       })
       .parse(request.body);
     const existing = await prisma.deliverable.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
@@ -209,6 +212,7 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
         title: changed.title,
         notes: changed.notes,
         status: changed.status,
+        labels: changed.labels === undefined ? undefined : await resolveLabels(tx, request.userId, ENSEMBLE_KEY, changed.labels),
         due: changed.due === undefined ? undefined : changed.due ? new Date(changed.due) : null,
         completedAt: changed.status === "completed" ? new Date() : changed.status === "upcoming" ? null : undefined,
       },
