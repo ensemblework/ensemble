@@ -192,7 +192,12 @@ export function BoardDragOverlay({ children, width = 264 }: { children: ReactNod
  * Call skipNext() in onDragEnd so the user's own drop is left to dnd-kit.
  */
 type Spot = { x: number; y: number; w: number; h: number; col: string };
-type MoveCard = { id: string; column: string | null };
+/**
+ * `key` is what places the card itself (its column, order and priority). A reorder glides only when
+ * some card's key just changed: a move, by the person or by someone else. A list drawn again in another
+ * order (sorted by a choice loaded after mount, or cached data settling) is not a move.
+ */
+type MoveCard = { id: string; column: string | null; key?: string };
 
 /** Viewport position plus every ancestor's scroll, so scrolling does not look like a move. */
 function contentBox(el: HTMLElement): { x: number; y: number; w: number; h: number; left: number; top: number } {
@@ -221,10 +226,16 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
   const previousOrder = useRef("");
   const previousScope = useRef(scope);
   const skip = useRef(false);
+  const keys = useRef(new Map<string, string>());
+  // Renders left in which a reorder may glide after a card moved: this one, and the next, as the
+  // Ensemble board draws its columns one render after the data that moved them.
+  const moved = useRef(0);
   useLayoutEffect(() => {
     const root = boardRef.current; if (!root) return;
     if (previousScope.current !== scope) {
       prev.current.clear();
+      keys.current.clear();
+      moved.current = 0;
       previousOrder.current = "";
       previousScope.current = scope;
     }
@@ -233,6 +244,9 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
     if (dragging) return;
     const cards = [...root.querySelectorAll<HTMLElement>("[data-bdg-card]")].filter((card) => !card.closest(".bdg-layer"));
     const tasks = new Map(rows.map((row) => [row.id, row]));
+    const nextKeys = new Map(rows.map((row) => [row.id, row.key ?? row.column ?? ""]));
+    if (rows.some((row) => keys.current.has(row.id) && keys.current.get(row.id) !== nextKeys.get(row.id))) moved.current = 2;
+    keys.current = nextKeys;
     const next = new Map<string, Spot>();
     const ids: string[] = [];
     for (const el of cards) {
@@ -259,8 +273,9 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
       // Where this card would sit, at the current scroll, if it had not moved in content space.
       const from = { left: box.left - (now.x - was.x), top: box.top - (now.y - was.y), width: was.w, height: was.h };
       const shifted = Math.abs(from.left - box.left) >= 0.5 || Math.abs(from.top - box.top) >= 0.5;
-      if (sameCards && rearranged && shifted && was.col === now.col) BD.flipFrom(el, from, theme, reduced);
+      if (moved.current > 0 && sameCards && rearranged && shifted && was.col === now.col) BD.flipFrom(el, from, theme, reduced);
     }
+    moved.current = rearranged ? 0 : Math.max(0, moved.current - 1);
     prev.current = next; previousOrder.current = order; skip.current = false;
   });
   return { skipNext: () => { skip.current = true; } };

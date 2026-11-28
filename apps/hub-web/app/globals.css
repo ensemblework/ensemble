@@ -2777,6 +2777,25 @@ span.mention:not(.mention-off) {
   box-shadow: 0 0 0 5px rgb(var(--accent-rgb) / 0.4);
   z-index: 1;
 }
+/* The resize corner of every tile (components/tile-resize.tsx). Each surface places it and decides when it shows. */
+.tile-resize {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  touch-action: none;
+}
+.tile-resize svg {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: block;
+  width: 7px;
+  height: 7px;
+}
+.tile-resize:hover {
+  color: var(--ink);
+}
 .widget-resize {
   width: 24px;
   height: 24px;
