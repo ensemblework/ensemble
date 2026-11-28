@@ -379,6 +379,66 @@ test("on its owner's plan, an agent that did the work and wrote nothing is asked
   assert.equal(agent.specs[0]!.session?.position, 2, "the first turn's message and reply are the session's: it goes on");
 });
 
+test("on its owner's plan, a crew step whose worker did the work and wrote nothing is never blocked as \"could not do its step\": its report counts, else it ends unverified", async () => {
+  const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
+  const owner = await person("Ines");
+  const computer = await pairComputer(owner, "Ines's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer"]) ids.push((await createNode(owner, template)).node.id);
+  await h.prisma.nodeAgent.update({ where: { id: ids[1]! }, data: { provider: "copilot-cli", model: "gpt-6.1-sol" } });
+  const made = await owner.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Home team", nodeIds: ids, leadNodeId: ids[0] } });
+  assert.equal(made.statusCode, 201, made.body);
+  const crew = json(made).room as { id: string };
+  script = (turn) => {
+    if (turn.slug === "manager" && /pay the rent|water the plants/.test(turn.transcript) && !turn.transcript.includes("nothing left to run")) {
+      const title = turn.transcript.includes("pay the rent") ? "Pay the rent" : "Water the plants";
+      return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: `Add a task “${title}” to the owner's board.` } }], then: "Plan: @builder adds it." };
+    }
+    return { text: "Done." };
+  };
+  const stepOf = async (title: string) => {
+    const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: owner.id, steps: { some: { brief: { contains: title } } } }, include: { steps: true } });
+    return mission.steps[0]!;
+  };
+
+  // It reports with node_step_report and writes nothing, also when asked again: the report is the result.
+  let agent = agentOn(computer, (spec) =>
+    spec.prompt === REPLY_PROMPT ? { text: "" } : { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Pay the rent" }] } }, { name: "node_step_report", input: { outcome: "done", summary: "Added “Pay the rent” to the board." } }], text: "", resumed: false },
+  );
+  try {
+    await say(owner, crew.id, "@manager please pay the rent: get it on my board");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  assert.ok(agent.specs.length >= 1, "the worker's step ran on the owner's computer");
+  let step = await stepOf("Pay the rent");
+  assert.deepEqual([step.status, step.result], ["done", "Added “Pay the rent” to the board."]);
+  assert.ok(await h.prisma.task.findFirst({ where: { userId: owner.id, title: "Pay the rent" } }), "the work is done");
+
+  // It does the work and never reports, and writes nothing each time: the step ends unverified, not blocked as a failure.
+  let calls = 0;
+  agent = agentOn(computer, (spec) => {
+    if (spec.prompt === REPLY_PROMPT) return { text: "" };
+    calls += 1;
+    return calls === 1 ? { tools: [{ name: "hub_create_tasks", input: { tasks: [{ title: "Water the plants" }] } }], text: "", resumed: false } : { tools: [{ name: "hub_list_tasks", input: { query: "Water the plants" } }], text: "" };
+  });
+  try {
+    await say(owner, crew.id, "@manager and water the plants: on my board too");
+  } finally {
+    agent.stop();
+  }
+  assert.deepEqual(agent.failures, []);
+  step = await stepOf("Water the plants");
+  assert.doesNotMatch(step.result ?? "", /could not do its step/);
+  assert.equal(agent.specs.filter((spec) => spec.prompt === REPLY_PROMPT).length, 2, "the step's turn and its one nudge, each asked once more for a reply");
+  assert.deepEqual([step.status, step.outcome], ["blocked", "unverified"], "not verified: it never reported");
+  assert.match(step.result ?? "", /^Not reported \(prose only\): Looked at: /, "what its tools did stands in for the words it never wrote");
+  assert.ok(await h.prisma.task.findFirst({ where: { userId: owner.id, title: "Water the plants" } }), "the work is done");
+  const rows = await read(owner, crew.id);
+  assert.ok(!rows.some((row) => row.kind === "error"), "no error in the crew's room");
+});
+
 test("on its owner's plan, a tool the turn called through hub_use_tool is listed in the message that goes on in its session", async () => {
   const { REPLY_PROMPT } = await import("../assistant/empty-reply.js");
   const plan = await onPlan("Ama");

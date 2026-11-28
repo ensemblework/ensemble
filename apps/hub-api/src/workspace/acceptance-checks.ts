@@ -69,6 +69,18 @@ const CHECK_WORDS = new Set(["test", "tests", "testing", "spec", "specs", "check
 const NOT_PROJECT = new Set(["node_modules", "vendor", ".git"]);
 /** A package script name that is a file (`bun run` runs files): never taken as a script. */
 const FILE_LIKE = /\/|\.(?:[cm]?[jt]sx?|py|sh)$/i;
+/** A make target that checks: test, lint, build, check, typecheck or verify, alone or with `-`, `_` or `.` after. */
+const CHECK_TARGET = /^(?:test|lint|build|check|typecheck|verify)(?:[-_.][A-Za-z0-9._-]*)?$/i;
+/** Checkers a package runner may start, only from the run's own install (`localToolProblem`): `npx tsc --noEmit`, `pnpm exec vitest run`. */
+const LOCAL_TOOLS = new Set(["tsc", "vitest", "jest", "mocha", "eslint"]);
+
+/** How many words in front are a package runner starting an installed checker (`npx`, `pnpm exec`); 0 for any other command. */
+function runnerWords(words: readonly string[]): number {
+  const [program = "", sub = "", tool = ""] = words;
+  if (program === "npx" && LOCAL_TOOLS.has(sub)) return 1;
+  if (program === "pnpm" && sub === "exec" && LOCAL_TOOLS.has(tool)) return 2;
+  return 0;
+}
 
 /** A name's parts: split at `/ : . _ -` and where a lower-case letter or digit meets a capital. */
 function nameParts(name: string): string[] {
@@ -82,6 +94,12 @@ function nameParts(name: string): string[] {
 function riskyScript(name: string): boolean {
   const lower = name.toLowerCase();
   return RISKY.some((word) => lower.includes(word)) || nameParts(name).some((part) => RISKY_PART.has(part));
+}
+
+/** The target a check command makes (`make test`, `make lint`): one checking target with no risky word, nothing else; null for any other command. */
+export function makeTarget(command: string): string | null {
+  const [program = "", target = "", ...rest] = command.trim().split(/\s+/);
+  return program === "make" && !rest.length && CHECK_TARGET.test(target) && !riskyScript(target) ? target : null;
 }
 
 /**
@@ -161,14 +179,18 @@ const MYPY: Args = { flags: /^(?:--strict|--ignore-missing-imports|--pretty|--no
  * where it runs has it, `checkCommandAt`), pytest (also
  * `python -m pytest`), `cargo test|build|check|clippy`, `go test|vet|build`, vitest, jest, mocha,
  * `tsc --noEmit`, eslint, `ruff check`, `ruff format --check`, mypy, `node <file>.js` or `python <file>.py`
- * with nothing else, and git that only reads (`gitReadsOnly`, the judges' own test). Never an interpreter's
- * `-e` or `-c`, npx and other package runners, make, or a shell. The web uses it to take a criterion's
- * command, and the computer again before it runs one.
+ * with nothing else, git that only reads (`gitReadsOnly`, the judges' own test), one of tsc, Vitest, Jest,
+ * Mocha or ESLint started by `npx` or `pnpm exec` (run only when the run's folder has it installed where it runs,
+ * `checkCommandAt`), and `make <target>` for a checking target with no risky word in its name (run only when the
+ * Makefile where it runs has it). Never an interpreter's `-e` or `-c`, another package runner, or a shell. The web
+ * uses it to take a criterion's command, and the computer again before it runs one.
  */
 export function isCheckCommand(command: string): boolean {
   if (command.length > 300 || !PLAIN.test(command)) return false;
   const words = command.split(" ");
   if (!words.every(staysInside)) return false;
+  const runner = runnerWords(words);
+  if (runner) return isCheckCommand(words.slice(runner).join(" "));
   const [program = "", sub = "", ...rest] = words;
   if (PACKAGE_MANAGERS.has(program)) {
     if (sub === "test") return rest.length === 0;
@@ -204,6 +226,8 @@ export function isCheckCommand(command: string): boolean {
       return argsAllowed(words.slice(1), MYPY);
     case "git":
       return gitReadsOnly(words);
+    case "make":
+      return makeTarget(command) !== null;
     default:
       return false;
   }
@@ -216,6 +240,11 @@ export function isCheckCommand(command: string): boolean {
 function fileWords(command: string): { at: number[]; tests: boolean } {
   if (!isCheckCommand(command)) return { at: [], tests: false };
   const words = command.split(" ");
+  const runner = runnerWords(words);
+  if (runner) {
+    const inner = fileWords(words.slice(runner).join(" "));
+    return { at: inner.at.map((index) => index + runner), tests: inner.tests };
+  }
   const [program = "", sub = ""] = words;
   const after = (offset: number, spec: Args) => ({ at: (positionalsAt(words.slice(offset), spec) ?? []).map((index) => index + offset), tests: spec === PYTEST });
   if (program === "node") return { at: [1], tests: false };
@@ -262,6 +291,54 @@ async function scriptProblem(root: string, cwd: string, name: string): Promise<s
   }
 }
 
+/**
+ * Why a checker a package runner starts (`npx tsc`) cannot run in `cwd`: the package it runs in (the nearest folder, up to
+ * the run's folder, with a package.json or node_modules, where npx looks) has no such program installed inside the run's
+ * folder. npx would otherwise fetch a package of that name from the registry.
+ */
+async function localToolProblem(root: string, cwd: string, tool: string): Promise<string | null> {
+  const missing = `${tool} is not installed where it runs: Ensemble runs a package runner's program only from the run's own node_modules.`;
+  for (let dir = await realpath(cwd).catch(() => cwd); within(root, dir); ) {
+    const found = await Promise.all(["package.json", "node_modules"].map((name) => lstat(join(dir, name)).then(() => true, () => false)));
+    if (found.some(Boolean)) {
+      const bin = await realpath(join(dir, "node_modules", ".bin", tool)).catch(() => null);
+      if (!bin) return missing;
+      return within(root, bin) ? null : `${tool} where it runs links out of the run's folder.`;
+    }
+    const parent = resolve(dir, "..");
+    if (dir === root || parent === dir) break;
+    dir = parent;
+  }
+  return missing;
+}
+
+/** The file make reads in `cwd`, in make's own order; null when there is none. */
+export async function makefileAt(cwd: string): Promise<string | null> {
+  for (const name of ["GNUmakefile", "makefile", "Makefile"]) {
+    const path = join(cwd, name);
+    if (await lstat(path).then(() => true, () => false)) return path;
+  }
+  return null;
+}
+
+/** Whether a Makefile has a rule for `target` (`test:`, `lint test: deps`), not a variable set with `:=`. */
+export function definesTarget(text: string, target: string): boolean {
+  const name = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^(?:[^\\s:#=]+[ \\t]+)*${name}(?:[ \\t]+[^\\s:#=]+)*[ \\t]*::?(?!=)`, "m").test(text);
+}
+
+/** Why `make <target>` cannot run as a check in `cwd`: the Makefile there (in the run's folder) has no rule of that name. */
+async function makeProblem(root: string, cwd: string, target: string): Promise<string | null> {
+  const missing = `"${target}" is not a target in the Makefile where it runs: Ensemble runs only a Makefile's own targets as checks.`;
+  const file = await makefileAt(cwd);
+  const path = file ? await realpath(file).catch(() => null) : null;
+  if (!path) return missing;
+  if (!within(root, path)) return "The Makefile is not in the run's folder.";
+  const info = await stat(path).catch(() => null);
+  if (!info?.isFile() || info.size > PACKAGE_JSON_MAX) return missing;
+  return definesTarget(await readFile(path, "utf8").catch(() => ""), target) ? null : missing;
+}
+
 /** A word for the shell completion.ts runs checks in (sh, PowerShell on Windows), taken as it is. */
 function shellWord(text: string): string {
   return process.platform === "win32" ? `'${text.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'` : `'${text.replace(/'/g, `'\\''`)}'`;
@@ -271,7 +348,8 @@ function shellWord(text: string): string {
  * A check command as it may run where it runs (`cwd`), checked just before: each file and test folder it runs must be in
  * the run's folder (not missing, nor a link out of it), and goes in the command as the real path checked, absolute and
  * quoted, so a link put in its place after the check is not followed; a package script must be one the package.json there
- * has (`packageScript`). Else why it cannot run.
+ * has (`packageScript`), a make target one the Makefile there has, and a program `npx` or `pnpm exec` starts one installed
+ * there (`npx` runs with `--no-install`, so it never fetches one). Else why it cannot run.
  */
 export async function checkCommandAt(root: string, cwd: string, command: string): Promise<{ command: string } | { problem: string }> {
   const real = await realpath(root).catch(() => null);
@@ -287,8 +365,13 @@ export async function checkCommandAt(root: string, cwd: string, command: string)
     words[index] = shellWord(cut >= 0 ? `${found}${word.slice(cut)}` : found);
   }
   const script = packageScript(command);
-  const problem = script === null ? null : await scriptProblem(real, cwd, script);
-  return problem ? { problem } : { command: words.join(" ") };
+  const target = makeTarget(command);
+  const runner = runnerWords(command.split(" "));
+  const problem =
+    script !== null ? await scriptProblem(real, cwd, script) : target !== null ? await makeProblem(real, cwd, target) : runner ? await localToolProblem(real, cwd, words[runner]!) : null;
+  if (problem) return { problem };
+  if (words[0] === "npx") words.splice(1, 0, "--no-install");
+  return { command: words.join(" ") };
 }
 
 /** Why a check command cannot run where it runs (`checkCommandAt`); null when it can. */

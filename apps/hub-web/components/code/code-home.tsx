@@ -29,7 +29,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ComponentType, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { openContextMenu } from "@/components/context-menu/menu-store";
 import { InlineError, RepoList, ReviewItem } from "@/components/code/code-lists";
-import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, ScrollTabs, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
+import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, useFullscreen, PanelHeader, ScrollTabs, SidePanel, StatusBar, StatusItem, textScale, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
 import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import { QuickOpen, useKeyLabel, useLinkNavigate, type QuickList } from "@/components/code/quick-open";
 import { RunCode } from "@/components/code/run-code";
@@ -333,7 +333,8 @@ export function CodeHome({
           )}
         </SidePanel>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        {/* The text size scales the Welcome and the threads as it scales the repository window's (`textScale`). */}
+        <div className="flex min-w-0 flex-1 flex-col" style={textScale(fontSize)}>
           <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-sidebar text-[12.5px]" role="tablist" aria-label="Open editors">
             <button type="button" className="icon-btn my-auto ml-1 h-7 w-7 shrink-0" title="Show or hide the side panel (Ctrl+B)" aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
               <PanelLeft size={14} />

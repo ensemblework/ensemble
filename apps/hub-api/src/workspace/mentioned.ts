@@ -1,14 +1,16 @@
 /**
  * The records a message to the Code tab's agent @mentions, read in full for the agent (docs/16 §9):
  * a page with the files on it and the pages inside it, meeting notes, a task with its page, a file's
- * text. They go with the message itself (`withMentionedContent`), so the agent has them whatever
- * computer it runs on and whether or not it calls a tool, and `ensemble_context` returns the same for a
- * page, task or meeting handle (`recordContent`). What they hold is information, not instructions.
+ * text, a diagram's source, a plot's settings and a data file's columns and first rows. They go with the
+ * message itself (`withMentionedContent`), so the agent has them whatever computer it runs on and
+ * whether or not it calls a tool, and `ensemble_context` returns the same for their handles
+ * (`recordContent`). What they hold is information, not instructions.
  */
 import { PageDocument, type PageMention } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { filesOnPage, filesOnTask, fileText } from "../files/attached.js";
 import { pageMarkdown } from "../pages/markdown.js";
+import { loadOwnedTable } from "../plots/service.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -19,6 +21,10 @@ export const ATTACHED_MARK = "\n\n(Attached from Ensemble:";
 /** A computer refuses a turn's message over 8,000 characters (remote/contract.ts JobSpec). */
 const MESSAGE_MAX = 8000;
 const CHILD_PAGES = 8;
+/** The kinds whose content is read for the agent; the others (people, projects…) come in the packet's context. */
+export const READABLE_KINDS = ["page", "task", "meeting", "file", "diagram", "plot", "dataset"] as const;
+/** A data file's rows shown to the agent at most. */
+const DATA_ROWS = 20;
 
 /** The mentions written after a message, in order. */
 export function mentionsIn(instructions: string): PageMention[] {
@@ -99,6 +105,36 @@ export async function recordContent(db: Db, userId: string, ref: { kind: string;
     const head = `### Meeting notes: ${note.title} (${note.askedAt.toISOString().slice(0, 10)}, ensemble://meeting/${ref.id})`;
     return [head, clip(note.answer.trim() || "(No notes.)", Math.max(300, budget - head.length - 2))].join("\n");
   }
+  if (ref.kind === "diagram") {
+    const diagram = await db.blockDiagram.findFirst({ where: { id: ref.id, userId, deletedAt: null }, select: { title: true, source: true } });
+    if (!diagram) return null;
+    const head = `### Diagram: ${diagram.title} (ensemble://diagram/${ref.id}, block diagram source)`;
+    return [head, diagram.source.trim() ? clip(diagram.source.trim(), Math.max(300, budget - head.length - 2)) : "(The diagram is empty.)"].join("\n");
+  }
+  if (ref.kind === "plot") {
+    // A tile of a plot space is mentioned as `<space id>/<tile id>`.
+    const [plotId, tileId] = ref.id.split("/");
+    const plot = await db.plot.findFirst({ where: { id: plotId, userId, deletedAt: null }, select: { title: true, config: true, code: true, datasetId: true } });
+    if (!plot) return null;
+    const config = plot.config && typeof plot.config === "object" && !Array.isArray(plot.config) ? (plot.config as Record<string, unknown>) : {};
+    const tiles = Array.isArray(config.tiles) ? (config.tiles as Array<{ id?: unknown }>) : null;
+    const shown = tileId && tiles ? { ...config, tiles: tiles.filter((tile) => tile.id === tileId) } : config;
+    const data = [plot.datasetId, ...(Array.isArray(config.datasetIds) ? config.datasetIds : [])].filter((id): id is string => typeof id === "string");
+    const head = `### Plot: ${plot.title} (ensemble://plot/${ref.id})${data.length ? `\nData files: ${[...new Set(data)].map((id) => `ensemble://dataset/${id}`).join(", ")}` : ""}`;
+    const code = plot.code.trim() ? `\nIts script:\n${clip(plot.code.trim(), Math.floor(budget / 3))}` : "";
+    return [head, `Its settings: ${clip(JSON.stringify(shown), Math.max(300, budget - head.length - code.length - 20))}`].join("\n") + code;
+  }
+  if (ref.kind === "dataset") {
+    const loaded = await loadOwnedTable(db as PrismaClient, userId, ref.id).catch(() => null);
+    const row = loaded ? null : await db.plotDataset.findFirst({ where: { id: ref.id, userId, deletedAt: null }, select: { name: true, columns: true, rowCount: true } });
+    if (!loaded && !row) return null;
+    const columns = (loaded?.table.columns ?? (Array.isArray(row?.columns) ? row.columns : [])) as Array<{ name?: unknown } | string>;
+    const names = columns.map((column) => (typeof column === "string" ? column : String(column?.name ?? ""))).filter(Boolean);
+    const count = loaded?.table.rows.length ?? row?.rowCount ?? 0;
+    const head = `### Data file: ${loaded?.name ?? row?.name} (ensemble://dataset/${ref.id}), ${count} rows\nColumns: ${names.join(", ")}`;
+    const rows = (loaded?.table.rows ?? []).slice(0, DATA_ROWS).map((cells) => JSON.stringify(cells));
+    return rows.length ? [head, `First rows:\n${clip(rows.join("\n"), Math.max(300, budget - head.length - 20))}`].join("\n") : head;
+  }
   if (ref.kind === "file") {
     const read = await fileText(db, userId, ref.id, 0, Math.min(budget, 6000)).catch(() => null);
     if (!read) return null;
@@ -115,7 +151,7 @@ export async function recordContent(db: Db, userId: string, ref: { kind: string;
  */
 export async function withMentionedContent(db: Db, userId: string, instructions: string): Promise<string> {
   const message = withoutAttached(instructions);
-  const readable = mentionsIn(message).filter((row) => ["page", "task", "meeting", "file"].includes(row.kind)).slice(0, 6);
+  const readable = mentionsIn(message).filter((row) => (READABLE_KINDS as readonly string[]).includes(row.kind)).slice(0, 6);
   if (!readable.length) return message;
   const room = MESSAGE_MAX - message.length - ATTACHED_MARK.length - 160;
   if (room < 600) return message;
