@@ -89,11 +89,13 @@ export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout,
     mobile: phone,
     resizable: !narrow,
     restoreHint: "Add it back from Board tiles.",
-    // A move, resize or removal saves every tile's place and size, through the same queued save as the rest.
+    // Through the same queued save as the rest. Sizes are written once a tile is resized (then every tile's,
+    // as on Today); a move or a removal before that leaves the tiles sharing the row.
     save: async (next) => {
       if (!next) return;
       const placed = next.tiles.filter((tile): tile is typeof tile & { key: InsightId } => (INSIGHT_IDS as readonly string[]).includes(tile.key));
-      await save({ ...layout, tiles: placed.map((tile) => tile.key), sizes: Object.fromEntries(placed.map((tile) => [tile.key, { c: tile.c, r: tile.r }])) });
+      const resized = placed.some((tile) => { const drawn = specs.find((spec) => spec.key === tile.key); return !drawn || drawn.c !== tile.c || drawn.r !== tile.r; });
+      await save({ ...layout, tiles: placed.map((tile) => tile.key), ...(layout.sizes || resized ? { sizes: Object.fromEntries(placed.map((tile) => [tile.key, { c: tile.c, r: tile.r }])) } : {}) });
     },
   });
   const arrangeable = editable && prefs.isSuccess;

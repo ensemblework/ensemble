@@ -201,6 +201,10 @@ test("tile edits target the actual profile desk, Context panel and Board prefere
  assert.ok(await h.prisma.preference.findUnique({ where: { userId_key: { userId: u.id, key: "desk.context.branch.overview" } } }));
  const board = (await run(u, "hub_read_layout", { surface: "board" })).data as any;
  assert.equal(board.kind, "board");
+ // Board tiles are sized like Today tiles: the read gives their columns and rows, not a fixed size.
+ assert.equal(JSON.stringify(board).includes("fixedSize"), false);
+ assert.ok(board.available.every((row: any) => Number.isInteger(row.c) && Number.isInteger(row.r)));
+ assert.deepEqual(board.limits, { maxTiles: 4, columns: 12, maxRows: 8 });
  await run(u, "hub_edit_layout", { surface: "board", version: board.version, edits: [{ action: "add", type: "attention" }] });
  const strip = await h.prisma.preference.findUniqueOrThrow({ where: { userId_key: { userId: u.id, key: "desk.board.insights" } } });
  assert.ok((strip.value as any).tiles.includes("attention"));
