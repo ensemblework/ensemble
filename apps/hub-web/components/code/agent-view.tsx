@@ -599,7 +599,7 @@ function Turn({
         <AskCard key={decision.id} decision={decision} threadId={threadId} viewOnly={viewOnly} />
       ))}
       {reply ? (
-        <div className={cx("agent-reply text-[13.5px]", live && "agent-streaming")} data-testid="agent-reply">
+        <div className="agent-reply text-[13.5px]" data-testid="agent-reply">
           <MarkdownText text={reply} />
         </div>
       ) : null}

@@ -147,20 +147,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .u-glyph.is-success .ug-agent { stroke: var(--ok); }
 .u-glyph.is-pause .ug-agent { stroke: var(--danger); }
 
-/* ── stream ────────────────────────────────────────────────────────────── */
-.m-stream[data-state="streaming"] { box-shadow: none; }
-.m-stream[data-state="streaming"]::after {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 1em;
-  margin-left: 3px;
-  border-radius: 99px;
-  vertical-align: text-bottom;
-  background: var(--accent);
-  opacity: calc(0.45 + var(--m-ornament) * 0.55);
-}
-
 /* ── tool / run / needs / approve / error ──────────────────────────────── */
 .m-tool { border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
 .m-tool[data-state="running"] { animation: m-seam var(--m-dur-loop) var(--m-ease-loop) infinite; }

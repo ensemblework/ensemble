@@ -737,7 +737,7 @@ Tasks, pages and records keep one identity across views. Saved, pending, failed 
 
 Loading feedback uses the smallest affected region (`components/motion/loading.tsx`, `skeletons.tsx`, `slot.tsx`). Ordinary actions have a delayed local indicator; boards, Today, pages and plot frames preserve their structure. Initial failures replace loaders with Retry, while usable cached content remains visible through refresh failures. Next loading boundaries own route readiness.
 
-Inline Ask on pages, tasks and comment threads shows a local wait. The dock distinguishes waiting for a reply from writing or using tools. Assigned work animates in its focused detail, not in the assignment button. Queued work and requests waiting for a person stay still. Sizes and lifecycle: [Brand and motion](BRAND.md#motion). The top bar reads personal AI activity even when the optional Workspace module is hidden, distinguishes checking/unavailable from confirmed idle, and reconciles activity on lifecycle events and reconnects.
+Inline Ask on pages, tasks and comment threads shows a local wait. In the assistant, inline Ask and Code, the Ensemble mark indicates activity; streamed answers display their Markdown without a trailing caret. Assigned work animates in its focused detail, not in the assignment button. Queued work and requests waiting for a person stay still. Sizes and lifecycle: [Brand and motion](BRAND.md#motion). The top bar reads personal AI activity even when the optional Workspace module is hidden, distinguishes checking/unavailable from confirmed idle, and reconciles activity on lifecycle events and reconnects.
 
 Activity events and ownership: [11](11_HOW_THE_ASSISTANT_WORKS.md).
 
