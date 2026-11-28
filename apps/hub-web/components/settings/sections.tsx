@@ -19,7 +19,7 @@ import { confirmAction } from "@/components/ask-dialog";
 import { isEmailAddress } from "@ensemble/shared-types";
 import { Modal } from "./modal";
 import { TimeInput } from "../date-time";
-import { TimezonePicker } from "./timezone-picker";
+import { canonicalTimeZone, timeZoneLabel } from "@/lib/time-zones";
 import { NumberField } from "./number-field";
 import { askNotificationPermission, notificationNote, readNotificationState, refreshNotificationPermission, showNotification, type NotificationState } from "./reminders";
 
@@ -573,12 +573,10 @@ export function IdentitySection({ settings, patch }: Props) {
   useEffect(() => setEmail(settings.email), [settings.email]);
   const emailError = left && !isEmailAddress(email) ? "Enter an email address like name@example.com." : null;
   return (
-    <SectionCard title="Time zone and email" info="Your time zone sets due times, reminders, scheduled tasks, the morning brief and quiet hours. The email confirms sensitive workspace changes; it does not change the email you sign in with.">
+    <SectionCard title="Time zone and email" info="Ensemble follows this computer's time zone for today, due dates, weeks, reminders, scheduled tasks, the morning brief and quiet hours. The email confirms sensitive workspace changes; it does not change the email you sign in with.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Time zone" description="For due times, reminders and quiet hours.">
-          <div className="w-64 max-w-full">
-            <TimezonePicker value={settings.timezone} automatic={settings.timezoneMode === "auto"} onChange={(timezone, timezoneMode) => patch({ timezone, timezoneMode })} />
-          </div>
+        <SettingRow title="Time zone" description="Follows this computer.">
+          <span id="settings-timezone" className="w-64 max-w-full truncate text-right text-[13px] text-ink">{timeZoneLabel(canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone))}</span>
         </SettingRow>
         <SettingRow title="Email" description="Where sensitive changes are confirmed. Not your sign-in.">
           <div className="w-64 max-w-full">

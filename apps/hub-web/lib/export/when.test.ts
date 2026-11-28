@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { exportTimeZone, isoInZone } from "./when";
+import { dueInZone, exportTimeZone, isoInZone } from "./when";
 
 test("download times are ISO 8601 in the person's zone, with the offset written out", () => {
   const at = "2026-10-16T08:35:07.250Z";
@@ -24,4 +24,10 @@ test("the zone is the person's when it is real, else this computer's", () => {
   assert.equal(exportTimeZone("Europe/London"), "Europe/London");
   assert.equal(exportTimeZone("Mars/Olympus_1"), exportTimeZone(null));
   assert.ok(exportTimeZone(null).length > 0);
+});
+
+test("a download writes a date-only due as its day, and a due with a time in the zone", () => {
+  assert.equal(dueInZone("2026-11-30T00:00:00.000Z", "America/Los_Angeles"), "2026-11-30");
+  assert.equal(dueInZone("2026-12-01T01:00:00.000Z", "America/Los_Angeles"), "2026-11-30T17:00:00-08:00");
+  assert.equal(dueInZone(null, "UTC"), "");
 });

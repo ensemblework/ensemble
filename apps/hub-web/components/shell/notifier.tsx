@@ -1,7 +1,7 @@
 "use client";
 
 import { canonicalTimeZone } from "@/lib/time-zones";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
@@ -12,19 +12,22 @@ import { accentWriteIsFresh, publishAppearance, readAppearance } from "@/lib/pre
 /** Fires reminder notifications while an Ensemble tab is open (docs/02 §14). */
 export function Notifier() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const client = useQueryClient();
   // Reminders are the space owner's own: none to fire in a space shared with you.
   const access = useSpaceAccess();
   const reminders = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, refetchInterval: 60_000, enabled: access.ready && !access.guest });
   const shown = useRef(new Set<string>());
 
+  // Days, due dates, weeks and reminders follow this computer's time zone: the account's zone is kept in step with it.
   const detectedZone = useRef<string | null>(null);
   useEffect(() => {
     const value = settings.data?.settings;
-    if (!value || value.timezoneMode !== "auto") return;
+    if (!value) return;
     const zone = canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (zone === canonicalTimeZone(value.timezone) || detectedZone.current === zone) return;
     detectedZone.current = zone;
-    void api.saveSettings({ timezone: zone, timezoneMode: "auto" }).then(() => settings.refetch()).catch(() => { detectedZone.current = null; });
+    // Today, the recap and every due label were read in the old zone: read them again.
+    void api.saveSettings({ timezone: zone, timezoneMode: "auto" }).then(() => client.invalidateQueries()).catch(() => { detectedZone.current = null; });
   }, [settings.data]);
 
   useEffect(() => {

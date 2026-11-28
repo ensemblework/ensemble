@@ -39,9 +39,10 @@ import { pageDoc } from "@/lib/export/items";
 import { api, type TaskRecord } from "@/lib/api";
 import { ASK_PRESETS, attachToAssistant, type AssistantAttachment } from "@/lib/assistant-attach";
 import { NO_NODES } from "@/lib/node-owner";
-import { PRIORITY, PRIORITY_ORDER, STATUS } from "@/lib/format";
+import { dueDay } from "@ensemble/shared-types";
+import { PRIORITY, PRIORITY_ORDER, STATUS, dateOnlyDue } from "@/lib/format";
 import type { ToastOptions } from "@/lib/toast-bus";
-import { Calendar, dayKey } from "../date-time";
+import { Calendar } from "../date-time";
 import { rememberPick, withRecent, type MenuAction, type MenuSection, type MenuSpec } from "./menu-store";
 
 const short = (text: string, max = 28) => {
@@ -278,9 +279,9 @@ export function taskMenu(task: TaskRecord, deps: TaskDeps, options: { open?: boo
       width: 272,
       render: (close) => (
         <Calendar
-          value={task.due ? dayKey(new Date(task.due)) : ""}
+          value={dueDay(task.due) ?? ""}
           close={close}
-          onPick={(day) => void Promise.resolve(save({ due: new Date(`${day}T17:00:00`).toISOString() })).catch((error: Error) => toast(error.message, { tone: "error" }))}
+          onPick={(day) => void Promise.resolve(save({ due: dateOnlyDue(day) })).catch((error: Error) => toast(error.message, { tone: "error" }))}
           onClear={() => void Promise.resolve(save({ due: null })).catch((error: Error) => toast(error.message, { tone: "error" }))}
         />
       ),

@@ -5,7 +5,7 @@ import { Maximize2, Minimize2, SquareArrowOutUpRight, Tag as TagIcon, X } from "
 import { useRouter } from "next/navigation";
 import { api, type DeliverableRecord } from "@/lib/api";
 import { ProjectPage } from "../project/project-page";
-import { shortDate } from "@/lib/format";
+import { dueDate, shortDate } from "@/lib/format";
 import { TaskPage } from "../task/task-page";
 import { usePeek, type PeekKind } from "./peek";
 import { ShareButton } from "../sharing/share-dialog";
@@ -120,7 +120,7 @@ function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | unde
         <button type="button" className="btn" aria-pressed={done} onClick={() => save.mutate({ status: done ? "upcoming" : "completed" })}>
           {done ? "Completed" : "Upcoming"}
         </button>
-        {row.due ? <span className="text-muted">Due {shortDate(row.due)}</span> : null}
+        {row.due ? <span className="text-muted">Due {shortDate(dueDate(row.due))}</span> : null}
       </div>
       <div className="mt-3 flex min-h-7 items-center gap-1.5 text-[13px] text-muted">
         <TagIcon size={14} strokeWidth={1.8} aria-hidden />

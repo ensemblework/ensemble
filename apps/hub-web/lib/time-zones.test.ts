@@ -1,18 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sameTimeZone, timeZoneLabel, timeZoneOptions } from "./time-zones";
-
-test("the time zone list has every IANA zone once, keeps the saved spelling, and never offers a made-up one", () => {
-  const zones = timeZoneOptions("Asia/Kolkata");
-  assert.ok(zones.length > 300);
-  assert.ok(zones.includes("Asia/Kolkata"));
-  assert.ok(!zones.includes("Asia/Calcutta"), "one entry per place");
-  assert.ok(zones.includes("UTC"));
-  assert.ok(zones.includes("Europe/London"));
-  assert.deepEqual([...zones].sort((a, b) => a.localeCompare(b)), zones);
-  assert.ok(!timeZoneOptions("Mars/Olympus_1").includes("Mars/Olympus_1"));
-  assert.ok(timeZoneOptions("europe/london").includes("Europe/London"));
-});
+import { sameTimeZone, timeZoneLabel } from "./time-zones";
 
 test("zones compare by place and read with their offset", () => {
   assert.equal(sameTimeZone("Asia/Kolkata", "Asia/Calcutta"), true);

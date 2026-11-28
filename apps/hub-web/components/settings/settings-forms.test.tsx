@@ -4,6 +4,7 @@ import test from "node:test";
 import React, { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Settings } from "@ensemble/shared-types";
+import { canonicalTimeZone, timeZoneLabel } from "@/lib/time-zones";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE } from "@/lib/prefs";
 import { ToastProvider } from "../toast.js";
 import { Segmented } from "../ui.js";
@@ -114,7 +115,7 @@ test("task limits: the old saved defaults show as no limit, a limit the owner ty
   }
 });
 
-test("the email is saved only when it is an address, and the time zone is picked from the IANA list", async () => {
+test("the email is saved only when it is an address, and the time zone is this computer's", async () => {
   const patches: Array<Record<string, unknown>> = [];
   function Harness() {
     const [settings, setSettings] = useState(() => Settings.parse({ email: "mira@fieldnote.example", timezone: "Mars/Olympus_1" }));
@@ -143,22 +144,12 @@ test("the email is saved only when it is an address, and the time zone is picked
     assert.deepEqual(patches, [{ email: "mira@fieldnote.example" }]);
     assert.equal(view.host.querySelector("#settings-email-error"), null);
 
-    const zone = view.host.querySelector<HTMLButtonElement>("#settings-timezone")!;
-    assert.equal(zone.getAttribute("aria-invalid"), "true");
-    assert.match(view.host.querySelector("#settings-timezone-error")?.textContent ?? "", /Pick your time zone/);
-    await act(async () => zone.click());
-    const search = document.querySelector<HTMLInputElement>('[aria-label="Search time zones"]')!;
-    await act(async () => typeInput(search, "Kolkata"));
-    const option = document.querySelector<HTMLButtonElement>('[role="option"]')!;
-    assert.match(option.textContent!, /Kolkata/);
-    assert.equal(document.querySelectorAll('[role="option"]').length, 1);
-    await act(async () => option.click());
-    assert.deepEqual(patches.at(-1), { timezone: "Asia/Kolkata", timezoneMode: "manual" });
-    assert.equal(view.host.querySelector("#settings-timezone-error"), null);
-    await act(async () => zone.click());
-    const detect = [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Use this computer’s time zone"))!;
-    await act(async () => detect.click());
-    assert.equal((patches.at(-1) as Record<string, unknown>)?.timezoneMode, "auto");
+    // The zone is this computer's, whatever the account last saved: nothing to pick, nothing saved from here.
+    const zone = view.host.querySelector<HTMLElement>("#settings-timezone")!;
+    assert.equal(zone.textContent, timeZoneLabel(canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone)));
+    assert.doesNotMatch(zone.textContent ?? "", /Mars/);
+    assert.equal(view.host.querySelector("button#settings-timezone"), null);
+    assert.equal(patches.some((patch) => "timezone" in (patch as Record<string, unknown>)), false);
   } finally {
     await view.done();
   }

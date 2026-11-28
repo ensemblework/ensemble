@@ -17,7 +17,7 @@
  * its owner started and reads alone (node/instructions.ts): other people's turns get none of it.
  */
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { refLink, type AssistantRef } from "@ensemble/shared-types";
+import { dueDay as sharedDueDay, isDateOnlyDue, refLink, type AssistantRef } from "@ensemble/shared-types";
 import { readCalendar } from "../calendar/read.js";
 import { desktopAdapter } from "../lib/desktop-db.js";
 import { addCalendarDays } from "../cowork/dates.js";
@@ -81,13 +81,11 @@ const ENDED = ["done", "dropped"];
 
 /** Date-only due dates are stored at midnight UTC (lib/clock.ts `parseDue`); a due with a time is an instant. */
 export function dueDay(due: Date, timeZone: string): string {
-  const midnight = due.getUTCHours() === 0 && due.getUTCMinutes() === 0 && due.getUTCSeconds() === 0 && due.getUTCMilliseconds() === 0;
-  return midnight ? due.toISOString().slice(0, 10) : zonedParts(timeZone, due).date;
+  return sharedDueDay(due, timeZone)!;
 }
 
 function dueTime(due: Date, timeZone: string): string | null {
-  const midnight = due.getUTCHours() === 0 && due.getUTCMinutes() === 0 && due.getUTCSeconds() === 0 && due.getUTCMilliseconds() === 0;
-  return midnight ? null : zonedParts(timeZone, due).time;
+  return isDateOnlyDue(due) ? null : zonedParts(timeZone, due).time;
 }
 
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);

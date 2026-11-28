@@ -1,4 +1,4 @@
-import { timeZoneName } from "@ensemble/shared-types";
+import { isDateOnlyDue, timeZoneName } from "@ensemble/shared-types";
 
 /** The zone a download writes its times in: the person's (Settings › Account), else this computer's. */
 export function exportTimeZone(saved?: string | null): string {
@@ -33,4 +33,12 @@ export function isoInZone(value: string | number | Date | null | undefined, time
   const sign = offset < 0 ? "-" : "+";
   const minutes = Math.abs(offset);
   return `${String(year).padStart(4, "0")}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${sign}${two(Math.floor(minutes / 60))}:${two(minutes % 60)}`;
+}
+
+/** A due as a download writes it: a date-only due as its day (it is the same day in every zone), a due with a time in `timeZone`. */
+export function dueInZone(value: string | null | undefined, timeZone: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return isDateOnlyDue(date) ? date.toISOString().slice(0, 10) : isoInZone(date, timeZone);
 }

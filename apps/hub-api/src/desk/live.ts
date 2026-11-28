@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { loadSettings } from "../lib/settings.js";
+import { dueDay } from "@ensemble/shared-types";
 import { zonedParts } from "../lib/clock.js";
 import { isLimitationRule, limitationDue, daysBetween, type LimitationRule } from "./limitation.js";
 import { TASK_SELECT } from "./entries.js";
@@ -63,10 +64,14 @@ function fileHints(metadata: unknown): { format: string | null; fileType: string
 
 export async function loadDeskLive(db: PrismaClient, userId: string, now = new Date()) {
   const settings = await loadSettings(db, userId);
-  const today = zonedParts(settings.timezone, now).date;
+  const zone = settings.timezone;
+  const today = zonedParts(zone, now).date;
+  // The day a due falls on in the person's zone, so "today" and "overdue" match the Board and the assistant.
+  const day = (value: Date | null) => dueDay(value, zone);
   const holidayFrom = new Date(now.getTime() - 400 * 86_400_000);
   const holidayTo = new Date(now.getTime() + 500 * 86_400_000);
-  const datedBefore = new Date(Date.parse(`${today}T00:00:00.000Z`) + 8 * 86_400_000);
+  // A day past next week, so a due with a time late on its last day in any zone is still in.
+  const datedBefore = new Date(Date.parse(`${today}T00:00:00.000Z`) + 9 * 86_400_000);
   const [recent, dated, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects, pinnedTasks] =
     await Promise.all([
       db.task.findMany({ where: { userId, deletedAt: null, ...ON_BOARD }, orderBy: { updatedAt: "desc" }, take: TASKS, select: TASK_SELECT }),
@@ -154,7 +159,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
 
   const countdowns = merged
     .filter((row) => row.due && (row.taskType === "exam" || row.taskType === "phase" || row.taskType === "deadline"))
-    .map((row) => ({ id: row.id, title: row.title, due: iso(row.due)!, days: daysBetween(today, iso(row.due)!) }))
+    .map((row) => ({ id: row.id, title: row.title, due: day(row.due)!, days: daysBetween(today, day(row.due)!) }))
     .sort((a, b) => a.days - b.days)
     .slice(0, 8);
 
@@ -167,7 +172,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       status: row.status,
       priority: row.priority,
       taskType: row.taskType,
-      due: iso(row.due),
+      due: day(row.due),
       startsAt: stamp(row.startsAt),
       court: row.court,
       matterStage: row.matterStage,
@@ -181,7 +186,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       projectId: row.projectId,
       starter: row.sourceRef.startsWith("template:"),
     })),
-    deliverables: deliverables.map((row) => ({ id: row.id, title: row.title, due: iso(row.due), status: row.status })),
+    deliverables: deliverables.map((row) => ({ id: row.id, title: row.title, due: day(row.due), status: row.status })),
     people: people.map((row) => ({
       id: row.id,
       name: row.name,

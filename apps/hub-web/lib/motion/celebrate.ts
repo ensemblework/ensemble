@@ -1,3 +1,5 @@
+import { dueDay } from "@ensemble/shared-types";
+
 /** One celebration per real clear. The first reading is a baseline, so a page that
  *  loads already empty does not fire. */
 
@@ -45,9 +47,8 @@ export function focusIds(tasks: TaskSnap[], now = new Date()): string[] {
       if (task.todayFocus === "keep") return true;
       if (task.priority === "p0" || task.priority === "critical") return true;
       if (!task.due) return false;
-      const due = new Date(task.due);
-      if (Number.isNaN(due.getTime())) return false;
-      return startOfDay(due) <= today;
+      const day = dueDay(task.due);
+      return Boolean(day) && startOfDay(new Date(`${day}T12:00:00`)) <= today;
     })
     .map((task) => task.id);
 }

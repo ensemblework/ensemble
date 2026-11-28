@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { isoDate } from "@/lib/format";
+import { dueDay } from "@ensemble/shared-types";
 import { dueDateProblem } from "@/lib/due-date";
+import { dateOnlyDue } from "@/lib/format";
 import { DateInput } from "../date-time";
 
 /**
  * The task's due date, picked or typed in Ensemble's own calendar. Only a whole date in range is
- * saved; anything else stays out of the board with an inline error.
+ * saved, as the day itself (date-only: the same day in every time zone); anything else stays out of
+ * the board with an inline error.
  */
 export function DueDateField({ due, onSave }: { due: string | null; onSave: (due: string | null) => void }) {
-  const saved = due ? isoDate(new Date(due)) : "";
+  const saved = dueDay(due) ?? "";
   const [error, setError] = useState<string | null>(null);
   const errorId = useId();
   useEffect(() => setError(null), [saved]);
@@ -30,7 +32,7 @@ export function DueDateField({ due, onSave }: { due: string | null; onSave: (due
           const problem = dueDateProblem(value);
           setError(problem);
           if (problem || value === saved) return;
-          onSave(value ? new Date(`${value}T17:00:00`).toISOString() : null);
+          onSave(value ? dateOnlyDue(value) : null);
         }}
       />
       {error ? (

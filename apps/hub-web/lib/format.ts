@@ -1,3 +1,4 @@
+import { dueDay } from "@ensemble/shared-types";
 import type { Priority, TaskStatus } from "./api";
 import { safeDate } from "./safe-date";
 import { fileKind } from "./file-kinds";
@@ -48,10 +49,24 @@ export function isoDate(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-/** "overdue by 5 days", "due today", "due in 2 days" — or null when there is no due date. */
+/** A picked day as a due the API stores date-only: midnight UTC, the same day in every time zone. */
+export function dateOnlyDue(day: string): string {
+  return `${day}T00:00:00.000Z`;
+}
+
+/**
+ * The day a task is due as a local date (noon), safe for any local date formatter. A date-only due keeps
+ * its date in every zone; a due with a time falls on its date in this computer's zone (`dueDay`).
+ */
+export function dueDate(due: string | Date | null | undefined): Date | null {
+  const day = dueDay(due);
+  return day ? new Date(`${day}T12:00:00`) : null;
+}
+
+/** "overdue by 5 days", "due today", "due in 2 days", or null when there is no due date. */
 export function dueLabel(due: string | null, done = false): { text: string; overdue: boolean } | null {
   if (!due || done) return null;
-  const date = safeDate(due);
+  const date = dueDate(due);
   if (!date) return { text: String(due), overdue: false };
   const days = Math.round((startOfDay(date).getTime() - startOfDay().getTime()) / DAY);
   if (days < 0) return { text: `overdue by ${-days} day${days === -1 ? "" : "s"}`, overdue: true };

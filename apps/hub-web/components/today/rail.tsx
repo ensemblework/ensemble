@@ -5,7 +5,7 @@ import { Check, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePeek } from "@/components/shell/peek";
 import { api, type DeliverableRecord } from "@/lib/api";
-import { clockLabel, isoDate, shortDate } from "@/lib/format";
+import { clockLabel, dueDate, isoDate, shortDate } from "@/lib/format";
 import { useTodayData } from "@/lib/home";
 import { useToast } from "../toast";
 import { DateInput, TimeInput } from "../date-time";
@@ -131,7 +131,7 @@ export function DeliverablesRail({ highlightId, size = "l" }: { highlightId?: st
                     </button>
                     <div className="text-[12px] text-muted">
                       {row.project.name}
-                      {row.due ? ` · ${shortDate(row.due)}` : ""}
+                      {row.due ? ` · ${shortDate(dueDate(row.due))}` : ""}
                     </div>
                   </div>
                 </div>

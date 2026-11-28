@@ -1,5 +1,7 @@
 /** Weekly recap text. Meeting rows are rolled-up summaries, not the raw notes. */
 
+import { dueDay } from "@ensemble/shared-types";
+
 export interface RecapLink {
   title: string;
   href: string;
@@ -34,17 +36,22 @@ function dueLabel(day: string, today: string): string {
 /**
  * Every open task that is past due as of `cutoff` (YYYY-MM-DD, exclusive), oldest first. For the
  * current week the cutoff is today; for a past week it is the end of that week. Earlier weeks'
- * misses still count: a task due last month and still open has slipped.
+ * misses still count: a task due last month and still open has slipped. A due's day is its day in
+ * `timeZone` (`dueDay`).
  */
 export function slippedLinks(
   tasks: Array<{ id: string; title: string; status: string; due: Date | null }>,
   cutoff: string,
   today: string,
+  timeZone = "UTC",
 ): RecapLink[] {
   return tasks
-    .filter((task) => task.due && OPEN.has(task.status) && task.due.toISOString().slice(0, 10) < cutoff)
-    .sort((a, b) => a.due!.getTime() - b.due!.getTime())
-    .map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: dueLabel(task.due!.toISOString().slice(0, 10), today) }));
+    .flatMap((task) => {
+      const day = dueDay(task.due, timeZone);
+      return day && OPEN.has(task.status) && day < cutoff ? [{ task, day }] : [];
+    })
+    .sort((a, b) => a.day.localeCompare(b.day) || a.task.due!.getTime() - b.task.due!.getTime())
+    .map(({ task, day }) => ({ title: task.title, href: `/tasks/${task.id}`, detail: dueLabel(day, today) }));
 }
 
 function section(title: string, rows: string[], empty: string): string {

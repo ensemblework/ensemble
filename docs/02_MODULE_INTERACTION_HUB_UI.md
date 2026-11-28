@@ -47,6 +47,12 @@ Dates and times are picked in Ensemble's own fields (`components/date-time.tsx`:
 
 Values stay `YYYY-MM-DD`, `HH:MM` and `YYYY-MM-DDTHH:MM`. Used for a task's due date, new tasks, reminders, quiet hours, the morning brief, routines, assignments and imported meetings.
 
+#### Days and time zones
+
+Everything follows the time zone of the computer you use. The Hub keeps the account's time zone in step with the browser's (`Intl.DateTimeFormat().resolvedOptions().timeZone`, `components/shell/notifier.tsx`); Settings › Account shows it and has nothing to pick. The API reads that zone for today, due today, overdue, week boundaries, reminders, routines and the morning brief.
+
+A due date picked without a time is saved date-only, midnight UTC on that day (`dateOnlyDue` in `lib/format.ts`; the API's `parseDue`), and is the same day in every zone. A due with a time falls on its date in the person's zone. `dueDay` (`packages/shared-types/src/due-day.ts`) decides the day for Today (`GET /api/desk/live` returns `due` as that day), the Board's due labels, the weekly recap's due and overdue lists and the assistant's `hub_list_due`, so they agree.
+
 #### Focused fields
 
 A focused field shows one edge, the outer one. A standalone field (`.field`) turns its own border accent.
@@ -310,7 +316,7 @@ Subcontrols depend on profile, local/hosted mode and permissions. `GET /api/sett
 
 If another place changed the same key differently, it returns 409 `SAVE_CONFLICT` with the saved value and this place's value. The dialog asks which to save; its retry uses the returned current copy, so a further clash asks again.
 
-Settings saves run in order and an unsaved draft stays in this tab, scoped to its settings owner (`components/save-conflict-host.tsx`, `app/(hub)/settings/page.tsx`, `lib/settings.ts`). `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
+Settings saves run in order and an unsaved draft stays in this tab, scoped to its settings owner (`components/save-conflict-host.tsx`, `app/(hub)/settings/page.tsx`, `lib/settings.ts`). `PUT /api/settings/modules` sets allowed modules. Time zone shows this computer's zone, which the Hub keeps as the account's ([Days and time zones](#days-and-time-zones)).
 
 #### Run profiles
 

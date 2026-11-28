@@ -213,6 +213,15 @@ test("slipped lists every open task past due, not only this week's", () => {
   assert.deepEqual(slippedLinks(tasks, "2025-06-01", "2026-10-16").map((row) => row.title), ["Due last year"], "a past week counts what was due before its end");
 });
 
+test("slipped work is past due on its day in the person's zone", () => {
+  // 17:59 in Los Angeles on 15 Oct is 00:59 UTC on 16 Oct.
+  const evening = { id: "la", title: "Due Thursday evening", status: "todo", due: new Date("2026-10-16T00:59:00.000Z") };
+  const dateOnly = { id: "d", title: "Due Friday", status: "todo", due: new Date("2026-10-16T00:00:00.000Z") };
+  assert.deepEqual(slippedLinks([evening, dateOnly], "2026-10-16", "2026-10-16", "America/Los_Angeles").map((row) => row.title), ["Due Thursday evening"]);
+  assert.equal(slippedLinks([evening], "2026-10-16", "2026-10-16", "America/Los_Angeles")[0]!.detail, "15 Oct");
+  assert.deepEqual(slippedLinks([evening, dateOnly], "2026-10-16", "2026-10-16", "Asia/Kolkata"), [], "in Kolkata both are due today");
+});
+
 test("recap days and hours follow the person's time zone, across a DST change", () => {
   const task = (id: string, at: string, byAgent = false) => ({ id, title: id, priority: "p1", projectId: null, at: new Date(at), byAgent });
   const kolkata = weekShape({
