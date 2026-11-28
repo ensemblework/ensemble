@@ -150,6 +150,31 @@ test("limitation, mocks, and hearings stay on the desk payload", async (t) => {
   }
 });
 
+test("due days on Today follow the person's time zone, and a date-only due never shifts", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const owner = await user("zone");
+  const app = await appFor(owner.id);
+  try {
+    // A date picked in Los Angeles at 17:00 is 01:00 UTC the next day; a date-only due is midnight UTC.
+    await prisma.task.createMany({
+      data: [
+        { userId: owner.id, title: "Evening due", status: "todo", due: new Date("2026-12-01T01:00:00.000Z") },
+        { userId: owner.id, title: "Date only", status: "todo", due: new Date("2026-11-30T00:00:00.000Z") },
+      ],
+    });
+    const dueOf = async (zone: string) => {
+      await saveSettings(prisma, owner.id, { timezone: zone, timezoneMode: "auto" });
+      const body = (await app.inject({ method: "GET", url: "/api/desk/live" })).json() as { tasks: Array<{ title: string; due: string | null }> };
+      return Object.fromEntries(body.tasks.map((row) => [row.title, row.due]));
+    };
+    assert.deepEqual(await dueOf("America/Los_Angeles"), { "Evening due": "2026-11-30", "Date only": "2026-11-30" });
+    assert.deepEqual(await dueOf("Asia/Kolkata"), { "Evening due": "2026-12-01", "Date only": "2026-11-30" });
+  } finally {
+    await app.close();
+    await cleanup(owner.id);
+  }
+});
+
 test("desk live stays inside its take caps when every list is overfilled", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const owner = await user("caps");

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { api, type ProjectDetail } from "@/lib/api";
-import { shortDate } from "@/lib/format";
+import { dueDate, shortDate } from "@/lib/format";
 import { usePeek } from "@/components/shell/peek";
 import { useToast } from "@/components/toast";
 import { Popover, PriorityTag, StatusPill, cx } from "@/components/ui";
@@ -131,7 +131,7 @@ export function LinkedWork({ project, editable }: { project: ProjectDetail; edit
               {editable ? <button type="button" role="checkbox" aria-checked={done} aria-label={`${done ? "Reopen" : "Complete"} “${row.title}”`} className={cx("linked-check", done && "is-done")} onClick={() => finishDeliverable.mutate({ rowId: row.id, done: !done })}>{done ? <Check size={11} strokeWidth={3} /> : null}</button> : null}
               <button type="button" className="linked-main" onClick={() => peek.open(row.id, "deliverable")}>
                 <span className={cx("linked-title", done && "is-done")}>{row.title}</span>
-                {row.due ? <span className="linked-meta"><CalendarDays size={12} /> {shortDate(row.due)}</span> : null}
+                {row.due ? <span className="linked-meta"><CalendarDays size={12} /> {shortDate(dueDate(row.due))}</span> : null}
               </button>
             </div>
           );

@@ -5,7 +5,7 @@ import { CalendarDays } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, type ContextItemCard, type ContextItemResponse, type ContextRelationGroup, type TaskStatus } from "@/lib/api";
-import { STATUS, shortDate } from "@/lib/format";
+import { STATUS, dueDate, shortDate } from "@/lib/format";
 import { usePeek, type PeekKind } from "../shell/peek";
 import { Tag, cx } from "../ui";
 import { markdownPlainText } from "@ensemble/shared-types";
@@ -52,7 +52,7 @@ function Row({ card, onOpen }: { card: ContextItemCard; onOpen: (card: ContextIt
         {card.role ? <span className="max-w-[40%] shrink-0 truncate text-[12px] text-muted">{card.role}</span> : null}
         {card.due ? (
           <span className="linked-meta">
-            <CalendarDays size={12} aria-hidden /> {shortDate(card.due)}
+            <CalendarDays size={12} aria-hidden /> {shortDate(dueDate(card.due))}
           </span>
         ) : null}
         <StatusChip status={card.status} />

@@ -1,3 +1,4 @@
+import { isDateOnlyDue } from "@ensemble/shared-types";
 import type { PageRecord, MeetingSessionRecord, SkillRecord, StandalonePageRecord, TaskRecord } from "../api";
 import { PRIORITY, STATUS } from "../format";
 import { blocksFromMarkdown, blocksFromPage, type Block, type ExportDoc } from "./document";
@@ -27,7 +28,7 @@ export function taskDoc(task: TaskRecord, page: PageRecord | null | undefined, o
     ["Priority", PRIORITY[task.priority]?.label ?? task.priority],
     ["Owner", ownerText],
   ];
-  if (task.due) meta.push(["Due", when(task.due, "date")]);
+  if (task.due) meta.push(["Due", isDateOnlyDue(new Date(task.due)) ? task.due.slice(0, 10) : when(task.due, "date")]);
   if (task.labels?.length) meta.push(["Labels", task.labels.join(", ")]);
   if (task.sourceUrl) meta.push(["Source", task.sourceUrl]);
   const blocks: Block[] = [];

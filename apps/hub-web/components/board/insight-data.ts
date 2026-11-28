@@ -1,3 +1,4 @@
+import { dueDay } from "@ensemble/shared-types";
 import type { TaskRecord } from "@/lib/api";
 import type { Role } from "../onboarding/roles";
 import { insightSize, type TileSize } from "@ensemble/shared-types/desk-layout";
@@ -39,7 +40,8 @@ export function matchesFocus(task: TaskRecord, focus: BoardFocus | null, who: Ow
     return task.status === "done" && Boolean(task.completedAt) && Date.parse(task.completedAt!) >= start.getTime() && Date.parse(task.completedAt!) <= now;
   }
   const end = new Date(now); end.setDate(end.getDate() + 6);
-  return ACTIVE.has(task.status) && Boolean(task.due) && task.due!.slice(0, 10) <= dayKey(end);
+  const day = dueDay(task.due);
+  return ACTIVE.has(task.status) && Boolean(day) && day! <= dayKey(end);
 }
 
 export function focusLabel(focus: BoardFocus): string {

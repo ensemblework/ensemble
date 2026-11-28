@@ -6,6 +6,7 @@ import { ArrowUpRight, Plus, X } from "lucide-react";
 import type { TaskRecord } from "@/lib/api";
 import type { Role } from "../onboarding/roles";
 import { INSIGHT_CATALOG, insightTitle } from "./insight-catalog";
+import { dueDay } from "@ensemble/shared-types";
 import { ACTIVE, IN_PROGRESS_STATUSES, boardTasks, completedDays, dayKey, idleDays, matchesFocus, openTasks, ownerBucket, type BoardFocus, type InsightId, type OwnerContext } from "./insight-data";
 
 const COLORS = ["var(--chart-blue)", "var(--chart-violet)", "var(--chart-amber)", "var(--chart-teal)"];
@@ -60,7 +61,7 @@ export function InsightTile({ id, role, tasks: raw, who, now, cap, focus = null,
   } else if (id === "deadlines") {
     const today = dayKey(new Date(now));
     const rows = open.filter((t) => matchesFocus(t, { kind: "deadlines" }, who, now));
-    const overdue = rows.filter((t) => t.due!.slice(0, 10) < today).length;
+    const overdue = rows.filter((t) => (dueDay(t.due) ?? "") < today).length;
     body = <><div className="insight-deadlines"><div>{metric(overdue, "overdue")}</div><div>{metric(rows.length - overdue, "due within 7 days")}</div></div>{action("See dated work", { kind: "deadlines" })}</>;
   } else {
     const rows = tasks.filter((t) => matchesFocus(t, { kind: id }, who, now)).sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));

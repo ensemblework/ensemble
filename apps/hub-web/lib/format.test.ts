@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { plural, pluralWord } from "./format";
+import { dueDate, dueLabel, isoDate, plural, pluralWord } from "./format";
 
 test("plurals follow English endings instead of always adding an s", () => {
   assert.equal(plural(3, "class"), "3 classes");
@@ -18,4 +18,26 @@ test("plurals follow English endings instead of always adding an s", () => {
   assert.equal(plural(2, "status"), "2 statuses");
   assert.equal(plural(2, "selected task", "selected tasks"), "2 selected tasks");
   assert.equal(pluralWord("data file"), "data files");
+});
+
+test("a date-only due reads as its own day west of UTC, and a due with a time as its local day", () => {
+  const zone = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const day = (offset: number) => {
+      const date = new Date();
+      date.setDate(date.getDate() + offset);
+      return isoDate(date);
+    };
+    // Midnight UTC is the previous evening in Los Angeles; the date must not move.
+    assert.equal(dueLabel(`${day(1)}T00:00:00.000Z`)?.text, "due tomorrow");
+    assert.equal(dueLabel(`${day(0)}T00:00:00.000Z`)?.text, "due today");
+    assert.equal(dueLabel(`${day(-1)}T00:00:00.000Z`)?.overdue, true);
+    // 17:00 local is the next day in UTC; it is still due on its local day.
+    assert.equal(dueLabel(new Date(`${day(1)}T17:00:00`).toISOString())?.text, "due tomorrow");
+    assert.equal(isoDate(dueDate(`${day(2)}T00:00:00.000Z`)!), day(2));
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
 });

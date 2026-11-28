@@ -14,7 +14,7 @@ import { nodeOwnerText } from "../node-owner";
 import { toMarkdown } from "./document";
 import { fileSlug } from "./formats";
 import { meetingDoc, pageDoc, skillDoc, taskDoc, type WriteTime } from "./items";
-import { exportTimeZone, isoInZone } from "./when";
+import { dueInZone, exportTimeZone, isoInZone } from "./when";
 
 export type SpaceSection = "pages" | "tasks" | "context" | "meetings" | "skills" | "diagrams" | "plots";
 
@@ -126,7 +126,7 @@ export async function exportSpace(options: {
           STATUS[task.status]?.label ?? task.status,
           PRIORITY[task.priority]?.label ?? task.priority,
           ownerText(task),
-          at(task.due),
+          dueInZone(task.due, zone),
           task.labels ?? [],
           task.sourceUrl,
           at(task.createdAt),
@@ -159,7 +159,7 @@ export async function exportSpace(options: {
       put("context/repos.json", JSON.stringify(repos.repos, null, 2));
     } else skipped.push("Repos");
     if (deliverables) {
-      put("context/deliverables.csv", toCsv(["title", "status", "due", "project"], deliverables.deliverables.map((row) => [row.title, row.status, at(row.due), row.project.name])));
+      put("context/deliverables.csv", toCsv(["title", "status", "due", "project"], deliverables.deliverables.map((row) => [row.title, row.status, dueInZone(row.due, zone), row.project.name])));
       put("context/deliverables.json", JSON.stringify(deliverables.deliverables, null, 2));
     } else skipped.push("Deliverables");
     report("context", 4, 4, "Context");

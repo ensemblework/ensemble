@@ -10,7 +10,7 @@ import { matchExcerpt } from "../bridge/text.js";
 import { Prisma, type PrismaClient, type TaskStatus } from "@prisma/client";
 import { claimSlot } from "../jobs/claim.js";
 import { collapseEventRows, EVENT_ROW_SELECT } from "../calendar/read.js";
-import { PageDocument, moduleDenied, restoreMentionLinks } from "@ensemble/shared-types";
+import { PageDocument, dueDay, moduleDenied, restoreMentionLinks } from "@ensemble/shared-types";
 import { separateLists } from "../imports/markdown.js";
 import { markdownToNodes, pageMarkdown } from "../pages/markdown.js";
 import { isReadKind, readItem, searchHub } from "../bridge/service.js";
@@ -820,7 +820,6 @@ export async function askEnsemble(db: Db, userId: string, question: string) {
   return { question: asked, answer, sources: composed.sources };
 }
 
-const DAY_MS = 86_400_000;
 /** Screen-time rows read for one week; a person active all day stays well under this. */
 const MAX_VIEWS = 20_000;
 
@@ -845,11 +844,18 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string, accou
   const endUtc = dayStart(bounds.end, timeZone);
   const prevStartUtc = dayStart(addCalendarDays(bounds.start, -7), timeZone);
   const current = startUtc <= now && now < endUtc;
-  // Mid-week, last week is compared up to the same moment, not its whole seven days.
-  const prevEndUtc = current ? new Date(now.getTime() - 7 * DAY_MS) : startUtc;
+  // Mid-week, last week is compared up to the same local date and time, which is not 7 × 24 hours
+  // across a clock change.
+  const prevEndUtc = current ? new Date(zonedDateTimeToUtc(addCalendarDays(clock.date, -7), clock.time, timeZone).getTime() + (now.getTime() % 60_000)) : startUtc;
   const cutoff = bounds.end < clock.date ? bounds.end : clock.date;
   const dueFrom = clock.date > bounds.start ? clock.date : bounds.start;
   const dueUntil = addCalendarDays(bounds.end, 7);
+  // A due's day is its day in the person's zone (`dueDay`): read a day wider on each side, then keep the right days.
+  const dayEdge = (day: string) => new Date(`${day}T00:00:00.000Z`);
+  const inDays = (due: Date | null, from: string, until: string) => {
+    const day = dueDay(due, timeZone);
+    return Boolean(day && day >= from && day < until);
+  };
   const both = { gte: prevStartUtc, lt: endUtc };
   const thisWeek = { gte: startUtc, lt: endUtc };
   const guest = isGuestIn(userId);
@@ -887,7 +893,7 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string, accou
     }),
     db.task.findMany({ where: { userId, deletedAt: null, createdAt: both }, select: { createdAt: true, projectId: true }, take: 4000 }),
     db.task.findMany({
-      where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { lt: new Date(`${cutoff}T00:00:00.000Z`) } },
+      where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { lt: dayEdge(addCalendarDays(cutoff, 1)) } },
       orderBy: { due: "asc" },
       select: { id: true, title: true, status: true, due: true },
       take: 100,
@@ -929,18 +935,18 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string, accou
     db.taskPage.findMany({ where: { userId, deletedAt: null, updatedAt: both }, select: { id: true, updatedAt: true }, take: 2000 }),
     dueFrom < dueUntil
       ? db.task.findMany({
-          where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { gte: new Date(`${dueFrom}T00:00:00.000Z`), lt: new Date(`${dueUntil}T00:00:00.000Z`) } },
+          where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { gte: dayEdge(addCalendarDays(dueFrom, -1)), lt: dayEdge(addCalendarDays(dueUntil, 1)) } },
           orderBy: { due: "asc" },
           select: { id: true, title: true, due: true, priority: true },
-          take: 12,
+          take: 24,
         })
       : Promise.resolve([]),
     dueFrom < dueUntil
       ? db.deliverable.findMany({
-          where: { userId, deletedAt: null, status: "upcoming", due: { gte: new Date(`${dueFrom}T00:00:00.000Z`), lt: new Date(`${dueUntil}T00:00:00.000Z`) } },
+          where: { userId, deletedAt: null, status: "upcoming", due: { gte: dayEdge(addCalendarDays(dueFrom, -1)), lt: dayEdge(addCalendarDays(dueUntil, 1)) } },
           orderBy: { due: "asc" },
           select: { title: true, due: true, projectId: true },
-          take: 6,
+          take: 12,
         })
       : Promise.resolve([]),
     db.approval.count({ where: { userId, decision: null } }),
@@ -983,7 +989,7 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string, accou
     ...completedWeek.map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: "Done" })),
     ...deliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, detail: "Deliverable" })),
   ];
-  const slipped = slippedLinks(overdue, cutoff, clock.date);
+  const slipped = slippedLinks(overdue, cutoff, clock.date, timeZone);
   const decided = [
     ...meetingDecisions(sessionsWeek),
     ...approvals.filter((row) => inWeek(row.decidedAt)).map((row) => ({ title: `${row.title} (${row.decision})`, href: "/needs-me" })),
@@ -1062,8 +1068,8 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string, accou
 
   const waiting = waitingApprovals + waitingDecisions;
   const dueSoon = [
-    ...dueTasks.map((row) => ({ title: row.title, href: `/tasks/${row.id}`, due: row.due!.toISOString().slice(0, 10), ...(row.priority === "critical" || row.priority === "p0" ? { detail: "High priority" } : {}) })),
-    ...dueDeliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, due: row.due!.toISOString().slice(0, 10), detail: "Deliverable" })),
+    ...dueTasks.filter((row) => inDays(row.due, dueFrom, dueUntil)).slice(0, 12).map((row) => ({ title: row.title, href: `/tasks/${row.id}`, due: dueDay(row.due, timeZone)!, ...(row.priority === "critical" || row.priority === "p0" ? { detail: "High priority" } : {}) })),
+    ...dueDeliverables.filter((row) => inDays(row.due, dueFrom, dueUntil)).slice(0, 6).map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, due: dueDay(row.due, timeZone)!, detail: "Deliverable" })),
   ]
     .sort((a, b) => a.due.localeCompare(b.due))
     .slice(0, 12);

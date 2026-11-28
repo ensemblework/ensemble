@@ -6,7 +6,7 @@ import { Inbox } from "lucide-react";
 import { useState } from "react";
 import { WIDGET_REGISTRY, type TileConfig, type WidgetId } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
-import { shortDate } from "@/lib/format";
+import { dueDate, shortDate, startOfDay } from "@/lib/format";
 import { personInitials } from "@/lib/initials";
 import { useHostCode } from "@/lib/use-module";
 
@@ -18,12 +18,9 @@ function useFeed() {
 }
 
 function daysUntil(iso: string | null): number | null {
-  if (!iso) return null;
-  const due = new Date(iso);
-  if (Number.isNaN(due.getTime())) return null;
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  return Math.round((due.getTime() - start.getTime()) / 86_400_000);
+  const due = dueDate(iso);
+  if (!due) return null;
+  return Math.round((startOfDay(due).getTime() - startOfDay().getTime()) / 86_400_000);
 }
 
 function dayLabel(days: number): string {
@@ -388,7 +385,7 @@ export function LensTile({ type, config }: { type: WidgetId; config?: TileConfig
         id: row.id,
         title: row.title,
         due: row.due,
-        meta: row.due ? `${dayLabel(daysUntil(row.due) ?? 0)} · ${shortDate(row.due)}` : "No date",
+        meta: row.due ? `${dayLabel(daysUntil(row.due) ?? 0)} · ${shortDate(dueDate(row.due))}` : "No date",
       })),
       ...data.reminders.map((row) => ({
         id: row.id,
@@ -546,7 +543,7 @@ export function LensTile({ type, config }: { type: WidgetId; config?: TileConfig
       .map((task) => ({
         id: task.id,
         title: task.title,
-        meta: task.due ? `${dayLabel(daysUntil(task.due) ?? 0)} · ${shortDate(task.due)}` : undefined,
+        meta: task.due ? `${dayLabel(daysUntil(task.due) ?? 0)} · ${shortDate(dueDate(task.due))}` : undefined,
         href: `/tasks/${task.id}`,
       }));
     if (!rows.length) return <Empty type={type} />;
