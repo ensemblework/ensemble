@@ -731,8 +731,8 @@ async function hitsForTerm(db: Db, userId: string, term: string, modules: string
     kind: String(hit.kind),
     label: String(hit.label),
     excerpt: String(hit.excerpt ?? ""),
-    url: String(hit.url),
-    path: pathFromHubUrl(String(hit.url)),
+    url: String(hit.url ?? ""),
+    path: hitPath(hit.kind, hit.url),
   }));
   const fromSessions: AskSource[] = sessions.map((session) => ({
     id: session.id,
@@ -745,6 +745,12 @@ async function hitsForTerm(db: Db, userId: string, term: string, modules: string
   return [...fromSessions, ...fromSearch];
 }
 
+/** A hit's address: a Hub path, or for an item from a connected app its source address ("" when it has none). */
+function hitPath(kind: unknown, url: unknown): string {
+  if (kind === "artifact") return typeof url === "string" ? url : "";
+  return pathFromHubUrl(String(url ?? ""));
+}
+
 export async function searchWorkspace(db: Db, userId: string, query: string) {
   const q = query.trim();
   if (!q) throw fail(400, "Enter a search term.");
@@ -754,12 +760,13 @@ export async function searchWorkspace(db: Db, userId: string, query: string) {
     db.meetingSession.findMany({ where: { userId, deletedAt: null, OR: [{ title: { contains: q, mode: "insensitive" } }, { notes: { contains: q, mode: "insensitive" } }, { recap: { contains: q, mode: "insensitive" } }] }, take: 8, orderBy: { startedAt: "desc" } }),
   ]);
   const hits = [
-    ...found.results.map((hit) => ({ id: hit.id, kind: hit.kind, label: hit.label, excerpt: hit.excerpt, path: pathFromHubUrl(hit.url ?? "") })),
+    ...found.results.map((hit) => ({ id: hit.id, kind: hit.kind, label: hit.label, excerpt: hit.excerpt, path: hitPath(hit.kind, hit.url) })),
     ...sessions.map((session) => ({ id: session.id, kind: "meeting", label: session.title, excerpt: matchExcerpt(`${session.notes} ${session.recap ?? ""}`, q).excerpt, path: `/meetings?session=${session.id}` })),
   ];
   const seen = new Set<string>();
+  // An item from an app with no source address has no path; it is still a result.
   const results = hits.sort((a, b) => (b.label.toLowerCase() === q.toLowerCase() ? 2 : Number(b.label.toLowerCase().includes(q.toLowerCase()))) - (a.label.toLowerCase() === q.toLowerCase() ? 2 : Number(a.label.toLowerCase().includes(q.toLowerCase()))))
-    .filter((hit) => { if (seen.has(hit.path)) return false; seen.add(hit.path); return true; }).slice(0, 12);
+    .filter((hit) => { const key = hit.path || `${hit.kind}:${hit.id}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 12);
   return { query: q, results };
 }
 

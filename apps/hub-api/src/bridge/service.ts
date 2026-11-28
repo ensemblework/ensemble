@@ -380,7 +380,7 @@ function eventCard(event: { id: string; title: string; ts: Date; url: string | n
     location: meta.location ?? null,
     joinUrl: meta.joinUrl ?? event.url ?? null,
     participants: event.participants,
-    url: hubUrl(`/files?view=apps&item=${event.id}`),
+    url: hubUrl("/meetings"),
     sourceUrl: event.url,
     ...trust,
   };
@@ -769,7 +769,8 @@ export async function readItem(
           taskId: artifact.taskId,
           projectId: artifact.projectId,
           repoId: artifact.repoId,
-          url: hubUrl(`/files?view=apps&item=${artifact.id}`),
+          // An item from a connected app opens at its source; the Hub has no page of its own for it.
+          url: artifact.url,
           sourceUrl: artifact.url,
           participants: artifact.participants,
           body: body(artifact.text),
@@ -1447,7 +1448,7 @@ export async function buildBrief(
       artifactKind: artifact.kind,
       label: artifact.title || artifact.kind,
       when: artifact.ts.toISOString(),
-      url: hubUrl(`/files?view=apps&item=${artifact.id}`),
+      url: artifact.url,
       sourceUrl: artifact.url,
       ...excerpt(artifact.text || artifact.title),
       ...trustForIngested(artifact.kind, artifact.authoredByMe),

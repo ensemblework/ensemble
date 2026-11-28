@@ -404,7 +404,7 @@ async function main() {
         const targets = [
           { name: "board", url: `${WEB}/board`, locate: (p) => p.getByRole("searchbox", { name: "Search tasks" }) },
           { name: "context", url: `${WEB}/context?view=board`, locate: (p) => p.getByRole("textbox", { name: "Filter context" }) },
-          { name: "people", url: `${WEB}/context?view=widgets&tab=people`, locate: (p) => p.getByPlaceholder("Filter people…") },
+          { name: "people", url: `${WEB}/context?tab=people`, locate: (p) => p.getByPlaceholder("Filter people…") },
           { name: "files", url: `${WEB}/files`, locate: (p) => p.getByRole("searchbox", { name: "Search files" }) },
           { name: "marketplace", url: `${WEB}/marketplace`, locate: (p) => p.getByRole("textbox", { name: "Search templates" }) },
           { name: "skills", url: `${WEB}/skills`, locate: (p) => p.getByPlaceholder("Search skills…") },

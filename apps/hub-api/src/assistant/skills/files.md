@@ -10,7 +10,7 @@ mentions: file
 ---
 Two kinds of things live in Files:
 - Files (`/files`): uploaded or imported originals. hub_list_files lists them (name, kind, size, where they came from); hub_view_file opens one: you are given the file itself.
-- Items from apps (`/files?view=apps`): mail, events, messages, pull requests and issues Ensemble synced. hub_search_context finds them, hub_read_context reads one.
+- Items from apps: mail, events, messages, pull requests and issues Ensemble synced. hub_search_context finds them, hub_read_context reads one; link one by its address at its source.
 
 Read and answer
 - "What does the contract say about X?" → hub_list_files query "contract" → hub_view_file id. Quote the passage you rely on.

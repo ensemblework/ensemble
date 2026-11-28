@@ -117,11 +117,11 @@ With `ensemble evidence off`, only the description reaches the web. A held captu
 
 File summaries are requested once when the file is first read, using the **Summarize files** model setting. Editing the file does not request a new summary. Summaries are at most 250 words and help search and agents identify the right file.
 
-## 11. Connected items opened explicitly
+## 11. Items from connected apps
 
-Files home lists uploaded and explicitly imported documents. Open **From your apps** to browse saved connected items such as messages, events, transcripts, issues or items attached to tasks and projects.
+Files lists uploaded and explicitly imported documents only. Items Ensemble keeps from connected apps (messages, events, transcripts, issues, items attached to tasks and projects) have no page of their own: in Context's Artifacts tile, the graph, related records and search, one opens at its source in a new tab, and one with no source address shows as text.
 
-The owner can remove a connected item. It leaves the relevant lists, task attachments, context and agent searches and is suppressed from later sync. Removed connected items are not in Trash. Attaching the same item again restores it.
+A removed connected item leaves the relevant lists, task attachments, context and agent searches and is suppressed from later sync. Removed connected items are not in Trash. Attaching the same item again restores it.
 
 Delete an uploaded document through Files instead of removing its extracted-text item. Space members see only shared item kinds, never the owner's private mail, chats or calendar.
 
@@ -405,17 +405,18 @@ A coding agent can attach files for its owner to see with the run's result: scre
 | `apps/hub-api/src/files/extract.test.ts` | Extraction per format and its limits |
 | `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts` | Import sources and states, downloads per app, attached files for agents, `view_attachment` / `save_attachment`, no extracted text to models |
 | `apps/hub-api/src/routes/artifacts.integration.test.ts` | §11: the list, reader, Remove and suppression, re-attach, the 409 for uploads, isolation, members refused |
-| `apps/hub-web/components/files/*.test.tsx`, `components/editor/file-attach.test.tsx`, `lib/files/*.test.ts` | From your apps, duplicates (Skip, Replace), refusals on rows, search and Retry, Present and Full screen (keys, clicks, hidden slides, the in-page layer), attaching in the editor |
+| `apps/hub-web/components/files/*.test.tsx`, `components/editor/file-attach.test.tsx`, `lib/files/*.test.ts` | Duplicates (Skip, Replace), refusals on rows, search and Retry, Present and Full screen (keys, clicks, hidden slides, the in-page layer), attaching in the editor |
 | `apps/hub-web/components/editor/page-image.test.tsx` | `/image`, drop and paste, progress, refusals before sending and Attach as file, pasted `data:` images, attributes through save and HTML, the controls by keyboard and button, read-only, loading with share headers and the unavailable state |
 | `apps/hub-web/lib/export/*.test.ts`, `lib/files/export-back.test.ts` | Markdown table parsing and tables in every Download format; embeds split out of paragraphs, linked names in lists, pictures and their linked captions in PDF, Word, Markdown, the web page and export back, an unreadable bitmap named instead |
 | `apps/hub-web/lib/scroll-handoff.test.ts` | A wheel over a card stays with it; a page scroll running over it stays with the page until the wheel rests; pinch-zoom and sideways scrolling |
 
-### 11. Connected items opened explicitly: implementation reference
+### 11. Items from connected apps: implementation reference
 
-The Files home (`components/files/files-screen.tsx`) shows only uploaded or explicitly imported documents and makes no connected-item list request; **Add from your apps** opens an explicit search/import picker. Direct links to `/files?view=apps` or `&item=…` (`components/files/from-apps.tsx`) open the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app.
+The Files home (`components/files/files-screen.tsx`) shows only uploaded or explicitly imported documents and makes no connected-item list request; **Add from your apps** opens an explicit search/import picker. A link to `/files?view=apps` (with or without `&item=`) is redirected to `/files` (`middleware.ts`; `app/(hub)/files/screen.tsx` in the packaged UI).
 
-- The list reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link).
-- The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file.
+- An item's link is its source address (`Artifact.url`): the graph's artifact nodes carry it as `path` (`GET /api/context/graph`), as do related records (`context/graph/neighbors.ts`), ranked search (`context/graph/search.ts`) and the search box (`searchWorkspace` in `cowork/service.ts`); the Context Bridge returns it as `url`. With none, the item has no link.
+- `GET /api/artifacts?exclude=uploads` lists items without uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link).
+- `GET /api/artifacts/:id` reads one; for an uploaded file's text it returns `documentId`.
 - Space members see the shared kinds only, never the owner's mail, chats or calendar (`visibleArtifacts`).
 
 **Remove** (`DELETE /api/artifacts/:id`, owner only; members get 403):

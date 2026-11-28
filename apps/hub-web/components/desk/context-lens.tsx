@@ -48,7 +48,6 @@ import { CustomizeContext, MockServices, mockServices, AssignmentsPanel } from "
 import { contextTabHref, useLensTab } from "./lens-tab";
 import { ARTIFACT_KIND_LABEL, artifactLine } from "./artifact-label";
 import { LoadError } from "@/components/load-error";
-import { filesHref } from "@/lib/files/links";
 import { useLayoutPreference, useTileControls, type Arrangeable, type TileControls } from "./arrange";
 import { arrange, hiddenTilesFor, isDefaultLayout, showTile } from "./layout";
 
@@ -309,7 +308,6 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
               ready={live.isSuccess}
               onPeople={() => choose("People")}
               onTab={choose}
-              onArtifact={(id) => router.push(filesHref("apps", id))}
               onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
             />
           )
@@ -427,8 +425,8 @@ function LiveProjects({ projects, ready, size, control, onAll, onNew }: { projec
   );
 }
 
-/** Items from connected apps. Each opens in Files → From your apps. */
-function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive["artifacts"]; ready: boolean; onOpen: (id: string) => void } & Placed) {
+/** Items from connected apps. Each opens at its source in a new tab; one with no source address is plain text. */
+function LiveArtifacts({ rows, ready, size, control }: { rows: DeskLive["artifacts"]; ready: boolean } & Placed) {
   const guest = useSpaceAccess().guest;
   return (
     <Tile
@@ -442,7 +440,14 @@ function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive[
     >
       {ready ? null : <TileLoading />}
       {rows.length ? <div className="visual-body"><div className="context-file-grid" data-lens-artifacts>
-        {rows.slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id} title={row.title}><FileText size={19} /><strong>{row.title}</strong><small data-artifact-type>{artifactLine(row)}</small><span>{shortWhen(row.ts)}</span></button>)}
+        {rows.slice(0, 6).map((row) => {
+          const body = <><FileText size={19} /><strong>{row.title}</strong><small data-artifact-type>{artifactLine(row)}</small><span>{shortWhen(row.ts)}</span></>;
+          return row.url ? (
+            <a key={row.id} href={row.url} target="_blank" rel="noopener noreferrer" className="context-file-card" data-artifact={row.id} title={row.title}>{body}</a>
+          ) : (
+            <div key={row.id} className="context-file-card" data-artifact={row.id} title={row.title}>{body}</div>
+          );
+        })}
       </div></div> : null}
     </Tile>
   );
@@ -480,7 +485,7 @@ const START_LABEL: Record<string, string> = { repos: "Add a repo", reviews: "Add
  * The live tiles of one Context tab, arranged by the person: moved, resized, hidden.
  * Saved per desk and tab as `desk.context.<desk>.<tab>`. On Overview, empty tiles fold into Get started.
  */
-function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTab, onArtifact, onSection }: { deskId: DeskId; tab: string; tabs: string[]; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onTab: (label: string) => void; onArtifact: (id: string) => void; onSection: (kind: string) => void }) {
+function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTab, onSection }: { deskId: DeskId; tab: string; tabs: string[]; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onTab: (label: string) => void; onSection: (kind: string) => void }) {
   // Today is the space owner's own: someone it is shared with is not sent there.
   const guest = useSpaceAccess().guest;
   const router = useRouter();
@@ -539,8 +544,8 @@ function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTa
       const section = byKey.get(spec.key)!;
       const name = section.spec.key;
       const label = START_LABEL[name] ?? section.spec.action;
-      // Repositories are added on the Repos widget tab; other sections take their first entry on Today.
-      const run = guest ? undefined : name === "repos" ? () => router.push("/context?view=widgets&tab=repos") : () => onSection(section.kind);
+      // Repositories have their own tab; other sections take their first entry on Today.
+      const run = guest ? undefined : name === "repos" ? () => router.push("/context?tab=repos") : () => onSection(section.kind);
       starters.push({ key: spec.key, icon: section.icon, label: guest ? section.title : label, run });
     }
   }
@@ -552,7 +557,7 @@ function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTa
         const control = tiles.controls(spec);
         if (spec.key === "people") return <LivePeople key={spec.key} people={people} onOpen={onPeople} onPerson={openPerson} size={size} control={control} />;
         if (spec.key === "projects") return <LiveProjects key={spec.key} projects={projects} ready={feed.isSuccess} size={size} control={control} onAll={() => (hasTab("Projects") ? onTab("Projects") : router.push("/context?tab=projects"))} onNew={newProject} />;
-        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={artifacts} ready={ready} size={size} control={control} onOpen={onArtifact} />;
+        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={artifacts} ready={ready} size={size} control={control} />;
         const section = byKey.get(spec.key);
         if (!section) return null;
         const count = live && section.filled ? (section.spec.count?.(live) ?? section.rows.length) : 0;

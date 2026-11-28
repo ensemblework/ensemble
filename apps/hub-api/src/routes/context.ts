@@ -1123,7 +1123,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
           : Promise.resolve([]),
         prisma.artifact.findMany({
           where: { userId, deletedAt: null, AND: [visibleArtifacts(userId)] },
-          select: { id: true, title: true, kind: true, projectId: true, repoId: true, taskId: true },
+          select: { id: true, title: true, kind: true, url: true, projectId: true, repoId: true, taskId: true },
           orderBy: { ts: "desc" },
           take: 80,
         }),
@@ -1154,7 +1154,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         .map((row) => ({ id: row.id, kind: "note", label: row.title || "Meeting", sub: "meeting notes", path: `/meetings?session=${row.id}` })),
       ...diagrams.map((row) => ({ id: row.id, kind: "diagram", label: row.title, sub: "diagram" })),
       ...plots.map((row) => ({ id: row.id, kind: "plot", label: row.title, sub: "plot" })),
-      ...artifacts.map((row) => ({ id: row.id, kind: "artifact", label: row.title || "Untitled artifact", sub: `artifact · ${row.kind.replaceAll("_", " ")}` })),
+      // An item from a connected app opens at its source (`path` is its address there), when it has one.
+      ...artifacts.map((row) => ({ id: row.id, kind: "artifact", label: row.title || "Untitled artifact", sub: `artifact · ${row.kind.replaceAll("_", " ")}`, ...(row.url ? { path: row.url } : {}) })),
     ];
     const ids = new Set(nodes.map((node) => node.id));
     // Standalone pages join the graph when they mention something on it; newest pages first.

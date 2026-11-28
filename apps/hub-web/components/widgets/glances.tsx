@@ -1,19 +1,12 @@
 "use client";
 
 import { Skeleton } from "@/components/ui";
-import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { CalendarDays, FileText, GitBranch, History, Sunrise, Users, type LucideIcon } from "lucide-react";
+import { GitBranch, Sunrise, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
-import { filesHref } from "@/lib/files/links";
 import type { Size } from "@ensemble/shared-types/widgets";
-
-const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
-  ssr: false,
-  loading: () => <Skeleton className="h-full min-h-[96px] w-full flex-1" />,
-});
 
 function useWhenVisible() {
   const ref = useRef<HTMLDivElement>(null);
@@ -140,87 +133,6 @@ export function ReposGlance({ size }: { size: Size }) {
       ) : (
         repos.data ? <GlanceEmpty icon={GitBranch} line="No repos yet." href="/context?tab=repos" action="Open repos" /> : null
       )}
-    </div>
-  );
-}
-
-export function MeetingsGlance({ size }: { size: Size }) {
-  const { ref, visible } = useWhenVisible();
-  const cues = useQuery({ queryKey: ["meeting-cues"], queryFn: api.meetingCues, enabled: visible, staleTime: 30_000 });
-  const rows = (cues.data?.cues ?? []).slice(0, limitFor(size, 1, 3));
-  return (
-    <div ref={ref} className="flex h-full min-h-0 flex-col">
-      {rows.length ? (
-        <ul className="space-y-1">
-          {rows.map((cue) => (
-            <li key={cue.artifactId ?? cue.start} className="truncate text-[13.5px]">
-              {cue.title}
-            </li>
-          ))}
-        </ul>
-      ) : cues.data ? (
-        <GlanceEmpty icon={CalendarDays} line="Nothing on the calendar." href="/meetings" action="Open meetings" />
-      ) : null}
-      {rows.length ? (
-        <Link href="/meetings" className="mt-2 inline-block text-[12px] text-accent hover:underline">
-          Open meetings
-        </Link>
-      ) : null}
-    </div>
-  );
-}
-
-export function ArtifactsGlance({ size }: { size: Size }) {
-  const { ref, visible } = useWhenVisible();
-  const artifacts = useQuery({ queryKey: ["artifacts", "widget"], queryFn: () => api.artifacts({}), enabled: visible, staleTime: 30_000 });
-  const rows = (artifacts.data?.artifacts ?? []).slice(0, limitFor(size, 1, 8));
-  return (
-    <div ref={ref} className="flex h-full min-h-0 flex-col">
-      {rows.length ? (
-        <ul className="space-y-1">
-          {rows.map((row) => (
-            <li key={row.id} className="truncate text-[13.5px]">
-              <Link href={filesHref("apps", row.id)} className="hover:text-accent">
-                {row.title || row.kind}
-              </Link>
-              {size !== "s" ? <span className="ml-2 text-[12px] text-muted">{row.kind}</span> : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        artifacts.data ? <GlanceEmpty icon={FileText} line="No artifacts yet." href="/files" action="Open files" /> : null
-      )}
-    </div>
-  );
-}
-
-export function GraphGlance({ size }: { size: Size }) {
-  return (
-    <div className="flex h-full min-h-[96px] flex-col" data-graph-size={size}>
-      <GraphTab compact />
-    </div>
-  );
-}
-
-export function RecentLinks({ size }: { size: Size }) {
-  const { ref, visible } = useWhenVisible();
-  const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: visible, staleTime: 15_000 });
-  const rows = [...(tasks.data?.tasks ?? [])]
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, size === "s" ? 3 : 8);
-  return (
-    <div ref={ref} className="flex h-full min-h-0 flex-col">
-      <ul className="space-y-1">
-        {rows.map((task) => (
-          <li key={task.id} className="truncate text-[13.5px]">
-            <Link href={`/tasks/${task.id}`} className="hover:text-accent">
-              {task.title}
-            </Link>
-            {task.taskType ? <span className="ml-2 text-[11px] uppercase tracking-wide text-faint">{task.taskType}</span> : null}
-          </li>
-        ))}
-      </ul>
-      {!rows.length && tasks.data ? <GlanceEmpty icon={History} line="Nothing recent." /> : null}
     </div>
   );
 }

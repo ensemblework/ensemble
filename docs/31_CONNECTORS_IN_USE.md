@@ -62,7 +62,7 @@ Connect an app once; the assistant, the Code tab's agent, runs Ensemble starts a
 
 Ensemble saves up to 20,000 characters with a link to the original. Choose **Refresh** to read it again or **Remove** to unlink it. The saved copy does not refresh on a schedule.
 
-Attached items appear in **Files → From your apps**. Removing one there detaches it from every task and project; attaching it again restores it. An item can belong to one task and one project. Attaching it to another task moves that attachment.
+An item can belong to one task and one project. Attaching it to another task moves that attachment.
 
 ### 2.4 Tasks, repositories and updates
 

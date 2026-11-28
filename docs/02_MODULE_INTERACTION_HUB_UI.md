@@ -121,7 +121,7 @@ Open **Today** for your profession desk, briefing, focus tasks, triage, reminder
 
 The Morning brief tile (`components/widgets/glances.tsx`) reads the built-in routine's latest successful reply with `GET /api/brief/today`, independently of unread bell notifications. A paused, deleted, disabled or not-run brief has a one-line empty state pointing to `/routines`; a failed brief without a saved reply says it did not finish. `/morning-brief` redirects to `/routines?routine=morning-brief`, which focuses the built-in routine even after a rename.
 
-Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Removing a tile does not remove its records.
+Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Today's widget view uses `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Removing a tile does not remove its records.
 
 #### Move or resize a Today tile
 
@@ -143,7 +143,7 @@ Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears i
 
 The native desk header (`components/desk/view.tsx`, `glance.tsx`) shows the date, a greeting and day-at-a-glance links: open, due today and overdue (from `/api/desk/live`), needs you (the Needs me count), agents working (`/api/agent/state`, workspace module on) and meetings today (a one-day `/api/calendar` read, shown once a calendar is connected).
 
-Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. View all and a tile's corner arrow open its full list (`tileHref` in `components/desk/live-board.tsx`): Repos the repository list (`/context?view=widgets&tab=repos`), Reviews, Checks and Deploys their Context tab, which a link opens even when the tab is not pinned; a tile on its own tab has no View all. `/api/desk/live` task rows include `priority`.
+Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. View all and a tile's corner arrow open its full list (`tileHref` in `components/desk/live-board.tsx`): Repos, Reviews, Checks and Deploys their Context tab, which a link opens even when the tab is not pinned; a tile on its own tab has no View all. `/api/desk/live` task rows include `priority`.
 
 Add a tile also offers Focus now (the next three open tasks with Done and Undo), Your week (finished tasks per day, the streak and a link to `/recap`) and, for engineer and builder profiles, Agents at work (running and queued agent jobs, the Needs you count, a link to `/runs`) (`components/desk/now-tiles.tsx`).
 
@@ -244,7 +244,7 @@ Incomplete content envelopes show recoverable text with an explicit warning; unr
 
 ### 3.5 Context
 
-Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. On Overview (`components/desk/context-lens.tsx`), People lists each person with role, open tasks and last contact; Projects shows active projects with a done/total bar (`/api/widgets/feed`) and opens the project peek.
+Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. On Overview (`components/desk/context-lens.tsx`), People lists each person with role, open tasks and last contact; Projects shows active projects with a done/total bar (`/api/widgets/feed`) and opens the project peek; Artifacts opens each item from a connected app at its source in a new tab, and one with no source address is text. A link to `?view=widgets` or to a `preferences`, `sources` or `artifacts` tab is redirected to Context itself, on the same tab when Context has it (`lib/context-href.ts`, in `middleware.ts` and, in the packaged UI, `app/(hub)/context/screen.tsx`).
 
 Empty Overview tiles fold into one Get started strip of first steps and return as tiles once they have content. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
 

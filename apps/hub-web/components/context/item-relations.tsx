@@ -24,6 +24,8 @@ export function useOpenCard() {
   return (card: ContextItemCard) => {
     if (card.kind === "task" || card.kind === "project" || card.kind === "deliverable" || card.kind === "page") peek.open(card.id, card.kind as PeekKind);
     else if (card.kind === "person") peek.open(card.id, "person");
+    // An item from a connected app: its address at its source, in a new tab.
+    else if (card.kind === "artifact" && card.path) window.open(card.path, "_blank", "noopener,noreferrer");
     else if (card.path) router.push(card.path);
   };
 }

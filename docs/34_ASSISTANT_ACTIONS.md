@@ -37,7 +37,7 @@ Ask the assistant to read your layout, then describe the tiles to add, remove, m
 | --- | --- |
 | Profile Today desk and Context panel | A 12-column grid. Tiles are at least 3 × 2, up to 12 columns and 8 rows; some tiles need more space |
 | Board overview | Add, remove, move or resize up to four tiles |
-| Today and Context widgets view | Per-tile filters. Board has no widgets view |
+| Today's widgets view | Per-tile filters. Board has no widgets view |
 
 ## 4. Limits
 
@@ -109,7 +109,7 @@ Other Hub writes follow the person's policy (default "Just do it", undoable). Vi
 | Profile Today desk | Preference `desk.layout.<desk>` | 12-column grid; tiles up to 12 columns and 8 rows, at least 3 × 2 (more for some tiles, `tileLimits`) |
 | Context panel | Preference `desk.context.<desk>.<tab>` | As desks |
 | Board overview | Preference `desk.board.insights` | At most four tiles on a 12-column grid of 80 px rows, sized like Today tiles (`sizes`, `insightSize`); a tile without a size shares the row with the others |
-| Today/Context widgets view | `/api/layouts/:surface` | Per-tile filters live here only; Board has no widgets view |
+| Today's widgets view | `/api/layouts/:surface` | Per-tile filters live here only; Board has no widgets view |
 
 `apps/hub-web/e2e/assistant-tile-catalog.ts` generates `packages/shared-types/src/workspace-tiles.generated.ts` from the UI definitions; `pnpm --filter @ensemble/hub-web test` fails on drift. After changing tile definitions run `pnpm --filter @ensemble/hub-web exec tsx --tsconfig tsconfig.json e2e/assistant-tile-catalog.ts`.
 

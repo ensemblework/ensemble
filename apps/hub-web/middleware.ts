@@ -3,6 +3,7 @@ import { BadPathError, normalizePath } from "@ensemble/shared-types/modules";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAnonymousAsset } from "@/lib/anonymous-asset";
 import { isAppRoute } from "@/lib/app-routes";
+import { cleanContextHref } from "@/lib/context-href";
 import { resolveHubApi } from "./lib/hub-origin";
 import { sessionCookieDelete } from "./lib/session-cookie";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
@@ -102,6 +103,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   if (PUBLIC.has(pathname)) return NextResponse.next();
+  // Context's old widgets view and its removed tabs, and Files' old Connected items view, answer with a
+  // redirect to the current page; the pages do the same in the packaged UI, which has no middleware.
+  const moved = pathname === "/context" ? cleanContextHref(request.nextUrl.searchParams) : pathname === "/files" && request.nextUrl.searchParams.get("view") === "apps" ? "/files" : null;
+  if (moved) return NextResponse.redirect(new URL(moved, request.url));
   // Public links: anyone with the address, signed in or not (docs/29 §7).
   if (/^\/p\/[A-Za-z0-9_-]{20,64}$/.test(pathname)) return NextResponse.next();
   const session = request.cookies.get(SESSION_COOKIE)?.value;
