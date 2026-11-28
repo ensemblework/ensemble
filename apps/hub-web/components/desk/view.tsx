@@ -5,7 +5,6 @@ import { Pin, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
-import { useModuleOn } from "@/lib/use-module";
 import { useToast } from "@/components/toast";
 import { LoadError } from "@/components/load-error";
 import { usePersistentState } from "@/lib/prefs";
@@ -46,9 +45,7 @@ export function DeskView({
   const toast = useToast();
   const client = useQueryClient();
   const [panel, setPanel] = useState<string | null>(panelQuery);
-  const diagramsOn = useModuleOn("diagrams");
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
-  const diagrams = useQuery({ queryKey: ["diagrams"], queryFn: api.diagrams, enabled: diagramsOn });
   const [phone, setPhone] = useState(false);
   const [banner, setBanner, bannerReady] = usePersistentState("ensemble.today.sample-hint", true);
   const [enter, setEnter] = useState(false);
@@ -160,22 +157,6 @@ export function DeskView({
       <AddedTiles />
       {openPanel === "plots" ? <PlotsGalleryPanel onClose={() => { setPanel(null); window.history.replaceState(null, "", window.location.pathname); }} /> : null}
       {openPanel === "chart" ? <ChartTypePanel onClose={() => { setPanel(null); window.history.replaceState(null, "", window.location.pathname); }} /> : null}
-      {diagramsOn && (diagrams.data?.diagrams.length ?? 0) > 0 ? (
-        <section className="tile" style={{ marginTop: 12 }} data-widget="diagrams">
-          <header className="th">
-            <span className="tt">Diagrams</span>
-            <span className="tm">{diagrams.data!.diagrams.length} linked</span>
-          </header>
-          <div className="row gap12" style={{ alignItems: "stretch" }}>
-            {diagrams.data!.diagrams.slice(0, 3).map((row) => (
-              <a key={row.id} href={`/diagrams/${row.id}`} className="col gap6" style={{ flex: 1, minWidth: 0 }}>
-                <img alt="" src={`/api/diagrams/${row.id}/svg`} style={{ width: "100%", height: 120, objectFit: "contain", background: "transparent" }} />
-                <span className="trunc" style={{ fontSize: 12.5 }}>{row.title}</span>
-              </a>
-            ))}
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }

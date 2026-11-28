@@ -5,7 +5,7 @@ import type { Role } from "../onboarding/roles";
 export const TILE_CATEGORIES = ["All tiles", "Progress & insights", "Planning & calendar", "People & meetings", "Work & resources"] as const;
 export type TileCategory = (typeof TILE_CATEGORIES)[number];
 
-const SHARED = new Set("day focus proposed needs dels reminders brief deadlines people follow meet questions decisions wip blocked blockers done objectives progress workload calendar agenda time-split due-week focus-now your-week".split(" "));
+const SHARED = new Set("day focus proposed needs dels reminders brief deadlines people follow meet questions decisions wip blocked blockers done objectives progress workload calendar agenda time-split due-week focus-now your-week diagrams".split(" "));
 const ROLE_TILES: Record<Role, string> = {
   student: "week courses streak now plan group reading countdown target affairs syllabus mocks revision hours accuracy pipeline words cites read advisor venue concepts",
   teacher: "week periods marking syllabus attendance duty paper countdown mocks accuracy read reading cites ones concepts hours courses now",
@@ -39,6 +39,7 @@ export function tileCategory(key: string): TileCategory {
 }
 
 const DESCRIPTIONS: Record<string, string> = {
+  diagrams: "Your newest block diagrams, as many as the tile is wide. Open one to keep editing it.",
   "focus-now": "Your next three open tasks: overdue and due today first, then by priority. Mark one done or open it in one click.",
   agents: "Agent runs working now and next in the queue, with their progress and anything waiting on you.",
   "your-week": "Tasks you finished on each of the last seven days, your total, and your streak.",

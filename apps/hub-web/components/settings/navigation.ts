@@ -6,6 +6,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["account", "avatar", "Avatar", [["Avatar", "profile picture initials face photo"], "Use initials"]],
   ["account", "you", "Time zone and email", [["Time zone", "timezone scheduling local time"], ["Email", "confirm confirmations sensitive changes address"]]],
   ["account", "features", "Features", [["Features", "modules enable disable code workspace runs metrics skills diagrams plots"], ["Desk extras", "optional tiles deadlines learning"]]],
+  ["account", "recap-tiles", "Weekly recap", [["Weekly recap", "recap week tiles show hide remove layout reset"]]],
   ["account", "this-mac", "This computer", [["Allow remote tasks", "mac computer device runner"], "Accept approvals from the web and phone"]],
   ["account", "about", "About Ensemble", [["About Ensemble", "version release update desktop web CLI"], "Check for updates"]],
   ["appearance", "appearance", "Theme", [["Theme", "dark light system mode", "Mode"], ["Color theme", "palette petrol aubergine graphite lagoon aurora juniper blueprint ensemble"], ["Doodle", "doodles background pattern wallpaper constellation orbits galaxy stardust ripples network contours waves weave dots circuits graph plain"], ["Accent", "colour color colors palette presets gold satin indigo tide ember rose brass orchid moss sky"], ["Custom accent", "custom colour color hex"]]],
@@ -47,7 +48,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 export const SETTINGS_DESTINATIONS: SettingsDestination[] = groups.flatMap(([tab, section, heading, entries]) => (entries.some(entry => (typeof entry === "string" ? entry : entry[0]) === heading) ? entries : [heading, ...entries]).map((entry) => {
   const [label, keywords = "", target = label] = typeof entry === "string" ? [entry] : entry;
-  return { id: `jump-${section}-${slug(label!)}`, tab, section, heading, label: label!, target: target!, keywords: `${heading} ${keywords}`, ownerOnly: tab === "connections" || tab === "data" || section === "features" || section === "this-mac" || section === "terminal" };
+  return { id: `jump-${section}-${slug(label!)}`, tab, section, heading, label: label!, target: target!, keywords: `${heading} ${keywords}`, ownerOnly: tab === "connections" || tab === "data" || section === "features" || section === "recap-tiles" || section === "this-mac" || section === "terminal" };
 }));
 SETTINGS_DESTINATIONS.push(
   { id: "jump-model-keys", tab:"assistant", section:"models", label:"API keys", target:"API keys", keywords:"api keys model providers credentials anthropic openai google gemini github copilot ollama provider", dialog:"keys" },

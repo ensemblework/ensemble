@@ -7,6 +7,7 @@ import { hasModule } from "@ensemble/shared-types/modules";
 import { WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { Dialog } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useModuleOn } from "@/lib/use-module";
 import { filesHref } from "@/lib/files/links";
 import { readAdded, removeDeskTile } from "@/lib/desk-added";
 import type { DeskId } from "./desks";
@@ -69,7 +70,8 @@ export function AddTileDialog({ deskId, onClose }: { deskId: DeskId; plots?: boo
   const sample = useMemo(() => sampleLive(role), [role]);
   const catalog = new Map(specPool());
   for (const spec of layout.defaults) catalog.set(spec.key, spec);
-  const candidates = [...catalog.values()].filter((spec) => tileFitsRole(spec.key, role));
+  const diagramsOn = useModuleOn("diagrams");
+  const candidates = [...catalog.values()].filter((spec) => tileFitsRole(spec.key, role) && (spec.key !== "diagrams" || diagramsOn));
   // Prefer the current desk's version when two keys draw the same content.
   const native = new Set(layout.defaults.map((s) => s.key));
   const all = candidates.filter((spec) => !candidates.some((other) => other.key !== spec.key && other.title === spec.title && (native.has(other.key) && !native.has(spec.key) || native.has(other.key) === native.has(spec.key) && candidates.indexOf(other) < candidates.indexOf(spec))));

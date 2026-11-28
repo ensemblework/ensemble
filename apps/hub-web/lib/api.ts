@@ -29,8 +29,22 @@ export const API = typeof window === "undefined" ? HUB_API : "";
 let knownSettings: Settings | null = null;
 const knownRecords = new Map<string, SaveObject>();
 const recordCollection = /^\/api\/(tasks|people|projects|repos|meetings\/sessions|deliverables|skills|plots|routines|comments)(?:\/([a-zA-Z0-9-]+))?$/;
+const preferencePath = (key: string) => `/api/preferences/${encodeURIComponent(key)}`;
+/** Request order, so a list read that started before a save finished cannot put the older copy back as the save base. */
+let requestClock = 0;
+const writtenAt = new Map<string, number>();
+/** One write per path at a time: the next one is sent with the version the last one saved. */
+const writes = new Map<string, Promise<unknown>>();
 
-function rememberRecords(path: string, answer: unknown): void {
+function serialWrite<T>(path: string, send: () => Promise<T>): Promise<T> {
+  const result = (writes.get(path) ?? Promise.resolve()).then(send, send);
+  const settled = result.then(() => undefined, () => undefined);
+  writes.set(path, settled);
+  void settled.then(() => { if (writes.get(path) === settled) writes.delete(path); });
+  return result;
+}
+
+function rememberRecords(path: string, answer: unknown, startedAt = Number.POSITIVE_INFINITY): void {
   if (typeof window === "undefined") return;
   if (path.startsWith("/api/plots/workspace") && saveObject(answer) && saveObject(answer.workspace) && typeof answer.workspace.id === "string") {
     knownRecords.set(`/api/plots/${answer.workspace.id}`, answer.workspace);
@@ -42,8 +56,13 @@ function rememberRecords(path: string, answer: unknown): void {
   }
   if (path === "/api/preferences" && saveObject(answer) && Array.isArray(answer.preferences)) {
     for (const row of answer.preferences) {
-      if (saveObject(row) && typeof row.key === "string") knownRecords.set(`/api/preferences/${encodeURIComponent(row.key)}`, { value: row.value });
+      if (!saveObject(row) || typeof row.key !== "string") continue;
+      const at = preferencePath(row.key);
+      if ((writtenAt.get(at) ?? -1) < startedAt) knownRecords.set(at, { value: row.value });
     }
+  }
+  if (path.startsWith("/api/preferences/") && saveObject(answer) && saveObject(answer.preference) && typeof answer.preference.key === "string") {
+    knownRecords.set(preferencePath(answer.preference.key), { value: answer.preference.value });
   }
   const match = recordCollection.exec(path.split("?")[0]!);
   if (!match || !saveObject(answer)) return;
@@ -219,6 +238,7 @@ export function withShare<T>(share: string | null, fn: () => T): T {
 
 export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean; direct?: boolean; base?: SaveObject }): Promise<T> {
   const { json, base, signal: explicit, surviveNavigation, direct, ...rest } = init ?? {};
+  const startedAt = ++requestClock;
   const external = explicit ?? currentExternalSignal();
   const tracked = trackRequest(external, path, surviveNavigation);
   let response: Response;
@@ -282,16 +302,19 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
     if (unreachable(response.status, text)) throw new ApiError(OFFLINE, response.status);
     throw new ApiError(text.trim() || response.statusText, response.status, code, data);
   }
+  const method = (rest.method ?? "GET").toUpperCase();
+  if (method !== "GET" && path.startsWith("/api/preferences/")) writtenAt.set(path, ++requestClock);
+  if (method === "DELETE") knownRecords.delete(path);
   if (response.status === 204) return undefined as T;
   const result: unknown = await response.json();
-  rememberRecords(path, result);
+  rememberRecords(path, result, startedAt);
   return result as T;
 }
 
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
 export const patch = <T>(path: string, json: unknown, base?: SaveObject) => request<T>(path, { method: "PATCH", json, base: base ?? knownRecords.get(path) });
-export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json, base: knownRecords.get(path) });
+export const put = <T>(path: string, json: unknown) => serialWrite(path, () => request<T>(path, { method: "PUT", json, base: knownRecords.get(path) }));
 export const del = <T>(path: string, json?: unknown) => request<T>(path, json === undefined ? { method: "DELETE" } : { method: "DELETE", json });
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
@@ -1793,9 +1816,9 @@ export const api = bindClient({
   deleteRepo: (id: string) => del<void>(`/api/repos/${id}`),
   preferences: () => get<{ preferences: PreferenceRecord[] }>("/api/preferences"),
   putPreference: (key: string, value: unknown) =>
-    put<{ preference: PreferenceRecord }>(`/api/preferences/${encodeURIComponent(key)}`, { value }),
+    put<{ preference: PreferenceRecord }>(preferencePath(key), { value }),
   setModules: (id: string, on: boolean) => put<{ modules: string }>("/api/settings/modules", { id, on }),
-  deletePreference: (key: string) => del(`/api/preferences/${encodeURIComponent(key)}`),
+  deletePreference: (key: string) => serialWrite(preferencePath(key), () => del(preferencePath(key))),
   /** `exclude: "uploads"` leaves out uploaded files; `before` is the previous page's `nextCursor`. */
   artifacts: (params: { kind?: string; q?: string; take?: number; exclude?: "uploads"; before?: string } = {}) =>
     get<{

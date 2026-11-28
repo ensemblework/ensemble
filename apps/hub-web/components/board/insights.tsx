@@ -1,7 +1,7 @@
 "use client";
 import { useAssistantSurface } from "@/lib/assistant-surface";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, Search, GripVertical } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
@@ -10,6 +10,7 @@ import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordi
 import { CSS } from "@dnd-kit/utilities";
 import { api, inItemView, type TaskRecord } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
+import { usePreferenceWrite } from "@/lib/preference-write";
 import type { LayoutPayload } from "@/lib/server-layout";
 import { useToast } from "../toast";
 import { Dialog } from "../ui";
@@ -37,7 +38,6 @@ const LEGACY: Record<string, InsightId> = { "column-summary": "flow", wip: "capa
 export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout, editing, onEditingChange, who, onOpen, onIdea, focus, onFocus, filtered = false, loading = false }: {
   tasks: TaskRecord[]; initialLayout?: LayoutPayload | null; editing: boolean; onEditingChange: (editing: boolean) => void; who: OwnerContext; onOpen: (id: string) => void; onIdea?: () => void; focus: BoardFocus | null; onFocus: (focus: BoardFocus | null) => void; filtered?: boolean; loading?: boolean;
 }) {
-  const client = useQueryClient();
   const toast = useToast();
   const access = useSpaceAccess();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000, enabled: !inItemView() });
@@ -58,29 +58,29 @@ export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout,
   }, []);
   const [localCollapsed, setLocalCollapsed] = useState<boolean | null>(null);
   const collapsed = editable ? (savedLayout ? layout.collapsed : phone) : (localCollapsed ?? phone);
-  const [pending, setPending] = useState(false);
+  const [saves, setSaves] = useState(0);
+  const pending = saves > 0;
   const [error, setError] = useState("");
-  const saving = useRef(false);
+  const write = usePreferenceWrite(INSIGHTS_KEY);
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
 
+  /** Drawn at once; saves to the same key go out one after another, so a quick second move is never dropped. */
   async function save(next: InsightLayout) {
-    if (!editable || !prefs.isSuccess || saving.current) return;
-    saving.current = true; setPending(true); setError("");
-    try {
-      const result = await api.putPreference(INSIGHTS_KEY, next);
-      client.setQueryData<Awaited<ReturnType<typeof api.preferences>>>(["preferences"], (old) => ({ preferences: [...(old?.preferences ?? []).filter((p) => p.key !== INSIGHTS_KEY), result.preference] }));
-    } catch (e) { setError((e as Error).message); toast((e as Error).message, { tone: "error" }); }
-    finally { saving.current = false; setPending(false); }
+    if (!editable || !prefs.isSuccess) return;
+    setSaves((n) => n + 1); setError("");
+    try { await write(next); }
+    catch (e) { setError((e as Error).message); toast((e as Error).message, { tone: "error" }); }
+    finally { setSaves((n) => n - 1); }
   }
   const sensors = useSensors(useSensor(FramedPointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const change = (tiles: InsightId[]) => void save({ ...layout, tiles });
   return <div className="board-insights desk" data-board-strip>
-    <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={pending || editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button>{filtered && <span>Matches your filters</span>}</div>
+    <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button>{filtered && <span>Matches your filters</span>}</div>
     {!collapsed && <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={({ active, over }) => {
       if (over && active.id !== over.id) change(arrayMove(layout.tiles, layout.tiles.indexOf(active.id as InsightId), layout.tiles.indexOf(over.id as InsightId)));
     }}><SortableContext items={layout.tiles} strategy={rectSortingStrategy}><div id="board-insight-tiles" className="board-insight-row" data-board-scroll>
-      {loading || !access.ready && !inItemView() ? <div className="insight-loading" role="status">Loading board overview…</div> : layout.tiles.map((id) => <SortableInsight key={id} id={id} title={insightTitle(id, role)} disabled={!editable || !prefs.isSuccess || pending} render={(grip) => <InsightTile id={id} role={role} tasks={tasks} who={who} now={now} cap={cap} focus={focus} onFocus={onFocus} onOpen={onOpen} onIdea={onIdea} grip={grip} onRemove={editable && prefs.isSuccess ? () => change(layout.tiles.filter((key) => key !== id)) : undefined} />} />)}
+      {loading || !access.ready && !inItemView() ? <div className="insight-loading" role="status">Loading board overview…</div> : layout.tiles.map((id) => <SortableInsight key={id} id={id} title={insightTitle(id, role)} disabled={!editable || !prefs.isSuccess} render={(grip) => <InsightTile id={id} role={role} tasks={tasks} who={who} now={now} cap={cap} focus={focus} onFocus={onFocus} onOpen={onOpen} onIdea={onIdea} grip={grip} onRemove={editable && prefs.isSuccess ? () => change(layout.tiles.filter((key) => key !== id)) : undefined} />} />)}
       {!layout.tiles.length && <button type="button" className="insight-empty-add" onClick={() => onEditingChange(true)}><Plus size={14} />Choose a small overview for this board</button>}
     </div></SortableContext></DndContext>}
     {editing && <InsightGallery role={role} layout={layout} cap={cap} editable={editable && prefs.isSuccess} pending={pending} error={error} onChange={change} onCapChange={(wipCap) => void save({ ...layout, wipCap })} onReset={() => void save({ v: 1, tiles: DEFAULT_INSIGHTS[role], collapsed: false })} onClose={() => onEditingChange(false)} />}
@@ -117,7 +117,7 @@ export function InsightGallery({ role, layout, cap, editable, pending, error, on
     <div className="tile-gallery-layout"><aside className="tile-gallery-sidebar"><label className="tile-gallery-search"><Search size={15} /><input aria-label="Search board tiles" value={query} placeholder="Find a board tile…" onChange={(e) => setQuery(e.target.value)} /></label><div className="tile-gallery-categories">{INSIGHT_CATEGORIES.map((c) => <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)}>{c}</button>)}</div><div className="tile-gallery-results">{matches.map((key) => { const Icon = INSIGHT_CATALOG[key].icon; return <button key={key} type="button" data-insight-option={key} aria-pressed={key === id} onClick={() => { setSelected(key); setPreviewFocus(null); setPane("preview"); }}><span className="tile-gallery-icon"><Icon size={16} /></span><span><strong>{insightTitle(key, role)}</strong><small>{layout.tiles.includes(key) ? "On this board" : INSIGHT_CATALOG[key].category}</small></span><ChevronRight size={14} /></button>; })}{!matches.length && <p className="tile-gallery-empty">No tiles match. Try another search.</p>}</div></aside>
       <section className="tile-gallery-detail">{id && <><header><span className="tile-gallery-eyebrow">{INSIGHT_CATALOG[id].category}</span><h2>{insightTitle(id, role)}</h2><p>{INSIGHT_CATALOG[id].description}</p></header><div className="tile-gallery-preview-label"><span><i />Interactive preview · sample tasks</span><span>{id === "capacity" ? <label className="insight-cap-setting">WIP cap <input type="number" aria-label="Board WIP cap" min={1} max={50} key={cap} defaultValue={cap} disabled={!editable || pending || !onCapChange} onBlur={(e) => { const n = Number(e.target.value); if (e.target.value && Number.isFinite(n) && n !== cap) onCapChange?.(Math.max(1, Math.min(50, Math.round(n)))); }} /></label> : "Compact by design"}</span></div><div className="tile-gallery-stage desk"><div className="board-insight-preview"><InsightTile id={id} role={role} tasks={sample} who={{ me: "sample-me", ownerId: "sample-me" }} now={now} cap={cap} onFocus={setPreviewFocus} focus={previewFocus} preview /></div></div><footer><div><strong>{layout.tiles.length} of {MAX_INSIGHTS} tiles selected</strong><p>{!editable ? "The workspace owner manages this layout." : selectedOn ? "Remove or reorder tiles below." : layout.tiles.length >= MAX_INSIGHTS ? "Remove a tile to make room for this one." : "Uses this board’s tasks and current filters."}</p></div><button type="button" disabled={!editable || pending || !selectedOn && layout.tiles.length >= MAX_INSIGHTS} onClick={() => onChange(selectedOn ? layout.tiles.filter((t) => t !== id) : [...layout.tiles, id])}>{pending ? "Saving…" : selectedOn ? "Remove tile" : "Add to board"}</button></footer></>}</section>
     </div>
-    <div className="insight-selected" aria-label="Selected board tiles">{layout.tiles.map((key, i) => <div key={key}><span>{insightTitle(key, role)}</span><button type="button" disabled={!editable || pending || i === 0} aria-label={`Move ${insightTitle(key, role)} left`} onClick={() => move(i, -1)}><ChevronLeft size={13} /></button><button type="button" disabled={!editable || pending || i === layout.tiles.length - 1} aria-label={`Move ${insightTitle(key, role)} right`} onClick={() => move(i, 1)}><ChevronRight size={13} /></button></div>)}<button type="button" className="insight-reset" disabled={!editable || pending} onClick={onReset}>Reset for my profile</button></div>
+    <div className="insight-selected" aria-label="Selected board tiles">{layout.tiles.map((key, i) => <div key={key}><span>{insightTitle(key, role)}</span><button type="button" disabled={!editable || i === 0} aria-label={`Move ${insightTitle(key, role)} left`} onClick={() => move(i, -1)}><ChevronLeft size={13} /></button><button type="button" disabled={!editable || i === layout.tiles.length - 1} aria-label={`Move ${insightTitle(key, role)} right`} onClick={() => move(i, 1)}><ChevronRight size={13} /></button></div>)}<button type="button" className="insight-reset" disabled={!editable || pending} onClick={onReset}>Reset for my profile</button></div>
     {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
   </div></Dialog>;
 }
