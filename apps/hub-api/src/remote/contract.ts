@@ -271,6 +271,8 @@ export const JobSpec = z
      * value this computer does not understand never refuses the whole job.
      */
     mission: z.unknown().optional(),
+    /** The run keeps what its agent left running when it ends (a node's session run, a chat turn): `stopsLeftovers`. */
+    keepsProcesses: z.boolean().optional(),
     /**
      * The Ensemble project of a task for the person's own coding agent: its id, name, brief (Markdown)
      * and the brief's hash (workspace/agent-projects.ts). The computer runs the task in the project's
