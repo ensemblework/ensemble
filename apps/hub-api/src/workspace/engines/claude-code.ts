@@ -36,7 +36,7 @@ import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
-import { addClaudeResult, claudeFromSubAgent, SUB_AGENT, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
+import { addClaudeResult, CLAUDE_SETTINGS_ENV, claudeFromSubAgent, SUB_AGENT, withClaudeSubAgentLimits, type ClaudeSpend } from "./sub-agents.js";
 import { EngineTrace } from "./trace.js";
 import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
@@ -150,6 +150,7 @@ export function claudeSettings(input: { hookCommand: string; sandboxed: boolean;
   return {
     // The model's fast mode: faster output that uses more of the plan.
     ...(input.fast ? { fastMode: true } : {}),
+    env: { ...CLAUDE_SETTINGS_ENV },
     hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: input.hookCommand, timeout: 86_400 }] }] },
     sandbox: input.sandboxed
       ? {

@@ -187,7 +187,9 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
       if (engine === "claude-code") await removeHistory(root, [folder, sessionId]);
     }
     if (engine === "cursor-agent") {
-      for (const child of children) if (child.workspace) await removeHistory(root, [child.workspace, child.id]);
+      // A sub-agent found only by its transcript may still have a chat: in whichever workspace's folder holds it.
+      const workspaces = await folders(root);
+      for (const child of children) for (const workspace of child.workspace ? [child.workspace] : workspaces) await removeHistory(root, [workspace, child.id]);
       const projects = join(cursorDataDir(), "projects");
       for (const folder of await folders(projects)) for (const id of [sessionId, ...children.map(child => child.id)]) await removeHistory(projects, [folder, "agent-transcripts", id]);
     }

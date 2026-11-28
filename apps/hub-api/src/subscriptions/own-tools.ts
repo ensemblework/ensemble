@@ -22,6 +22,7 @@ import { acpCalls, pickOption } from "../workspace/engines/acp.js";
 import { hookCall, judgeFloor, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
 import { logAi } from "../lib/ai-activity.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
+import { CLAUDE_SETTINGS_ENV } from "../workspace/engines/sub-agents.js";
 import type { OwnJudge, OwnToolEvent, OwnVerdict } from "./bridge.js";
 
 const words = (value: unknown): string => (typeof value === "string" ? value : Array.isArray(value) ? value.join(" ") : "");
@@ -58,7 +59,8 @@ export function chatHookCommand(source: "claude" | "copilot-cli"): string {
 
 /** Claude Code's per-turn settings: the hook on every tool. Its own permission prompts never come up: the hook decides. */
 export function claudeChatSettings(hookCommand: string): Record<string, unknown> {
-  return { hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: OWN_TOOL_HOOK_SECONDS }] }] } };
+  // Agent teams stay off over the person's own settings (sub-agents.ts). A turn without its own tools has no Agent tool to start one.
+  return { env: { ...CLAUDE_SETTINGS_ENV }, hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: OWN_TOOL_HOOK_SECONDS }] }] } };
 }
 
 /** Writes Copilot's per-turn plugin (a legacy plugin: `plugin.json` and `hooks.json`) into `dir`. */

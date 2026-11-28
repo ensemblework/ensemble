@@ -166,6 +166,9 @@ test("deleting a Cursor session deletes the sub-agent chats it started, at any d
     await writeFile(join(transcripts, root, "subagents", `${named}.jsonl`), "named only here");
     await mkdir(join(transcripts, named), { recursive: true });
     await writeFile(join(transcripts, named, `${named}.jsonl`), "its own folder");
+    // Its chat's store cannot be read here (no meta), so only the transcript names it.
+    await mkdir(join(cursor, "chats", "ws-b", named), { recursive: true });
+    await writeFile(join(cursor, "chats", "ws-b", named, "store.db"), "unreadable");
     await mkdir(join(transcripts, unrelated, "subagents"), { recursive: true });
     await writeFile(join(transcripts, unrelated, "subagents", `${outsider}.jsonl`), "keep");
 
@@ -173,7 +176,7 @@ test("deleting a Cursor session deletes the sub-agent chats it started, at any d
     assert.deepEqual((await cursorSubAgents(child)).map(found => found.id), [grandchild], "a sub-agent's own tree");
 
     await deleteNativeSession("cursor-agent", root, home);
-    for (const path of [join(cursor, "acp-sessions", root), join(cursor, "chats", "ws-a", child), join(cursor, "chats", "ws-b", other), join(cursor, "chats", "ws-a", grandchild), join(transcripts, root), join(transcripts, named)]) await gone(path);
+    for (const path of [join(cursor, "acp-sessions", root), join(cursor, "chats", "ws-a", child), join(cursor, "chats", "ws-b", other), join(cursor, "chats", "ws-a", grandchild), join(transcripts, root), join(transcripts, named), join(cursor, "chats", "ws-b", named)]) await gone(path);
     for (const id of [outsider, unrelated, plain]) await lstat(join(cursor, "chats", "ws-a", id, "store.db"));
     assert.equal(await readFile(join(cursor, "chats", "ws-a", broken, "store.db"), "utf8"), "keep");
     assert.equal(await readFile(join(transcripts, unrelated, "subagents", `${outsider}.jsonl`), "utf8"), "keep");

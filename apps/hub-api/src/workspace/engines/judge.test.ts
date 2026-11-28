@@ -242,6 +242,7 @@ test("Claude Code gets the hook on every tool, a strict sandbox, and the run's i
   assert.deepEqual(settings.sandbox.filesystem.allowWrite, ["/w"]);
   assert.deepEqual(settings.sandbox.network, { allowedDomains: [], strictAllowlist: true });
   assert.ok(settings.permissions.deny?.includes("WebFetch"));
+  assert.deepEqual((settings as { env?: unknown }).env, { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" }, "agent teams stay off over the person's own settings.json");
   const online = claudeSettings({ hookCommand: "x", sandboxed: false, network: true, filesystem: { allowWrite: [], denyRead: [] } }) as { sandbox: { enabled: boolean }; permissions: { allow?: string[] } };
   assert.equal(online.sandbox.enabled, false);
   assert.ok(online.permissions.allow?.includes("WebFetch(domain:*)"));

@@ -11,6 +11,13 @@
 /** How a sub-agent's tool call starts its summary in a run's trace and live log. */
 export const SUB_AGENT = "Sub-agent: ";
 
+/**
+ * The `env` of the per-run settings (`--settings`) of a Claude Code run Ensemble starts with its own tools: agent
+ * teams off. Claude Code applies the `env` of its settings over its environment, so a person's `~/.claude/settings.json`
+ * that turns teams on would otherwise win; the per-run settings come above theirs.
+ */
+export const CLAUDE_SETTINGS_ENV = { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" } as const;
+
 /** How deep Claude Code's sub-agents may nest in a run Ensemble starts: Claude Code's documented default, which a remote flag of its own can otherwise change. */
 export const CLAUDE_SUB_AGENT_DEPTH = 3;
 

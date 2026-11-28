@@ -463,6 +463,7 @@ test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, an
   assert.ok(claude.includes("--strict-mcp-config") && claude[claude.indexOf("--mcp-config") + 1] === "m", "and no MCP server but Ensemble's");
   assert.deepEqual(JSON.parse(claude[claude.indexOf("--settings") + 1]), claudeChatSettings("node hook.mjs --source claude --chat"));
   assert.equal(claudeChatSettings("h").hooks && (claudeChatSettings("h").hooks as { PreToolUse: Array<{ matcher: string }> }).PreToolUse[0]!.matcher, "*", "the hook sees every tool");
+  assert.deepEqual(claudeChatSettings("h").env, { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" }, "agent teams stay off over the person's own settings.json");
   // GitHub Copilot: every tool, path and URL, with the hook as a per-turn plugin.
   const copilot = copilotArgs({ prompt: "Make notes.md", mcpFile: "/t/mcp.json", model: null, effort: null, pluginDir: "/t/copilot-floor" });
   assert.ok(["--allow-all-tools", "--allow-all-paths", "--allow-all-urls"].every((flag) => copilot.includes(flag)));
