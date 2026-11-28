@@ -24,11 +24,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
-import type { ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { InfoTip, MenuItem, Popover, QueryError, Skeleton } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, type RecapStats, type WeeklyRecap } from "@/lib/api";
 import { AgentBars, Ahead, Highlights, Projects, RecapTile, Record } from "./tiles";
+import { RECAP_LAYOUT_KEY, recapArrangement, type RecapTileSpec } from "./layout";
+import { useLayoutPreference, useTileControls, type TileControls } from "@/components/desk/arrange";
+import "@/components/desk/desk.css";
 import { DailyChart, HeatScale, HeatStrip, SuccessRing, SurfaceDonut } from "./charts";
 import { addDays, dayMonth, duration, hourLabel, peakWindow, plural, shortDuration, weekdayLong } from "./format";
 import "./recap.css";
@@ -150,62 +153,97 @@ function isQuiet(data: WeeklyRecap) {
   return !s.completed && !s.created && !s.agentRuns && !s.activeMinutes && !s.meetings && !s.decisions && !s.pagesEdited && !data.done.length;
 }
 
+/** The recap's tiles in the person's order and widths (`desk.recap.layout`), moved, resized and removed as on Today. */
+function useRecapTiles() {
+  const { layout: saved, save, ready, prefs } = useLayoutPreference(RECAP_LAYOUT_KEY);
+  const arranged = recapArrangement(prefs.data?.preferences.find((row) => row.key === RECAP_LAYOUT_KEY)?.value);
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 767px)");
+    const sync = () => setPhone(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+  const tiles = useTileControls({
+    shown: arranged.shown,
+    hidden: arranged.hidden.map((spec) => spec.key),
+    save,
+    customized: Boolean(saved),
+    mobile: phone,
+    heights: false,
+    restoreHint: "Turn it back on in Settings › Account.",
+  });
+  // Until the saved arrangement is known, a change would start from the default one.
+  return { shown: arranged.shown, controls: ready ? tiles.controls : () => undefined };
+}
+
 function Body({ data }: { data: WeeklyRecap }) {
   const quiet = isQuiet(data);
   const showAhead = data.current || data.ahead.overdueTotal > 0;
+  const { shown, controls } = useRecapTiles();
+  const tile = (spec: RecapTileSpec): ReactNode => {
+    const place = { c: spec.c, control: controls(spec) };
+    // A quiet week has nothing to chart; the plan and the record still show.
+    if (quiet && !["ahead", "record"].includes(spec.key)) return null;
+    switch (spec.key) {
+      case "rhythm":
+        return (
+          <RecapTile {...place} title="Daily rhythm" icon={CalendarRange} right={<DailyLegend />}>
+            <DailyChart days={data.days} today={data.today} />
+            <Flow data={data} />
+          </RecapTile>
+        );
+      case "highlights":
+        return <RecapTile {...place} title="Highlights" icon={Award}><Highlights rows={data.highlights} /></RecapTile>;
+      case "when":
+        return data.stats.activeMinutes ? <WhenYouWorked data={data} place={place} /> : (
+          <RecapTile {...place} title="When you worked" icon={Clock3} className="recap-quiet-time" labelledBy="recap-no-time">
+            <p>
+              {data.current
+                ? "Fills in as you use Ensemble: when you were active, and where the time went."
+                : "No active time was recorded in Ensemble that week."}
+            </p>
+            <InfoTip label="About active time" text={ACTIVE_NOTE} />
+          </RecapTile>
+        );
+      case "time":
+        return data.stats.activeMinutes ? (
+          <RecapTile {...place} title="Where time went" icon={PieChart} right={<InfoTip label="About active time" text={ACTIVE_NOTE} />}>
+            <SurfaceDonut surfaces={data.surfaces} />
+          </RecapTile>
+        ) : null;
+      case "projects":
+        return (
+          <RecapTile {...place} title="Projects moved" icon={FolderKanban} meta={data.projects.length ? plural(data.projects.length, "project") : undefined}>
+            <Projects rows={data.projects} />
+          </RecapTile>
+        );
+      case "agents":
+        return (
+          <RecapTile {...place} title="Agent work" icon={AgentIcon} right={<Link href="/runs" className="recap-link">Runs</Link>}>
+            <AgentWork data={data} />
+          </RecapTile>
+        );
+      case "ahead":
+        return showAhead ? (
+          <RecapTile {...place} title={data.current ? "Looking ahead" : "What this week left open"} icon={data.current ? CalendarClock : Flag}>
+            <Ahead data={data} />
+          </RecapTile>
+        ) : null;
+      case "record":
+        return data.done.length || data.decided.length || data.meetings.length ? (
+          <RecapTile {...place} title="The week, item by item" icon={ListChecks}>
+            <Record data={data} />
+          </RecapTile>
+        ) : null;
+    }
+  };
   return (
     <div className="mt-6 space-y-3">
       {quiet ? <Quiet data={data} /> : <Kpis data={data} />}
-      <div className="recap-grid">
-        {quiet ? null : (
-          <>
-            <RecapTile title="Daily rhythm" icon={CalendarRange} lg={8} right={<DailyLegend />}>
-              <DailyChart days={data.days} today={data.today} />
-              <Flow data={data} />
-            </RecapTile>
-            <RecapTile title="Highlights" icon={Award} lg={4}>
-              <Highlights rows={data.highlights} />
-            </RecapTile>
-            {data.stats.activeMinutes ? (
-              <>
-                <WhenYouWorked data={data} />
-                <RecapTile title="Where time went" icon={PieChart} md={6} lg={5} right={<InfoTip label="About active time" text={ACTIVE_NOTE} />}>
-                  <SurfaceDonut surfaces={data.surfaces} />
-                </RecapTile>
-              </>
-            ) : (
-              <section className="recap-tile recap-quiet-time" aria-labelledby="recap-no-time">
-                <header className="recap-tile-head">
-                  <Clock3 size={14} strokeWidth={2.1} aria-hidden />
-                  <h2 id="recap-no-time">When you worked</h2>
-                </header>
-                <p>
-                  {data.current
-                    ? "Fills in as you use Ensemble: when you were active, and where the time went."
-                    : "No active time was recorded in Ensemble that week."}
-                </p>
-                <InfoTip label="About active time" text={ACTIVE_NOTE} />
-              </section>
-            )}
-            <RecapTile title="Projects moved" icon={FolderKanban} md={6} lg={6} meta={data.projects.length ? plural(data.projects.length, "project") : undefined}>
-              <Projects rows={data.projects} />
-            </RecapTile>
-            <RecapTile title="Agent work" icon={AgentIcon} md={6} lg={6} right={<Link href="/runs" className="recap-link">Runs</Link>}>
-              <AgentWork data={data} />
-            </RecapTile>
-          </>
-        )}
-        {showAhead ? (
-          <RecapTile title={data.current ? "Looking ahead" : "What this week left open"} icon={data.current ? CalendarClock : Flag}>
-            <Ahead data={data} />
-          </RecapTile>
-        ) : null}
-        {data.done.length || data.decided.length || data.meetings.length ? (
-          <RecapTile title="The week, item by item" icon={ListChecks}>
-            <Record data={data} />
-          </RecapTile>
-        ) : null}
-      </div>
+      <div className="recap-grid">{shown.map((spec) => <Fragment key={spec.key}>{tile(spec)}</Fragment>)}</div>
     </div>
   );
 }
@@ -320,7 +358,7 @@ function Flow({ data }: { data: WeeklyRecap }) {
   );
 }
 
-function WhenYouWorked({ data }: { data: WeeklyRecap }) {
+function WhenYouWorked({ data, place }: { data: WeeklyRecap; place: { c: number; control?: TileControls } }) {
   const total = data.stats.activeMinutes;
   const peak = peakWindow(data.rhythm);
   const topDay = [...data.days].sort((a, b) => b.activeMinutes - a.activeMinutes)[0];
@@ -328,7 +366,7 @@ function WhenYouWorked({ data }: { data: WeeklyRecap }) {
     ? `${duration(total)} active in Ensemble.${peak ? ` Most active ${hourLabel(peak.from)} to ${hourLabel(peak.to)}.` : ""}${topDay?.activeMinutes ? ` Longest day: ${weekdayLong(topDay.date)}, ${duration(topDay.activeMinutes)}.` : ""}`
     : "No active time recorded this week.";
   return (
-    <RecapTile title="When you worked" icon={Clock3} md={6} lg={7} meta={total ? duration(total) : undefined} right={<InfoTip label="About active time" text={ACTIVE_NOTE} />}>
+    <RecapTile {...place} title="When you worked" icon={Clock3} meta={total ? duration(total) : undefined} right={<InfoTip label="About active time" text={ACTIVE_NOTE} />}>
       <HeatStrip rhythm={data.rhythm} days={data.days} summary={summary} />
       <div className="recap-tile-foot recap-heat-foot">
         {total ? (

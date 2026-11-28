@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
 import type { WeeklyRecap } from "@/lib/api";
+import type { TileControls } from "@/components/desk/arrange";
 import { dayLabel, dayMonth, plural } from "./format";
 
 /** The recap's card: the desk tile look, sized by the recap grid (data-md / data-lg spans). */
@@ -25,8 +26,8 @@ export function RecapTile({
   icon: Icon,
   meta,
   right,
-  md,
-  lg,
+  c,
+  control,
   className,
   children,
   labelledBy,
@@ -35,22 +36,35 @@ export function RecapTile({
   icon: LucideIcon;
   meta?: ReactNode;
   right?: ReactNode;
-  md?: 6;
-  lg?: 4 | 5 | 6 | 7 | 8;
+  /** Columns of 12 on a wide screen. Up to 6 shares a row on a tablet; a phone is always one column. */
+  c?: number;
+  /** Move grip, ⋯ menu and width corner from `useTileControls`. */
+  control?: TileControls;
   className?: string;
   children: ReactNode;
   labelledBy?: string;
 }) {
   const id = labelledBy ?? `recap-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <section className={`recap-tile${className ? ` ${className}` : ""}`} data-md={md} data-lg={lg} aria-labelledby={id}>
+    <section
+      {...control?.attrs}
+      className={`recap-tile${className ? ` ${className}` : ""}`}
+      data-desk-key={control?.deskKey}
+      data-span={c}
+      data-md={c && c <= 6 ? 6 : undefined}
+      style={c ? ({ "--recap-span": c } as CSSProperties) : undefined}
+      aria-labelledby={id}
+    >
       <header className="recap-tile-head">
+        {control?.grip}
         <Icon size={14} strokeWidth={2.1} aria-hidden />
         <h2 id={id}>{title}</h2>
         {meta != null ? <span className="recap-tile-meta">{meta}</span> : null}
         {right != null ? <div className="recap-tile-right">{right}</div> : null}
+        {control?.options ? <div className="recap-tile-acts">{control.options}</div> : null}
       </header>
       {children}
+      {control?.corner}
     </section>
   );
 }

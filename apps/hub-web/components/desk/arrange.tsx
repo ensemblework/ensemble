@@ -83,7 +83,7 @@ function SizeStep({ label, value, unit, min, max, onChange, title }: { label: "W
 }
 
 /** A tile's ⋯ menu. Size steps are left out where tiles cannot be resized (a phone). */
-function TileOptions({ title, size, limits, onResize, onRemove }: { title: string; size: TileSize; limits: TileLimits; onResize?: (size: TileSize) => void; onRemove: () => void }) {
+function TileOptions({ title, size, limits, heights, onResize, onRemove }: { title: string; size: TileSize; limits: TileLimits; heights: boolean; onResize?: (size: TileSize) => void; onRemove: () => void }) {
   return (
     <Popover
       align="right"
@@ -99,7 +99,7 @@ function TileOptions({ title, size, limits, onResize, onRemove }: { title: strin
           {onResize ? (
             <>
               <SizeStep label="Width" title={title} value={size.c} unit={`of ${GRID_COLUMNS}`} min={limits.minC} max={limits.maxC} onChange={(c) => onResize({ c, r: size.r })} />
-              <SizeStep label="Height" title={title} value={size.r} unit={size.r === 1 ? "row" : "rows"} min={limits.minR} max={limits.maxR} onChange={(r) => onResize({ c: size.c, r })} />
+              {heights ? <SizeStep label="Height" title={title} value={size.r} unit={size.r === 1 ? "row" : "rows"} min={limits.minR} max={limits.maxR} onChange={(r) => onResize({ c: size.c, r })} /> : null}
               <div className="my-1 border-t border-[var(--line)]" />
             </>
           ) : null}
@@ -163,6 +163,7 @@ export function useTileControls<S extends Arrangeable>({
   customized,
   mobile,
   restoreHint,
+  heights = true,
 }: {
   shown: S[];
   hidden: string[];
@@ -171,6 +172,8 @@ export function useTileControls<S extends Arrangeable>({
   mobile?: boolean;
   /** Where a hidden tile comes back from, for the toast. */
   restoreHint: string;
+  /** False where tiles take the height of their content (the weekly recap): only the width changes. */
+  heights?: boolean;
 }) {
   const toast = useToast();
   // A space shared with you keeps its owner's arrangement: no grips, no resizing, no hiding.
@@ -240,12 +243,12 @@ export function useTileControls<S extends Arrangeable>({
       const box = section.getBoundingClientRect();
       outline.style.transform = `translate3d(${box.left}px, ${box.top}px, 0)`;
       outline.style.width = `${last.c * column + (last.c - 1) * gap}px`;
-      outline.style.height = `${last.r * row + (last.r - 1) * gap}px`;
-      label.textContent = `${last.c} × ${last.r}`;
+      outline.style.height = heights ? `${last.r * row + (last.r - 1) * gap}px` : `${box.height}px`;
+      label.textContent = heights ? `${last.c} × ${last.r}` : `${last.c} of 12`;
     };
     place();
     const update = perFrame((x: number, y: number) => {
-      last = sizeFromDrag(start, { dx: x - x0, dy: y - y0 }, { column, row, gap }, limits);
+      last = sizeFromDrag(start, { dx: x - x0, dy: heights ? y - y0 : 0 }, { column, row, gap }, limits);
       place();
     });
     const move = (next: PointerEvent) => update(next.clientX, next.clientY);
@@ -279,7 +282,7 @@ export function useTileControls<S extends Arrangeable>({
   }
 
   function resizeByKey(event: ReactKeyboardEvent<HTMLElement>, spec: S) {
-    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ...(heights ? { ArrowDown: [0, 1], ArrowUp: [0, -1] } : {}) }[event.key];
     if (!step) return;
     event.preventDefault();
     const next = resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! });
@@ -412,8 +415,8 @@ export function useTileControls<S extends Arrangeable>({
       <button
         type="button"
         className="tresize"
-        aria-label={`Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.`}
-        title="Drag to resize"
+        aria-label={heights ? `Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.` : `Resize ${spec.title}, ${sizeOf(spec).c} of 12 columns wide. Use the left and right arrow keys.`}
+        title={heights ? "Drag to resize" : "Drag to change the width"}
         onPointerDown={(event) => startResize(event, spec)}
         onKeyDown={(event) => resizeByKey(event, spec)}
       />
@@ -423,6 +426,7 @@ export function useTileControls<S extends Arrangeable>({
         title={spec.title}
         size={sizeOf(spec)}
         limits={tileLimits(spec)}
+        heights={heights}
         onResize={fixed ? undefined : (size) => {
           const next = resizeTile(arranged, spec.key, size);
           const saved = next.tiles.find((tile) => tile.key === spec.key);

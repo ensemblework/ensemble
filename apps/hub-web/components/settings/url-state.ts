@@ -40,6 +40,7 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   profile: "account",
   avatar: "account",
   features: "account",
+  "recap-tiles": "account",
   about: "account",
   appearance: "appearance",
   you: "account",
