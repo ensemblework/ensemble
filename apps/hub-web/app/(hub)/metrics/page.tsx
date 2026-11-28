@@ -18,22 +18,26 @@ function money(value: number): string { return value === 0 ? "$0" : `$${value.to
 function spent(row: { estimatedUsd: number | null; credits?: number | null }): string {
   return [row.estimatedUsd == null ? null : money(row.estimatedUsd), row.credits == null ? null : creditAmount(row.credits)].filter(Boolean).join(" · ") || "Not reported";
 }
-function callCost(call: UsageCall) {
-  if (call.provider === "ollama") return "Local model";
-  if (["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor"].includes(call.provider)) return "Your AI plan";
-  return spent(call);
+/** AI plans (Claude, ChatGPT, Copilot, Cursor) are paid by the person's own plan: never priced, never credits. */
+const PLAN_PROVIDERS = new Set(["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor"]);
+function costOf(provider: string, row: { estimatedUsd: number | null; credits?: number | null }) {
+  if (provider === "ollama") return "Local model";
+  if (PLAN_PROVIDERS.has(provider)) return "Your AI plan";
+  return spent(row);
 }
 
-function ActivityChart({ days }: { days: MetricsSummary["days"] }) {
-  const [mode, setMode] = useState<"calls" | "tokensIn" | "tokensOut" | "credits">("calls");
+/** `credits`: Ensemble's own credits are in use, so the chart can show them. */
+function ActivityChart({ days, credits }: { days: MetricsSummary["days"]; credits: boolean }) {
+  const [chosen, setMode] = useState<"calls" | "tokensIn" | "tokensOut" | "credits">("calls");
+  const mode = chosen === "credits" && !credits ? "calls" : chosen;
   const [selected, setSelected] = useState<string | null>(null);
   const peak = Math.max(1, ...days.map(day => day[mode] ?? 0));
   const current = days.find(day => day.day === selected);
   return <section className="tile rounded-xl bg-panel p-5" aria-label="Daily AI activity">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h2 className="text-sm font-semibold">Your AI activity</h2><p className="mt-1 text-xs text-muted">Explore a day to see how you used AI. Dates are in UTC.</p></div>
+      <div><h2 className="text-sm font-semibold">Your AI activity</h2><p className="mt-1 text-xs text-muted">Dates are in UTC.</p></div>
       <div className="flex flex-wrap gap-1 rounded-lg bg-raised p-1" aria-label="Chart measure">
-        {([ ["calls", "Calls"], ["tokensIn", "Input tokens"], ["tokensOut", "Output tokens"], ["credits", "Credits"] ] as const).map(([key, label]) => <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)} className={cx("rounded-md px-2.5 py-1.5 text-xs", mode === key ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}>{label}</button>)}
+        {([ ["calls", "Calls"], ["tokensIn", "Input tokens"], ["tokensOut", "Output tokens"], ...(credits ? [["credits", "Credits"]] as const : []) ] as const).map(([key, label]) => <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)} className={cx("rounded-md px-2.5 py-1.5 text-xs", mode === key ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}>{label}</button>)}
       </div>
     </div>
     <div className="mt-6 flex h-36 items-end gap-1 border-b border-line" role="group" aria-label="Activity by day">
@@ -42,7 +46,7 @@ function ActivityChart({ days }: { days: MetricsSummary["days"] }) {
       </button>)}
     </div>
     <div className="mt-2 flex justify-between text-xs text-faint"><span>{days[0]?.day}</span><span>{days.at(-1)?.day}</span></div>
-    <p className="mt-4 min-h-5 text-xs text-muted" aria-live="polite">{current ? `${current.day}: ${current.calls} ${current.calls === 1 ? "call" : "calls"} · ${count(current.tokensIn + current.tokensOut)} tokens · ${spent(current)}` : "Hover, focus or select a day for its calls, tokens and cost."}</p>
+    <p className="mt-4 min-h-5 text-xs text-muted" aria-live="polite">{current ? `${current.day}: ${current.calls} ${current.calls === 1 ? "call" : "calls"} · ${count(current.tokensIn + current.tokensOut)} tokens · ${spent(current)}` : "Select a day for its totals."}</p>
   </section>;
 }
 
@@ -51,9 +55,9 @@ function RecentCall({ call }: { call: UsageCall }) {
     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-3 py-4 marker:content-none [&::-webkit-details-marker]:hidden">
       <div className="min-w-0 flex-[2] basis-56"><p className="truncate text-sm font-medium" title={call.title}>{call.title}</p><p className="mt-1 text-xs text-muted">{providerName(call.provider)} · {modelName(call.provider, call.model)}</p></div>
       <div className="flex min-w-0 flex-1 basis-48 justify-between gap-4 text-xs tabular-nums"><span><span className="block text-faint">Input tokens</span><strong className="mt-1 block font-medium">{count(call.tokensIn)}</strong></span><span><span className="block text-faint">Output tokens</span><strong className="mt-1 block font-medium">{count(call.tokensOut)}</strong></span></div>
-      <div className="ml-auto flex items-center gap-3"><span className="min-w-24 text-right text-sm font-medium">{callCost(call)}</span><ChevronDown size={14} className="text-muted transition-transform group-open:rotate-180" /></div>
+      <div className="ml-auto flex items-center gap-3"><span className="min-w-24 text-right text-sm font-medium">{costOf(call.provider, call)}</span><ChevronDown size={14} className="text-muted transition-transform group-open:rotate-180" /></div>
     </summary>
-    <div className="mb-4 rounded-lg bg-raised p-4 text-xs leading-5 text-muted"><p>{call.purpose} · {dateTime(call.at)}</p><p className="mt-2">{call.purpose === "Delegated tasks" ? "An external agent may report one total for its run, which can include multiple model calls. " : ""}Input is the context sent to the model, including instructions, conversation and attachments. Output is what the model generated, including reasoning when the provider counts it.</p>{call.tokensIn == null || call.tokensOut == null ? <p className="mt-2">This provider did not report every token count for this call. Unreported values are excluded from token totals.</p> : null}<p className="mt-2">{call.provider === "ensemble" ? "This call used your monthly Ensemble credits." : call.provider === "ollama" ? "This call ran on your local model. Ensemble does not measure your computer’s electricity or hardware costs." : ["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor"].includes(call.provider) ? "This call used your AI plan. Plan balance and usage outside Ensemble are not read." : call.estimatedUsd == null ? "The price for this model is unavailable; no cost is assumed." : "Cost is an estimate at the model’s published list price, not an invoice."}</p></div>
+    <p className="mb-4 rounded-lg bg-raised px-4 py-3 text-xs text-muted">{call.purpose} · {dateTime(call.at)}</p>
   </details>;
 }
 
@@ -77,7 +81,7 @@ export default function MetricsPage() {
   const purposes = (data?.byPurpose ?? []).filter(row => row.calls > 0).sort((a, b) => b.calls - a.calls);
   return <div className="mx-auto max-w-[1200px] px-4 pb-24 pt-8 sm:px-8">
     <PageHeader title="Metrics" actions={<div className="flex flex-wrap items-center gap-2">
-      <InfoTip label="About usage" text="Only calls through Ensemble appear here. Token counts come from provider responses. Other apps and AI plan balances are not read. Missing values mean not reported, not zero." />
+      <InfoTip label="About usage" text="Only calls through Ensemble appear here, with token counts as each provider reports them; missing means not reported, not zero. Input is what the model was sent, output what it wrote, including reasoning when the provider counts it. An agent may report one total for a whole run. Calls on your AI plan use that plan; Ensemble does not read its balance. Dollar costs are list-price estimates." />
       <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{providerChoices.map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
       <select aria-label="Usage period" value={windowDays} onChange={event => setWindowDays(Number(event.target.value))} className="field text-sm"><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select>
       <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}>{metrics.isFetching ? <Spinner size={15} /> : <RefreshCw size={15} />}</button>
@@ -85,18 +89,18 @@ export default function MetricsPage() {
     {metrics.error ? <p role="alert" className="mb-4 rounded-lg border border-danger/40 p-3 text-sm text-danger">{metrics.error.message}</p> : null}
     <div className="space-y-5">
       {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : credits.data?.localOnly ? <IncludedLocalOnly /> : credits.error ? <p role="alert" className="text-sm text-danger">Could not load credits: {credits.error.message}</p> : null}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted"><span>{provider === "all" ? "All Ensemble activity" : providerName(provider)} · last {windowDays} days</span><span>{metrics.isFetching ? "Updating usage…" : "Provider and date filters apply below. Credits above cover the UTC calendar month."}</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted"><span>{provider === "all" ? "All Ensemble activity" : providerName(provider)} · last {windowDays} days</span>{metrics.isFetching ? <span>Updating usage…</span> : null}</div>
       {data?.truncated ? <p role="note" className="text-sm text-muted">This window exceeds 5,000 records from a usage source. Choose a shorter period for complete totals.</p> : null}
       <div className={cx("space-y-5 transition-opacity", metrics.isPlaceholderData && "pointer-events-none opacity-50")} aria-busy={metrics.isFetching}>
         <div className="grid gap-3 sm:grid-cols-3">
           {[{ title: "AI calls", value: calls, detail: "Requests made through Ensemble", icon: Info }, { title: "Input tokens", value: input, detail: "Context you sent to your models", icon: ArrowUpRight }, { title: "Output tokens", value: output, detail: "Content generated by your models", icon: ArrowDownLeft }].map(stat => <div key={stat.title} className="tile rounded-xl bg-panel p-5"><div className="flex items-center justify-between text-xs text-muted">{stat.title}<stat.icon size={15} /></div><div className="mt-3 text-3xl font-semibold tabular-nums">{metrics.isLoading ? "…" : count(stat.value)}</div><p className="mt-2 text-xs text-faint">{stat.detail}</p></div>)}
         </div>
         {data?.reporting && (data.reporting.withInput < calls || data.reporting.withOutput < calls) ? <p className="flex items-start gap-2 text-xs text-muted"><Info size={14} className="shrink-0" />Token totals include reported values only. Input counts: {data.reporting.withInput} of {calls} calls; output counts: {data.reporting.withOutput} of {calls} calls.</p> : null}
-        {data ? <ActivityChart days={data.days} /> : null}
+        {data ? <ActivityChart days={data.days} credits={Boolean(credits.data?.available) || data.days.some(day => day.credits != null)} /> : null}
         <div className="grid gap-4 md:grid-cols-2">
           <section className="tile min-w-0 rounded-xl bg-panel p-5">
             <h2 className="mb-4 text-sm font-semibold">Models you used</h2>
-            {!models.length ? <Empty>No model calls recorded in this period.</Empty> : <div id="usage-models" className="space-y-4">{models.slice(0, allModels ? undefined : 5).map(row => <div key={`${row.provider}:${row.model}`} data-model-row={`${row.provider}:${row.model}`}><div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0"><span className="block truncate font-medium" title={modelName(row.provider, row.model)}>{modelName(row.provider, row.model)}</span><span className="mt-1 block text-faint">{providerName(row.provider)}</span></span><span className="shrink-0 text-right text-muted">{row.calls} calls · {spent(row)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><div className="h-full rounded-full bg-accent" style={{ width: `${row.calls / maxCalls * 100}%` }} /></div></div>)}</div>}
+            {!models.length ? <Empty>No model calls recorded in this period.</Empty> : <div id="usage-models" className="space-y-4">{models.slice(0, allModels ? undefined : 5).map(row => <div key={`${row.provider}:${row.model}`} data-model-row={`${row.provider}:${row.model}`}><div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0"><span className="block truncate font-medium" title={modelName(row.provider, row.model)}>{modelName(row.provider, row.model)}</span><span className="mt-1 block text-faint">{providerName(row.provider)}</span></span><span className="shrink-0 text-right text-muted">{row.calls} calls · {costOf(row.provider, row)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><div className="h-full rounded-full bg-accent" style={{ width: `${row.calls / maxCalls * 100}%` }} /></div></div>)}</div>}
             {models.length > 5 ? <button type="button" className="btn-ghost mt-3 text-xs" aria-expanded={allModels} aria-controls="usage-models" onClick={() => setAllModels(value => !value)}>{allModels ? "Show fewer models" : `Show all ${models.length} models`}</button> : null}
           </section>
           <section className="tile min-w-0 rounded-xl bg-panel p-5">
@@ -105,7 +109,7 @@ export default function MetricsPage() {
             {purposes.length > 5 ? <button type="button" className="btn-ghost mt-3 text-xs" aria-expanded={allPurposes} aria-controls="usage-purposes" onClick={() => setAllPurposes(value => !value)}>{allPurposes ? "Show fewer purposes" : `Show all ${purposes.length} purposes`}</button> : null}
           </section>
         </div>
-        <section className="tile rounded-xl bg-panel p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Most recent calls</h2><p className="mt-1 text-xs text-muted">Open a call for its time, purpose and how usage is counted.</p></div><label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"><Search size={14} className="shrink-0 text-muted" /><input type="search" aria-label="Search recent calls" placeholder="Find a call…" value={search} onChange={event => setSearch(event.target.value)} className="w-40 min-w-0 bg-transparent text-xs outline-none" /></label></div>
+        <section className="tile rounded-xl bg-panel p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">Most recent calls</h2><label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"><Search size={14} className="shrink-0 text-muted" /><input type="search" aria-label="Search recent calls" placeholder="Find a call…" value={search} onChange={event => setSearch(event.target.value)} className="w-40 min-w-0 bg-transparent text-xs outline-none" /></label></div>
           {!recent.length ? <Empty>{search ? "No recent calls match." : "No calls recorded in this period."}</Empty> : recent.slice(0, more ? 40 : 5).map((call, index) => <RecentCall key={`${call.at}-${index}`} call={call} />)}
           {recent.length > 5 ? <button type="button" className="mt-3 text-xs text-accent" onClick={() => setMore(!more)}>{more ? "Show fewer" : `Show ${recent.length - 5} more calls`}</button> : null}
         </section>

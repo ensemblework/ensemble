@@ -30,16 +30,41 @@
 /* ── Tiles ──────────────────────────────────────────────────────────────── */
 .recap-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
 .recap-grid > * { grid-column: 1 / -1; }
+/* A tablet puts tiles marked data-md side by side, filling gaps; a wide screen uses each tile's saved width in order. */
 @media (min-width: 768px) {
+  .recap-grid { grid-auto-flow: row dense; }
   .recap-grid > [data-md="6"] { grid-column: span 6; }
 }
 @media (min-width: 1100px) {
-  .recap-grid > [data-lg="4"] { grid-column: span 4; }
-  .recap-grid > [data-lg="5"] { grid-column: span 5; }
-  .recap-grid > [data-lg="6"] { grid-column: span 6; }
-  .recap-grid > [data-lg="7"] { grid-column: span 7; }
-  .recap-grid > [data-lg="8"] { grid-column: span 8; }
+  .recap-grid { grid-auto-flow: row; }
+  .recap-grid > [data-span] { grid-column: span var(--recap-span); }
 }
+
+/* Move grip, ⋯ menu and width corner (`useTileControls`), shown on hover or focus. */
+.recap .tgrip { width: 16px; height: 20px; margin-left: -8px; margin-right: -4px; display: grid; place-items: center; flex-shrink: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--faint); cursor: grab; opacity: 0; transition: opacity var(--dur-fast) var(--ease); touch-action: none; }
+.recap .tgrip:hover { color: var(--ink); background: var(--hover); }
+.recap-tile-acts { margin-left: auto; display: flex; flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.recap-tile-right + .recap-tile-acts { margin-left: 0; }
+.recap-tile-acts button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.recap-tile-acts button:hover { color: var(--ink); background: var(--hover); }
+.recap .tresize { position: absolute; z-index: 3; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 0; background: transparent; cursor: ew-resize; opacity: 0; touch-action: none; transition: opacity var(--dur-fast) var(--ease); }
+.recap .tresize::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); border-bottom-right-radius: 2px; }
+.recap .tresize:hover::before { border-color: var(--ink); }
+.recap .recap-tile:hover .tgrip,
+.recap .recap-tile:hover .tresize,
+.recap .recap-tile:hover .recap-tile-acts,
+.recap .recap-tile-acts:focus-within,
+.recap .recap-tile-acts:has([aria-expanded="true"]),
+.recap .tgrip:focus-visible,
+.recap .tresize:focus-visible,
+.recap .recap-tile[data-resizing="1"] .tresize { opacity: 1; }
+.recap .tgrip:focus-visible,
+.recap .tresize:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
+.recap .recap-tile[data-resizing="1"] { border-color: var(--line-strong); }
+.recap .recap-tile[data-dragging="1"] { opacity: 0.45; }
+.recap .recap-tile[data-drop]::before { content: ""; position: absolute; z-index: 4; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--ink-2); }
+.recap .recap-tile[data-drop="before"]::before { left: 3px; }
+.recap .recap-tile[data-drop="after"]::before { right: 3px; }
 .recap-tile { position: relative; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-tile); background: var(--tile); box-shadow: var(--elev-tile); padding: 16px 18px 18px; transition: border-color var(--dur-fast) var(--ease); }
 .recap-tile:hover,
 .recap-tile:focus-within { border-color: var(--line-strong); }

@@ -131,3 +131,57 @@ test("plot-space saves compare the edited copy and return the actual chosen conf
   assert.equal(saved.json().workspace.code, "first()");
   assert.deepEqual(saved.json().workspace.config, base.config);
 });
+
+test("a tile layout save that changes nothing against its base keeps the stored layout instead of failing", async () => {
+  const user = await h.asUser();
+  const path = "/api/preferences/desk.board.insights";
+  const start = { v: 1, tiles: ["flow", "done", "ownership"], collapsed: false };
+  const created = await user.inject({ method: "PUT", url: path, payload: { value: start } });
+  assert.equal(created.statusCode, 200, created.body);
+  const base = { value: created.json().preference.value };
+  const swapped = { ...start, tiles: ["done", "flow", "ownership"] };
+  const swap = await user.inject({ method: "PUT", url: path, payload: { value: swapped, _base: base } });
+  assert.equal(swap.statusCode, 200, swap.body);
+  assert.deepEqual(swap.json().preference.value.tiles, ["done", "flow", "ownership"]);
+  // The same value as the base: nothing to write, and the newer stored layout stays.
+  const same = await user.inject({ method: "PUT", url: path, payload: { value: start, _base: base } });
+  assert.equal(same.statusCode, 200, same.body);
+  assert.deepEqual(same.json().preference.value.tiles, ["done", "flow", "ownership"]);
+  const back = await user.inject({ method: "PUT", url: path, payload: { value: start, _base: { value: swap.json().preference.value } } });
+  assert.equal(back.statusCode, 200, back.body);
+  assert.deepEqual(back.json().preference.value.tiles, ["flow", "done", "ownership"]);
+});
+
+test("resizing tiles from the latest saved layout never conflicts, and either choice of a real clash saves", async () => {
+  const user = await h.asUser();
+  const path = "/api/preferences/desk.layout.default";
+  await user.inject({ method: "PUT", url: "/api/preferences/ui.example", payload: { value: { kept: true } } });
+  const tile = (key: string, c: number, r = 3) => ({ key, c, r });
+  let value: unknown = { v: 1, tiles: [tile("deploys", 3), tile("proposed", 4), tile("progress", 5)], hidden: ["calendar"] };
+  const first = await user.inject({ method: "PUT", url: path, payload: { value } });
+  assert.equal(first.statusCode, 200, first.body);
+  for (const tiles of [[tile("deploys", 8), tile("proposed", 4), tile("progress", 5)], [tile("deploys", 8), tile("proposed", 4), tile("progress", 6)], [tile("proposed", 4), tile("deploys", 8), tile("progress", 6)]]) {
+    const next = { v: 1, tiles, hidden: ["calendar"] };
+    const saved = await user.inject({ method: "PUT", url: path, payload: { value: next, _base: { value } } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    value = saved.json().preference.value;
+    assert.deepEqual(value, next);
+  }
+  // A layout edited from an older copy (another tab) is a real clash. Either answer saves.
+  const stale = { value: first.json().preference.value };
+  const mine = { v: 1, tiles: [tile("deploys", 3), tile("proposed", 4), tile("progress", 7)], hidden: ["calendar"] };
+  for (const choice of ["saved", "yours"] as const) {
+    const clash = await user.inject({ method: "PUT", url: path, payload: { value: mine, _base: stale } });
+    assert.equal(clash.statusCode, 409, clash.body);
+    const conflict = clash.json<SaveConflict>();
+    assert.deepEqual(conflict.conflicts.map((row) => row.path), [["value", "tiles"]]);
+    const resolved = resolveSave(conflict, choice);
+    const chosen = await user.inject({ method: "PUT", url: path, payload: { value: { ...(conflict.current.value as object), ...(resolved.value as object) }, _base: conflict.current } });
+    assert.equal(chosen.statusCode, 200, chosen.body);
+    assert.deepEqual(chosen.json().preference.value.tiles, choice === "saved" ? (conflict.current.value as { tiles: unknown }).tiles : mine.tiles);
+    assert.deepEqual(chosen.json().preference.value.hidden, ["calendar"]);
+  }
+  const reloaded = (await user.inject({ url: "/api/preferences" })).json().preferences as Array<{ key: string; value: unknown }>;
+  assert.deepEqual(reloaded.find((row) => row.key === "desk.layout.default")?.value, mine);
+  assert.deepEqual(reloaded.find((row) => row.key === "ui.example")?.value, { kept: true });
+});

@@ -355,6 +355,12 @@ export const WORKSPACE_TILES = {
           "title": "Your week",
           "c": 4,
           "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
+          "r": 3
         }
       ]
     },
@@ -753,6 +759,12 @@ export const WORKSPACE_TILES = {
           "key": "your-week",
           "title": "Your week",
           "c": 4,
+          "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
           "r": 3
         }
       ]
@@ -1159,6 +1171,12 @@ export const WORKSPACE_TILES = {
           "title": "Your week",
           "c": 4,
           "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
+          "r": 3
         }
       ]
     },
@@ -1546,6 +1564,12 @@ export const WORKSPACE_TILES = {
           "title": "Your week",
           "c": 4,
           "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
+          "r": 3
         }
       ]
     },
@@ -1912,6 +1936,12 @@ export const WORKSPACE_TILES = {
           "key": "your-week",
           "title": "Your week",
           "c": 4,
+          "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
           "r": 3
         }
       ]
@@ -2294,6 +2324,12 @@ export const WORKSPACE_TILES = {
           "title": "Your week",
           "c": 4,
           "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
+          "r": 3
         }
       ]
     },
@@ -2584,6 +2620,12 @@ export const WORKSPACE_TILES = {
           "key": "your-week",
           "title": "Your week",
           "c": 4,
+          "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
           "r": 3
         }
       ]
@@ -2942,6 +2984,12 @@ export const WORKSPACE_TILES = {
           "title": "Your week",
           "c": 4,
           "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
+          "r": 3
         }
       ]
     },
@@ -3284,6 +3332,12 @@ export const WORKSPACE_TILES = {
           "key": "your-week",
           "title": "Your week",
           "c": 4,
+          "r": 3
+        },
+        {
+          "key": "diagrams",
+          "title": "Diagrams",
+          "c": 12,
           "r": 3
         }
       ]
@@ -6932,6 +6986,12 @@ export const WORKSPACE_TILES = {
         "title": "Your week",
         "c": 4,
         "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
+        "r": 3
       }
     ],
     "teacher": [
@@ -7202,6 +7262,12 @@ export const WORKSPACE_TILES = {
         "title": "Your week",
         "c": 4,
         "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
+        "r": 3
       }
     ],
     "lawyer": [
@@ -7439,6 +7505,12 @@ export const WORKSPACE_TILES = {
         "key": "your-week",
         "title": "Your week",
         "c": 4,
+        "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
         "r": 3
       }
     ],
@@ -7692,6 +7764,12 @@ export const WORKSPACE_TILES = {
         "title": "Your week",
         "c": 4,
         "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
+        "r": 3
       }
     ],
     "vibe": [
@@ -7930,6 +8008,12 @@ export const WORKSPACE_TILES = {
         "title": "Your week",
         "c": 4,
         "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
+        "r": 3
       }
     ],
     "manager": [
@@ -8139,6 +8223,12 @@ export const WORKSPACE_TILES = {
         "key": "your-week",
         "title": "Your week",
         "c": 4,
+        "r": 3
+      },
+      {
+        "key": "diagrams",
+        "title": "Diagrams",
+        "c": 12,
         "r": 3
       }
     ]

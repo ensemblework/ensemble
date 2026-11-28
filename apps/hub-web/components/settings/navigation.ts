@@ -6,6 +6,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["account", "avatar", "Avatar", [["Avatar", "profile picture initials face photo"], "Use initials"]],
   ["account", "you", "Time zone and email", [["Time zone", "timezone scheduling local time"], ["Email", "confirm confirmations sensitive changes address"]]],
   ["account", "features", "Features", [["Features", "modules enable disable code workspace runs metrics skills diagrams plots"], ["Desk extras", "optional tiles deadlines learning"]]],
+  ["account", "recap-tiles", "Weekly recap", [["Weekly recap", "recap week tiles show hide remove layout reset"]]],
   ["account", "this-mac", "This computer", [["Allow remote tasks", "mac computer device runner"], "Accept approvals from the web and phone"]],
   ["account", "about", "About Ensemble", [["About Ensemble", "version release update desktop web CLI"], "Check for updates"]],
   ["appearance", "appearance", "Theme", [["Theme", "dark light system mode", "Mode"], ["Color theme", "palette petrol aubergine graphite lagoon aurora juniper blueprint ensemble"], ["Doodle", "doodles background pattern wallpaper constellation orbits galaxy stardust ripples network contours waves weave dots circuits graph plain"], ["Accent", "colour color colors palette presets gold satin indigo tide ember rose brass orchid moss sky"], ["Custom accent", "custom colour color hex"]]],
@@ -47,7 +48,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 export const SETTINGS_DESTINATIONS: SettingsDestination[] = groups.flatMap(([tab, section, heading, entries]) => (entries.some(entry => (typeof entry === "string" ? entry : entry[0]) === heading) ? entries : [heading, ...entries]).map((entry) => {
   const [label, keywords = "", target = label] = typeof entry === "string" ? [entry] : entry;
-  return { id: `jump-${section}-${slug(label!)}`, tab, section, heading, label: label!, target: target!, keywords: `${heading} ${keywords}`, ownerOnly: tab === "connections" || tab === "data" || section === "features" || section === "this-mac" || section === "terminal" };
+  return { id: `jump-${section}-${slug(label!)}`, tab, section, heading, label: label!, target: target!, keywords: `${heading} ${keywords}`, ownerOnly: tab === "connections" || tab === "data" || section === "features" || section === "recap-tiles" || section === "this-mac" || section === "terminal" };
 }));
 SETTINGS_DESTINATIONS.push(
   { id: "jump-model-keys", tab:"assistant", section:"models", label:"API keys", target:"API keys", keywords:"api keys model providers credentials anthropic openai google gemini github copilot ollama provider", dialog:"keys" },
@@ -56,11 +57,12 @@ SETTINGS_DESTINATIONS.push(
 for (const tier of ["Low model", "Medium model", "High model", "Max model"]) {
   for (const control of ["provider", "model", "thinking"]) SETTINGS_DESTINATIONS.push({ id:`jump-${slug(tier)}-${control}`, tab:"assistant", section:"models", heading:"Models", label:control === "model" ? tier : `${tier} ${control}`, target:`${tier} ${control}`, keywords:`model tier preset reasoning thinking effort ${tier} ${control}` });
 }
-for (const label of ["Code", "Agent queue", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}`, ownerOnly:true });
+for (const label of ["Code", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}${label === "Runs" ? " agent queue workspace" : ""}`, ownerOnly:true });
 export const SETTINGS_DESTINATION_BY_ID = new Map(SETTINGS_DESTINATIONS.map((row) => [row.id, row]));
 /** Ids that links already carry, for controls that were renamed or moved: each still lands. */
 const ALIASES: Record<string, string> = {
-  "jump-feature-workspace": "jump-feature-agent-queue",
+  "jump-feature-workspace": "jump-feature-runs",
+  "jump-feature-agent-queue": "jump-feature-runs",
   "jump-account-delete-account": "jump-danger-delete-account",
   "jump-you-scheduling-and-confirmations": "jump-you-time-zone-and-email",
   "jump-appearance-appearance": "jump-appearance-theme",

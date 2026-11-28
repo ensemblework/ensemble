@@ -531,10 +531,13 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       await lockUserTransaction(tx, owner);
       const current = await tx.preference.findUnique({ where: { userId_key: { userId: owner, key } } });
       const changed = guardedSave({ value: current?.value ?? null }, body, saveBase(request));
+      // Nothing changed against the version the client edited (it chose the saved copy, or put a value back): keep what is stored.
+      const value = changed.value !== undefined ? changed.value : current && !current.deletedAt ? current.value : body.value;
+      if (value === undefined) throw Object.assign(new Error("Supply a value to save."), { statusCode: 400 });
       return tx.preference.upsert({
-      where: { userId_key: { userId: owner, key } },
-      create: { userId: owner, key, value: changed.value as never, source: "me", confidence: 1 },
-      update: { ...(changed.value !== undefined ? { value: changed.value as never } : {}), source: "me", confidence: 1, deletedAt: null },
+        where: { userId_key: { userId: owner, key } },
+        create: { userId: owner, key, value: value as never, source: "me", confidence: 1 },
+        update: { value: value as never, source: "me", confidence: 1, deletedAt: null },
       });
     });
     if (key.startsWith("ui.") && key !== ONBOARDING_TOUR_KEY) await mirrorSettings(prisma, owner);

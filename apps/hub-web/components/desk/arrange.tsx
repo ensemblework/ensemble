@@ -1,11 +1,13 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { GripVertical } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Ellipsis, GripVertical, Minus, Plus, X } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "@/lib/api";
+import { usePreferenceWrite } from "@/lib/preference-write";
 import { useToast } from "@/components/toast";
-import { hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
+import { MenuItem, Popover } from "@/components/ui";
+import { GRID_COLUMNS, hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileLimits, type TileSize } from "./layout";
 import { useSpaceAccess } from "@/lib/access";
 import { measureBoxes, motionReduced, perFrame, playFlip, type Box } from "@/lib/motion/drag";
 
@@ -34,28 +36,21 @@ function announce(text: string) {
   // The same words twice in a row would not be read again.
   region.textContent = region.textContent === text ? `${text}\u00a0` : text;
 }
-type Prefs = Awaited<ReturnType<typeof api.preferences>>;
-
 /** A layout preference with an optimistic write and a rollback on failure. */
 export function useLayoutPreference(key: string) {
-  const client = useQueryClient();
   const toast = useToast();
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
   const layout = readLayout(prefs.data?.preferences.find((row) => row.key === key)?.value);
+  const write = usePreferenceWrite(key);
   const save = useCallback(
     async (next: DeskLayout | null) => {
-      const before = client.getQueryData<Prefs>(["preferences"]);
-      const rest = (before?.preferences ?? []).filter((row) => row.key !== key);
-      client.setQueryData<Prefs>(["preferences"], { preferences: next ? [...rest, { key, value: next } as Prefs["preferences"][number]] : rest });
       try {
-        if (next) await api.putPreference(key, next);
-        else await api.deletePreference(key);
+        await write(next);
       } catch (error) {
-        if (before) client.setQueryData(["preferences"], before);
         toast((error as Error).message, { tone: "error" });
       }
     },
-    [client, key, toast],
+    [write, toast],
   );
   return { ready: prefs.isSuccess, layout, save, prefs };
 }
@@ -65,8 +60,58 @@ export type TileControls = {
   attrs: Record<string, string | undefined>;
   grip?: ReactNode;
   corner?: ReactNode;
-  onHide?: () => void;
+  /** The ⋯ menu in the tile's header: its width and height, and Remove tile. */
+  options?: ReactNode;
 };
+
+function SizeStep({ label, value, unit, min, max, onChange, title }: { label: "Width" | "Height"; value: number; unit: string; min: number; max: number; onChange: (next: number) => void; title: string }) {
+  const [less, more] = label === "Width" ? ["Narrower", "Wider"] : ["Shorter", "Taller"];
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 py-1 text-[13px]">
+      <span>{label}</span>
+      <span className="flex items-center gap-1">
+        <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink disabled:opacity-30" aria-label={`${less}: ${title}`} disabled={value <= min} onClick={() => onChange(value - 1)}>
+          <Minus size={13} />
+        </button>
+        <span className="w-[74px] text-center tabular-nums text-muted">{value} {unit}</span>
+        <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink disabled:opacity-30" aria-label={`${more}: ${title}`} disabled={value >= max} onClick={() => onChange(value + 1)}>
+          <Plus size={13} />
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/** A tile's ⋯ menu. Size steps are left out where tiles cannot be resized (a phone). */
+function TileOptions({ title, size, limits, heights, onResize, onRemove }: { title: string; size: TileSize; limits: TileLimits; heights: boolean; onResize?: (size: TileSize) => void; onRemove: () => void }) {
+  return (
+    <Popover
+      align="right"
+      width={236}
+      trigger={(open, toggle) => (
+        <button type="button" title="Tile options" aria-label={`Options for ${title}`} aria-haspopup="true" aria-expanded={open} onClick={toggle}>
+          <Ellipsis size={13} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div role="group" aria-label={`${title} options`}>
+          {onResize ? (
+            <>
+              <SizeStep label="Width" title={title} value={size.c} unit={`of ${GRID_COLUMNS}`} min={limits.minC} max={limits.maxC} onChange={(c) => onResize({ c, r: size.r })} />
+              {heights ? <SizeStep label="Height" title={title} value={size.r} unit={size.r === 1 ? "row" : "rows"} min={limits.minR} max={limits.maxR} onChange={(r) => onResize({ c: size.c, r })} /> : null}
+              <div className="my-1 border-t border-[var(--line)]" />
+            </>
+          ) : null}
+          <MenuItem onClick={() => { close(); onRemove(); }}>
+            <X size={14} aria-hidden />
+            Remove tile
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
 
 /** The tiles of the grid `section` sits in, with their keys. */
 function gridTiles(grid: Element | null | undefined): HTMLElement[] {
@@ -118,6 +163,7 @@ export function useTileControls<S extends Arrangeable>({
   customized,
   mobile,
   restoreHint,
+  heights = true,
 }: {
   shown: S[];
   hidden: string[];
@@ -126,6 +172,8 @@ export function useTileControls<S extends Arrangeable>({
   mobile?: boolean;
   /** Where a hidden tile comes back from, for the toast. */
   restoreHint: string;
+  /** False where tiles take the height of their content (the weekly recap): only the width changes. */
+  heights?: boolean;
 }) {
   const toast = useToast();
   // A space shared with you keeps its owner's arrangement: no grips, no resizing, no hiding.
@@ -195,12 +243,12 @@ export function useTileControls<S extends Arrangeable>({
       const box = section.getBoundingClientRect();
       outline.style.transform = `translate3d(${box.left}px, ${box.top}px, 0)`;
       outline.style.width = `${last.c * column + (last.c - 1) * gap}px`;
-      outline.style.height = `${last.r * row + (last.r - 1) * gap}px`;
-      label.textContent = `${last.c} × ${last.r}`;
+      outline.style.height = heights ? `${last.r * row + (last.r - 1) * gap}px` : `${box.height}px`;
+      label.textContent = heights ? `${last.c} × ${last.r}` : `${last.c} of 12`;
     };
     place();
     const update = perFrame((x: number, y: number) => {
-      last = sizeFromDrag(start, { dx: x - x0, dy: y - y0 }, { column, row, gap }, limits);
+      last = sizeFromDrag(start, { dx: x - x0, dy: heights ? y - y0 : 0 }, { column, row, gap }, limits);
       place();
     });
     const move = (next: PointerEvent) => update(next.clientX, next.clientY);
@@ -234,7 +282,7 @@ export function useTileControls<S extends Arrangeable>({
   }
 
   function resizeByKey(event: ReactKeyboardEvent<HTMLElement>, spec: S) {
-    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ...(heights ? { ArrowDown: [0, 1], ArrowUp: [0, -1] } : {}) }[event.key];
     if (!step) return;
     event.preventDefault();
     const next = resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! });
@@ -339,7 +387,7 @@ export function useTileControls<S extends Arrangeable>({
     const before = customized ? { v: 1 as const, tiles: shown.map((item) => ({ key: item.key, c: item.c, r: item.r })), hidden } : null;
     remember(document.querySelector(`[data-desk-key="${CSS.escape(spec.key)}"]`)?.parentElement);
     void save(hideTile(arranged, spec.key));
-    toast(`Hid ${spec.title}. ${restoreHint}`, {
+    toast(`Removed ${spec.title}. ${restoreHint}`, {
       action: { label: "Undo", run: () => void save(before ?? showTile({ shown: shown.filter((item) => item.key !== spec.key), hidden }, spec)) },
     });
   }
@@ -367,13 +415,28 @@ export function useTileControls<S extends Arrangeable>({
       <button
         type="button"
         className="tresize"
-        aria-label={`Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.`}
-        title="Drag to resize"
+        aria-label={heights ? `Resize ${spec.title}, ${sizeOf(spec).c} columns by ${sizeOf(spec).r} rows. Use the arrow keys.` : `Resize ${spec.title}, ${sizeOf(spec).c} of 12 columns wide. Use the left and right arrow keys.`}
+        title={heights ? "Drag to resize" : "Drag to change the width"}
         onPointerDown={(event) => startResize(event, spec)}
         onKeyDown={(event) => resizeByKey(event, spec)}
       />
     ),
-    onHide: fixed && !mobile ? undefined : () => hide(spec),
+    options: fixed && !mobile ? undefined : (
+      <TileOptions
+        title={spec.title}
+        size={sizeOf(spec)}
+        limits={tileLimits(spec)}
+        heights={heights}
+        onResize={fixed ? undefined : (size) => {
+          const next = resizeTile(arranged, spec.key, size);
+          const saved = next.tiles.find((tile) => tile.key === spec.key);
+          if (saved) announce(`${spec.title} is ${saved.c} columns by ${saved.r} rows.`);
+          remember(document.querySelector(`[data-desk-key="${CSS.escape(spec.key)}"]`)?.parentElement);
+          void save(next);
+        }}
+        onRemove={() => hide(spec)}
+      />
+    ),
   });
 
   return { sizeOf, controls };

@@ -62,7 +62,7 @@ export const MARKET_CARDS: readonly MarketCard[] = [
     name: "Bench",
     blurb: "The build on a timeline, the parts in hand, and every test by board.",
     accent: "sky",
-    removes: ["code", "metrics", "runs", "skills", "workspace", "plots"],
+    removes: ["code", "metrics", "skills", "plots"],
     widgets: ["change-requests", "test-log", "spec-register", "focus", "artifacts", "people", "decisions"],
     expiresInDays: null,
   },

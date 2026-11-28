@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type { Settings } from "@ensemble/shared-types";
 import { FeaturesSection } from "@/components/features/section";
+import { RecapTilesSection } from "@/components/recap/settings-section";
 import { AboutSection } from "./about";
 import { AccountSection } from "./account";
 import { AvatarPicker } from "./avatar-picker";
@@ -23,6 +24,7 @@ export function AccountTab({ settings, patch }: { settings: Settings; patch: (va
       <div id="avatar" className="scroll-mt-6"><AvatarPicker /></div>
       <div id="you" className="scroll-mt-6"><IdentitySection settings={settings} patch={patch} /></div>
       {guest ? null : <div id="features" className="scroll-mt-6"><FeaturesSection /></div>}
+      {guest ? null : <div id="recap-tiles" className="scroll-mt-6"><RecapTilesSection /></div>}
       <div id="this-mac" className="scroll-mt-6 empty:hidden"><RemoteMacSection /></div>
       <div id="about" className="scroll-mt-6"><AboutSection /></div>
     </>

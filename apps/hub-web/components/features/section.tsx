@@ -3,11 +3,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { OPTIONAL_MODULES, hasModule, moduleFitsProfile, type OptionalModule } from "@ensemble/shared-types/modules";
-import { SectionCard, SettingRow, Toggle } from "@/components/ui";
+import { InfoTip, SectionCard, SettingRow, Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
 import { featureCopy, setFeature } from "@/lib/features";
 import { deskIdFromTemplate } from "@/components/desk/desks";
-import { DESK_EXTRAS, defaultExtras, extrasForProfile, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
+import { DESK_EXTRAS, extrasForProfile, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
 import { layoutKey, readLayout } from "@/components/desk/layout";
 import { shellProfile } from "@/components/desk/tile-catalog";
 import { useToast } from "@/components/toast";
@@ -23,10 +23,10 @@ export function FeaturesSection() {
   const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
   const extras = resolveExtras(deskId, prefs.isSuccess ? extraValue : undefined);
   // Only what fits this profile: no Code for a lawyer, no exam deadlines for an engineer.
+  // The agent queue has no row of its own: the Runs switch turns it on and off with the run history.
   const profile = shellProfile(shell.data);
-  const modules = OPTIONAL_MODULES.filter((id) => moduleFitsProfile(id, profile));
+  const modules = OPTIONAL_MODULES.filter((id) => id !== "workspace" && moduleFitsProfile(id, profile));
   const offered = extrasForProfile(profile);
-  const onByDefault = new Set(defaultExtras(deskId));
   const toggle = async (id: OptionalModule, on: boolean) => {
     setBusy(id);
     try {
@@ -68,12 +68,13 @@ export function FeaturesSection() {
   return (
     <SectionCard
       title="Features"
-      description="Turn a part of Ensemble on or off. Turning one off hides it. Notes, diagrams, and reviews stay where they are."
+      description="Turn parts of Ensemble on or off."
+      info="Turning one off hides it. Notes, diagrams and reviews stay where they are."
     >
       <div data-features className="divide-y divide-[var(--line)]">
         {modules.map((id) => {
           const feature = featureCopy(id);
-          const on = hasModule(shell.data?.modules, id);
+          const on = hasModule(shell.data?.modules, id) || (id === "runs" && hasModule(shell.data?.modules, "workspace"));
           return (
             <SettingRow key={id} title={feature.label} description={feature.line}>
               <Toggle
@@ -88,11 +89,10 @@ export function FeaturesSection() {
       </div>
       {offered.length ? (
         <div className="mt-4 border-t border-line pt-3" data-desk-extras>
-          <div data-jump-label="Desk extras" className="text-[13.5px] font-medium">Desk extras</div>
-          <p className="mt-0.5 text-[12.5px] text-muted">Optional tiles for your current profile. Turning one off hides it. The rows stay.</p>
+          <div data-jump-label="Desk extras" className="flex items-center gap-1 text-[13.5px] font-medium">Desk extras<InfoTip text="Optional Today tiles for your profile. Turning one off hides the tile; its rows stay. Some are on for this desk until you turn them off." /></div>
           <div className="divide-y divide-[var(--line)]">
           {offered.map((extra) => (
-            <SettingRow key={extra.id} title={extra.label} description={onByDefault.has(extra.id) ? `${extra.line} On for this desk until you turn it off.` : extra.line}>
+            <SettingRow key={extra.id} title={extra.label} description={extra.line}>
               <Toggle
                 checked={extras.has(extra.id)}
                 disabled={!prefs.isSuccess || extraBusy === extra.id}

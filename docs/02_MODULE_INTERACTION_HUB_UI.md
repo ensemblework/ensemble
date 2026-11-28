@@ -57,7 +57,7 @@ When an input sits inside a box (an icon, chips or a hidden label beside it: `.c
 
 The assistant's bubble sits only along the bottom or the right edge of the work area, never over the sidebar, the top bar or a bar pinned to the work area's foot (an element marked `data-launcher-floor`, such as Code's status bar, which also sends `ensemble:launcher-floor` as it appears and goes): a drag lands on the nearer edge (`snapLauncher` in `components/assistant/ask-launcher.tsx`).
 
-Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters fit the screen it is opened on (`starterPrompts`).
+Its empty chat fits the window: the mark sits left of the greeting, and the greeting, line and starters scale with the window's width and height between readable limits (a size container in `app/globals.css`), so a small window loses the subline and third starter instead of scrolling. Starters share one row height, so they are the same size however they wrap. Starters fit the screen it is opened on (`starterPrompts`).
 
 #### Format an assistant message
 
@@ -93,7 +93,7 @@ Row actions float over page titles instead of taking their width, so titles stay
 
 ### Find the views available to your profile
 
-Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission.
+Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Settings › Account › Features has one Runs switch that turns both on or off (`setFeature` in `lib/features.ts`); both signup desks for builders (`mkt.branch-desk`, `mkt.bench`) start with both on.
 
 Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 
@@ -121,13 +121,19 @@ Open **Today** for your profession desk, briefing, focus tasks, triage, reminder
 
 The Morning brief tile (`components/widgets/glances.tsx`) reads the built-in routine's latest successful reply with `GET /api/brief/today`, independently of unread bell notifications. A paused, deleted, disabled or not-run brief has a one-line empty state pointing to `/routines`; a failed brief without a saved reply says it did not finish. `/morning-brief` redirects to `/routines?routine=morning-brief`, which focuses the built-in routine even after a rename.
 
-Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Hiding a tile does not remove its records.
+Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Removing a tile does not remove its records.
 
 #### Move or resize a Today tile
 
 A native desk tile (Today and Context Overview, `useTileControls` in `components/desk/arrange.tsx`) moves by the grip before its title: its label lifts and follows the pointer, the tile waits faded, and a line on the tile under the pointer shows which side it lands on. The corner resizes it: a dashed outline shows the snapped size in columns × rows, and the tiles stay still until the release.
 
 Nothing renders while the pointer moves; on release the layout saves once and every tile glides to its new place (FLIP, `lib/motion/drag.ts`). Esc cancels either. Focused, the grip moves the tile with the arrow keys and the corner resizes it.
+
+Each tile's ⋯ menu (`TileOptions`) has Width and Height steps within the tile's limits (`tileLimits`) and Remove tile, which offers Undo; a removed tile comes back from Add a tile. On a phone the menu has only Remove tile. A shared space's guest gets none of these controls.
+
+A layout change is drawn at once and saved in the background (`usePreferenceWrite` in `lib/preference-write.ts`); if the newest save fails, the layout goes back to what the Hub last saved (not to an earlier edit still unsaved) and says why. Saves to one preference go out one at a time, each with the copy the previous one saved as its `_base`, so quick moves and resizes by one person never ask which version to save (§5).
+
+The Diagrams tile (`components/desk/diagrams-tile.tsx`, key `diagrams`) shows the newest block diagrams, as many as its width holds, and links to `/diagrams`. With the Diagrams feature on, it joins the end of Today once there is a diagram, unless it was removed, and Add a tile offers it; it moves, resizes and is removed like any tile.
 
 In the widget view's Edit layout (`components/widgets/edit-mode.tsx`) tiles glide after a drop, an arrow key or a size change, and their contents do not render while one is dragged.
 
@@ -171,7 +177,7 @@ A card reaching Done, by your drag or because the work finished, moves like a ca
 
 Only a reorder within a column slides the shifted cards; opening a peek, the assistant, or resizing the board moves nothing (`components/motion/board-drag/board-drag-dnd-kit.tsx`). A dragged card is drawn in the same frame as the pointer move (`lib/motion/dnd-sensors.ts`); while it is in the air only the columns it leaves and enters render again (columns, cards and the overview are memoised), and the lists are not measured for remote moves.
 
-A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px.
+A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. A reorder, swap or collapse is drawn at once and saved like a Today layout (`usePreferenceWrite`), so a second move while the first saves is kept. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px.
 
 Add a page and Board tiles are in the toolbar's More (⋯) menu; Import and New task stay visible.
 
@@ -277,7 +283,7 @@ Renamed jump ids keep working as aliases.
 
 | Tab | Cards |
 | --- | --- |
-| Account | Account (profile, password, linked login methods, export), Avatar, Time zone and email, Features (owner), This computer (desktop app), About Ensemble |
+| Account | Account (profile, password, linked login methods, export), Avatar, Time zone and email, Features (owner), Weekly recap tiles (owner), This computer (desktop app), About Ensemble |
 | Appearance | Theme (mode, color theme, doodle, accent), Text (size, app font), Layout and motion (auto-collapse sidebar, Pages panel side, Ensemble's right-click menu, reduce motion), Reset appearance |
 | Notifications | Notifications on this device, Quiet hours, Nudges (agent work waiting for review, work gone quiet), Routines, Quick capture |
 | Shortcuts | Key bindings by group, with change, conflict checks and reset |
@@ -366,6 +372,8 @@ Its scheduled runs happen at most once per local day; Run now is explicit. A sav
 `/recap` (`components/recap/recap-view.tsx`) reviews one Monday–Sunday week in the person's time zone. ‹ › and This week move between weeks with `?date=YYYY-MM-DD`; Export copies or downloads the Markdown. A summary sentence written from the numbers (no model call) leads, followed by six figures with their change against last week (during the current week, against the same moment last week): tasks done (by you and by agents), tasks added, agent runs, Active in Ensemble, decisions and pages edited.
 
 Tiles: Daily rhythm (tasks finished per day by you and by agents, tasks added as a dashed bar; a bulk-add day is clipped and labelled), Highlights (delivered milestones, high-priority tasks, best day, project progress, active days, first agent run, Needs me clear), When you worked (weekday × hour) and Where time went (top five areas), Projects moved, Agent work (success rate, runs by agent), Looking ahead (due through the end of next week, overdue, waiting in Needs me; a past week shows what it left open) and the week item by item.
+
+The tiles are arranged as on Today (`useTileControls` with `heights: false`, `components/recap/layout.ts`): drag the grip to move a tile, drag the corner or use the ⋯ menu to change its width (3–12 columns; Daily rhythm at least 6), and Remove tile. Tiles keep the height of their content. On a tablet, When you worked, Where time went, Projects moved and Agent work share rows in pairs until the person arranges the recap; after that any tile of 6 columns or fewer takes half a row. A phone shows one column. In a week with no active time, When you worked also takes the columns of Where time went (`recapPlace`). The arrangement is saved in `desk.recap.layout`. Settings › Account › Weekly recap (`components/recap/settings-section.tsx`) switches each tile on or off and resets the layout. A tile with nothing to show that week is left out without changing the layout.
 
 Active in Ensemble is the signed-in person's own screen time from the interaction log ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)), not hours worked. A week with nothing recorded shows one "A quiet week" card.
 
@@ -725,7 +733,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 
 **Saves outside live documents.** The Hub keeps the last-read copy for task fields, people, projects, repositories, deliverables, manual meeting notes, skills, routines, plots, comments and preferences. Their ordinary saves send `_base`; row-locked writes merge disjoint fields and return 409 `SAVE_CONFLICT` for overlapping ones (`lib/save-conflict.ts`, `packages/shared-types/src/save-merge.ts`).
 
-Nested objects merge by field; arrays and whole document blocks are compared as values. The dialog keeps both values until the person chooses. Keeping the saved value still applies non-conflicting changes. Meeting and project editors keep pending drafts; settings keep theirs in session storage. `settings.changed` is account-private and refreshes the other windows.
+Nested objects merge by field; arrays and whole document blocks are compared as values. The dialog keeps both values until the person chooses. Keeping the saved value still applies non-conflicting changes, and a save with nothing changed against its `_base` keeps the stored value. A preference's `_base` is the copy its last save returned, not only the last list read: writes to one preference are sent one at a time (`put` and `deletePreference` in `lib/api.ts`), and a list read that started before a save finished does not replace it. Meeting and project editors keep pending drafts; settings keep theirs in session storage. `settings.changed` is account-private and refreshes the other windows.
 
 Pages and task documents keep their live step/rebase protocol (§13); boards, diagrams and original files keep their revision/hash checks. Callers without `_base` retain their existing write contract.
 
